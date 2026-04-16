@@ -409,3 +409,51 @@ Call log:
 [17:12:15]   📊 Found 2 rows in table
 [17:12:15] ❌ Claim 2012823126C050003001 not found in worklist.
 [17:12:15] ❌ ERROR: Claim '2012823126C050003001' was not found in Worklist.
+[17:18:56] 📁 Scanning folder: C:/Users/Dev/Downloads/automationfolderuploading
+[17:18:56] 📊 Excel: sample_excel.xls
+[17:19:00] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[17:19:00] 🚀 Automation started — Claim: 2012823126C050003001
+[17:19:00] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[17:19:01] ------------------------------------
+[17:19:01] STEP 1 - Login
+[17:19:01] ------------------------------------
+[17:19:05] Navigating to portal...
+[17:19:08] Login page loaded.
+[17:19:08] Login attempt 1/7...
+[17:19:08] Reading CAPTCHA from canvas...
+[17:19:09] CAPTCHA candidates: ['uhwUfJ', 'UHWUFJ', 'uhwufj']
+[17:19:09] Trying CAPTCHA [primary / Mixed-Case]: 'uhwUfJ'
+[17:19:12]   Clicked login button
+[17:19:14] Login confirmed. CAPTCHA variant: primary / Mixed-Case
+[17:19:14]   Success signal: Dashboard tab detected: https://portal.uiic.in/surveyor/data/Surveyor.html?v=16009#/home
+[17:19:16] Locating dashboard/worklist page...
+[17:19:16] Found Surveyor page: https://portal.uiic.in/surveyor/data/Surveyor.html?v=16009#/home
+[17:19:18] ------------------------------------
+[17:19:18] STEP 2 - Navigate to Claim: 2012823126C050003001
+[17:19:18] ------------------------------------
+[17:19:18] 📌 Current URL: https://portal.uiic.in/surveyor/data/Surveyor.html?v=16009#/home
+[17:19:20] 📋 Clicked Worklist sidebar link.
+[17:19:22] 📌 Selecting Claim Type: Non Maruti
+[17:19:38]   ⚠️  Claim type dropdown not found — proceeding anyway
+[17:19:38] 📌 Entering Claim No: 2012823126C050003001
+[17:19:51]   ✅ Claim number entered: 2012823126C050003001
+[17:19:51] 📌 Clicking Filter button...
+[17:19:51]   ✅ Filter button clicked
+[17:19:54] 📌 Waiting for search results...
+[17:19:56] 🔎 Scanning table page 1 for claim: 2012823126C050003001
+[17:19:56]   📊 Found 2 rows in table
+[17:19:56]   ✅ Claim found in row 2: 1	2012823126C050003001	BALKAR SINGH	09/04/2026 11:11:00 AM	02/04/2026 5:30:00 AM...
+[17:19:56]   ✅ Clicked Action button for claim 2012823126C050003001
+[17:19:58] ✅ Claim 2012823126C050003001 found and Action clicked!
+[17:20:00] ------------------------------------
+[17:20:00] STEP 3 - Fill Interim Report
+[17:20:00] ------------------------------------
+[17:20:00] 📑 Clicking 'Interim Report' tab...
+[17:20:30] ERROR: Locator.click: Timeout 30000ms exceeded.
+Call log:
+  - waiting for locator("a:has-text('Interim Report'), li a[href*='interim'], .nav-tabs a:has-text('Interim')").first
+
+[17:20:30] ❌ ERROR: Automation failed: Locator.click: Timeout 30000ms exceeded.
+Call log:
+  - waiting for locator("a:has-text('Interim Report'), li a[href*='interim'], .nav-tabs a:has-text('Interim')").first
+
