@@ -1,0 +1,28 @@
+{
+  "_comment": "Maps lowercase filename keywords to Document Type dropdown values on the UIIC portal. filename is matched using 'in' operator (substring match).",
+  "claim_documents_tab": {
+    "driving_license":          "Driving License",
+    "registration_certificate": "RC Book",
+    "pan_card":                 "PAN Card",
+    "cancel_check":             "Cancelled Cheque Or Bank Details",
+    "cancelled_cheque":         "Cancelled Cheque Or Bank Details",
+    "claim_form":               "Claim Form",
+    "discharge_voucher":        "Discharge or Satisfaction Voucher",
+    "fitness_certificate":      "Vehicle Fitness Certificate",
+    "police_report":            "FIR",
+    "route_permit":             "Road Permit for Commercial Vehicle",
+    "kyc_form":                 "CKYC Form",
+    "towing_bill":              "Other 1",
+    "tax_report":               "Other 2",
+    "tp_affidavit":             "Other 3",
+    "partnership_deed":         "Other 4",
+    "payment_receipt":          "Other 5"
+  },
+  "claim_assessment_tab": {
+    "assessment":               "assessment_report",
+    "survey_report":            "survey_report",
+    "repair_estimate":          "estimate",
+    "final_invoice":            "invoice",
+    "spot_report":              "reinspection_report"
+  }
+}

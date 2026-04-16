@@ -1,0 +1,39 @@
+[project]
+name = "uiic-automation"
+version = "1.0.0"
+description = "UIIC Insurance Surveyor Portal Automation Tool"
+
+# We specify Python 3.12 because PaddleOCR v2 is highly stable on it.
+requires-python = ">=3.12,<3.13"
+
+# These are the exact version constraints to prevent the C++ crash
+dependencies = [
+    # GUI & Browser Automation
+    "PyQt6>=6.5.0",
+    "playwright>=1.40.0",
+
+    # Excel Processing
+    "xlrd>=2.0.1",
+    "openpyxl>=3.1.0",
+
+    # CAPTCHA OCR Engine (PaddleOCR v2 stable branch)
+    # CRITICAL: paddlepaddle must stay < 3.0.0
+    # Version 3.x contains an architecture bug on Windows Intel CPUs
+    # (onednn_instruction.cc:118). Locked to the stable 2.x branch.
+    "paddlepaddle>=2.6.0,<3.0.0",
+    "paddleocr>=2.8.0,<3.0.0",
+
+    # Image Processing (PaddleOCR transitive deps)
+    "Pillow>=10.0.0",
+    "numpy<2.0.0",
+
+    # PaddlePaddle imports setuptools at runtime (cpp_extension)
+    "setuptools",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
