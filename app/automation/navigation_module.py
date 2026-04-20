@@ -21,73 +21,74 @@ an empty table that showed "No Records Found".
 """
 import asyncio
 import logging
-from typing import Callable
+from typing import Callable, Optional
+
+from playwright.async_api import Page
 
 logger = logging.getLogger(__name__)
 
 # Known working URL from live portal observation
-WORKLIST_URL = "https://portal.uiic.in/surveyor/data/Surveyor.html?v=62486#/Worklist"
+WORKLIST_URL = "https://portal.uiic.in/surveyor/data/Surveyor.html#/Worklist"
 
 # ── Selectors ─────────────────────────────────────────────────────────────────
-# Worklist sidebar link
-SEL_WORKLIST_MENU = (
-    "a:has-text('Worklist'), "
-    "li a[href*='Worklist'], "
-    "li:has-text('Worklist') a, "
-    ".sidebar a:has-text('Worklist'), "
-    "ul.nav a:has-text('Worklist')"
-)
+# B8 FIX: Store selectors as lists instead of comma-joined strings.
+# Joining selectors with ', ' then splitting on ', ' breaks selectors that
+# themselves contain commas (e.g. inside :has-text() patterns).
+SEL_WORKLIST_MENU = [
+    "a:has-text('Worklist')",
+    "li a[href*='Worklist']",
+    "li:has-text('Worklist') a",
+    ".sidebar a:has-text('Worklist')",
+    "ul.nav a:has-text('Worklist')",
+]
 
-# Claim No filter input
-SEL_CLAIM_NO_INPUT = (
-    "input[ng-model*='claimNo'], "
-    "input[ng-model*='ClaimNo'], "
-    "input[ng-model*='claim_no'], "
-    "input[placeholder*='Claim No'], "
-    "input[placeholder*='Claim no'], "
-    "input[placeholder*='claim no']"
-)
+SEL_CLAIM_NO_INPUT = [
+    "input[name='claimPolicyNo']",
+    "input[ng-model*='filterWorklistClaimNo']",
+    "input[ng-model*='claimNo']",
+    "input[ng-model*='ClaimNo']",
+    "input[placeholder*='Claim']",
+]
 
-# Filter & Reset buttons
-SEL_FILTER_BTN = (
-    "button:has-text('Filter'), "
-    "input[value='Filter'], "
-    "a:has-text('Filter'), "
-    "button.btn-primary:has-text('Filter')"
-)
-SEL_RESET_BTN = (
-    "button:has-text('Reset'), "
-    "input[value='Reset'], "
-    "a:has-text('Reset')"
-)
+SEL_FILTER_BTN = [
+    "button:has-text('Filter')",
+    "input[value='Filter']",
+    "a:has-text('Filter')",
+    "button.btn-primary:has-text('Filter')",
+]
+SEL_RESET_BTN = [
+    "button:has-text('Reset')",
+    "input[value='Reset']",
+    "a:has-text('Reset')",
+]
 
-# Claim Type dropdown
-SEL_CLAIM_TYPE_DD = (
-    "select[ng-model*='claimType'], "
-    "select[ng-model*='ClaimType'], "
-    "select[ng-model*='claim_type'], "
-    "#claimType"
-)
+SEL_CLAIM_TYPE_DD = [
+    "select[name='claimType']",
+    "select[ng-model*='claimType']",
+    "#claimType",
+]
+CLAIM_TYPE_NONMARUTI_VALUE = "string:NONMARUTI"
 
-# Search result table
 SEL_RESULT_TABLE = "table tbody tr"
-SEL_ACTION_BTN = (
-    "button:has-text('Click Here'), "
-    "a:has-text('Click Here'), "
-    "td button:has-text('Click'), "
-    "td a:has-text('Click')"
-)
-SEL_PAGE_NEXT = (
-    "a:has-text('Next'), "
-    "li.next:not(.disabled) a, "
-    ".pagination .next a"
-)
+SEL_ACTION_BTN = [
+    "button:has-text('Click Here')",
+    "a:has-text('Click Here')",
+    "td button:has-text('Click')",
+    "td a:has-text('Click')",
+]
+SEL_PAGE_NEXT = [
+    "a:has-text('Next')",
+    "li.next:not(.disabled) a",
+    ".pagination .next a",
+]
 SEL_NO_RECORDS = "td:has-text('No Records Found'), td:has-text('No Record Found'), td:has-text('No records')"
 
 
-async def _click_first_visible(page, selector_str: str, timeout: int = 4000) -> bool:
-    """Try each comma-separated selector; click the first visible one."""
-    for sel in selector_str.split(", "):
+async def _click_first_visible(page, selectors, timeout: int = 4000) -> bool:
+    """Try each selector (list or comma-string); click the first visible one."""
+    if isinstance(selectors, str):
+        selectors = [s.strip() for s in selectors.split(",")]
+    for sel in selectors:
         try:
             el = page.locator(sel.strip()).first
             await el.wait_for(state="visible", timeout=timeout)
@@ -98,9 +99,11 @@ async def _click_first_visible(page, selector_str: str, timeout: int = 4000) -> 
     return False
 
 
-async def _fill_first_visible(page, selector_str: str, value: str, timeout: int = 4000) -> bool:
-    """Try each comma-separated selector; fill the first visible one."""
-    for sel in selector_str.split(", "):
+async def _fill_first_visible(page, selectors, value: str, timeout: int = 4000) -> bool:
+    """Try each selector (list or comma-string); fill the first visible one."""
+    if isinstance(selectors, str):
+        selectors = [s.strip() for s in selectors.split(",")]
+    for sel in selectors:
         try:
             el = page.locator(sel.strip()).first
             await el.wait_for(state="visible", timeout=timeout)
@@ -113,9 +116,11 @@ async def _fill_first_visible(page, selector_str: str, value: str, timeout: int 
     return False
 
 
-async def _select_first_visible(page, selector_str: str, label: str, timeout: int = 4000) -> bool:
-    """Try each comma-separated selector; select option by label in the first visible one."""
-    for sel in selector_str.split(", "):
+async def _select_first_visible(page, selectors, label: str, timeout: int = 4000) -> bool:
+    """Try each selector (list or comma-string); select option by label."""
+    if isinstance(selectors, str):
+        selectors = [s.strip() for s in selectors.split(",")]
+    for sel in selectors:
         try:
             el = page.locator(sel.strip()).first
             await el.wait_for(state="visible", timeout=timeout)
@@ -132,14 +137,14 @@ async def _select_first_visible(page, selector_str: str, label: str, timeout: in
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 async def navigate_to_claim(
-    page,
+    page: Page,
     claim_no: str,
     claim_type: str = "Non Maruti",
     log_cb: Callable[[str], None] = print,
-) -> bool:
+) -> Optional[Page]:
     """
     Navigate to Worklist → select claim type → filter by claim no → click Action.
-    Returns True if claim found and clicked.
+    Returns the claim details Page (may be a new tab) if found, or None.
     """
     log_cb(f"📌 Current URL: {page.url}")
 
@@ -148,7 +153,7 @@ async def navigate_to_claim(
 
     # Strategy A: Click sidebar Worklist link
     try:
-        for sel in SEL_WORKLIST_MENU.split(", "):
+        for sel in SEL_WORKLIST_MENU:
             try:
                 link = page.locator(sel.strip()).first
                 if await link.is_visible(timeout=3000):
@@ -174,10 +179,30 @@ async def navigate_to_claim(
 
     # ── Step 2: Select Claim Type to "Non Maruti" ─────────────────────────────
     log_cb(f"📌 Selecting Claim Type: {claim_type}")
-    if await _select_first_visible(page, SEL_CLAIM_TYPE_DD, claim_type):
-        log_cb(f"  ✅ Claim type set to: {claim_type}")
-        await asyncio.sleep(1.5)
-    else:
+    # Try confirmed value first ('string:NONMARUTI'), then label text
+    set_ct = False
+    for ct_sel in SEL_CLAIM_TYPE_DD:
+        try:
+            el = page.locator(ct_sel.strip()).first
+            if await el.is_visible(timeout=3000):
+                try:
+                    await el.select_option(value=CLAIM_TYPE_NONMARUTI_VALUE)
+                    set_ct = True
+                except Exception:
+                    pass
+                if not set_ct:
+                    try:
+                        await el.select_option(label=claim_type)
+                        set_ct = True
+                    except Exception:
+                        pass
+                if set_ct:
+                    log_cb(f"  ✅ Claim type set to: {claim_type}")
+                    await asyncio.sleep(1.5)
+                    break
+        except Exception:
+            continue
+    if not set_ct:
         log_cb("  ⚠️  Claim type dropdown not found — proceeding anyway")
 
     # ── Step 3: Enter claim number and click Filter ───────────────────────────
@@ -220,19 +245,18 @@ async def navigate_to_claim(
     page_num = 1
     while True:
         log_cb(f"🔎 Scanning table page {page_num} for claim: {claim_no}")
-        found = await _find_and_click_claim(page, claim_no, log_cb)
-        if found:
+        claim_page = await _find_and_click_claim(page, claim_no, log_cb)
+        if claim_page is not None:
             await asyncio.sleep(2)
             log_cb(f"✅ Claim {claim_no} found and Action clicked!")
-            return True
+            return claim_page
 
         # Try next pagination page
         has_next = False
-        for sel in SEL_PAGE_NEXT.split(", "):
+        for sel in SEL_PAGE_NEXT:
             try:
                 next_btn = page.locator(sel.strip()).first
                 if await next_btn.is_visible(timeout=1500):
-                    # Check parent <li> isn't disabled
                     try:
                         disabled = await next_btn.locator("xpath=..").evaluate(
                             "el => el.classList.contains('disabled')"
@@ -253,11 +277,14 @@ async def navigate_to_claim(
             break
 
     log_cb(f"❌ Claim {claim_no} not found in worklist.")
-    return False
+    return None
 
 
-async def _find_and_click_claim(page, claim_no: str, log_cb: Callable) -> bool:
-    """Search current table page for claim_no; click its Action button."""
+async def _find_and_click_claim(page: Page, claim_no: str, log_cb: Callable) -> Optional[Page]:
+    """
+    Search current table page for claim_no; click its Action button.
+    Returns the new page (if a new tab opened) or same page, or None if not found.
+    """
     try:
         rows = page.locator(SEL_RESULT_TABLE)
         count = await rows.count()
@@ -282,33 +309,71 @@ async def _find_and_click_claim(page, claim_no: str, log_cb: Callable) -> bool:
                     log_cb(f"  ✅ Claim found in row {i + 1}: {text[:80]}...")
 
                     # Click "Click Here" button in the Action column
-                    for btn_sel in SEL_ACTION_BTN.split(", "):
+                    # The portal may open a NEW TAB — listen for it
+                    context = page.context
+                    pages_before = set(id(p) for p in context.pages)
+
+                    for btn_sel in SEL_ACTION_BTN:
                         try:
                             btn = row.locator(btn_sel.strip()).first
                             if await btn.is_visible(timeout=2000):
                                 await btn.click()
                                 log_cb(f"  ✅ Clicked Action button for claim {claim_no}")
-                                return True
+                                return await _detect_new_page(page, context, pages_before, log_cb)
                         except Exception:
                             continue
 
                     # Fallback: click any button/link in the last few TDs
                     log_cb("  ⚠️  'Click Here' not found — trying any button in row...")
                     try:
+                        context = page.context
+                        pages_before = set(id(p) for p in context.pages)
                         any_btn = row.locator("td button, td a").last
                         if await any_btn.is_visible(timeout=1500):
                             await any_btn.click()
                             log_cb(f"  ✅ Clicked fallback button for claim {claim_no}")
-                            return True
+                            return await _detect_new_page(page, context, pages_before, log_cb)
                     except Exception:
                         pass
 
                     log_cb(f"  ⚠️  Found claim row but couldn't click Action button")
-                    return False
+                    return None
 
             except Exception:
                 continue
 
     except Exception as e:
         log_cb(f"  ⚠️  Row scan error: {e}")
-    return False
+    return None
+
+
+async def _detect_new_page(
+    original_page: Page,
+    context,
+    pages_before: set,
+    log_cb: Callable,
+    timeout: float = 5.0,
+) -> Page:
+    """
+    After clicking 'Click Here', the portal usually opens the claim details
+    in a new tab. Wait up to `timeout` seconds for it, then return whichever
+    page to use for subsequent steps.
+    """
+    # Wait for a new tab to appear
+    elapsed = 0.0
+    while elapsed < timeout:
+        await asyncio.sleep(0.5)
+        elapsed += 0.5
+        for p in context.pages:
+            if id(p) not in pages_before and not p.is_closed():
+                try:
+                    await p.wait_for_load_state("domcontentloaded", timeout=10000)
+                except Exception:
+                    pass
+                await p.bring_to_front()
+                log_cb(f"  🆕 New tab detected: {p.url}")
+                return p
+
+    # No new tab — the page navigated in-place (SPA route change)
+    log_cb(f"  📌 No new tab — staying on: {original_page.url}")
+    return original_page

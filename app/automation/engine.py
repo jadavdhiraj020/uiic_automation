@@ -221,16 +221,40 @@ class AutomationEngine:
         password = settings["password"]
         claim_type = settings.get("claim_type", "Non Maruti")
         headless = settings.get("browser_headless", False)
-        slow_mo = settings.get("browser_slow_mo_ms", 80)
+        slow_mo = settings.get("browser_slow_mo_ms", 200)  # 200ms = visible but not sluggish
         max_retries = settings.get("captcha_max_retries", 5)
 
         steps = ["Login", "Navigate to Claim", "Interim Report", "Claim Documents", "Claim Assessment"]
         browser = None
 
         async with async_playwright() as pw:
-            browser = await pw.chromium.launch(headless=headless, slow_mo=slow_mo, args=["--start-maximized"])
-            context = await browser.new_context(no_viewport=True)
+            browser = await pw.chromium.launch(
+                headless=headless,
+                slow_mo=slow_mo,
+                args=[
+                    "--start-maximized",
+                    "--window-size=1920,1080",      # fallback if --start-maximized ignored
+                    "--disable-infobars",           # no "Chrome is controlled by..." bar
+                    "--disable-features=TranslateUI",
+                ]
+            )
+            context = await browser.new_context(
+                no_viewport=True,                  # let OS window size dictate
+                accept_downloads=True,
+            )
             page = await context.new_page()
+            await page.bring_to_front()            # ensure browser is on top from start
+
+            # ── Auto-accept JS dialogs (alert/confirm/prompt) ─────────────────
+            # Portal may show alerts during upload — auto-dismiss them.
+            # (Proven approach from Doc_uploader.py)
+            async def _on_dialog(dialog):
+                self.log_cb(f"Dialog detected ({dialog.type}): {dialog.message} — auto-accepting.")
+                try:
+                    await dialog.accept()
+                except Exception:
+                    pass  # already dismissed / stale — ignore
+            page.on("dialog", _on_dialog)
 
             captured_pages: List[Page] = []
             context.on("page", lambda p: captured_pages.append(p))
@@ -275,9 +299,12 @@ class AutomationEngine:
                 self.log_cb(f"STEP 2 - Navigate to Claim: {claim.claim_no}")
                 self.log_cb("-" * 36)
 
-                found = await navigate_to_claim(page, claim.claim_no, claim_type, log_cb=self.log_cb)
-                if not found:
+                claim_page = await navigate_to_claim(page, claim.claim_no, claim_type, log_cb=self.log_cb)
+                if claim_page is None:
                     return AutomationRunResult(False, f"Claim '{claim.claim_no}' was not found in Worklist.")
+                # Switch to the claim details page (may be a new tab)
+                page = claim_page
+                self.log_cb(f"📌 Working on page: {page.url}")
                 if self._check_stop():
                     return AutomationRunResult(False, "Automation stopped by user.")
 
@@ -287,26 +314,32 @@ class AutomationEngine:
                 self.log_cb("-" * 36)
                 self.log_cb("STEP 3 - Fill Interim Report")
                 self.log_cb("-" * 36)
+                await page.bring_to_front()
+                await page.evaluate("window.scrollTo(0, 0)")
                 await fill_interim_report(page, claim, log_cb=self.log_cb)
                 if self._check_stop():
                     return AutomationRunResult(False, "Automation stopped by user.")
 
                 await asyncio.sleep(1.0)
+                await page.bring_to_front()
 
                 self.step_cb(3, steps[3])
                 self.log_cb("-" * 36)
                 self.log_cb("STEP 4 - Upload Claim Documents")
                 self.log_cb("-" * 36)
+                await page.evaluate("window.scrollTo(0, 0)")
                 await fill_claim_documents(page, claim, log_cb=self.log_cb)
                 if self._check_stop():
                     return AutomationRunResult(False, "Automation stopped by user.")
 
                 await asyncio.sleep(1.0)
+                await page.bring_to_front()
 
                 self.step_cb(4, steps[4])
                 self.log_cb("-" * 36)
                 self.log_cb("STEP 5 - Fill Claim Assessment")
                 self.log_cb("-" * 36)
+                await page.evaluate("window.scrollTo(0, 0)")
                 await fill_claim_assessment(page, claim, log_cb=self.log_cb)
                 if self._check_stop():
                     return AutomationRunResult(False, "Automation stopped by user.")
@@ -328,7 +361,8 @@ class AutomationEngine:
                 logger.exception("Automation error")
                 return AutomationRunResult(False, f"Automation failed: {exc}")
             finally:
-                try:
-                    await browser.close()
-                except Exception:
-                    pass
+                # B7 FIX: Do NOT call browser.close() here.
+                # The 'async with async_playwright()' context manager closes
+                # the browser automatically when the block exits.
+                # Explicit close() here caused double-close RuntimeWarning.
+                pass

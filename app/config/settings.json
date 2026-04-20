@@ -4,7 +4,7 @@
   "password": "Soip@881",
   "claim_type": "Non Maruti",
   "browser_headless": false,
-  "browser_slow_mo_ms": 80,
+  "browser_slow_mo_ms": 200,
   "timeout_ms": 30000,
   "captcha_max_retries": 7,
   "upload_wait_ms": 3000,
