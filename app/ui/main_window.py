@@ -545,6 +545,13 @@ class MainWindow(QMainWindow):
                 self._claim = read_excel(self._scan_result.excel_path, CONFIG_DIR)
                 self._claim.claim_doc_files  = self._scan_result.claim_doc_files
                 self._claim.assessment_files = self._scan_result.assessment_files
+                
+                # Output the exact coordinates of where data was found
+                if hasattr(self._claim, "_excel_logs") and self._claim._excel_logs:
+                    self._append_log("📌 Excel Data Sources Map:")
+                    for lg in self._claim._excel_logs:
+                        self._append_log(lg)
+                
                 if self.inp_claim_no.text().strip():
                     self._claim.claim_no = self.inp_claim_no.text().strip()
                 elif self._claim.claim_no:

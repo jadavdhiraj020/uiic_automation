@@ -314,8 +314,9 @@ async def _upload_all(page, claim: ClaimData, log_cb: Callable) -> None:
     for slot_key, file_path in claim.assessment_files.items():
         if not file_path:
             continue
+        upload_label = ASSESSMENT_UPLOAD_LABELS.get(slot_key, slot_key)
         try:
-            ok = await _upload_by_label(page, slot_key, file_path, log_cb)
+            ok = await _upload_by_label(page, upload_label, file_path, log_cb)
             if ok:
                 count += 1
         except Exception as e:
@@ -346,12 +347,11 @@ async def fill_claim_assessment(page, claim: ClaimData,
     await _click_declaration_radio(page, log_cb)
 
     # Remarks (optional — same text as observation)
-    if claim.surveyor_observation and claim.surveyor_observation.strip():
-        try:
-            await safe_fill_portal_text(page, ASSESSMENT["remarks"],
-                                 claim.surveyor_observation, "Remarks", log_cb)
-        except Exception as e:
-            log_cb(f"  ⚠️  Remarks: {e}")
+    try:
+        await safe_fill_portal_text(page, ASSESSMENT["remarks"],
+                             "OK", "Remarks", log_cb)
+    except Exception as e:
+        log_cb(f"  ⚠️  Remarks: {e}")
 
     await _upload_all(page, claim, log_cb)
 

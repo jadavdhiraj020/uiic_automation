@@ -224,3 +224,6 @@ Call log:
 [13:09:20] Please review all tabs in the browser, then click Final Submit manually.
 [13:09:20] 
 [13:09:20] Browser left open for manual review. Click Stop in the app when you are done.
+[13:25:40] Stop requested. Closing automation safely...
+[13:25:40] ■  Stop requested by user.
+[13:25:42] Automation finished and browser session was closed.

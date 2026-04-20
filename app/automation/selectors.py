@@ -132,7 +132,7 @@ ASSESSMENT = {
     # Declaration
     "radio_declaration":  "input[name='ynPerused'][value='Y']",
     # Remarks
-    "remarks":            "#remarks, #surveyor_remarks, #surveyorRemarks, textarea[ng-model*='remark']",
+    "remarks":            "#remarks, #surveyor_remarks, #surveyorRemarks, textarea[ng-model*='remark'], textarea[name*='RemarksOffice'], textarea[name*='emarks']",
     # File uploads (5 fixed slots)
     "file_input":         "input[type='file']",
 }

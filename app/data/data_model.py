@@ -58,6 +58,9 @@ class ClaimData:
     final_report_no: str = ""
     final_report_date: str = ""
 
+    # ── Internal Metadata ─────────────────────────────────────────────────────
+    _excel_logs: List[str] = field(default_factory=list)
+
     # ── Surveyor Charges ──────────────────────────────────────────────────────
     traveling_expenses: str = "0"
     professional_fee: str = "0"

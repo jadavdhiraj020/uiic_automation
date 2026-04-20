@@ -139,7 +139,7 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
       4. This makes the search position-independent: the label can be in
          any column; the value just needs to be to the right on the same row.
 
-    Returns cleaned string value or None.
+    Returns tuple (cleaned string value, coordinate info string) or (None, None).
     """
     label_lower = label.lower().strip()
     all_rows = list(sheet.rows())
@@ -162,22 +162,24 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                     val = target_row[hint_c]
                     result = _extract_value(val, is_date)
                     if result is not None:
+                        coord_str = f"R{target_r+1}C{hint_c+1}"
                         logger.info(
                             f"  [{label}] found at R{r_idx}C{c_idx}, "
-                            f"value at R{target_r}C{hint_c} = {result}"
+                            f"value at {coord_str} = {result}"
                         )
-                        return result
+                        return result, coord_str
 
                 # ── Strategy 2: Scan right from label col to find first value
                 for scan_c in range(c_idx + 1, len(target_row)):
                     val = target_row[scan_c]
                     result = _extract_value(val, is_date)
                     if result is not None:
+                        coord_str = f"R{target_r+1}C{scan_c+1}"
                         logger.info(
                             f"  [{label}] found at R{r_idx}C{c_idx}, "
-                            f"value at R{target_r}C{scan_c} (scan right) = {result}"
+                            f"value at {coord_str} (scan right) = {result}"
                         )
-                        return result
+                        return result, coord_str
 
                 # ── Strategy 3: If row_offset=0 and no value found on same row,
                 #    try one row below the label (common pattern in Indian Excel reports)
@@ -187,13 +189,14 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                         val = next_row[scan_c]
                         result = _extract_value(val, is_date)
                         if result is not None:
+                            coord_str = f"R{target_r+2}C{scan_c+1}"
                             logger.info(
                                 f"  [{label}] found at R{r_idx}C{c_idx}, "
-                                f"value at R{target_r+1}C{scan_c} (scan below) = {result}"
+                                f"value at {coord_str} (scan below) = {result}"
                             )
-                            return result
+                            return result, coord_str
 
-    return None
+    return None, None
 
 
 def _extract_value(val: Any, is_date: bool) -> Optional[str]:
@@ -300,13 +303,17 @@ def read_excel(excel_path: str, config_dir: str):
 
         if sheet_name == "ALL":
             for sh in wb.all_sheets():
-                value = _search_label(sh, label, row_off, col_off, is_date)
+                value, coord = _search_label(sh, label, row_off, col_off, is_date)
                 if value:
+                    sh_name = sh.name if hasattr(sh, 'name') else 'Sheet'
+                    claim._excel_logs.append(f"  📊 {field_name}: '{value}' (Source: {sh_name} -> {coord})")
                     break
         else:
             sh = wb.get_sheet(sheet_name)
             if sh:
-                value = _search_label(sh, label, row_off, col_off, is_date)
+                value, coord = _search_label(sh, label, row_off, col_off, is_date)
+                if value:
+                    claim._excel_logs.append(f"  📊 {field_name}: '{value}' (Source: {sheet_name} -> {coord})")
             else:
                 logger.warning(f"  [{field_name}] Sheet '{sheet_name}' not found in workbook")
 
