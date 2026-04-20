@@ -128,7 +128,7 @@ ASSESSMENT = {
     "travel":             "#travelExpense",
     "daily_allowance":    "#dailyAllowance",
     "photo":              "#photoCharge",
-    "total":              "#totalClaimedAmt, #totalClaimAmt, #totalClaimed, input[ng-model*='totalClaim']",
+    "total":              "#totalClaimedAmt, #totalClaimAmt, #totalClaimed, #totalClaimedAmount, input[ng-model*='totalClaimed'], input[ng-model*='totalSurveyorCharges']",
     # Declaration
     "radio_declaration":  "input[name='ynPerused'][value='Y']",
     # Remarks

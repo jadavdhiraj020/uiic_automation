@@ -17,6 +17,11 @@ from typing import Callable
 logger = logging.getLogger(__name__)
 
 
+def _js_escape(value: str) -> str:
+    """Escape a string for safe embedding inside a JS single-quoted literal."""
+    return str(value).replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ").replace("\r", "")
+
+
 # ── Value converters ──────────────────────────────────────────────────────────
 
 def _clean_text_for_portal(value: str) -> str:
@@ -84,11 +89,12 @@ def _to_iso_date(value: str) -> str:
 
 async def _raw_fill(page, sel: str, value_str: str, label: str,
                     log_cb: Callable, timeout_ms: int = 5000,
-                    retries: int = 1) -> bool:
+                    retries: int = 1, source: str = "") -> bool:
     """
     Core fill operation with one automatic retry on failure.
     No value filtering — fills whatever string is passed.
     """
+    src_tag = f"Source: {source}" if source else "Source: Excel Data"
     for attempt in range(retries + 1):
         try:
             el = page.locator(sel).first
@@ -97,7 +103,7 @@ async def _raw_fill(page, sel: str, value_str: str, label: str,
             await el.fill(value_str)
             await el.press("Tab")
             await asyncio.sleep(0.1)
-            log_cb(f"  ✅ [Filled] {label} : '{value_str[:60]}' (Source: Excel Data)")
+            log_cb(f"  ✅ [Filled] {label} : '{value_str[:60]}' ({src_tag})")
             return True
         except Exception as e:
             if attempt < retries:
@@ -111,7 +117,8 @@ async def _raw_fill(page, sel: str, value_str: str, label: str,
 # ── Public fill helpers ───────────────────────────────────────────────────────
 
 async def safe_fill(page, sel: str, value, label: str,
-                    log_cb: Callable, timeout_ms: int = 5000) -> bool:
+                    log_cb: Callable, timeout_ms: int = 5000,
+                    source: str = "") -> bool:
     """
     Fill a text / number input.
     Skips only if value is None or empty string.
@@ -119,11 +126,12 @@ async def safe_fill(page, sel: str, value, label: str,
     """
     if value is None or str(value).strip() == "":
         return False
-    return await _raw_fill(page, sel, str(value).strip(), label, log_cb, timeout_ms)
+    return await _raw_fill(page, sel, str(value).strip(), label, log_cb, timeout_ms, source=source)
 
 
 async def safe_fill_amount(page, sel: str, value, label: str,
-                           log_cb: Callable, timeout_ms: int = 5000) -> bool:
+                           log_cb: Callable, timeout_ms: int = 5000,
+                           source: str = "") -> bool:
     """
     Fill a monetary field (rounds to nearest integer).
     Fills even when value is '0' — these are mandatory portal fields.
@@ -133,11 +141,12 @@ async def safe_fill_amount(page, sel: str, value, label: str,
         return False
     int_val = _to_int_amount(str(value))
     # Use _raw_fill directly (not safe_fill) so "0" is NOT filtered out
-    return await _raw_fill(page, sel, int_val, label, log_cb, timeout_ms)
+    return await _raw_fill(page, sel, int_val, label, log_cb, timeout_ms, source=source)
 
 
 async def safe_fill_date(page, sel: str, value, label: str,
-                         log_cb: Callable, timeout_ms: int = 5000) -> bool:
+                         log_cb: Callable, timeout_ms: int = 5000,
+                         source: str = "") -> bool:
     """
     Fill an Angular custom datepicker field (text input with calendar icon).
 
@@ -159,6 +168,8 @@ async def safe_fill_date(page, sel: str, value, label: str,
         log_cb(f"  ⚠️  {label}: bad date '{value}'")
         return False
 
+    src_tag = f"Source: {source}" if source else "Source: Excel Data"
+
     # Portal text fields expect DD/MM/YYYY
     parts = iso_date.split("-")                          # ['2026', '03', '16']
     display = f"{parts[2]}/{parts[1]}/{parts[0]}"       # '16/03/2026'
@@ -179,7 +190,7 @@ async def safe_fill_date(page, sel: str, value, label: str,
                 }}));
 
                 // Set the value
-                el.value = '{display}';
+                el.value = '{_js_escape(display)}';
 
                 // Fire events Angular needs to register the change
                 el.dispatchEvent(new Event('input',  {{bubbles: true}}));
@@ -204,7 +215,7 @@ async def safe_fill_date(page, sel: str, value, label: str,
             if actual and actual.strip():
                 await page.keyboard.press("Escape")  # close any stray popup
                 await asyncio.sleep(0.1)
-                log_cb(f"  ✅ [Filled] {label} : '{actual}' (Source: Excel Data, Mode: JS)")
+                log_cb(f"  ✅ [Filled] {label} : '{actual}' ({src_tag}, Mode: JS)")
                 return True
 
     except Exception as e1:
@@ -213,18 +224,20 @@ async def safe_fill_date(page, sel: str, value, label: str,
 
 
 async def safe_fill_text(page, sel: str, value, label: str,
-                         log_cb: Callable, timeout_ms: int = 5000) -> bool:
+                         log_cb: Callable, timeout_ms: int = 5000,
+                         source: str = "") -> bool:
     """Fill a general text/textarea — strips portal-rejected chars (NOT commas)."""
     if not value or str(value).strip() == "":
         return False
     clean = _clean_text_for_portal(str(value))
     if not clean:
         return False
-    return await _raw_fill(page, sel, clean, label, log_cb, timeout_ms)
+    return await _raw_fill(page, sel, clean, label, log_cb, timeout_ms, source=source)
 
 
 async def safe_fill_portal_text(page, sel: str, value, label: str,
-                                log_cb: Callable, timeout_ms: int = 5000) -> bool:
+                                log_cb: Callable, timeout_ms: int = 5000,
+                                source: str = "") -> bool:
     """Fill a portal text field with STRICT char stripping (commas, dots, special chars).
     Use for: Place of Survey, Surveyor Observation, Remarks.
     Portal warning: 'Please do not enter Special Symbols such as @ # $ ! , etc.'
@@ -234,11 +247,12 @@ async def safe_fill_portal_text(page, sel: str, value, label: str,
     clean = _clean_text_strict(str(value))
     if not clean:
         return False
-    return await _raw_fill(page, sel, clean, label, log_cb, timeout_ms)
+    return await _raw_fill(page, sel, clean, label, log_cb, timeout_ms, source=source)
 
 
 async def safe_select(page, sel: str, value: str, label: str,
-                      log_cb: Callable, timeout_ms: int = 5000) -> bool:
+                      log_cb: Callable, timeout_ms: int = 5000,
+                      source: str = "") -> bool:
     """
     Select a dropdown option by label, value, or partial text match.
     Handles both plain <select> and AngularJS selects where option values
@@ -246,6 +260,7 @@ async def safe_select(page, sel: str, value: str, label: str,
     """
     if not value or str(value).strip() == "":
         return False
+    src_tag = f"Source: {source}" if source else "Source: Excel Data"
     try:
         el = page.locator(sel).first
         await el.wait_for(state="visible", timeout=timeout_ms)
@@ -254,7 +269,7 @@ async def safe_select(page, sel: str, value: str, label: str,
         try:
             await el.select_option(label=value, timeout=timeout_ms)
             await asyncio.sleep(0.1)
-            log_cb(f"  ✅ [Selected] {label} : '{value}' (Source: Excel Data, Mode: Exact Label)")
+            log_cb(f"  ✅ [Selected] {label} : '{value}' ({src_tag}, Mode: Exact Label)")
             return True
         except Exception:
             pass
@@ -263,7 +278,7 @@ async def safe_select(page, sel: str, value: str, label: str,
         try:
             await el.select_option(value=value, timeout=timeout_ms)
             await asyncio.sleep(0.1)
-            log_cb(f"  ✅ [Selected] {label} : '{value}' (Source: Excel Data, Mode: Exact Value)")
+            log_cb(f"  ✅ [Selected] {label} : '{value}' ({src_tag}, Mode: Exact Value)")
             return True
         except Exception:
             pass
@@ -279,7 +294,7 @@ async def safe_select(page, sel: str, value: str, label: str,
             if val_lower == txt_lower or val_lower in txt_lower or txt_lower in val_lower:
                 await el.select_option(value=opt_val)
                 await asyncio.sleep(0.1)
-                log_cb(f"  ✅ [Selected] {label} : '{txt}' (Source: Excel Data, Mode: Partial Text)")
+                log_cb(f"  ✅ [Selected] {label} : '{txt}' ({src_tag}, Mode: Partial Text)")
                 return True
             # Match by stripping Angular prefixes from option value
             # e.g. 'number:10' → '10', 'string:HH' → 'HH'
@@ -287,7 +302,7 @@ async def safe_select(page, sel: str, value: str, label: str,
             if val_lower == stripped:
                 await el.select_option(value=opt_val)
                 await asyncio.sleep(0.1)
-                log_cb(f"  ✅ [Selected] {label} : '{txt}' (Source: Excel Data, Mode: Angular Value)")
+                log_cb(f"  ✅ [Selected] {label} : '{txt}' ({src_tag}, Mode: Angular Value)")
                 return True
 
         # ── Strategy 4: JS fallback for AngularJS select ──────────────────────
@@ -295,7 +310,7 @@ async def safe_select(page, sel: str, value: str, label: str,
             (function() {{
                 var el = document.querySelector('{sel}');
                 if (!el) return false;
-                var search = '{value.strip().lower()}';
+                var search = '{_js_escape(value.strip().lower())}';
                 var opts = Array.from(el.options);
                 // Match by text
                 var match = opts.find(o =>
@@ -320,7 +335,7 @@ async def safe_select(page, sel: str, value: str, label: str,
         """)
         if set_ok:
             await asyncio.sleep(0.1)
-            log_cb(f"  ✅ [Selected] {label} : '{set_ok}' (Source: Excel Data, Mode: JS Fallback)")
+            log_cb(f"  ✅ [Selected] {label} : '{set_ok}' ({src_tag}, Mode: JS Fallback)")
             return True
 
         log_cb(f"  ⚠️  {label}: no match for '{value}'")

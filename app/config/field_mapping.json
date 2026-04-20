@@ -1,6 +1,9 @@
 {
   "_comment": "field_mapping.json — Maps ClaimData fields to Excel labels. The reader scans the entire sheet for the label text, then reads the first non-empty value to its RIGHT. col_offset is a hint (tried first) but the reader will scan rightward automatically if the hint is wrong — so this works with ANY Excel layout.",
 
+
+  "claim_no":               { "sheet": "ALL",    "search_label": "Claim no",              "row_offset": 0, "col_offset": 1 },
+
   "vehicle_no":             { "sheet": "Sheet2", "search_label": "VEHICLE REG. NO.",      "row_offset": 0, "col_offset": 4 },
   "chassis_no":             { "sheet": "ALL",    "search_label": "Chassis Number",        "row_offset": 0, "col_offset": 3 },
   "engine_no":              { "sheet": "ALL",    "search_label": "Engine Number",         "row_offset": 0, "col_offset": 3 },
@@ -8,16 +11,18 @@
   "date_of_survey":         { "sheet": "ALL",    "search_label": "Date and Time of Survey","row_offset": 0, "col_offset": 4 },
   "place_of_survey":        { "sheet": "ALL",    "search_label": "Workshop",              "row_offset": 0, "col_offset": 4 },
   "surveyor_observation":   { "sheet": "ALL",    "search_label": "OBERVATIONS/COMMENTS",  "row_offset": 1, "col_offset": 0 },
+  "mobile_no":              { "sheet": "Sheet1", "search_label": "Mobile:",               "row_offset": 0, "col_offset": 1 },
+  "email_id":               { "sheet": "Sheet1", "search_label": "e-mail:-",              "row_offset": 0, "col_offset": 1 },
 
   "initial_loss_amount":    { "sheet": "Sheet1", "search_label": "NET PAYABLE",           "row_offset": 0, "col_offset": 4 },
   "compulsory_excess":      { "sheet": "Sheet1", "search_label": "COMPULSORY DEDUCTIBLE", "row_offset": 0, "col_offset": 6 },
   "voluntary_excess":       { "sheet": "Sheet1", "search_label": "LESS EXCESS CLAUSE",    "row_offset": 0, "col_offset": 5 },
   "salvage_value":          { "sheet": "Sheet1", "search_label": "LESS SALVAGE VALUE",    "row_offset": 0, "col_offset": 5 },
 
-  "parts_age_dep_excl_gst": { "sheet": "Sheet1", "search_label": "NET FOR PARTS",         "row_offset": 0, "col_offset": 4 },
-  "parts_50_dep_excl_gst":  { "sheet": "Sheet1", "search_label": "NET FOR PARTS",         "row_offset": 0, "col_offset": 5 },
-  "parts_30_dep_excl_gst":  { "sheet": "Sheet1", "search_label": "NET FOR PARTS",         "row_offset": 0, "col_offset": 6 },
-  "parts_nil_dep_excl_gst": { "sheet": "Sheet1", "search_label": "NET FOR PARTS",         "row_offset": 0, "col_offset": 7 },
+  "parts_age_dep_excl_gst": { "sheet": "Sheet1", "search_label": "SUB TOTAL",             "row_offset": 0, "col_offset": 5 },
+  "parts_50_dep_excl_gst":  { "sheet": "Sheet1", "search_label": "SUB TOTAL",             "row_offset": 0, "col_offset": 6 },
+  "parts_30_dep_excl_gst":  { "sheet": "Sheet1", "search_label": "SUB TOTAL",             "row_offset": 0, "col_offset": 7 },
+  "parts_nil_dep_excl_gst": { "sheet": "Sheet1", "search_label": "SUB TOTAL",             "row_offset": 0, "col_offset": 8 },
 
   "labour_excl_gst":        { "sheet": "Sheet1", "search_label": "LABOUR ESTIMATED",      "row_offset": 0, "col_offset": 7 },
 
@@ -29,6 +34,5 @@
   "traveling_expenses":     { "sheet": "Sheet5", "search_label": "CONVEYANCE CHARGES",    "row_offset": 0, "col_offset": 5 },
   "photo_charges":          { "sheet": "Sheet5", "search_label": "PHOTOGRAPHS",           "row_offset": 0, "col_offset": 5 },
   "daily_allowance":        { "sheet": "Sheet5", "search_label": "DAILY ALLOWANCE",       "row_offset": 0, "col_offset": 5 },
-  "total_claimed_amount":   { "sheet": "Sheet5", "search_label": "TOTAL",                 "row_offset": 0, "col_offset": 2 },
   "final_report_no":        { "sheet": "Sheet5", "search_label": "Ref:",                  "row_offset": 0, "col_offset": 1 }
 }

@@ -14,15 +14,23 @@ import logging
 import tempfile
 from typing import List, Optional
 
-from paddleocr import PaddleOCR
-
 logger = logging.getLogger(__name__)
 
-# ── PaddleOCR singleton ──────────────────────────────────────────────────────
+# ── PaddleOCR lazy singleton ─────────────────────────────────────────────────
+# Loaded on first use (not at import time) to avoid ~3-5s startup delay.
 # lang='en': English model
 # use_angle_cls=False: CAPTCHA text is never upside-down
 # show_log=False: Suppress noisy PaddlePaddle internals
-_ocr = PaddleOCR(use_angle_cls=False, lang='en', show_log=False)
+_ocr = None
+
+
+def _get_ocr():
+    """Return the PaddleOCR singleton, creating it on first call."""
+    global _ocr
+    if _ocr is None:
+        from paddleocr import PaddleOCR
+        _ocr = PaddleOCR(use_angle_cls=False, lang='en', show_log=False)
+    return _ocr
 
 
 def _extract_text(img_bytes: bytes) -> str:
@@ -37,7 +45,7 @@ def _extract_text(img_bytes: bytes) -> str:
         with os.fdopen(tmp_fd, "wb") as f:
             f.write(img_bytes)
 
-        result = _ocr.ocr(tmp_path, cls=False)
+        result = _get_ocr().ocr(tmp_path, cls=False)
 
         if not result or result[0] is None:
             logger.warning("PaddleOCR returned no result")

@@ -234,21 +234,24 @@ class MainWindow(QMainWindow):
         vlay.addWidget(self.validation_bar)
 
         # Summary table — all fields color coded
-        self.preview_table = QTableWidget(0, 3)
-        self.preview_table.setHorizontalHeaderLabels(["FIELD", "VALUE", "STATUS"])
+        self.preview_table = QTableWidget(0, 4)
+        self.preview_table.setHorizontalHeaderLabels(["FIELD", "VALUE", "SOURCE", "STATUS"])
         self.preview_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.preview_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.preview_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.preview_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.preview_table.verticalHeader().setVisible(False)
         self.preview_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.preview_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         self.preview_table.setShowGrid(False)
         self.preview_table.setAlternatingRowColors(True)
         self.preview_table.setStyleSheet(
-            "QTableWidget { alternate-background-color:#FAFAFA; }"
+            "QTableWidget { alternate-background-color:#FAFAFA; border:1px solid #EEEEEE; border-radius:4px; }"
+            "QHeaderView::section { background-color:#F0F0F0; font-weight:bold; color:#555555; padding:6px; border:none; border-bottom:1px solid #DDDDDD; }"
+            "QTableWidget::item { padding: 4px 8px; }"
         )
-        self.preview_table.setMinimumHeight(260)
-        self.preview_table.setMaximumHeight(380)
+        self.preview_table.setMinimumHeight(280)
+        self.preview_table.setMaximumHeight(400)
         vlay.addWidget(self.preview_table)
 
         # Document status bar
@@ -473,7 +476,7 @@ class MainWindow(QMainWindow):
         # Populate all fields table with color coding
         all_fields = self._claim.all_fields_for_preview()
         self.preview_table.setRowCount(len(all_fields))
-        for i, (label, value, is_critical) in enumerate(all_fields):
+        for i, (label, value, is_critical, source_coord) in enumerate(all_fields):
             # B4 FIX: "0" IS a valid value (odometer, zero amounts) — do NOT mark as missing
             has_value = bool(value and str(value).strip() not in ("", "—"))
 
@@ -495,6 +498,12 @@ class MainWindow(QMainWindow):
                 v_item.setForeground(QColor("#AAAAAA"))
             self.preview_table.setItem(i, 1, v_item)
 
+            # Source column (Column 2)
+            src_display = source_coord if source_coord else "—"
+            src_item = QTableWidgetItem(src_display)
+            src_item.setForeground(QColor("#0066CC") if source_coord else QColor("#AAAAAA"))
+            self.preview_table.setItem(i, 2, src_item)
+
             if has_value:
                 status = "OK"
             elif is_critical:
@@ -509,7 +518,7 @@ class MainWindow(QMainWindow):
                 s_item.setForeground(QColor("#CC0000"))
             else:
                 s_item.setForeground(QColor("#AAAAAA"))
-            self.preview_table.setItem(i, 2, s_item)
+            self.preview_table.setItem(i, 3, s_item)
 
     def _update_doc_chips(self):
         if not self._scan_result:

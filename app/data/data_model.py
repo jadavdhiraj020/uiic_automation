@@ -16,6 +16,7 @@ from typing import Dict, List, Tuple
 class ClaimData:
     # ── Identification ────────────────────────────────────────────────────────
     claim_no: str = ""
+    payment_to: str = ""               # "REPAIRER" → Cashless, "INSURED" → Reimbursement
 
     # ── Interim Report ────────────────────────────────────────────────────────
     type_of_settlement: str = "Partial Loss"  # Default for non-TL motor claims.
@@ -60,6 +61,7 @@ class ClaimData:
 
     # ── Internal Metadata ─────────────────────────────────────────────────────
     _excel_logs: List[str] = field(default_factory=list)
+    _excel_coords: Dict[str, str] = field(default_factory=dict)
 
     # ── Surveyor Charges ──────────────────────────────────────────────────────
     traveling_expenses: str = "0"
@@ -123,34 +125,44 @@ class ClaimData:
             f"Initial Loss: ₹{self.initial_loss_amount or '—'}"
         )
 
-    def all_fields_for_preview(self) -> List[Tuple[str, str, bool]]:
+    def all_fields_for_preview(self) -> List[Tuple[str, str, bool, str]]:
         """
-        Returns list of (label, value, is_critical) for UI preview table.
+        Returns list of (label, value, is_critical, source_coord) for UI preview table.
         is_critical=True means field is required for automation success.
         """
+        def _src(key: str) -> str:
+            return self._excel_coords.get(key, "")
+
         return [
-            # (Label, value, critical?)
-            ("Claim No",              self.claim_no,              True),
-            ("Date of Survey",        self.date_of_survey,        True),
-            ("Time of Survey",        f"{self.time_hh}:{self.time_mm}" if self.time_hh else "", False),
-            ("Place of Survey",       self.place_of_survey,       True),
-            ("Type of Settlement",    self.type_of_settlement,    True),
-            ("Odometer Reading",      self.odometer,              False),
-            ("Initial Loss (₹)",      self.initial_loss_amount,   True),
-            ("Parts Age Dep (₹)",     self.parts_age_dep_excl_gst, False),
-            ("Parts 50% Dep (₹)",     self.parts_50_dep_excl_gst, False),
-            ("Parts 30% Dep (₹)",     self.parts_30_dep_excl_gst, False),
-            ("Parts Nil Dep (₹)",     self.parts_nil_dep_excl_gst, False),
-            ("Labour (₹)",            self.labour_excl_gst,       False),
-            ("WS Invoice No",         self.workshop_invoice_no,   False),
-            ("Towing Charges (₹)",    self.towing_charges,        False),
-            ("Voluntary Excess (₹)",  self.voluntary_excess,      False),
-            ("Compulsory Excess (₹)", self.compulsory_excess,     False),
-            ("Salvage Value (₹)",     self.salvage_value,         False),
-            ("Report No",             self.final_report_no,       True),
-            ("Travel Expenses (₹)",   self.traveling_expenses,    False),
-            ("Professional Fee (₹)",  self.professional_fee,      False),
-            ("Photo Charges (₹)",     self.photo_charges,         False),
-            ("Total Survey Fee (₹)",  self.total_claimed_amount,  True),
-            ("Surveyor Observation",  self.surveyor_observation,  False),
+            ("Claim No",              self.claim_no,              True,  _src("claim_no")),
+            ("Payment Option",        "Cashless" if "repairer" in self.payment_to.lower() or not self.payment_to else "Reimbursement" if "insured" in self.payment_to.lower() else "—",
+                                                                  True,  _src("payment_to")),
+            ("Date of Survey",        self.date_of_survey,        True,  _src("date_of_survey")),
+            ("Time of Survey",        f"{self.time_hh}:{self.time_mm}" if self.time_hh else "", False, _src("time_hh")),
+            ("Place of Survey",       self.place_of_survey,       True,  _src("place_of_survey")),
+            ("Type of Settlement",    self.type_of_settlement,    True,  _src("type_of_settlement")),
+            ("Odometer Reading",      self.odometer,              False, _src("odometer")),
+            ("Initial Loss (₹)",      self.initial_loss_amount,   True,  _src("initial_loss_amount")),
+            ("Parts Age Dep (₹)",     self.parts_age_dep_excl_gst, False, _src("parts_age_dep_excl_gst")),
+            ("Parts 50% Dep (₹)",     self.parts_50_dep_excl_gst,  False, _src("parts_50_dep_excl_gst")),
+            ("Parts 30% Dep (₹)",     self.parts_30_dep_excl_gst,  False, _src("parts_30_dep_excl_gst")),
+            ("Parts Nil Dep (₹)",     self.parts_nil_dep_excl_gst, False, _src("parts_nil_dep_excl_gst")),
+            ("Labour (₹)",            self.labour_excl_gst,        True,  _src("labour_excl_gst")),
+            ("Workshop Inv No",       self.workshop_invoice_no,   False, _src("workshop_invoice_no")),
+            ("Workshop Inv Date",     self.workshop_invoice_date, False, _src("workshop_invoice_date")),
+            ("Towing Charges (₹)",    self.towing_charges,        False, _src("towing_charges")),
+            ("Spot Repairs (₹)",      self.spot_repairs,          False, _src("spot_repairs")),
+            ("Voluntary Excess (₹)",  self.voluntary_excess,      False, _src("voluntary_excess")),
+            ("Compulsory Excess (₹)", self.compulsory_excess,     False, _src("compulsory_excess")),
+            ("Imposed Excess (₹)",    self.imposed_excess,        False, _src("imposed_excess")),
+            ("Salvage Value (₹)",     self.salvage_value,         False, _src("salvage_value")),
+            ("Invoice No",            self.invoice_no,            False, _src("invoice_no")),
+            ("Invoice Date",          self.invoice_date,          False, _src("invoice_date")),
+            ("Report No",             self.final_report_no,       True,  _src("final_report_no")),
+            ("Report Date",           self.final_report_date,     False, _src("final_report_date")),
+            ("Travel Exp (₹)",        self.traveling_expenses,    False, _src("traveling_expenses")),
+            ("Prof. Fee (₹)",         self.professional_fee,      False, _src("professional_fee")),
+            ("Daily Allow. (₹)",      self.daily_allowance,       False, _src("daily_allowance")),
+            ("Photo Charges (₹)",     self.photo_charges,         False, _src("photo_charges")),
+            ("Observation",           self.surveyor_observation,  False, _src("surveyor_observation")),
         ]

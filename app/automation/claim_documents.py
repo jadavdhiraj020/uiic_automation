@@ -129,35 +129,68 @@ async def _click_doc_radios(page, log_cb: Callable) -> None:
 
 
 
-async def _click_cashless(page, log_cb: Callable) -> None:
-    """Click the Cashless payment option via JS."""
-    result = await page.evaluate("""
-        (function() {
-            var vals = ['CASHLESS', 'Cashless', 'cashless', 'C'];
-            for (var v of vals) {
+async def _click_payment_option(page, claim: ClaimData, log_cb: Callable) -> None:
+    """
+    Select the Payment Option radio based on Excel data:
+      - payment_to contains 'repairer' → Cashless
+      - payment_to contains 'insured'  → Reimbursement
+      - default (no data)              → Cashless
+    """
+    payment_raw = str(claim.payment_to).strip().lower()
+    source = claim._excel_coords.get("payment_to", "")
+    src_tag = f" (Source: {source})" if source else ""
+
+    if "insured" in payment_raw:
+        target = "reimbursement"
+    else:
+        target = "cashless"  # default: repairer → cashless
+
+    result = await page.evaluate(f"""
+        (function() {{
+            var target = '{target}';
+            // Try exact value match first
+            var vals = target === 'cashless'
+                ? ['CASHLESS', 'Cashless', 'cashless', 'C']
+                : ['REIMBURSEMENT', 'Reimbursement', 'reimbursement', 'R'];
+            for (var v of vals) {{
                 var r = document.querySelector('input[type="radio"][value="' + v + '"]');
-                if (r) {
+                if (r) {{
                     r.checked = true;
                     r.click();
-                    r.dispatchEvent(new Event('change', {bubbles:true}));
+                    r.dispatchEvent(new Event('change', {{bubbles:true}}));
                     return v;
-                }
-            }
-            // Try label
+                }}
+            }}
+            // Try checkbox fallback (portal uses checkboxes for Cashless/Reimbursement)
+            var checkboxes = document.querySelectorAll('input[type="checkbox"]');
+            for (var cb of checkboxes) {{
+                var label = '';
+                var parent = cb.closest('label,td,div');
+                if (parent) label = parent.textContent.trim().toLowerCase();
+                if (label.includes(target)) {{
+                    if (!cb.checked) {{
+                        cb.click();
+                        cb.dispatchEvent(new Event('change', {{bubbles:true}}));
+                    }}
+                    return 'checkbox:' + target;
+                }}
+            }}
+            // Try label click
             var labels = document.querySelectorAll('label');
-            for (var l of labels) {
-                if (l.textContent.trim().toLowerCase() === 'cashless') {
+            for (var l of labels) {{
+                if (l.textContent.trim().toLowerCase().includes(target)) {{
                     l.click();
-                    return 'label';
-                }
-            }
+                    return 'label:' + target;
+                }}
+            }}
             return null;
-        })();
+        }})();
     """)
+    display = target.capitalize()
     if result:
-        log_cb(f"  ✅ Payment: Cashless")
+        log_cb(f"  ✅ Payment: {display}{src_tag}")
     else:
-        log_cb("  ⚠️  Payment: Cashless not found")
+        log_cb(f"  ⚠️  Payment: {display} not found on page")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -395,7 +428,7 @@ async def fill_claim_documents(page, claim: ClaimData,
     # ── Verification radios (AngularJS-compatible JS) ─────────────────────────
     log_cb("🔘 Setting verification radios...")
     await _click_doc_radios(page, log_cb)
-    await _click_cashless(page, log_cb)
+    await _click_payment_option(page, claim, log_cb)
 
     # ── Build queue (includes docs with missing/oversized files as None) ──────
     log_cb("\n📎 Building upload queue...")

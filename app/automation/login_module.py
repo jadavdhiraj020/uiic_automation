@@ -32,19 +32,6 @@ SEL_DASHBOARD_MARKERS = (
     "a:has-text('Interim Report')"
 )
 
-_DEBUG_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "logs", "captcha_debug")
-
-
-async def _save_debug_captcha(img_bytes: bytes, attempt: int):
-    try:
-        os.makedirs(_DEBUG_DIR, exist_ok=True)
-        path = os.path.join(_DEBUG_DIR, f"captcha_attempt_{attempt}.png")
-        with open(path, "wb") as f:
-            f.write(img_bytes)
-        logger.info("CAPTCHA saved: %s", path)
-    except Exception:
-        pass
-
 
 async def _get_captcha_bytes(page) -> bytes:
     await asyncio.sleep(1.0)
@@ -260,7 +247,6 @@ async def do_login(
 
         try:
             img_bytes = await _get_captcha_bytes(page)
-            await _save_debug_captcha(img_bytes, attempt)
             candidates = get_captcha_candidates(img_bytes)
         except Exception as exc:
             log_cb(f"CAPTCHA screenshot error: {exc}")
@@ -332,5 +318,4 @@ async def do_login(
         await asyncio.sleep(1)
 
     log_cb("Login failed after all retries.")
-    log_cb("Check captured CAPTCHA images in: logs/captcha_debug/")
     return False

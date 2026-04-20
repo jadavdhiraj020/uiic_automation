@@ -202,63 +202,76 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
     return False
 
 
-async def _fill_parts(page, claim: ClaimData, log_cb: Callable) -> None:
+async def _fill_parts(page, claim: ClaimData, log_cb: Callable, _src) -> None:
     log_cb("\n🔩 Parts Depreciation:")
     try:
         await safe_fill_amount(page, ASSESSMENT["age_dep"],
-                               claim.parts_age_dep_excl_gst, "Age Dep (Metal)", log_cb)
+                               claim.parts_age_dep_excl_gst, "Age Dep (Metal)", log_cb,
+                               source=_src("parts_age_dep_excl_gst"))
         await safe_fill_amount(page, ASSESSMENT["dep_50"],
-                               claim.parts_50_dep_excl_gst, "50% Dep (Plastic)", log_cb)
+                               claim.parts_50_dep_excl_gst, "50% Dep (Plastic)", log_cb,
+                               source=_src("parts_50_dep_excl_gst"))
         await safe_fill_amount(page, ASSESSMENT["dep_30"],
-                               claim.parts_30_dep_excl_gst, "30% Dep (Fibre)", log_cb)
+                               claim.parts_30_dep_excl_gst, "30% Dep (Fibre)", log_cb,
+                               source=_src("parts_30_dep_excl_gst"))
         await safe_fill_amount(page, ASSESSMENT["nil_dep"],
-                               claim.parts_nil_dep_excl_gst, "Nil Dep", log_cb)
+                               claim.parts_nil_dep_excl_gst, "Nil Dep", log_cb,
+                               source=_src("parts_nil_dep_excl_gst"))
     except Exception as e:
         log_cb(f"  ❌ Parts section error: {e}")
 
 
-async def _fill_labour(page, claim: ClaimData, log_cb: Callable) -> None:
+async def _fill_labour(page, claim: ClaimData, log_cb: Callable, _src) -> None:
     log_cb("\n👷 Labour:")
     try:
         await safe_fill_amount(page, ASSESSMENT["labour"],
-                               claim.labour_excl_gst, "Labour (Excl GST)", log_cb)
+                               claim.labour_excl_gst, "Labour (Excl GST)", log_cb,
+                               source=_src("labour_excl_gst"))
     except Exception as e:
         log_cb(f"  ❌ Labour section error: {e}")
 
 
-async def _fill_workshop_invoice(page, claim: ClaimData, log_cb: Callable) -> None:
+async def _fill_workshop_invoice(page, claim: ClaimData, log_cb: Callable, _src) -> None:
     log_cb("\n🧾 Workshop Invoice:")
     try:
         # Strip trailing "(CREDIT)" or anything after a space, and limit to 20 chars
         ws_no = str(claim.workshop_invoice_no).split(" ")[0].split("(")[0][:20]
         await safe_fill(page, ASSESSMENT["ws_invoice_no"],
-                        ws_no, "WS Invoice No", log_cb)
+                        ws_no, "WS Invoice No", log_cb,
+                        source=_src("workshop_invoice_no"))
         await safe_fill_date(page, ASSESSMENT["ws_invoice_date"],
-                             claim.workshop_invoice_date, "WS Invoice Date", log_cb)
+                             claim.workshop_invoice_date, "WS Invoice Date", log_cb,
+                             source=_src("workshop_invoice_date"))
     except Exception as e:
         log_cb(f"  ❌ Workshop invoice error: {e}")
 
 
-async def _fill_other_charges(page, claim: ClaimData, log_cb: Callable) -> None:
+async def _fill_other_charges(page, claim: ClaimData, log_cb: Callable, _src) -> None:
     log_cb("\n💰 Other Charges:")
     try:
         await safe_fill_amount(page, ASSESSMENT["towing"],
-                               claim.towing_charges, "Towing Charges", log_cb)
+                               claim.towing_charges, "Towing Charges", log_cb,
+                               source=_src("towing_charges"))
         await safe_fill_amount(page, ASSESSMENT["spot_repairs"],
-                               claim.spot_repairs, "Spot Repairs", log_cb)
+                               claim.spot_repairs, "Spot Repairs", log_cb,
+                               source=_src("spot_repairs"))
         await safe_fill_amount(page, ASSESSMENT["vol_excess"],
-                               claim.voluntary_excess, "Voluntary Excess", log_cb)
+                               claim.voluntary_excess, "Voluntary Excess", log_cb,
+                               source=_src("voluntary_excess"))
         await safe_fill_amount(page, ASSESSMENT["comp_excess"],
-                               claim.compulsory_excess, "Compulsory Excess", log_cb)
+                               claim.compulsory_excess, "Compulsory Excess", log_cb,
+                               source=_src("compulsory_excess"))
         await safe_fill_amount(page, ASSESSMENT["imp_excess"],
-                               claim.imposed_excess, "Imposed Excess", log_cb)
+                               claim.imposed_excess, "Imposed Excess", log_cb,
+                               source=_src("imposed_excess"))
         await safe_fill_amount(page, ASSESSMENT["salvage"],
-                               claim.salvage_value, "Salvage Value", log_cb)
+                               claim.salvage_value, "Salvage Value", log_cb,
+                               source=_src("salvage_value"))
     except Exception as e:
         log_cb(f"  ❌ Other charges error: {e}")
 
 
-async def _fill_invoice_details(page, claim: ClaimData, log_cb: Callable) -> None:
+async def _fill_invoice_details(page, claim: ClaimData, log_cb: Callable, _src) -> None:
     log_cb("\n📋 Invoice Details:")
     try:
         # BUG FIX (B6): Use explicit empty-string check, NOT falsy check.
@@ -270,40 +283,55 @@ async def _fill_invoice_details(page, claim: ClaimData, log_cb: Callable) -> Non
         inv_no_clean = str(inv_no).split(" ")[0].split("(")[0][:20]
         
         await safe_fill(page, ASSESSMENT["invoice_no"],
-                        inv_no_clean, "Invoice No", log_cb)
+                        inv_no_clean, "Invoice No", log_cb,
+                        source=_src("invoice_no") or _src("workshop_invoice_no"))
         await safe_fill_date(page, ASSESSMENT["invoice_date"],
-                             inv_date, "Invoice Date", log_cb)
+                             inv_date, "Invoice Date", log_cb,
+                             source=_src("invoice_date") or _src("workshop_invoice_date"))
     except Exception as e:
         log_cb(f"  ❌ Invoice details error: {e}")
 
 
-async def _fill_report_details(page, claim: ClaimData, log_cb: Callable) -> None:
+async def _fill_report_details(page, claim: ClaimData, log_cb: Callable, _src) -> None:
     log_cb("\n📝 Report Details:")
     try:
         await safe_fill(page, ASSESSMENT["report_no"],
-                        claim.final_report_no, "Report No", log_cb)
+                        claim.final_report_no, "Report No", log_cb,
+                        source=_src("final_report_no"))
         if claim.final_report_date and claim.final_report_date.strip():
             await safe_fill_date(page, ASSESSMENT["report_date"],
-                                 claim.final_report_date, "Report Date", log_cb)
+                                 claim.final_report_date, "Report Date", log_cb,
+                                 source=_src("final_report_date"))
         else:
             log_cb("  ⏭️  Report Date: skipped (portal auto-fills today's date)")
     except Exception as e:
         log_cb(f"  ❌ Report details error: {e}")
 
 
-async def _fill_surveyor_charges(page, claim: ClaimData, log_cb: Callable) -> None:
+async def _fill_surveyor_charges(page, claim: ClaimData, log_cb: Callable, _src) -> None:
     log_cb("\n💼 Surveyor Charges:")
     try:
         await safe_fill_amount(page, ASSESSMENT["travel"],
-                               claim.traveling_expenses, "Travel Expenses", log_cb)
+                               claim.traveling_expenses, "Travel Expenses", log_cb,
+                               source=_src("traveling_expenses"))
         await safe_fill_amount(page, ASSESSMENT["prof_fee"],
-                               claim.professional_fee, "Professional Fee", log_cb)
+                               claim.professional_fee, "Professional Fee", log_cb,
+                               source=_src("professional_fee"))
         await safe_fill_amount(page, ASSESSMENT["daily_allowance"],
-                               claim.daily_allowance, "Daily Allowance", log_cb)
+                               claim.daily_allowance, "Daily Allowance", log_cb,
+                               source=_src("daily_allowance"))
         await safe_fill_amount(page, ASSESSMENT["photo"],
-                               claim.photo_charges, "Photo Charges", log_cb)
+                               claim.photo_charges, "Photo Charges", log_cb,
+                               source=_src("photo_charges"))
+        # Total Claimed = sum of the 4 surveyor charge fields
+        total = sum(
+            int(float(v or 0))
+            for v in [claim.traveling_expenses, claim.professional_fee,
+                      claim.daily_allowance, claim.photo_charges]
+        )
         await safe_fill_amount(page, ASSESSMENT["total"],
-                               claim.total_claimed_amount, "Total Claimed", log_cb)
+                               str(total), "Total Claimed Amount", log_cb,
+                               source="Calculated")
     except Exception as e:
         log_cb(f"  ❌ Surveyor charges error: {e}")
 
@@ -334,13 +362,17 @@ async def fill_claim_assessment(page, claim: ClaimData,
 
     log_cb("📊 Filling Claim Assessment...")
 
-    await _fill_parts(page, claim, log_cb)
-    await _fill_labour(page, claim, log_cb)
-    await _fill_workshop_invoice(page, claim, log_cb)
-    await _fill_other_charges(page, claim, log_cb)
-    await _fill_invoice_details(page, claim, log_cb)
-    await _fill_report_details(page, claim, log_cb)
-    await _fill_surveyor_charges(page, claim, log_cb)
+    # Helper to look up Excel source coordinate for a field
+    def _src(key: str) -> str:
+        return claim._excel_coords.get(key, "")
+
+    await _fill_parts(page, claim, log_cb, _src)
+    await _fill_labour(page, claim, log_cb, _src)
+    await _fill_workshop_invoice(page, claim, log_cb, _src)
+    await _fill_other_charges(page, claim, log_cb, _src)
+    await _fill_invoice_details(page, claim, log_cb, _src)
+    await _fill_report_details(page, claim, log_cb, _src)
+    await _fill_surveyor_charges(page, claim, log_cb, _src)
 
     # Declaration radio (AngularJS-compatible)
     log_cb("\n✍️  Declaration:")
@@ -349,7 +381,8 @@ async def fill_claim_assessment(page, claim: ClaimData,
     # Remarks (optional — same text as observation)
     try:
         await safe_fill_portal_text(page, ASSESSMENT["remarks"],
-                             "OK", "Remarks", log_cb)
+                             "OK", "Remarks", log_cb,
+                             source="Hardcoded")
     except Exception as e:
         log_cb(f"  ⚠️  Remarks: {e}")
 
