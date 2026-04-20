@@ -49,8 +49,9 @@ def _collect_alive_pages(context: BrowserContext, captured_pages: List[Page]) ->
     candidates.extend(captured_pages)
     try:
         candidates.extend(context.pages)
-    except Exception:
-        return []
+    except Exception as e:
+        logger.error(f"Error collecting pages: {e}")
+        raise e
 
     for page in candidates:
         marker = id(page)

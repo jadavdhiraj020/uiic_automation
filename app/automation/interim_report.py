@@ -202,9 +202,15 @@ async def fill_interim_report(page, claim: ClaimData,
     else:
         log_cb("  ⏭️  Expected Completion Date: not in Excel")
 
-    # ── 11. Surveyor's Observation (portal: no special chars incl commas) ────────────
+    # ── 11. Surveyor's Observation & Remarks (no special chars) ───────────────────
+    obs_with_ok = f"{claim.surveyor_observation} OK".strip()
     await safe_fill_portal_text(page, INTERIM["observation"],
-                                claim.surveyor_observation,
+                                obs_with_ok,
                                 "Surveyor's Observation", log_cb, T)
+    
+    # User requested 'Remarks *' field is blank on interim report
+    await safe_fill_portal_text(page, "#remarks, textarea[ng-model*='remark']",
+                                obs_with_ok,
+                                "Remarks", log_cb, T)
 
     log_cb("✅ Interim Report complete.")

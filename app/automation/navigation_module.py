@@ -316,21 +316,22 @@ async def _find_and_click_claim(page: Page, claim_no: str, log_cb: Callable) -> 
                     for btn_sel in SEL_ACTION_BTN:
                         try:
                             btn = row.locator(btn_sel.strip()).first
-                            if await btn.is_visible(timeout=2000):
-                                await btn.click()
+                            if await btn.is_visible(timeout=1500):
+                                await btn.click(timeout=3000)
                                 log_cb(f"  ✅ Clicked Action button for claim {claim_no}")
                                 return await _detect_new_page(page, context, pages_before, log_cb)
                         except Exception:
                             continue
 
-                    # Fallback: click any button/link in the last few TDs
+                    # Fallback: click any button/link/icon in the last few TDs
                     log_cb("  ⚠️  'Click Here' not found — trying any button in row...")
                     try:
                         context = page.context
                         pages_before = set(id(p) for p in context.pages)
-                        any_btn = row.locator("td button, td a").last
+                        # Find the very last clickable element in the row
+                        any_btn = row.locator("a, button, [role='button'], input[type='button'], .btn, .action-icon").last
                         if await any_btn.is_visible(timeout=1500):
-                            await any_btn.click()
+                            await any_btn.click(timeout=3000, force=True)
                             log_cb(f"  ✅ Clicked fallback button for claim {claim_no}")
                             return await _detect_new_page(page, context, pages_before, log_cb)
                     except Exception:
@@ -375,5 +376,7 @@ async def _detect_new_page(
                 return p
 
     # No new tab — the page navigated in-place (SPA route change)
+    if "Worklist" in original_page.url:
+        raise Exception("Portal stayed on Worklist — claim did not load (internal portal error).")
     log_cb(f"  📌 No new tab — staying on: {original_page.url}")
     return original_page

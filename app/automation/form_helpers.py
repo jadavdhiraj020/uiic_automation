@@ -32,10 +32,10 @@ def _clean_text_strict(value: str) -> str:
     Portal message: 'Please do not enter Special Symbols such as @ # $ ! \' , etc.'
     Use for: Place of Survey, Surveyor Observation, Remarks.
     """
-    # Strip: @ # $ ! ' ` , and other portal-rejected chars
-    cleaned = re.sub(r"[@#$!'`,\.\(\)\[\]\{\}\*\^\&\%\~\|\\<>\"]", " ", str(value))
+    # Aggressively keep ONLY letters, numbers, and spaces (no hyphens)
+    cleaned = re.sub(r"[^a-zA-Z0-9\s]", " ", str(value))
     # Collapse multiple spaces
-    cleaned = re.sub(r" +", " ", cleaned).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned
 
 
@@ -46,7 +46,11 @@ def _to_int_amount(value: str) -> str:
     141262.52 → '141263'  |  100818.02 → '100818'  |  '0' → '0'
     """
     try:
-        return str(round(float(str(value).replace(",", ""))))
+        # Strip everything except digits and decimal point
+        v_clean = re.sub(r"[^\d.]", "", str(value))
+        if not v_clean:
+            return "0"
+        return str(round(float(v_clean)))
     except Exception:
         return str(value)
 
@@ -93,7 +97,7 @@ async def _raw_fill(page, sel: str, value_str: str, label: str,
             await el.fill(value_str)
             await el.press("Tab")
             await asyncio.sleep(0.1)
-            log_cb(f"  ✅ {label}: {value_str[:60]}")
+            log_cb(f"  ✅ [Filled] {label} : '{value_str[:60]}' (Source: Excel Data)")
             return True
         except Exception as e:
             if attempt < retries:
@@ -147,7 +151,7 @@ async def safe_fill_date(page, sel: str, value, label: str,
     Portal expects: DD/MM/YYYY format in these text inputs.
     """
     if not value or str(value).strip() == "":
-        log_cb(f"  ⏭️  {label}: skipped (empty)")
+        log_cb(f"  ⏭️  [Skipped] {label} : (Empty in Excel)")
         return False
 
     iso_date = _to_iso_date(str(value).strip())
@@ -200,35 +204,11 @@ async def safe_fill_date(page, sel: str, value, label: str,
             if actual and actual.strip():
                 await page.keyboard.press("Escape")  # close any stray popup
                 await asyncio.sleep(0.1)
-                log_cb(f"  ✅ {label}: {actual} (JS)")
+                log_cb(f"  ✅ [Filled] {label} : '{actual}' (Source: Excel Data, Mode: JS)")
                 return True
 
     except Exception as e1:
-        log_cb(f"  🔄 {label}: JS strategy failed ({str(e1)[:60]}), trying keyboard...")
-
-    # ── Strategy 2: Triple-click select-all, then type (keyboard fallback) ────
-    try:
-        el = page.locator(sel).first
-        await el.wait_for(state="visible", timeout=2000)
-
-        # Triple-click to select all existing text WITHOUT opening picker
-        await el.click(click_count=3)
-        await asyncio.sleep(0.1)
-        await page.keyboard.press("Escape")   # close calendar if opened
-        await asyncio.sleep(0.1)
-        await page.keyboard.press("Control+a")  # select all
-        await page.keyboard.type(display, delay=25)
-        await asyncio.sleep(0.1)
-        await page.keyboard.press("Escape")   # close calendar
-        await asyncio.sleep(0.05)
-        await page.keyboard.press("Tab")
-        await asyncio.sleep(0.15)
-
-        log_cb(f"  ✅ {label}: {display} (keyboard)")
-        return True
-
-    except Exception as e2:
-        log_cb(f"  ⚠️  {label}: all strategies failed. JS err: {str(e2)[:80]}")
+        log_cb(f"  ⚠️  {label}: JS strategy failed ({str(e1)[:60]})")
         return False
 
 
@@ -272,18 +252,18 @@ async def safe_select(page, sel: str, value: str, label: str,
 
         # ── Strategy 1: Try exact label match ─────────────────────────────────
         try:
-            await el.select_option(label=value)
+            await el.select_option(label=value, timeout=timeout_ms)
             await asyncio.sleep(0.1)
-            log_cb(f"  ✅ {label}: {value}")
+            log_cb(f"  ✅ [Selected] {label} : '{value}' (Source: Excel Data, Mode: Exact Label)")
             return True
         except Exception:
             pass
 
         # ── Strategy 2: Try exact value match ─────────────────────────────────
         try:
-            await el.select_option(value=value)
+            await el.select_option(value=value, timeout=timeout_ms)
             await asyncio.sleep(0.1)
-            log_cb(f"  ✅ {label}: {value}")
+            log_cb(f"  ✅ [Selected] {label} : '{value}' (Source: Excel Data, Mode: Exact Value)")
             return True
         except Exception:
             pass
@@ -299,7 +279,7 @@ async def safe_select(page, sel: str, value: str, label: str,
             if val_lower == txt_lower or val_lower in txt_lower or txt_lower in val_lower:
                 await el.select_option(value=opt_val)
                 await asyncio.sleep(0.1)
-                log_cb(f"  ✅ {label}: '{txt}' (text match)")
+                log_cb(f"  ✅ [Selected] {label} : '{txt}' (Source: Excel Data, Mode: Partial Text)")
                 return True
             # Match by stripping Angular prefixes from option value
             # e.g. 'number:10' → '10', 'string:HH' → 'HH'
@@ -307,7 +287,7 @@ async def safe_select(page, sel: str, value: str, label: str,
             if val_lower == stripped:
                 await el.select_option(value=opt_val)
                 await asyncio.sleep(0.1)
-                log_cb(f"  ✅ {label}: '{txt}' (angular value match)")
+                log_cb(f"  ✅ [Selected] {label} : '{txt}' (Source: Excel Data, Mode: Angular Value)")
                 return True
 
         # ── Strategy 4: JS fallback for AngularJS select ──────────────────────
@@ -340,7 +320,7 @@ async def safe_select(page, sel: str, value: str, label: str,
         """)
         if set_ok:
             await asyncio.sleep(0.1)
-            log_cb(f"  ✅ {label}: '{set_ok}' (JS fallback)")
+            log_cb(f"  ✅ [Selected] {label} : '{set_ok}' (Source: Excel Data, Mode: JS Fallback)")
             return True
 
         log_cb(f"  ⚠️  {label}: no match for '{value}'")

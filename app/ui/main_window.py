@@ -65,7 +65,7 @@ class AutomationWorker(QObject):
             success = bool(getattr(result, "success", False))
             message = getattr(result, "message", "Automation finished.")
             self.done_signal.emit(success, message)
-        except Exception as e:
+        except BaseException as e:
             self.done_signal.emit(False, str(e))
         finally:
             try:

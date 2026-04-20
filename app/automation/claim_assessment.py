@@ -229,8 +229,10 @@ async def _fill_labour(page, claim: ClaimData, log_cb: Callable) -> None:
 async def _fill_workshop_invoice(page, claim: ClaimData, log_cb: Callable) -> None:
     log_cb("\n🧾 Workshop Invoice:")
     try:
+        # Strip trailing "(CREDIT)" or anything after a space, and limit to 20 chars
+        ws_no = str(claim.workshop_invoice_no).split(" ")[0].split("(")[0][:20]
         await safe_fill(page, ASSESSMENT["ws_invoice_no"],
-                        claim.workshop_invoice_no, "WS Invoice No", log_cb)
+                        ws_no, "WS Invoice No", log_cb)
         await safe_fill_date(page, ASSESSMENT["ws_invoice_date"],
                              claim.workshop_invoice_date, "WS Invoice Date", log_cb)
     except Exception as e:
@@ -263,8 +265,12 @@ async def _fill_invoice_details(page, claim: ClaimData, log_cb: Callable) -> Non
         # claim.invoice_no == "0" is valid; only fall back when truly absent.
         inv_no   = claim.invoice_no   if claim.invoice_no.strip()   else claim.workshop_invoice_no
         inv_date = claim.invoice_date if claim.invoice_date.strip() else claim.workshop_invoice_date
+        
+        # Strip trailing "(CREDIT)" or anything after a space, and limit to 20 chars
+        inv_no_clean = str(inv_no).split(" ")[0].split("(")[0][:20]
+        
         await safe_fill(page, ASSESSMENT["invoice_no"],
-                        inv_no, "Invoice No", log_cb)
+                        inv_no_clean, "Invoice No", log_cb)
         await safe_fill_date(page, ASSESSMENT["invoice_date"],
                              inv_date, "Invoice Date", log_cb)
     except Exception as e:
@@ -305,18 +311,16 @@ async def _fill_surveyor_charges(page, claim: ClaimData, log_cb: Callable) -> No
 async def _upload_all(page, claim: ClaimData, log_cb: Callable) -> None:
     log_cb("\n📤 Uploading Assessment Documents...")
     count = 0
-    for slot_key, upload_label in ASSESSMENT_UPLOAD_LABELS.items():
-        file_path = claim.assessment_files.get(slot_key)
+    for slot_key, file_path in claim.assessment_files.items():
         if not file_path:
-            log_cb(f"  ⏭️  [{slot_key}]: no file")
             continue
         try:
-            ok = await _upload_by_label(page, upload_label, file_path, log_cb)
+            ok = await _upload_by_label(page, slot_key, file_path, log_cb)
             if ok:
                 count += 1
         except Exception as e:
             log_cb(f"  ❌ [{slot_key}] upload error: {e}")
-    log_cb(f"  📁 {count}/{len(ASSESSMENT_UPLOAD_LABELS)} files uploaded")
+    log_cb(f"  📁 {count}/{len(claim.assessment_files)} files uploaded")
 
 
 async def fill_claim_assessment(page, claim: ClaimData,
