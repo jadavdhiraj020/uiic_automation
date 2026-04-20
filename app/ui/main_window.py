@@ -490,13 +490,29 @@ class MainWindow(QMainWindow):
 
     # ── LOGIC ─────────────────────────────────────────────────────────
     def _open_log_file(self):
-        """B3/P1: Open log file once at startup instead of per log call."""
+        """B3/P1: Open log file once at startup instead of per log call.
+           Implements log rotation to keep the last 5 sessions."""
         try:
             log_dir = os.path.join(os.path.dirname(__file__), "..", "..", "logs")
             os.makedirs(log_dir, exist_ok=True)
-            self._log_file = open(
-                os.path.join(log_dir, "automation.log"), "a", encoding="utf-8"
-            )
+            
+            base_log = os.path.join(log_dir, "automation.log")
+            
+            if os.path.exists(base_log):
+                for i in range(4, 0, -1):
+                    old_log = f"{base_log}.{i}"
+                    new_log = f"{base_log}.{i+1}"
+                    if os.path.exists(old_log):
+                        if os.path.exists(new_log):
+                            os.remove(new_log)
+                        os.rename(old_log, new_log)
+                
+                new_log_1 = f"{base_log}.1"
+                if os.path.exists(new_log_1):
+                    os.remove(new_log_1)
+                os.rename(base_log, new_log_1)
+                
+            self._log_file = open(base_log, "w", encoding="utf-8")
         except Exception:
             self._log_file = None
 

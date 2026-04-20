@@ -227,3 +227,246 @@ Call log:
 [13:25:40] Stop requested. Closing automation safely...
 [13:25:40] ■  Stop requested by user.
 [13:25:42] Automation finished and browser session was closed.
+[13:26:05] 📁 Scanning folder: C:/Users/Dev/Downloads/automationfolderuploading
+[13:26:05] 📊 Excel: sample_excel.xls
+[13:26:05] 📌 Excel Data Sources Map:
+[13:26:05]   📊 vehicle_no: 'PB 01D 5619' (Source: Sheet2 -> R12C6)
+[13:26:05]   📊 chassis_no: '477991' (Source: Sheet1 -> R187C6)
+[13:26:05]   📊 engine_no: '4258606' (Source: Sheet1 -> R189C6)
+[13:26:05]   📊 date_of_survey: '16.03.2026' (Source: Sheet1 -> R62C7)
+[13:26:05]   📊 place_of_survey: 'Plot No. B-51, Ind. Area, Phase-6, Mohali' (Source: Sheet1 -> R69C7)
+[13:26:05]   📊 surveyor_observation: 'As per the instructions of The New India Assurance Co Ltd, Mani Majra, Chandigarh. I visited the Repairer's workshop. The Vehicle was carefully inspected, its damages were noted and photographs taken. The Photographs in the Under Repair Condition were also taken. The damages are commensurate with the cause and nature of accident.' (Source: Sheet1 -> R81C3)
+[13:26:05]   📊 initial_loss_amount: '141262.52' (Source: Sheet1 -> R178C6)
+[13:26:05]   📊 compulsory_excess: '500' (Source: Sheet1 -> R94C10)
+[13:26:05]   📊 voluntary_excess: '500' (Source: Sheet1 -> R177C7)
+[13:26:05]   📊 salvage_value: '0' (Source: Sheet1 -> R180C7)
+[13:26:05]   📊 parts_age_dep_excl_gst: '100818.02' (Source: Sheet1 -> R140C6)
+[13:26:05]   📊 parts_50_dep_excl_gst: '0' (Source: Sheet1 -> R140C7)
+[13:26:05]   📊 parts_30_dep_excl_gst: '0' (Source: Sheet1 -> R140C8)
+[13:26:05]   📊 parts_nil_dep_excl_gst: '0' (Source: Sheet1 -> R140C9)
+[13:26:05]   📊 labour_excl_gst: '34275' (Source: Sheet1 -> R154C9)
+[13:26:05]   📊 workshop_invoice_no: 'IJOSJI2425001650 (CREDIT)' (Source: Sheet3 -> R39C7)
+[13:26:05]   📊 towing_charges: '0' (Source: Sheet3 -> R47C7)
+[13:26:05]   📊 professional_fee: '1800' (Source: Sheet5 -> R28C8)
+[13:26:05]   📊 traveling_expenses: '500' (Source: Sheet5 -> R30C8)
+[13:26:05]   📊 photo_charges: '200' (Source: Sheet5 -> R32C8)
+[13:26:05]   📊 daily_allowance: '0' (Source: Sheet5 -> R35C8)
+[13:26:05]   📊 total_claimed_amount: '2500' (Source: Sheet5 -> R39C8)
+[13:26:05]   📊 final_report_no: 'SK/2025-26/NIA/001' (Source: Sheet5 -> R10C4)
+[13:28:13] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[13:28:13] 🚀 Automation started — Claim: 2012013126C050003001
+[13:28:13] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[13:28:22] ------------------------------------
+[13:28:22] STEP 1 - Login
+[13:28:22] ------------------------------------
+[13:28:31] Navigating to portal...
+[13:28:34] Login page loaded.
+[13:28:34] Login attempt 1/7...
+[13:28:34] Reading CAPTCHA from canvas...
+[13:28:36] CAPTCHA candidates: ['8cDSzY', '8CDSZY', '8cdszy']
+[13:28:36] Trying CAPTCHA [primary / Mixed-Case]: '8cDSzY'
+[13:28:40]   Clicked login button
+[13:28:42] Login confirmed. CAPTCHA variant: primary / Mixed-Case
+[13:28:42]   Success signal: Dashboard tab detected: https://portal.uiic.in/surveyor/data/Surveyor.html?v=22375#/home
+[13:28:44] Locating dashboard/worklist page...
+[13:28:44] Found Surveyor page: https://portal.uiic.in/surveyor/data/Surveyor.html?v=22375#/home
+[13:28:46] ------------------------------------
+[13:28:46] STEP 2 - Navigate to Claim: 2012013126C050003001
+[13:28:46] ------------------------------------
+[13:28:46] 📌 Current URL: https://portal.uiic.in/surveyor/data/Surveyor.html?v=22375#/home
+[13:28:48] 📋 Clicked Worklist sidebar link.
+[13:28:50] 📌 Selecting Claim Type: Non Maruti
+[13:28:50]   ✅ Claim type set to: Non Maruti
+[13:28:52] 📌 Entering Claim No: 2012013126C050003001
+[13:28:52]   ✅ Claim number entered: 2012013126C050003001
+[13:28:53] 📌 Clicking Filter button...
+[13:28:53]   ✅ Filter button clicked
+[13:28:56] 📌 Waiting for search results...
+[13:28:58] 🔎 Scanning table page 1 for claim: 2012013126C050003001
+[13:28:58]   📊 Found 2 rows in table
+[13:28:58]   ✅ Claim found in row 2: 1	2012013126C050003001	SANDEEP KAUR	03/04/2026 4:14:00 PM	01/04/2026 6:00:00 AM	...
+[13:28:58]   ✅ Clicked Action button for claim 2012013126C050003001
+[13:29:03]   📌 No new tab — staying on: https://portal.uiic.in/surveyor/data/Surveyor.html?v=22375#/SurveyorClaimSurvey
+[13:29:05] ✅ Claim 2012013126C050003001 found and Action clicked!
+[13:29:05] 📌 Working on page: https://portal.uiic.in/surveyor/data/Surveyor.html?v=22375#/SurveyorClaimSurvey
+[13:29:07] ------------------------------------
+[13:29:07] STEP 3 - Fill Interim Report
+[13:29:07] ------------------------------------
+[13:29:07] 📑 Clicking 'Interim' tab...
+[13:29:08]   ✅ 'Interim' tab (idx 1)
+[13:29:08] ✏️  Filling Interim Report...
+[13:29:19]   ✅ [Selected] Type of Settlement : 'Partial Loss' (Source: Excel Data, Mode: Partial Text)
+[13:29:20]   ✅ [Filled] Date of Survey : '16/03/2026' (Source: Excel Data, Mode: JS)
+[13:29:20]   ⏭️  Time HH: skipped (not set in Excel)
+[13:29:20]   ⏭️  Time MM: skipped (not set in Excel)
+[13:29:20]   ⏭️  Odometer Reading: skipped (portal field is read-only)
+[13:29:21]   ✅ [Filled] Place of Survey : 'Plot No B 51 Ind Area Phase 6 Mohali' (Source: Excel Data)
+[13:29:21]   🔘 Setting Yes radios...
+[13:29:21]   🔘 JS radios set: 5/5 → ['ynVehicleInspected', 'ynSurveyCompleted', 'ynDLApplicable', 'ynDLVerified', 'ynRCBookVerified']
+[13:29:21]   ✅ [Filled] Initial Loss Amount : '141263' (Source: Excel Data)
+[13:29:21]   ⏭️  Mobile No: not in Excel (fill manually if required)
+[13:29:21]   ⏭️  Email ID: not in Excel
+[13:29:21]   ⏭️  Expected Completion Date: not in Excel
+[13:29:22]   ✅ [Filled] Surveyor's Observation : 'As per the instructions of The New India Assurance Co Ltd Ma' (Source: Excel Data)
+[13:29:23]   ✅ [Filled] Remarks : 'OK' (Source: Excel Data)
+[13:29:23] ✅ Interim Report complete.
+[13:29:24] ------------------------------------
+[13:29:24] STEP 4 - Upload Claim Documents
+[13:29:24] ------------------------------------
+[13:29:24] 📑 Clicking 'Documents' tab...
+[13:29:26]   ✅ 'Documents' tab (idx 2)
+[13:29:26] 🔘 Setting verification radios...
+[13:29:26]   🔘 Doc radios: 3/3 named + 2 auto-YES
+[13:29:26]   ✅ Payment: Cashless
+[13:29:26] 
+📎 Building upload queue...
+[13:29:26]   📎 [Discharge or Satisfaction Voucher]: Discharge_Voucher.pdf (1.0MB)
+[13:29:26]   📎 [Driving License]: Driving_License.pdf (1.9MB)
+[13:29:26]   📎 [Vehicle Fitness Certificate]: Fitness_Certificate.jpeg (0.3MB)
+[13:29:26]   📎 [PAN Card]: PAN_Card.jpg (0.0MB)
+[13:29:26]   📎 [RC Book]: Registration_Certificate.pdf (1.6MB)
+[13:29:26]   📎 [Road Permit for Commercial Vehicle]: Route_Permit.pdf (1.0MB)
+[13:29:26]   📎 [Cancelled Cheque Or Bank Details]: cancel_check.jpeg (0.2MB)
+[13:29:26]   📎 [Other 1]: other-Partnership_Deed.pdf (0.7MB)
+[13:29:26]   📎 [Other 2]: other-Payment_Receipt.pdf (0.0MB)
+[13:29:26]   📎 [Other 3]: other_Tax_Report.jpeg (0.1MB)
+[13:29:26] 
+📤 Processing 10 document rows...
+[13:29:26]   ✅ Upload panel ready
+[13:29:26] 
+  [1/10] 'Discharge or Satisfaction Voucher' → Discharge_Voucher.pdf
+[13:29:26]     ℹ️  Using pre-existing row (row count: 1)
+[13:29:26]       ✅ Doc type: Discharge or Satisfaction Voucher
+[13:29:26]     ✅ Uploaded: Discharge_Voucher.pdf
+[13:29:26] 
+  [2/10] 'Driving License' → Driving_License.pdf
+[13:29:26]     ➕ Clicking PLUS for new row...
+[13:29:27]     ➕ New row added (plus img)
+[13:29:27]       ✅ Doc type: Driving License
+[13:29:28]     ✅ Uploaded: Driving_License.pdf
+[13:29:28] 
+  [3/10] 'Vehicle Fitness Certificate' → Fitness_Certificate.jpeg
+[13:29:28]     ➕ Clicking PLUS for new row...
+[13:29:29]     ➕ New row added (plus img)
+[13:29:29]       ✅ Doc type: Vehicle Fitness Certificate
+[13:29:29]     ✅ Uploaded: Fitness_Certificate.jpeg
+[13:29:29] 
+  [4/10] 'PAN Card' → PAN_Card.jpg
+[13:29:29]     ➕ Clicking PLUS for new row...
+[13:29:30]     ➕ New row added (plus img)
+[13:29:30]       ✅ Doc type: PAN Card
+[13:29:31]     ✅ Uploaded: PAN_Card.jpg
+[13:29:31] 
+  [5/10] 'RC Book' → Registration_Certificate.pdf
+[13:29:31]     ➕ Clicking PLUS for new row...
+[13:29:32]     ➕ New row added (plus img)
+[13:29:32]       ✅ Doc type: RC Book
+[13:29:32]     ✅ Uploaded: Registration_Certificate.pdf
+[13:29:32] 
+  [6/10] 'Road Permit for Commercial Vehicle' → Route_Permit.pdf
+[13:29:32]     ➕ Clicking PLUS for new row...
+[13:29:33]     ➕ New row added (plus img)
+[13:29:33]       ✅ Doc type: Road Permit for Commercial Vehicle
+[13:29:34]     ✅ Uploaded: Route_Permit.pdf
+[13:29:34] 
+  [7/10] 'Cancelled Cheque Or Bank Details' → cancel_check.jpeg
+[13:29:34]     ➕ Clicking PLUS for new row...
+[13:29:35]     ➕ New row added (plus img)
+[13:29:35]       ✅ Doc type: Cancelled Cheque Or Bank Details
+[13:29:35]     ✅ Uploaded: cancel_check.jpeg
+[13:29:35] 
+  [8/10] 'Other 1' → other-Partnership_Deed.pdf
+[13:29:35]     ➕ Clicking PLUS for new row...
+[13:29:36]     ➕ New row added (plus img)
+[13:29:36]       ✅ Doc type: Other 1
+[13:29:37]     ✅ Uploaded: other-Partnership_Deed.pdf
+[13:29:37] 
+  [9/10] 'Other 2' → other-Payment_Receipt.pdf
+[13:29:37]     ➕ Clicking PLUS for new row...
+[13:29:38]     ➕ New row added (plus img)
+[13:29:38]       ✅ Doc type: Other 2
+[13:29:38]     ✅ Uploaded: other-Payment_Receipt.pdf
+[13:29:38] 
+  [10/10] 'Other 3' → other_Tax_Report.jpeg
+[13:29:38]     ➕ Clicking PLUS for new row...
+[13:29:39]     ➕ New row added (plus img)
+[13:29:39]       ✅ Doc type: Other 3
+[13:29:40]     ✅ Uploaded: other_Tax_Report.jpeg
+[13:29:40] 
+✅ Claim Documents complete — 10 rows processed.
+[13:29:41] ------------------------------------
+[13:29:41] STEP 5 - Fill Claim Assessment
+[13:29:41] ------------------------------------
+[13:29:41] 📑 Clicking 'Assessment' tab...
+[13:29:42]   ✅ 'Assessment' tab (idx 3)
+[13:29:42] 📊 Filling Claim Assessment...
+[13:29:42] 
+🔩 Parts Depreciation:
+[13:29:43]   ✅ [Filled] Age Dep (Metal) : '100818' (Source: Excel Data)
+[13:29:44]   ✅ [Filled] 50% Dep (Plastic) : '0' (Source: Excel Data)
+[13:29:45]   ✅ [Filled] 30% Dep (Fibre) : '0' (Source: Excel Data)
+[13:29:45]   ✅ [Filled] Nil Dep : '0' (Source: Excel Data)
+[13:29:45] 
+👷 Labour:
+[13:29:46]   ✅ [Filled] Labour (Excl GST) : '34275' (Source: Excel Data)
+[13:29:46] 
+🧾 Workshop Invoice:
+[13:29:47]   ✅ [Filled] WS Invoice No : 'IJOSJI2425001650' (Source: Excel Data)
+[13:29:47]   ⏭️  [Skipped] WS Invoice Date : (Empty in Excel)
+[13:29:47] 
+💰 Other Charges:
+[13:29:48]   ✅ [Filled] Towing Charges : '0' (Source: Excel Data)
+[13:29:49]   ✅ [Filled] Spot Repairs : '0' (Source: Excel Data)
+[13:29:49]   ✅ [Filled] Voluntary Excess : '500' (Source: Excel Data)
+[13:29:50]   ✅ [Filled] Compulsory Excess : '500' (Source: Excel Data)
+[13:29:51]   ✅ [Filled] Imposed Excess : '0' (Source: Excel Data)
+[13:29:52]   ✅ [Filled] Salvage Value : '0' (Source: Excel Data)
+[13:29:52] 
+📋 Invoice Details:
+[13:29:53]   ✅ [Filled] Invoice No : 'IJOSJI2425001650' (Source: Excel Data)
+[13:29:53]   ⏭️  [Skipped] Invoice Date : (Empty in Excel)
+[13:29:53] 
+📝 Report Details:
+[13:29:54]   ✅ [Filled] Report No : 'SK/2025-26/NIA/001' (Source: Excel Data)
+[13:29:54]   ⏭️  Report Date: skipped (portal auto-fills today's date)
+[13:29:54] 
+💼 Surveyor Charges:
+[13:29:54]   ✅ [Filled] Travel Expenses : '500' (Source: Excel Data)
+[13:29:55]   ✅ [Filled] Professional Fee : '1800' (Source: Excel Data)
+[13:29:56]   ✅ [Filled] Daily Allowance : '0' (Source: Excel Data)
+[13:29:57]   ✅ [Filled] Photo Charges : '200' (Source: Excel Data)
+[13:30:02]   🔄 Total Claimed: retry 1 (Locator.wait_for: Timeout 5000ms exceeded.
+Call log:
+  - wai)
+[13:30:07]   ⚠️  Total Claimed: Locator.wait_for: Timeout 5000ms exceeded.
+Call log:
+  - waiting for locator("#totalClaimedAmt, #tot
+[13:30:07] 
+✍️  Declaration:
+[13:30:07]   ✅ Declaration: Yes (broad:
+                             )
+[13:30:08]   ✅ [Filled] Remarks : 'OK' (Source: Excel Data)
+[13:30:08] 
+📤 Uploading Assessment Documents...
+[13:30:08]   ▶ [Upload Invoice] ← Final_Invoice.pdf
+[13:30:08]   ✅ Uploaded: Final_Invoice.pdf (li.clearfix)
+[13:30:08]   ▶ [Upload Estimate] ← Repair_Estimate.pdf
+[13:30:09]   ✅ Uploaded: Repair_Estimate.pdf (li.clearfix)
+[13:30:09]   ▶ [Upload Re-Inspection Report] ← Spot_report.pdf
+[13:30:09]   ✅ Uploaded: Spot_report.pdf (li.clearfix)
+[13:30:09]   ▶ [Upload Survey Report] ← Survey_Report.pdf
+[13:30:09]   ✅ Uploaded: Survey_Report.pdf (li.clearfix)
+[13:30:09]   ▶ [Upload Assessment Report] ← assessment.pdf
+[13:30:09]   ✅ Uploaded: assessment.pdf (li.clearfix)
+[13:30:09]   📁 5/5 files uploaded
+[13:30:09] 
+✅ Claim Assessment complete.
+[13:30:09] 👀 Review all tabs then click 'Final Submit' manually.
+[13:30:09] 
+[13:30:09] AUTOMATION COMPLETE
+[13:30:09] Please review all tabs in the browser, then click Final Submit manually.
+[13:30:09] 
+[13:30:09] Browser left open for manual review. Click Stop in the app when you are done.
+[13:30:55] Stop requested. Closing automation safely...
+[13:30:55] ■  Stop requested by user.
+[13:30:56] Automation finished and browser session was closed.
