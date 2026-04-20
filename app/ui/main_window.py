@@ -21,7 +21,7 @@ from PyQt6.QtGui     import QFont, QColor, QTextCursor, QIcon
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QLineEdit, QPushButton, QProgressBar, QTextEdit,
-    QFileDialog, QFrame, QSizePolicy, QScrollArea,
+    QFileDialog, QFrame, QSizePolicy, QScrollArea, QComboBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
     QSpacerItem, QApplication,
 )
@@ -29,12 +29,12 @@ from PyQt6.QtWidgets import (
 CONFIG_DIR = os.path.join(os.path.dirname(__file__), "..", "config")
 
 STEPS = [
-    ("Login",            "🔐"),
-    ("Navigate to Claim","🗺"),
-    ("Interim Report",   "📋"),
-    ("Claim Documents",  "📂"),
-    ("Claim Assessment", "📊"),
-    ("Complete",         "✅"),
+    ("Login",            "1"),
+    ("Navigate to Claim","2"),
+    ("Interim Report",   "3"),
+    ("Claim Documents",  "4"),
+    ("Claim Assessment", "5"),
+    ("Complete",         "6"),
 ]
 
 
@@ -212,7 +212,6 @@ class MainWindow(QMainWindow):
 
         root_widget = QWidget()
         root_widget.setObjectName("rootWidget")
-        root_widget.setStyleSheet("background:#F5F5F5;")
         root_layout = QVBoxLayout(root_widget)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
@@ -224,7 +223,7 @@ class MainWindow(QMainWindow):
 
         # Body: sidebar + content
         body = QWidget()
-        body.setStyleSheet("background:#F5F5F5;")
+        body.setObjectName("bodyWidget")
         body_layout = QHBoxLayout(body)
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(0)
@@ -288,16 +287,16 @@ class MainWindow(QMainWindow):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         inner = QWidget()
-        inner.setStyleSheet("background:#F5F5F5;")
+        inner.setObjectName("innerWidget")
         lay = QVBoxLayout(inner)
         lay.setContentsMargins(24, 20, 24, 20)
         lay.setSpacing(12)
 
         # Page heading
         heading = QLabel("Claim Automation")
-        heading.setStyleSheet("font-size:18pt; font-weight:700; color:#000000;")
+        heading.setStyleSheet("font-size:18pt; font-weight:bold; color:#111111;")
         sub = QLabel("Fill and submit insurance claim forms automatically")
-        sub.setStyleSheet("font-size:9.5pt; color:#888888; margin-bottom:4px;")
+        sub.setStyleSheet("font-size:9.5pt; color:#777777; margin-bottom:4px;")
         lay.addWidget(heading)
         lay.addWidget(sub)
 
@@ -344,7 +343,9 @@ class MainWindow(QMainWindow):
         grid.addWidget(self.inp_claim_no, 1, 2)
 
         grid.addWidget(_field_label("CLAIM TYPE"), 0, 3)
-        self.inp_claim_type = _input("e.g. Non Maruti")
+        self.inp_claim_type = QComboBox()
+        self.inp_claim_type.addItems(["Non Maruti", "Maruti"])
+        self.inp_claim_type.setMinimumHeight(36)
         grid.addWidget(self.inp_claim_type, 1, 3)
 
         return _card(w, title="Configuration", subtitle="Portal credentials and claim details")
@@ -448,9 +449,6 @@ class MainWindow(QMainWindow):
     def _build_action_bar(self):
         bar = QFrame()
         bar.setObjectName("actionBar")
-        bar.setStyleSheet(
-            "background:#FFFFFF; border-top:1px solid #E0E0E0;"
-        )
         bar.setMinimumHeight(64)
         bar.setMaximumHeight(64)
         lay = QHBoxLayout(bar)
@@ -508,7 +506,7 @@ class MainWindow(QMainWindow):
                 s = json.load(f)
             self.inp_username.setText(s.get("username", ""))
             self.inp_password.setText(s.get("password", ""))
-            self.inp_claim_type.setText(s.get("claim_type", "Non Maruti"))
+            self.inp_claim_type.setCurrentText(s.get("claim_type", "Non Maruti"))
         except Exception:
             pass
 
@@ -711,7 +709,7 @@ class MainWindow(QMainWindow):
         settings_override = {
             "username":   self.inp_username.text().strip(),
             "password":   self.inp_password.text().strip(),
-            "claim_type": self.inp_claim_type.text().strip(),
+            "claim_type": self.inp_claim_type.currentText().strip(),
         }
         self._save_settings(settings_override)
         self.progress_bar.setValue(0)
