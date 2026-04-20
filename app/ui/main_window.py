@@ -35,7 +35,19 @@ from PyQt6.QtWidgets import (
     QSpacerItem, QApplication, QStackedWidget,
 )
 
-CONFIG_DIR = os.path.join(os.path.dirname(__file__), "..", "config")
+from app.utils import resource_path, get_base_dir
+
+CONFIG_DIR = resource_path("app", "config")
+
+
+def _writable_config_dir() -> str:
+    """Return a writable directory for settings.json.
+    When frozen, sys._MEIPASS is read-only, so we write settings
+    next to the .exe instead."""
+    import sys
+    if getattr(sys, "frozen", False):
+        return os.path.join(os.path.dirname(sys.executable), "config")
+    return CONFIG_DIR
 
 from app.ui.worker import AutomationWorker
 from app.ui.components.widgets import (
@@ -441,7 +453,12 @@ class MainWindow(QMainWindow):
         """B3/P1: Open log file once at startup instead of per log call.
            Implements log rotation to keep the last 5 sessions."""
         try:
-            log_dir = os.path.join(os.path.dirname(__file__), "..", "..", "logs")
+            # When frozen, write logs next to the exe; otherwise use project root
+            import sys
+            if getattr(sys, "frozen", False):
+                log_dir = os.path.join(os.path.dirname(sys.executable), "logs")
+            else:
+                log_dir = os.path.join(os.path.dirname(__file__), "..", "..", "logs")
             os.makedirs(log_dir, exist_ok=True)
             
             base_log = os.path.join(log_dir, "automation.log")
@@ -475,7 +492,9 @@ class MainWindow(QMainWindow):
             pass
 
     def _save_settings(self, overrides: dict):
-        path = os.path.join(CONFIG_DIR, "settings.json")
+        wdir = _writable_config_dir()
+        os.makedirs(wdir, exist_ok=True)
+        path = os.path.join(wdir, "settings.json")
         try:
             try:
                 with open(path, "r", encoding="utf-8") as f:

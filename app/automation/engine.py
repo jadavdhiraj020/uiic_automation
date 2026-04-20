@@ -25,8 +25,10 @@ from app.automation.login_module import do_login
 from app.automation.navigation_module import WORKLIST_URL, navigate_to_claim
 from app.data.data_model import ClaimData
 
+from app.utils import resource_path
+
 logger = logging.getLogger(__name__)
-CONFIG_DIR = os.path.join(os.path.dirname(__file__), "..", "config")
+CONFIG_DIR = resource_path("app", "config")
 
 
 def _load_settings() -> dict:
