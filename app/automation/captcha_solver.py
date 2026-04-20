@@ -14,6 +14,8 @@ import logging
 import tempfile
 from typing import List, Optional
 
+import sys
+
 logger = logging.getLogger(__name__)
 
 # ── PaddleOCR lazy singleton ─────────────────────────────────────────────────
@@ -25,11 +27,40 @@ _ocr = None
 
 
 def _get_ocr():
-    """Return the PaddleOCR singleton, creating it on first call."""
+    """Return the PaddleOCR singleton, creating it on first call.
+
+    When running as a frozen exe, explicitly point PaddleOCR to the
+    bundled model directories inside _internal/.paddleocr/whl/.
+    """
     global _ocr
     if _ocr is None:
         from paddleocr import PaddleOCR
-        _ocr = PaddleOCR(use_angle_cls=False, lang='en', show_log=False)
+
+        kwargs = dict(use_angle_cls=False, lang='en', show_log=False)
+
+        if getattr(sys, "frozen", False):
+            # Frozen exe: models are bundled at sys._MEIPASS/.paddleocr/whl/
+            model_root = os.path.join(sys._MEIPASS, ".paddleocr", "whl")
+            det_dir = os.path.join(model_root, "det", "en", "en_PP-OCRv3_det_infer")
+            rec_dir = os.path.join(model_root, "rec", "en", "en_PP-OCRv4_rec_infer")
+            cls_dir = os.path.join(model_root, "cls", "ch_ppocr_mobile_v2.0_cls_infer")
+
+            if os.path.isdir(det_dir):
+                kwargs["det_model_dir"] = det_dir
+                logger.info(f"Using bundled det model: {det_dir}")
+            if os.path.isdir(rec_dir):
+                kwargs["rec_model_dir"] = rec_dir
+                logger.info(f"Using bundled rec model: {rec_dir}")
+            if os.path.isdir(cls_dir):
+                kwargs["cls_model_dir"] = cls_dir
+                logger.info(f"Using bundled cls model: {cls_dir}")
+
+        try:
+            _ocr = PaddleOCR(**kwargs)
+            logger.info("PaddleOCR initialized successfully.")
+        except Exception as exc:
+            logger.error(f"PaddleOCR initialization FAILED: {exc}")
+            raise
     return _ocr
 
 

@@ -10,7 +10,6 @@ Post-login strategy:
 """
 
 import asyncio
-import json
 import logging
 import os
 from dataclasses import dataclass
@@ -25,16 +24,17 @@ from app.automation.login_module import do_login
 from app.automation.navigation_module import WORKLIST_URL, navigate_to_claim
 from app.data.data_model import ClaimData
 
-from app.utils import resource_path
+from app.utils import load_settings, resource_path
 
 logger = logging.getLogger(__name__)
 CONFIG_DIR = resource_path("app", "config")
 
 
 def _load_settings() -> dict:
-    path = os.path.join(CONFIG_DIR, "settings.json")
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    # Production reliability: in a frozen EXE, bundled config is read-only.
+    # The UI writes user settings into a writable per-user location, so we
+    # must read that (and merge with defaults) here too.
+    return load_settings()
 
 
 @dataclass

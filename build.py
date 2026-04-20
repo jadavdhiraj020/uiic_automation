@@ -39,7 +39,7 @@ def find_playwright_chromium() -> str | None:
             if entry.startswith("chromium"):
                 full = os.path.join(driver_dir, entry)
                 if os.path.isdir(full):
-                    print(f"  ✅ Found Playwright Chromium: {full}")
+                    print(f"  [OK] Found Playwright Chromium: {full}")
                     return full
 
     # Fallback: check LOCALAPPDATA
@@ -50,7 +50,7 @@ def find_playwright_chromium() -> str | None:
             if entry.startswith("chromium"):
                 full = os.path.join(ms_pw, entry)
                 if os.path.isdir(full):
-                    print(f"  ✅ Found Playwright Chromium (ms-playwright): {full}")
+                    print(f"  [OK] Found Playwright Chromium (ms-playwright): {full}")
                     return full
 
     return None
@@ -61,7 +61,7 @@ def find_paddleocr_models() -> str | None:
     home = os.path.expanduser("~")
     model_dir = os.path.join(home, ".paddleocr")
     if os.path.isdir(model_dir):
-        print(f"  ✅ Found PaddleOCR models: {model_dir}")
+        print(f"  [OK] Found PaddleOCR models: {model_dir}")
         return model_dir
     return None
 
@@ -78,18 +78,18 @@ def build():
     config_dir = os.path.join(ROOT, "app", "config")
     if os.path.isdir(config_dir):
         datas.append(f"{config_dir}{os.pathsep}app/config")
-        print(f"  ✅ Config dir: {config_dir}")
+        print(f"  [OK] Config dir: {config_dir}")
 
     # QSS stylesheet
     qss_path = os.path.join(ROOT, "app", "ui", "styles.qss")
     if os.path.isfile(qss_path):
         datas.append(f"{qss_path}{os.pathsep}app/ui")
-        print(f"  ✅ QSS stylesheet: {qss_path}")
+        print(f"  [OK] QSS stylesheet: {qss_path}")
 
     # App icon
     if os.path.isfile(ICON_PATH):
         datas.append(f"{ICON_PATH}{os.pathsep}assets")
-        print(f"  ✅ App icon: {ICON_PATH}")
+        print(f"  [OK] App icon: {ICON_PATH}")
 
     # Playwright Chromium browser
     chromium_dir = find_playwright_chromium()
@@ -154,42 +154,67 @@ def build():
         "app.data.folder_scanner",
     ]
 
-    # ── Build command ──────────────────────────────────────────────────────
-    cmd = [
-        sys.executable, "-m", "PyInstaller",
-        "--noconfirm",
-        "--onedir",                       # onedir = faster startup than onefile
-        "--windowed",                     # no console window (GUI app)
-        f"--name={APP_NAME}",
-        f"--distpath={DIST_DIR}",
-        f"--workpath={BUILD_DIR}",
-    ]
+    # ── Build via spec for maximum reproducibility ─────────────────────────
+    # The spec file contains the full data/binaries/hidden-import story.
+    spec_path = os.path.join(ROOT, "uiic_automation.spec")
+    if os.path.isfile(spec_path):
+        cmd = [
+            sys.executable,
+            "-m",
+            "PyInstaller",
+            "--noconfirm",
+            f"--distpath={DIST_DIR}",
+            f"--workpath={BUILD_DIR}",
+            spec_path,
+        ]
+    else:
+        # Fallback: legacy CLI build (kept for compatibility)
+        cmd = [
+            sys.executable, "-m", "PyInstaller",
+            "--noconfirm",
+            "--onedir",                       # onedir = faster startup than onefile
+            "--windowed",                     # no console window (GUI app)
+            f"--name={APP_NAME}",
+            f"--distpath={DIST_DIR}",
+            f"--workpath={BUILD_DIR}",
+        ]
 
-    # Icon
-    if os.path.isfile(ICON_PATH):
-        cmd.append(f"--icon={ICON_PATH}")
+    if not os.path.isfile(spec_path):
+        # Icon
+        if os.path.isfile(ICON_PATH):
+            cmd.append(f"--icon={ICON_PATH}")
 
-    # Data files
-    for d in datas:
-        cmd.extend(["--add-data", d])
+        # Data files
+        for d in datas:
+            cmd.extend(["--add-data", d])
 
-    # Hidden imports
-    for h in hidden_imports:
-        cmd.extend(["--hidden-import", h])
+        # Hidden imports
+        for h in hidden_imports:
+            cmd.extend(["--hidden-import", h])
 
-    # Exclude unnecessary heavy packages
-    excludes = [
-        "matplotlib",
-        "scipy",
-        "pandas",  # only used optionally in folder_scanner
-        "tkinter",
-        "unittest",
-        "test",
-    ]
-    for e in excludes:
-        cmd.extend(["--exclude-module", e])
+        # Add PaddleOCR internal dir to pathex so it finds 'ppocr' and 'tools'
+        import paddleocr
+        paddleocr_dir = os.path.dirname(paddleocr.__file__)
+        cmd.extend(["--paths", paddleocr_dir])
 
-    cmd.append(MAIN_SCRIPT)
+        # Runtime hook to set deterministic env vars in frozen mode
+        hook_path = os.path.join(ROOT, "pyinstaller_hooks", "runtime_hook.py")
+        if os.path.isfile(hook_path):
+            cmd.extend(["--runtime-hook", hook_path])
+
+        # Exclude unnecessary heavy packages
+        excludes = [
+            "matplotlib",
+            "scipy",
+            "pandas",  # only used optionally in folder_scanner
+            "tkinter",
+            "unittest",
+            "test",
+        ]
+        for e in excludes:
+            cmd.extend(["--exclude-module", e])
+
+        cmd.append(MAIN_SCRIPT)
 
     print()
     print("  Running PyInstaller...")
@@ -199,13 +224,13 @@ def build():
     result = subprocess.run(cmd, cwd=ROOT)
 
     if result.returncode != 0:
-        print("\n  ❌ Build FAILED!")
+        print("\n  [FAIL] Build FAILED!")
         sys.exit(1)
 
     exe_dir = os.path.join(DIST_DIR, APP_NAME)
     print()
     print("=" * 60)
-    print(f"  ✅ Build SUCCESSFUL!")
+    print(f"  [OK] Build SUCCESSFUL!")
     print(f"  Output: {exe_dir}")
     print(f"  EXE:    {os.path.join(exe_dir, APP_NAME + '.exe')}")
     print()

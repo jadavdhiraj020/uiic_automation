@@ -18,7 +18,7 @@ from app.automation.form_helpers import (
     safe_fill, safe_fill_amount, safe_fill_date, safe_fill_text,
     safe_fill_portal_text,
 )
-from app.automation.selectors import ASSESSMENT, TABS, TAB_SEL
+from app.automation.selectors import ASSESSMENT, ASSESSMENT_SLOTS, TABS, TAB_SEL
 from app.automation.tab_utils import click_tab
 
 logger = logging.getLogger(__name__)

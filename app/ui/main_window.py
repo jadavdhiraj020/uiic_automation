@@ -35,19 +35,15 @@ from PyQt6.QtWidgets import (
     QSpacerItem, QApplication, QStackedWidget,
 )
 
-from app.utils import resource_path, get_base_dir
+from app.utils import resource_path, save_settings, settings_paths, user_data_dir, ensure_dir
 
 CONFIG_DIR = resource_path("app", "config")
+_SETTINGS_PATHS = settings_paths()
 
 
 def _writable_config_dir() -> str:
-    """Return a writable directory for settings.json.
-    When frozen, sys._MEIPASS is read-only, so we write settings
-    next to the .exe instead."""
-    import sys
-    if getattr(sys, "frozen", False):
-        return os.path.join(os.path.dirname(sys.executable), "config")
-    return CONFIG_DIR
+    # Backward-compatible: keep function but route to the canonical user config dir.
+    return user_data_dir("config")
 
 from app.ui.worker import AutomationWorker
 from app.ui.components.widgets import (
@@ -453,13 +449,8 @@ class MainWindow(QMainWindow):
         """B3/P1: Open log file once at startup instead of per log call.
            Implements log rotation to keep the last 5 sessions."""
         try:
-            # When frozen, write logs next to the exe; otherwise use project root
-            import sys
-            if getattr(sys, "frozen", False):
-                log_dir = os.path.join(os.path.dirname(sys.executable), "logs")
-            else:
-                log_dir = os.path.join(os.path.dirname(__file__), "..", "..", "logs")
-            os.makedirs(log_dir, exist_ok=True)
+            # Production reliability: always write logs to a user-writable directory.
+            log_dir = ensure_dir(user_data_dir("logs"))
             
             base_log = os.path.join(log_dir, "automation.log")
             
@@ -483,7 +474,9 @@ class MainWindow(QMainWindow):
 
     def _load_settings(self):
         try:
-            with open(os.path.join(CONFIG_DIR, "settings.json"), "r") as f:
+            # Prefer user settings; fall back to bundled defaults
+            path = _SETTINGS_PATHS["user"] if os.path.exists(_SETTINGS_PATHS["user"]) else _SETTINGS_PATHS["default"]
+            with open(path, "r", encoding="utf-8") as f:
                 s = json.load(f)
             self.inp_username.setText(s.get("username", ""))
             self.inp_password.setText(s.get("password", ""))
@@ -492,18 +485,8 @@ class MainWindow(QMainWindow):
             pass
 
     def _save_settings(self, overrides: dict):
-        wdir = _writable_config_dir()
-        os.makedirs(wdir, exist_ok=True)
-        path = os.path.join(wdir, "settings.json")
         try:
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    settings = json.load(f)
-            except Exception:
-                settings = {}
-            settings.update(overrides)
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(settings, f, indent=2)
+            save_settings(overrides)
         except Exception as exc:
             self._append_log(f"⚠️  Could not save settings: {exc}")
 
