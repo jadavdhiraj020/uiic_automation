@@ -122,37 +122,34 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
     log_cb(f"  ▶ [{upload_label}] ← {fname}")
     abs_path = str(os.path.abspath(file_path))
 
-    # Strategy 0: Direct name selector — from confirmed DOM structure
-    # Portal uses: <input type="file" name="fileToUploadN"> where N = slot index
+    # Strategy 0: Direct name selector + Fallbacks
+    # Portal uses 'fileToUploadMan' for mandatory docs and 'fileToUploadOpt' for others,
+    # or sometimes 'fileToUpload1'. We will query by name or just use a robust relative locator.
     slot_idx = ASSESSMENT_SLOTS.get(slot_key)
-    if slot_idx is not None:
-        try:
-            direct_sel = f'input[name="fileToUpload{slot_idx}"]'
-            # Remove Angular disabled attribute first via JS
-            await page.evaluate(f"""
-                (() => {{
-                    const inp = document.querySelector('{direct_sel}');
-                    if (inp) {{
-                        inp.removeAttribute('disabled');
-                        inp.removeAttribute('ng-disabled');
-                        inp.removeAttribute('data-ng-disabled');
-                        inp.disabled = false;
-                    }}
-                }})();
-            """)
-            await asyncio.sleep(0.2)
-
-            el = page.locator(direct_sel).first
-            if await el.count() > 0:
-                await el.set_input_files(abs_path)
+    try:
+        # First try to find the row by label, then find the input inside it
+        row = page.locator("li.clearfix").filter(has_text=upload_label).first
+        if await row.count() > 0:
+            inp = row.locator('input[type="file"]').first
+            if await inp.count() > 0:
+                # Remove Angular disabled attributes
+                await inp.evaluate('''el => {
+                    el.removeAttribute('disabled');
+                    el.removeAttribute('ng-disabled');
+                    el.removeAttribute('data-ng-disabled');
+                    el.disabled = false;
+                }''')
+                await asyncio.sleep(0.2)
+                await inp.set_input_files(abs_path)
                 try:
-                    await page.wait_for_load_state("networkidle", timeout=5000)
+                    await inp.evaluate("el => el.dispatchEvent(new Event('change', { bubbles: true }))")
                 except Exception:
-                    await asyncio.sleep(1.5)
-                log_cb(f"  ✅ Uploaded: {fname} (direct name=fileToUpload{slot_idx})")
+                    pass
+                await asyncio.sleep(3.0)
+                log_cb(f"  ✅ Uploaded: {fname} (li.clearfix relative selector)")
                 return True
-        except Exception as e:
-            log_cb(f"  ⚠️  Direct selector failed: {str(e)[:80]}")
+    except Exception as e:
+        log_cb(f"  ⚠️  Strategy 0 failed: {str(e)[:80]}")
 
     # Strategy 1: JS that finds the input, removes disabled, and returns it
     try:
@@ -198,9 +195,10 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
             if element:
                 await element.set_input_files(abs_path)
                 try:
-                    await page.wait_for_load_state("networkidle", timeout=4000)
+                    await page.evaluate("el => el.dispatchEvent(new Event('change', { bubbles: true }))", arg=element)
                 except Exception:
-                    await asyncio.sleep(1.5)
+                    pass
+                await asyncio.sleep(3.0)
                 log_cb(f"  ✅ Uploaded: {fname} (JS DOM scan)")
                 return True
     except Exception as e:
@@ -218,9 +216,10 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
             if await file_input.count() > 0:
                 await file_input.set_input_files(abs_path)
                 try:
-                    await page.wait_for_load_state("networkidle", timeout=4000)
+                    await page.evaluate("el => el.dispatchEvent(new Event('change', { bubbles: true }))", arg=file_input)
                 except Exception:
-                    await asyncio.sleep(1.5)
+                    pass
+                await asyncio.sleep(3.0)
                 log_cb(f"  ✅ Uploaded: {fname} (li.clearfix)")
                 return True
     except Exception:
@@ -237,9 +236,10 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
             if await sibling_input.count() > 0:
                 await sibling_input.first.set_input_files(abs_path)
                 try:
-                    await page.wait_for_load_state("networkidle", timeout=4000)
+                    await page.evaluate("el => el.dispatchEvent(new Event('change', { bubbles: true }))", arg=sibling_input.first)
                 except Exception:
-                    await asyncio.sleep(1.5)
+                    pass
+                await asyncio.sleep(3.0)
                 log_cb(f"  ✅ Uploaded: {fname} (label parent)")
                 return True
             grandparent = parent.locator("xpath=..")
@@ -247,9 +247,10 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
             if await gp_input.count() > 0:
                 await gp_input.first.set_input_files(abs_path)
                 try:
-                    await page.wait_for_load_state("networkidle", timeout=4000)
+                    await page.evaluate("el => el.dispatchEvent(new Event('change', { bubbles: true }))", arg=gp_input.first)
                 except Exception:
-                    await asyncio.sleep(1.5)
+                    pass
+                await asyncio.sleep(3.0)
                 log_cb(f"  ✅ Uploaded: {fname} (label grandparent)")
                 return True
     except Exception:

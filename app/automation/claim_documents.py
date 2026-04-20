@@ -480,9 +480,10 @@ async def fill_claim_documents(page, claim: ClaimData,
                 if ok:
                     # Wait for upload to process
                     try:
-                        await page.wait_for_load_state("networkidle", timeout=4000)
+                        await page.evaluate(f"() => {{ const el = document.querySelectorAll('input[type=\"file\"][name^=\"fileToUpload\"]')[{row_idx}]; if (el) el.dispatchEvent(new Event('change', {{bubbles:true}})); }}")
                     except Exception:
-                        await asyncio.sleep(1.5)
+                        pass
+                    await asyncio.sleep(3.0)
                     log_cb(f"    ✅ Uploaded: {fname}")
                 else:
                     log_cb(f"    ❌ Upload FAILED for: {fname}")
