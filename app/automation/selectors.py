@@ -107,6 +107,8 @@ ASSESSMENT = {
     # GST (auto-calculated by portal, but may need manual 0 entry)
     "gst_parts":          "#gstOnParts",
     "gst_labour":         "#gstOnLabourCharge",
+    "gst_18_parts":       "input[data-ng-model*='gst18AmountP'], input[ng-model*='gst18AmountP']",
+    "gst_18_labour":      "input[data-ng-model*='gst18AmountL'], input[ng-model*='gst18AmountL']",
     # Workshop invoice — NOTE: capital W, I, N in WorkshopInvoiceNo
     "ws_invoice_no":      "#WorkshopInvoiceNo",
     "ws_invoice_date":    "#labourInvoiceDate",

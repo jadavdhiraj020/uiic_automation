@@ -410,6 +410,36 @@ class MainWindow(QMainWindow):
                 self._claim.claim_doc_files  = self._scan_result.claim_doc_files
                 self._claim.assessment_files = self._scan_result.assessment_files
                 
+                # ── PDF Extraction for Workshop Invoice ──
+                invoice_pdf = self._scan_result.assessment_files.get("invoice")
+                if invoice_pdf and os.path.exists(invoice_pdf):
+                    try:
+                        import pdfplumber
+                        import re
+                        self._append_log("📄 Extracting Workshop Invoice details from PDF...")
+                        with pdfplumber.open(invoice_pdf) as pdf:
+                            text = pdf.pages[0].extract_text()
+                            if text:
+                                inv_match = re.search(r'Tax Invoice No\.(.*?)\(', text, re.IGNORECASE)
+                                if not inv_match:
+                                    inv_match = re.search(r'Tax Invoice No\.?\s*([A-Za-z0-9-]+)', text, re.IGNORECASE)
+                                
+                                date_match = re.search(r'Invoice Date and Time\s*(\d{2}/\d{2}/\d{4})', text, re.IGNORECASE)
+                                
+                                if inv_match:
+                                    ext_inv = inv_match.group(1).strip()
+                                    self._claim.workshop_invoice_no = ext_inv
+                                    self._claim._excel_coords["workshop_invoice_no"] = "PDF Source"
+                                    self._append_log(f"  ✅ WS Invoice No (from PDF): {ext_inv}")
+                                
+                                if date_match:
+                                    ext_date = date_match.group(1).strip()
+                                    self._claim.workshop_invoice_date = ext_date
+                                    self._claim._excel_coords["workshop_invoice_date"] = "PDF Source"
+                                    self._append_log(f"  ✅ WS Invoice Date (from PDF): {ext_date}")
+                    except Exception as e:
+                        self._append_log(f"  ⚠️ Could not parse invoice PDF: {e}")
+                
                 # Output the exact coordinates of where data was found
                 if hasattr(self._claim, "_excel_logs") and self._claim._excel_logs:
                     self._append_log("📌 Excel Data Sources Map:")

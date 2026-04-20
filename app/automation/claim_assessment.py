@@ -124,7 +124,7 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
     # (proven in Doc_uploader.py — most reliable)
     try:
         row = page.locator("li.clearfix").filter(
-            has=page.locator(f"text='{upload_label}'")
+            has=page.locator(f"*:has-text('{upload_label}')")
         ).filter(
             has=page.locator('input[type="file"]')
         ).first
@@ -211,12 +211,13 @@ async def _fill_parts(page, claim: ClaimData, log_cb: Callable, _src) -> None:
         await safe_fill_amount(page, ASSESSMENT["dep_50"],
                                claim.parts_50_dep_excl_gst, "50% Dep (Plastic)", log_cb,
                                source=_src("parts_50_dep_excl_gst"))
-        await safe_fill_amount(page, ASSESSMENT["dep_30"],
-                               claim.parts_30_dep_excl_gst, "30% Dep (Fibre)", log_cb,
-                               source=_src("parts_30_dep_excl_gst"))
+
         await safe_fill_amount(page, ASSESSMENT["nil_dep"],
                                claim.parts_nil_dep_excl_gst, "Nil Dep", log_cb,
                                source=_src("parts_nil_dep_excl_gst"))
+        await safe_fill_amount(page, ASSESSMENT["gst_18_parts"],
+                               claim.parts_gst18_amount, "Parts GST 18%", log_cb,
+                               source=_src("parts_gst18_amount"))
     except Exception as e:
         log_cb(f"  ❌ Parts section error: {e}")
 
@@ -226,6 +227,9 @@ async def _fill_labour(page, claim: ClaimData, log_cb: Callable, _src) -> None:
     try:
         await safe_fill_amount(page, ASSESSMENT["labour"],
                                claim.labour_excl_gst, "Labour (Excl GST)", log_cb,
+                               source=_src("labour_excl_gst"))
+        await safe_fill_amount(page, ASSESSMENT["gst_18_labour"],
+                               claim.labour_excl_gst, "Labour GST 18%", log_cb,
                                source=_src("labour_excl_gst"))
     except Exception as e:
         log_cb(f"  ❌ Labour section error: {e}")
@@ -295,8 +299,16 @@ async def _fill_invoice_details(page, claim: ClaimData, log_cb: Callable, _src) 
 async def _fill_report_details(page, claim: ClaimData, log_cb: Callable, _src) -> None:
     log_cb("\n📝 Report Details:")
     try:
+        import re
+        raw_ref = claim.final_report_no or ""
+        if len(claim.invoice_no or "") > len(raw_ref):
+            raw_ref = claim.invoice_no
+            
+        # The user requested to only enter the last value after dash/slash (e.g., '116')
+        clean_report_no = re.split(r'[/\\-]', raw_ref)[-1].strip() if raw_ref else ""
+        
         await safe_fill(page, ASSESSMENT["report_no"],
-                        claim.final_report_no, "Report No", log_cb,
+                        clean_report_no, "Report No", log_cb,
                         source=_src("final_report_no"))
         if claim.final_report_date and claim.final_report_date.strip():
             await safe_fill_date(page, ASSESSMENT["report_date"],

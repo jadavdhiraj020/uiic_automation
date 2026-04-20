@@ -98,13 +98,51 @@ def scan_folder(folder_path: str, config_dir: str) -> FolderScanResult:
             continue
 
         ext = Path(fname).suffix.lower()
+        fname_lower = fname.lower()
+
+        # ── Handle our generated subset excel directly ────────────────────────
+        if fname_lower == "re-inspection report format.xlsx":
+            if os.path.exists(full_path) and "reinspection_report" not in result.assessment_files:
+                result.assessment_files["reinspection_report"] = full_path
+                logger.info("Assessment file [reinspection_report]: Re-Inspection Report format.xlsx (previously generated)")
+            continue
 
         # ── Excel file ────────────────────────────────────────────────────────
         if ext in _EXCEL_EXTENSIONS:
             if result.excel_path is None:
                 result.excel_path = full_path
                 logger.info("Excel found: %s", fname)
+
+                # ── Auto-extract Sheet 7 for Re-Inspection Report ─────────────
+                spot_path = os.path.join(folder_path, "Re-Inspection Report format.xlsx")
+                if not os.path.exists(spot_path):
+                    try:
+                        import pandas as pd
+                        excel_data = pd.ExcelFile(full_path, engine="openpyxl")
+                        all_sheets = excel_data.sheet_names
+                        if len(all_sheets) > 6:
+                            target_sheet = all_sheets[6]
+                            logger.info(f"Extracting Sheet 7 ('{target_sheet}') for Re-Inspection Report...")
+                            df = excel_data.parse(sheet_name=target_sheet)
+                            with pd.ExcelWriter(spot_path, engine="openpyxl") as writer:
+                                df.to_excel(writer, sheet_name=target_sheet, index=False)
+                            logger.info(f"✅ Generated {spot_path}")
+                    except Exception as e:
+                        logger.warning(f"Could not extract Sheet 7: {e}")
+                
+                # If we successfully created/found Re-Inspection Report format.xlsx, assign it!
+                if os.path.exists(spot_path):
+                    if "reinspection_report" in result.assessment_files:
+                        logger.warning("Overriding previous reinspection_report with generated Excel Sheet 7.")
+                    result.assessment_files["reinspection_report"] = spot_path
+                    logger.info("Assessment file [reinspection_report]: %s", spot_path)
             else:
+                # ── Handle our generated subset excel directly so it doesn't get skipped if it shows up second ──
+                if fname_lower == "re-inspection report format.xlsx":
+                    result.assessment_files["reinspection_report"] = full_path
+                    logger.info("Assessment file [reinspection_report]: %s (previously generated)", full_path)
+                    continue
+
                 logger.warning("Multiple Excel files found. Keeping first: %s", result.excel_path)
                 result.skipped_files.append(full_path)
             continue

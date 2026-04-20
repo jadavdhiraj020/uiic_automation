@@ -1,60 +1,251 @@
-[18:14:06] 📁 Scanning folder: C:/Users/Dev/Downloads/uiic_automation
-[18:14:06] ⚠️  No Excel file found in folder!
-[18:14:14] 📁 Scanning folder: C:/Users/Dev/Downloads/automationfolderuploading
-[18:14:14] 📊 Excel: new_sample.xlsx
-[18:14:15] 📌 Excel Data Sources Map:
-[18:14:15]   📊 claim_no: '2012013126C050003001' (Source: R181C4 (Sheet1))
-[18:14:15]   📊 vehicle_no: 'HR 20AY 7179' (Source: R14C6 (Sheet2))
-[18:14:15]   📊 chassis_no: '033264' (Source: R155C6 (Sheet1))
-[18:14:15]   📊 engine_no: '172413' (Source: R157C6 (Sheet1))
-[18:14:15]   📊 date_of_survey: '16.02.2026' (Source: R57C7 (Sheet1))
-[18:14:15]   📊 place_of_survey: 'Plot No. 177-H, Ind. Area, Phase-I, Chandigarh' (Source: R64C7 (Sheet1))
-[18:14:15]   📊 surveyor_observation: 'As per the instructions of The Oriental Insurance Co Ltd, RO:-Service Centre, Sector-17, Chandigarh. I visited the Repairer's workshop. The Vehicle was carefully inspected, its damages were noted and photographs taken. The Photographs in the Under Repair Condition were also taken. The damages are commensurate with the cause and nature of accident.' (Source: R75C3 (Sheet1))
-[18:14:15]   📊 mobile_no: '098761-35253' (Source: R4C9 (Sheet1))
-[18:14:15]   📊 email_id: 'ksunilsurveyor@gmail.com' (Source: R5C9 (Sheet1))
-[18:14:15]   📊 initial_loss_amount: '82255.94' (Source: R146C6 (Sheet1))
-[18:14:15]   📊 salvage_value: '100' (Source: R148C7 (Sheet1))
-[18:14:15]   📊 parts_age_dep_excl_gst: '1989' (Source: R111C7 (Sheet1))
-[18:14:15]   📊 parts_50_dep_excl_gst: '4905.09' (Source: R111C8 (Sheet1))
-[18:14:15]   📊 parts_30_dep_excl_gst: '186' (Source: R111C9 (Sheet1))
-[18:14:15]   📊 parts_nil_dep_excl_gst: '7080' (Source: R111C10 (Sheet1))
-[18:14:15]   📊 labour_excl_gst: '59999.94' (Source: R123C9 (Sheet1))
-[18:14:15]   📊 towing_charges: '800' (Source: R144C7 (Sheet1))
-[18:14:15]   📊 traveling_expenses: '500' (Source: R30C8 (Sheet5))
-[18:14:15]   📊 photo_charges: '0' (Source: R32C8 (Sheet5))
-[18:14:15]   📊 daily_allowance: '0' (Source: R35C8 (Sheet5))
-[18:14:15]   📊 final_report_no: 'SK/2025-26/OICL/116' (Source: R10C4 (Sheet5))
-[18:14:15]   📊 payment_to: 'INSURED' (Source: R159C3 (Sheet1))
-[18:14:16] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[18:14:16] 🚀 Automation started — Claim: 2012013126C050003001
-[18:14:16] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[18:14:18] ------------------------------------
-[18:14:18] STEP 1 - Login
-[18:14:18] ------------------------------------
-[18:14:18] Navigating to portal...
-[18:14:20] Login page loaded.
-[18:14:20] Login attempt 1/7...
-[18:14:20] Reading CAPTCHA from canvas...
-[18:14:26] CAPTCHA candidates: ['CYr9Hr', 'CYR9HR', 'cyr9hr']
-[18:14:26] Trying CAPTCHA [primary / Mixed-Case]: 'CYr9Hr'
-[18:14:30]   Clicked login button
-[18:14:32] Login confirmed. CAPTCHA variant: primary / Mixed-Case
-[18:14:32]   Success signal: Dashboard tab detected: https://portal.uiic.in/surveyor/data/Surveyor.html?v=30631#/home
-[18:14:34] Locating dashboard/worklist page...
-[18:14:34] Found Surveyor page: https://portal.uiic.in/surveyor/data/Surveyor.html?v=30631#/home
-[18:14:36] ------------------------------------
-[18:14:36] STEP 2 - Navigate to Claim: 2012013126C050003001
-[18:14:36] ------------------------------------
-[18:14:36] 📌 Current URL: https://portal.uiic.in/surveyor/data/Surveyor.html?v=30631#/home
-[18:14:38] 📋 Clicked Worklist sidebar link.
-[18:14:40] 📌 Selecting Claim Type: Non Maruti
-[18:14:40]   ✅ Claim type set to: Non Maruti
-[18:14:42] 📌 Entering Claim No: 2012013126C050003001
-[18:14:42]   ✅ Claim number entered: 2012013126C050003001
-[18:14:43] 📌 Clicking Filter button...
-[18:14:43]   ✅ Filter button clicked
-[18:14:46] 📌 Waiting for search results...
-[18:14:48] 🔎 Scanning table page 1 for claim: 2012013126C050003001
-[18:14:48]   📊 Found 1 rows in table
-[18:14:48] ❌ Claim 2012013126C050003001 not found in worklist.
-[18:14:49] ❌ ERROR: Claim '2012013126C050003001' was not found in Worklist.
+[00:23:58] 📁 Scanning folder: C:/Users/jadav/Coding/Automation/UIIC/uiic_automation/automationfolderuploading
+[00:23:58] 📊 Excel: new_sample.xlsx
+[00:23:59] 📄 Extracting Workshop Invoice details from PDF...
+[00:24:00]   ✅ WS Invoice No (from PDF): INZ25-01569
+[00:24:00]   ✅ WS Invoice Date (from PDF): 27/01/2026
+[00:24:00] 📌 Excel Data Sources Map:
+[00:24:00]   📊 claim_no: '2012013126C050003001' (Source: R181C4 (Sheet1))
+[00:24:00]   📊 vehicle_no: 'HR 20AY 7179' (Source: R14C6 (Sheet2))
+[00:24:00]   📊 chassis_no: '033264' (Source: R155C6 (Sheet1))
+[00:24:00]   📊 engine_no: '172413' (Source: R157C6 (Sheet1))
+[00:24:00]   📊 date_of_survey: '16.02.2026' (Source: R57C7 (Sheet1))
+[00:24:00]   📊 place_of_survey: 'Plot No. 177-H, Ind. Area, Phase-I, Chandigarh' (Source: R64C7 (Sheet1))
+[00:24:00]   📊 surveyor_observation: 'As per the instructions of The Oriental Insurance Co Ltd, RO:-Service Centre, Sector-17, Chandigarh. I visited the Repairer's workshop. The Vehicle was carefully inspected, its damages were noted and photographs taken. The Photographs in the Under Repair Condition were also taken. The damages are commensurate with the cause and nature of accident.' (Source: R75C3 (Sheet1))
+[00:24:00]   📊 mobile_no: '098761-35253' (Source: R4C9 (Sheet1))
+[00:24:00]   📊 email_id: 'ksunilsurveyor@gmail.com' (Source: R5C9 (Sheet1))
+[00:24:00]   📊 initial_loss_amount: '82255.94' (Source: R146C6 (Sheet1))
+[00:24:00]   📊 compulsory_excess: '1000' (Source: R145C7 (Sheet1))
+[00:24:00]   📊 salvage_value: '100' (Source: R148C7 (Sheet1))
+[00:24:00]   📊 parts_age_dep_excl_gst: '1989' (Source: R111C7 (Sheet1))
+[00:24:00]   📊 parts_50_dep_excl_gst: '4905.09' (Source: R111C8 (Sheet1))
+[00:24:00]   📊 parts_nil_dep_excl_gst: '186' (Source: R111C9 (Sheet1))
+[00:24:00]   📊 parts_gst18_amount: '7080' (Source: R111C10 (Sheet1))
+[00:24:00]   📊 labour_excl_gst: '13170' (Source: R131C8 (Sheet1))
+[00:24:00]   📊 towing_charges: '800' (Source: R144C7 (Sheet1))
+[00:24:00]   📊 professional_fee: '1800' (Source: R28C8 (Sheet5))
+[00:24:00]   📊 traveling_expenses: '500' (Source: R30C8 (Sheet5))
+[00:24:00]   📊 photo_charges: '0' (Source: R32C8 (Sheet5))
+[00:24:00]   📊 daily_allowance: '0' (Source: R35C8 (Sheet5))
+[00:24:00]   📊 invoice_no: 'SK/2025-26/OICL/116' (Source: R10C4 (Sheet5))
+[00:24:00]   📊 invoice_date: '19.02.2026' (Source: R10C12 (Sheet5))
+[00:24:00]   📊 final_report_no: 'SK/2025-26/OICL/116' (Source: R8C3 (Sheet1))
+[00:24:00]   📊 final_report_date: '19.02.2026' (Source: R8C11 (Sheet1))
+[00:24:00]   📊 payment_to: 'INSURED' (Source: R159C3 (Sheet1))
+[00:28:07] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[00:28:07] 🚀 Automation started — Claim: 2012013126C050003001
+[00:28:07] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[00:28:09] ------------------------------------
+[00:28:09] STEP 1 - Login
+[00:28:09] ------------------------------------
+[00:28:09] Navigating to portal...
+[00:28:12] Login page loaded.
+[00:28:12] Login attempt 1/3...
+[00:28:12] Reading CAPTCHA from canvas...
+[00:28:26] CAPTCHA candidates: ['U5t1bG', 'U5T1BG', 'u5t1bg']
+[00:28:26] Trying CAPTCHA [primary / Mixed-Case]: 'U5t1bG'
+[00:28:30]   Clicked login button
+[00:28:32] Login confirmed. CAPTCHA variant: primary / Mixed-Case
+[00:28:32]   Success signal: Dashboard tab detected: https://portal.uiic.in/surveyor/data/Surveyor.html?v=89513#/home
+[00:28:34] Locating dashboard/worklist page...
+[00:28:34] Found Surveyor page: https://portal.uiic.in/surveyor/data/Surveyor.html?v=89513#/home
+[00:28:36] ------------------------------------
+[00:28:36] STEP 2 - Navigate to Claim: 2012013126C050003001
+[00:28:36] ------------------------------------
+[00:28:36] 📌 Current URL: https://portal.uiic.in/surveyor/data/Surveyor.html?v=89513#/home
+[00:28:38] 📋 Clicked Worklist sidebar link.
+[00:28:40] 📌 Selecting Claim Type: Non Maruti
+[00:28:40]   ✅ Claim type set to: Non Maruti
+[00:28:42] 📌 Entering Claim No: 2012013126C050003001
+[00:28:42]   ✅ Claim number entered: 2012013126C050003001
+[00:28:43] 📌 Clicking Filter button...
+[00:28:43]   ✅ Filter button clicked
+[00:28:46] 📌 Waiting for search results...
+[00:28:48] 🔎 Scanning table page 1 for claim: 2012013126C050003001
+[00:28:48]   📊 Found 2 rows in table
+[00:28:48]   ✅ Claim found in row 2: 1	2012013126C050003001	SANDEEP KAUR	03/04/2026 4:14:00 PM	01/04/2026 6:00:00 AM	...
+[00:28:48]   ✅ Clicked Action button for claim 2012013126C050003001
+[00:28:54]   📌 No new tab — staying on: https://portal.uiic.in/surveyor/data/Surveyor.html?v=89513#/SurveyorClaimSurvey
+[00:28:56] ✅ Claim 2012013126C050003001 found and Action clicked!
+[00:28:56] 📌 Working on page: https://portal.uiic.in/surveyor/data/Surveyor.html?v=89513#/SurveyorClaimSurvey
+[00:28:57] ------------------------------------
+[00:28:57] STEP 3 - Fill Interim Report
+[00:28:57] ------------------------------------
+[00:28:57] 📑 Clicking 'Interim' tab...
+[00:28:59]   ✅ 'Interim' tab (idx 1)
+[00:28:59] ✏️  Filling Interim Report...
+[00:29:10]   ✅ [Selected] Type of Settlement : 'Partial Loss' (Source: Excel Data, Mode: Partial Text)
+[00:29:10]   ✅ [Filled] Date of Survey : '16/02/2026' (Source: R57C7 (Sheet1), Mode: JS)
+[00:29:10]   ✅ [Selected] Time HH : '10' (Source: R57C7 (Sheet1), Mode: Exact Label)
+[00:29:11]   ✅ [Selected] Time MM : '00' (Source: R57C7 (Sheet1), Mode: Exact Label)
+[00:29:11]   ⏭️  Odometer Reading: skipped (portal field is read-only)
+[00:29:12]   ✅ [Filled] Place of Survey : 'Plot No 177 H Ind Area Phase I Chandigarh' (Source: R64C7 (Sheet1))
+[00:29:12]   🔘 Setting Yes radios...
+[00:29:12]   🔘 JS radios set: 5/5 → ['ynVehicleInspected', 'ynSurveyCompleted', 'ynDLApplicable', 'ynDLVerified', 'ynRCBookVerified']
+[00:29:12]   ✅ [Filled] Initial Loss Amount : '82256' (Source: R146C6 (Sheet1))
+[00:29:13]   ✅ [Filled] Mobile No : '9876135253' (Source: R4C9 (Sheet1))
+[00:29:14]   ✅ [Filled] Email ID : 'ksunilsurveyor@gmail.com' (Source: R5C9 (Sheet1))
+[00:29:15]   ✅ [Filled] Expected Completion Date : '26/02/2026' (Source: R57C7 (Sheet1) +10d, Mode: JS)
+[00:29:15]   ✅ [Filled] Surveyor's Observation : 'As per the instructions of The Oriental Insurance Co Ltd RO ' (Source: R75C3 (Sheet1))
+[00:29:16]   ✅ [Filled] Remarks : 'OK' (Source: Hardcoded)
+[00:29:16] ✅ Interim Report complete.
+[00:29:17] ------------------------------------
+[00:29:17] STEP 4 - Upload Claim Documents
+[00:29:17] ------------------------------------
+[00:29:17] 📑 Clicking 'Documents' tab...
+[00:29:19]   ✅ 'Documents' tab (idx 2)
+[00:29:19] 🔘 Setting verification radios...
+[00:29:19]   🔘 Doc radios: 3/3 named + 2 auto-YES
+[00:29:19]   ✅ Payment: Reimbursement (Source: R159C3 (Sheet1))
+[00:29:19] 
+📎 Building upload queue...
+[00:29:19]   📎 [Discharge or Satisfaction Voucher]: Discharge_Voucher.pdf (1.0MB)
+[00:29:19]   📎 [Driving License]: Driving_License.pdf (1.9MB)
+[00:29:19]   📎 [Vehicle Fitness Certificate]: Fitness_Certificate.jpeg (0.3MB)
+[00:29:19]   📎 [PAN Card]: PAN_Card.jpg (0.0MB)
+[00:29:19]   📎 [RC Book]: Registration_Certificate.pdf (1.6MB)
+[00:29:19]   📎 [Road Permit for Commercial Vehicle]: Route_Permit.pdf (1.0MB)
+[00:29:19]   📎 [Cancelled Cheque Or Bank Details]: cancel_check.jpeg (0.2MB)
+[00:29:19]   📎 [Other 1]: other-Partnership_Deed.pdf (0.7MB)
+[00:29:19]   📎 [Other 2]: other-Payment_Receipt.pdf (0.0MB)
+[00:29:19]   📎 [Other 3]: other_Tax_Report.jpeg (0.1MB)
+[00:29:19] 
+📤 Processing 10 document rows...
+[00:29:19]   ✅ Upload panel ready
+[00:29:19] 
+  [1/10] 'Discharge or Satisfaction Voucher' → Discharge_Voucher.pdf
+[00:29:19]     ℹ️  Using pre-existing row (row count: 1)
+[00:29:19]       ✅ Doc type: Discharge or Satisfaction Voucher
+[00:29:19]     ✅ Uploaded: Discharge_Voucher.pdf
+[00:29:19] 
+  [2/10] 'Driving License' → Driving_License.pdf
+[00:29:19]     ➕ Clicking PLUS for new row...
+[00:29:21]     ➕ New row added (plus img)
+[00:29:21]       ✅ Doc type: Driving License
+[00:29:21]     ✅ Uploaded: Driving_License.pdf
+[00:29:21] 
+  [3/10] 'Vehicle Fitness Certificate' → Fitness_Certificate.jpeg
+[00:29:21]     ➕ Clicking PLUS for new row...
+[00:29:22]     ➕ New row added (plus img)
+[00:29:22]       ✅ Doc type: Vehicle Fitness Certificate
+[00:29:22]     ✅ Uploaded: Fitness_Certificate.jpeg
+[00:29:22] 
+  [4/10] 'PAN Card' → PAN_Card.jpg
+[00:29:22]     ➕ Clicking PLUS for new row...
+[00:29:24]     ➕ New row added (plus img)
+[00:29:24]       ✅ Doc type: PAN Card
+[00:29:24]     ✅ Uploaded: PAN_Card.jpg
+[00:29:24] 
+  [5/10] 'RC Book' → Registration_Certificate.pdf
+[00:29:24]     ➕ Clicking PLUS for new row...
+[00:29:25]     ➕ New row added (plus img)
+[00:29:25]       ✅ Doc type: RC Book
+[00:29:25]     ✅ Uploaded: Registration_Certificate.pdf
+[00:29:25] 
+  [6/10] 'Road Permit for Commercial Vehicle' → Route_Permit.pdf
+[00:29:25]     ➕ Clicking PLUS for new row...
+[00:29:27]     ➕ New row added (plus img)
+[00:29:27]       ✅ Doc type: Road Permit for Commercial Vehicle
+[00:29:27]     ✅ Uploaded: Route_Permit.pdf
+[00:29:27] 
+  [7/10] 'Cancelled Cheque Or Bank Details' → cancel_check.jpeg
+[00:29:27]     ➕ Clicking PLUS for new row...
+[00:29:28]     ➕ New row added (plus img)
+[00:29:28]       ✅ Doc type: Cancelled Cheque Or Bank Details
+[00:29:28]     ✅ Uploaded: cancel_check.jpeg
+[00:29:28] 
+  [8/10] 'Other 1' → other-Partnership_Deed.pdf
+[00:29:28]     ➕ Clicking PLUS for new row...
+[00:29:30]     ➕ New row added (plus img)
+[00:29:30]       ✅ Doc type: Other 1
+[00:29:30]     ✅ Uploaded: other-Partnership_Deed.pdf
+[00:29:30] 
+  [9/10] 'Other 2' → other-Payment_Receipt.pdf
+[00:29:30]     ➕ Clicking PLUS for new row...
+[00:29:31]     ➕ New row added (plus img)
+[00:29:31]       ✅ Doc type: Other 2
+[00:29:32]     ✅ Uploaded: other-Payment_Receipt.pdf
+[00:29:32] 
+  [10/10] 'Other 3' → other_Tax_Report.jpeg
+[00:29:32]     ➕ Clicking PLUS for new row...
+[00:29:33]     ➕ New row added (plus img)
+[00:29:33]       ✅ Doc type: Other 3
+[00:29:33]     ✅ Uploaded: other_Tax_Report.jpeg
+[00:29:33] 
+✅ Claim Documents complete — 10 rows processed.
+[00:29:34] ------------------------------------
+[00:29:34] STEP 5 - Fill Claim Assessment
+[00:29:34] ------------------------------------
+[00:29:34] 📑 Clicking 'Assessment' tab...
+[00:29:36]   ✅ 'Assessment' tab (idx 3)
+[00:29:36] 📊 Filling Claim Assessment...
+[00:29:36] 
+🔩 Parts Depreciation:
+[00:29:36]   ✅ [Filled] Age Dep (Metal) : '1989' (Source: R111C7 (Sheet1))
+[00:29:37]   ✅ [Filled] 50% Dep (Plastic) : '4905' (Source: R111C8 (Sheet1))
+[00:29:38]   ✅ [Filled] Nil Dep : '186' (Source: R111C9 (Sheet1))
+[00:29:39]   ✅ [Filled] Parts GST 18% : '7080' (Source: R111C10 (Sheet1))
+[00:29:39] 
+👷 Labour:
+[00:29:40]   ✅ [Filled] Labour (Excl GST) : '13170' (Source: R131C8 (Sheet1))
+[00:29:40]   ✅ [Filled] Labour GST 18% : '13170' (Source: R131C8 (Sheet1))
+[00:29:40] 
+🧾 Workshop Invoice:
+[00:29:41]   ✅ [Filled] WS Invoice No : 'INZ25-01569' (Source: PDF Source)
+[00:29:42]   ✅ [Filled] WS Invoice Date : '27/01/2026' (Source: PDF Source, Mode: JS)
+[00:29:42] 
+💰 Other Charges:
+[00:29:43]   ✅ [Filled] Towing Charges : '800' (Source: R144C7 (Sheet1))
+[00:29:43]   ✅ [Filled] Spot Repairs : '0' (Source: Excel Data)
+[00:29:44]   ✅ [Filled] Voluntary Excess : '0' (Source: Excel Data)
+[00:29:45]   ✅ [Filled] Compulsory Excess : '1000' (Source: R145C7 (Sheet1))
+[00:29:46]   ✅ [Filled] Imposed Excess : '0' (Source: Excel Data)
+[00:29:47]   ✅ [Filled] Salvage Value : '100' (Source: R148C7 (Sheet1))
+[00:29:47] 
+📋 Invoice Details:
+[00:29:47]   ✅ [Filled] Invoice No : 'SK/2025-26/OICL/116' (Source: R10C4 (Sheet5))
+[00:29:48]   ✅ [Filled] Invoice Date : '19/02/2026' (Source: R10C12 (Sheet5), Mode: JS)
+[00:29:48] 
+📝 Report Details:
+[00:29:49]   ✅ [Filled] Report No : '116' (Source: R8C3 (Sheet1))
+[00:29:49]   ✅ [Filled] Report Date : '19/02/2026' (Source: R8C11 (Sheet1), Mode: JS)
+[00:29:49] 
+💼 Surveyor Charges:
+[00:29:50]   ✅ [Filled] Travel Expenses : '500' (Source: R30C8 (Sheet5))
+[00:29:51]   ✅ [Filled] Professional Fee : '1800' (Source: R28C8 (Sheet5))
+[00:29:52]   ✅ [Filled] Daily Allowance : '0' (Source: R35C8 (Sheet5))
+[00:29:52]   ✅ [Filled] Photo Charges : '0' (Source: R32C8 (Sheet5))
+[00:29:57]   🔄 Total Claimed Amount: retry 1 (Locator.wait_for: Timeout 5000ms exceeded.
+Call log:
+  - wai)
+[00:30:03]   ⚠️  Total Claimed Amount: Locator.wait_for: Timeout 5000ms exceeded.
+Call log:
+  - waiting for locator("#totalClaimedAmt, #tot
+[00:30:03] 
+✍️  Declaration:
+[00:30:03]   ✅ Declaration: Yes (broad:
+                             )
+[00:30:04]   ✅ [Filled] Remarks : 'OK' (Source: Hardcoded)
+[00:30:04] 
+📤 Uploading Assessment Documents...
+[00:30:04]   ▶ [Upload Invoice] ← Final_Invoice.pdf
+[00:30:04]   ✅ Uploaded: Final_Invoice.pdf (li.clearfix)
+[00:30:04]   ▶ [Upload Estimate] ← Repair_Estimate.pdf
+[00:30:04]   ✅ Uploaded: Repair_Estimate.pdf (li.clearfix)
+[00:30:04]   ▶ [Upload Re-Inspection Report] ← Spot_report.pdf
+[00:30:04]   ✅ Uploaded: Spot_report.pdf (li.clearfix)
+[00:30:04]   ▶ [Upload Survey Report] ← Survey_Report.pdf
+[00:30:05]   ✅ Uploaded: Survey_Report.pdf (li.clearfix)
+[00:30:05]   ▶ [Upload Assessment Report] ← assessment.pdf
+[00:30:05]   ✅ Uploaded: assessment.pdf (li.clearfix)
+[00:30:05]   📁 5/5 files uploaded
+[00:30:05] 
+✅ Claim Assessment complete.
+[00:30:05] 👀 Review all tabs then click 'Final Submit' manually.
+[00:30:05] 
+[00:30:05] AUTOMATION COMPLETE
+[00:30:05] Please review all tabs in the browser, then click Final Submit manually.
+[00:30:05] 
+[00:30:05] Browser left open for manual review. Click Stop in the app when you are done.
+[00:40:26] Stop requested. Closing automation safely...
+[00:40:26] ■  Stop requested by user.
+[00:40:29] Automation finished and browser session was closed.

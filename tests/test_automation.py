@@ -489,7 +489,7 @@ class TestFieldMapping:
 
     def test_parts_fields_use_sub_total(self, mapping):
         for f in ["parts_age_dep_excl_gst", "parts_50_dep_excl_gst",
-                   "parts_30_dep_excl_gst", "parts_nil_dep_excl_gst"]:
+                   "parts_nil_dep_excl_gst", "parts_gst18_amount"]:
             assert mapping[f]["search_label"] == "SUB TOTAL", \
                 f"{f} should use 'SUB TOTAL' label"
 
@@ -556,6 +556,12 @@ class TestDocMapping:
     def test_doc_mapping_not_empty(self, doc_mapping):
         assert len(doc_mapping) > 0
 
+    def test_spot_report_not_reinspection(self, doc_mapping):
+        """Spot report should NOT be mistakenly mapped as a Re-Inspection report."""
+        assessment_tab = doc_mapping.get("claim_assessment_tab", {})
+        assert assessment_tab.get("spot_report") != "reinspection_report", \
+            "Spot report must not be mapped to Re-Inspection Report."
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 12. EXPECTED COMPLETION DATE
@@ -581,3 +587,32 @@ class TestExpectedCompletionDate:
         dt = datetime.strptime("25/12/2025", "%d/%m/%Y")
         result = (dt + timedelta(days=10)).strftime("%d/%m/%Y")
         assert result == "04/01/2026"
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 13. REPORT DETAILS EXTRACTION LOGIC
+# ═════════════════════════════════════════════════════════════════════════════
+
+class TestReportNumberLogic:
+    """Extracting correct report numbers from variable length strings."""
+
+    def _extract(self, invoice_no, final_report_no):
+        raw_ref = final_report_no or ""
+        if len(invoice_no or "") > len(raw_ref):
+            raw_ref = invoice_no
+        return re.split(r'[/\\-]', raw_ref)[-1].strip() if raw_ref else ""
+
+    def test_longest_ref_chosen(self):
+        # Invoice no is longer
+        assert self._extract("SK/2025-26/OICL/116", "SK/2025-26") == "116"
+        # Final report no is longer
+        assert self._extract("SK/26", "SK/2025-26/116") == "116"
+
+    def test_dash_separator(self):
+        assert self._extract("SK/2025-26-116", "") == "116"
+
+    def test_single_number(self):
+        assert self._extract("116", "") == "116"
+
+    def test_empty_string(self):
+        assert self._extract("", "") == ""

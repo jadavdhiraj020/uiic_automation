@@ -35,8 +35,8 @@ class ClaimData:
     # ── Claim Assessment — Parts ──────────────────────────────────────────────
     parts_age_dep_excl_gst: str = "0"
     parts_50_dep_excl_gst: str = "0"
-    parts_30_dep_excl_gst: str = "0"
     parts_nil_dep_excl_gst: str = "0"
+    parts_gst18_amount: str = "0"
 
     # ── Claim Assessment — Labour ─────────────────────────────────────────────
     labour_excl_gst: str = "0"
@@ -140,13 +140,16 @@ class ClaimData:
             ("Date of Survey",        self.date_of_survey,        True,  _src("date_of_survey")),
             ("Time of Survey",        f"{self.time_hh}:{self.time_mm}" if self.time_hh else "", False, _src("time_hh")),
             ("Place of Survey",       self.place_of_survey,       True,  _src("place_of_survey")),
+            ("Mobile No",             self.mobile_no,             False, _src("mobile_no")),
+            ("Email ID",              self.email_id,              False, _src("email_id")),
+            ("Expected Compl. Date",  self.expected_completion_date, False, _src("expected_completion_date") or ("Calculated from Survey Date" if self.date_of_survey else "")),
             ("Type of Settlement",    self.type_of_settlement,    True,  _src("type_of_settlement")),
             ("Odometer Reading",      self.odometer,              False, _src("odometer")),
             ("Initial Loss (₹)",      self.initial_loss_amount,   True,  _src("initial_loss_amount")),
             ("Parts Age Dep (₹)",     self.parts_age_dep_excl_gst, False, _src("parts_age_dep_excl_gst")),
             ("Parts 50% Dep (₹)",     self.parts_50_dep_excl_gst,  False, _src("parts_50_dep_excl_gst")),
-            ("Parts 30% Dep (₹)",     self.parts_30_dep_excl_gst,  False, _src("parts_30_dep_excl_gst")),
             ("Parts Nil Dep (₹)",     self.parts_nil_dep_excl_gst, False, _src("parts_nil_dep_excl_gst")),
+            ("Parts GST 18% (₹)",     self.parts_gst18_amount,     False, _src("parts_gst18_amount")),
             ("Labour (₹)",            self.labour_excl_gst,        True,  _src("labour_excl_gst")),
             ("Workshop Inv No",       self.workshop_invoice_no,   False, _src("workshop_invoice_no")),
             ("Workshop Inv Date",     self.workshop_invoice_date, False, _src("workshop_invoice_date")),

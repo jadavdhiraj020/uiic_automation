@@ -63,7 +63,6 @@
     "estimate":                 "estimate",
     "final_invoice":            "invoice",
     "invoice":                  "invoice",
-    "spot_report":              "reinspection_report",
     "re_inspection":            "reinspection_report",
     "reinspection":             "reinspection_report"
   }
