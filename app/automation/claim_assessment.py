@@ -96,17 +96,19 @@ async def _click_declaration_radio(page, log_cb: Callable) -> None:
 
 
 async def _upload_by_label(page, upload_label: str, file_path: str,
-                            log_cb: Callable) -> bool:
+                            log_cb: Callable, slot_key: str = "") -> bool:
     """
-    Find the file input associated with the given section heading label.
+    Find the file input associated with the given upload label.
 
-    REWRITTEN 2026-04-20 — Uses proven approach from Doc_uploader.py:
-      Strategy 1: Find li.clearfix containing both the label text AND a file input
-      Strategy 2: Find label by text, then traverse parent/grandparent for file input
-      Strategy 3: XPath following fallback
+    REWRITTEN 2026-04-21 — Confirmed from live DOM:
+      Portal uses name="fileToUploadN" where N = slot index (0-4).
+      Strategy 0: Direct input[name='fileToUploadN'] — bulletproof
+      Strategy 1: JS DOM scan — walks li.clearfix rows by text
+      Strategy 2: li.clearfix Playwright filter
+      Strategy 3: label parent/grandparent traversal
+      Strategy 4: XPath following fallback
 
-    This is more robust than pure XPath following which can accidentally
-    grab file inputs from other sections.
+    Also handles Angular's data-ng-disabled by removing disabled attr via JS.
     """
     fname = os.path.basename(file_path)
     if not os.path.isfile(file_path):
@@ -120,8 +122,91 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
     log_cb(f"  ▶ [{upload_label}] ← {fname}")
     abs_path = str(os.path.abspath(file_path))
 
-    # Strategy 1: Find li.clearfix that contains both the label text and a file input
-    # (proven in Doc_uploader.py — most reliable)
+    # Strategy 0: Direct name selector — from confirmed DOM structure
+    # Portal uses: <input type="file" name="fileToUploadN"> where N = slot index
+    slot_idx = ASSESSMENT_SLOTS.get(slot_key)
+    if slot_idx is not None:
+        try:
+            direct_sel = f'input[name="fileToUpload{slot_idx}"]'
+            # Remove Angular disabled attribute first via JS
+            await page.evaluate(f"""
+                (() => {{
+                    const inp = document.querySelector('{direct_sel}');
+                    if (inp) {{
+                        inp.removeAttribute('disabled');
+                        inp.removeAttribute('ng-disabled');
+                        inp.removeAttribute('data-ng-disabled');
+                        inp.disabled = false;
+                    }}
+                }})();
+            """)
+            await asyncio.sleep(0.2)
+
+            el = page.locator(direct_sel).first
+            if await el.count() > 0:
+                await el.set_input_files(abs_path)
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=5000)
+                except Exception:
+                    await asyncio.sleep(1.5)
+                log_cb(f"  ✅ Uploaded: {fname} (direct name=fileToUpload{slot_idx})")
+                return True
+        except Exception as e:
+            log_cb(f"  ⚠️  Direct selector failed: {str(e)[:80]}")
+
+    # Strategy 1: JS that finds the input, removes disabled, and returns it
+    try:
+        js_label = upload_label.replace("'", "\\'")
+        input_handle = await page.evaluate_handle(f"""
+            (() => {{
+                const target = '{js_label}'.toLowerCase();
+                const rows = document.querySelectorAll('li.clearfix');
+                for (const row of rows) {{
+                    const text = row.textContent.toLowerCase().replace(/\\s+/g, ' ');
+                    if (text.includes(target)) {{
+                        const inp = row.querySelector('input[type="file"]');
+                        if (inp) {{
+                            inp.removeAttribute('disabled');
+                            inp.disabled = false;
+                            return inp;
+                        }}
+                    }}
+                }}
+                // Fallback: scan labels
+                const allLabels = document.querySelectorAll('label, span, td, b, strong');
+                for (const lbl of allLabels) {{
+                    const text = lbl.textContent.toLowerCase().replace(/\\s+/g, ' ');
+                    if (text.includes(target)) {{
+                        let el = lbl;
+                        for (let i = 0; i < 5; i++) {{
+                            el = el.parentElement;
+                            if (!el) break;
+                            const inp = el.querySelector('input[type="file"]');
+                            if (inp) {{
+                                inp.removeAttribute('disabled');
+                                inp.disabled = false;
+                                return inp;
+                            }}
+                        }}
+                    }}
+                }}
+                return null;
+            }})()
+        """)
+        if input_handle:
+            element = input_handle.as_element()
+            if element:
+                await element.set_input_files(abs_path)
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=4000)
+                except Exception:
+                    await asyncio.sleep(1.5)
+                log_cb(f"  ✅ Uploaded: {fname} (JS DOM scan)")
+                return True
+    except Exception as e:
+        log_cb(f"  ⚠️  JS strategy failed for [{upload_label}]: {str(e)[:80]}")
+
+    # Strategy 2: Playwright li.clearfix filter
     try:
         row = page.locator("li.clearfix").filter(
             has=page.locator(f"*:has-text('{upload_label}')")
@@ -141,14 +226,12 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
     except Exception:
         pass
 
-    # Strategy 2: Find label by text, then look for file input in parent/grandparent
-    # (proven in Doc_uploader.py)
+    # Strategy 3: label parent/grandparent traversal
     try:
         labels = page.locator(f"label:has-text('{upload_label}')")
         label_count = await labels.count()
         for i in range(label_count):
             lbl = labels.nth(i)
-            # Look in parent container
             parent = lbl.locator("xpath=..")
             sibling_input = parent.locator('input[type="file"]')
             if await sibling_input.count() > 0:
@@ -159,7 +242,6 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
                     await asyncio.sleep(1.5)
                 log_cb(f"  ✅ Uploaded: {fname} (label parent)")
                 return True
-            # Try grandparent
             grandparent = parent.locator("xpath=..")
             gp_input = grandparent.locator('input[type="file"]')
             if await gp_input.count() > 0:
@@ -173,7 +255,7 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
     except Exception:
         pass
 
-    # Strategy 3: XPath following fallback (original approach)
+    # Strategy 4: XPath following fallback
     label_selectors = [
         f"span:has-text('{upload_label}')",
         f"label:has-text('{upload_label}')",
@@ -356,7 +438,8 @@ async def _upload_all(page, claim: ClaimData, log_cb: Callable) -> None:
             continue
         upload_label = ASSESSMENT_UPLOAD_LABELS.get(slot_key, slot_key)
         try:
-            ok = await _upload_by_label(page, upload_label, file_path, log_cb)
+            ok = await _upload_by_label(page, upload_label, file_path, log_cb,
+                                         slot_key=slot_key)
             if ok:
                 count += 1
         except Exception as e:

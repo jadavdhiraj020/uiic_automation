@@ -27,8 +27,14 @@ logger = logging.getLogger(__name__)
 
 
 def _clean_mobile(raw: str) -> str:
-    """Strip to digits only, take last 10 (removes leading 0 and dashes)."""
-    digits = re.sub(r"[^\d]", "", str(raw))
+    """Strip to digits only, take last 10 (removes leading 0 and dashes).
+    Also handles Excel float format (e.g. '9876135253.0') by stripping '.0' first.
+    """
+    s = str(raw).strip()
+    # Excel stores phone numbers as floats — strip trailing .0 before digit extraction
+    if re.match(r'^\d+\.0$', s):
+        s = s[:-2]
+    digits = re.sub(r"[^\d]", "", s)
     return digits[-10:] if len(digits) >= 10 else digits
 
 
