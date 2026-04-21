@@ -1,230 +1,290 @@
-<div align="center">
-  
-# 🏢 UIIC Surveyor Automation 🚀
+# UIIC Surveyor Automation
 
-**An enterprise-grade, zero-click automation suite for UIIC Insurance Surveyors.**
+Desktop automation tool for processing UIIC surveyor claims using a PyQt6 UI, Playwright browser automation, and PaddleOCR-based CAPTCHA solving.
 
-[![Python 3.12](https://img.shields.io/badge/Python-3.12-blue?logo=python&logoColor=white)](#)
-[![PyQt6](https://img.shields.io/badge/GUI-PyQt6-green?logo=qt)](#)
-[![Playwright](https://img.shields.io/badge/Browser-Playwright-orange?logo=microsoftedge)](#)
-[![PaddleOCR](https://img.shields.io/badge/AI-PaddleOCR-red?logo=paddlepaddle)](#)
+This project is designed for Windows workflows and can be run from source or packaged as a standalone EXE.
 
-*Automate claim submissions on the [UIIC Surveyor Portal](https://portal.uiic.in/surveyor/) — from auto-solving CAPTCHAs to final document uploads — in under 2 minutes.*
+## What This Project Does
 
-</div>
+- Logs in to the UIIC surveyor portal.
+- Solves portal CAPTCHA locally using PaddleOCR.
+- Navigates to the target claim in worklist.
+- Fills interim report fields.
+- Uploads claim documents and assessment files.
+- Fills claim assessment values from Excel data.
+- Leaves browser open at the end for final manual review and submit.
 
-<br>
+## Key Tech Stack
 
----
+- Python 3.10 to 3.12
+- PyQt6 (desktop UI)
+- Playwright (browser automation)
+- PaddleOCR / PaddlePaddle (CAPTCHA OCR)
+- pandas + openpyxl + xlrd (Excel ingestion)
+- PyInstaller (Windows packaging)
 
-## ✨ Why This Exists
-Manually filling out insurance claims on the UIIC Surveyor Portal takes time and is prone to human error. This application reads your Excel survey reports, solves the portal's login CAPTCHA using deep learning, and automatically fills out all complex web forms identically to how a human would (but flawlessly and much faster).
+## Requirements
 
-<br>
+- OS: Windows 10/11
+- Python: 3.10 to 3.12
+  - Preferred for release builds: Python 3.10
+  - Supported for local development: Python 3.10/3.11/3.12
+- Microsoft Edge/Chromium runtime support (installed automatically via Playwright command below)
 
----
+## Package Manager: uv (Recommended)
 
-## 👥 For Surveyors (Non-Technical Users)
+This repository uses `uv` as the Python package manager, but installs from the repository requirement files for deterministic Windows behavior.
 
-### 1️⃣ Installation & Setup
+### 1. Install uv
 
-1. **Download** the provided ZIP file containing the compiled `.exe` application.
-   <br>
-2. **Extract** the ZIP file to a safe location on your computer (e.g., your Desktop).
-   <br>
-3. Open the extracted `UIIC_Surveyor_Automation` folder.
-   <br>
-4. Double-click the **`UIIC_Surveyor_Automation.exe`** application icon to launch it.
+Pick one method:
 
-<br>
+```powershell
+winget install --id=astral-sh.uv -e
+```
 
-### 2️⃣ Setting Up Your Claim Folder
+or
 
-Before starting the bot, you must place all files for a single claim into **one single folder**.
+```powershell
+pip install uv
+```
+
+### 2. Clone and enter project
+
+```powershell
+git clone <your-repo-url>
+cd uiic_automation
+```
+
+### 3. Create environment and install dependencies (stable path)
+
+```powershell
+uv venv --python 3.10
+uv pip install -r requirements.txt
+```
+
+Notes:
+- This project currently relies on curated constraints in `requirements.txt` / `requirements-build.txt`.
+- Avoid `uv sync` on fresh machines unless a validated lockfile is maintained for your target environment.
+
+### 4. Install Playwright browser runtime
+
+```powershell
+uv run playwright install chromium
+```
+
+### 5. (Optional) Install test tooling
+
+```powershell
+uv pip install pytest
+```
+
+### 6. Verify installation quickly
+
+```powershell
+uv run python -c "import PyQt6,playwright,paddleocr,pandas; print('OK')"
+```
+
+## Run the App (Source)
+
+```powershell
+uv run python main.py
+```
+
+## End-User Usage Flow
+
+1. Enter portal username/password.
+2. Select a single claim folder.
+3. Start automation.
+4. Wait for the bot to complete all steps.
+5. Perform final manual review and submit in portal.
+
+Important:
+- Automation intentionally keeps the browser open at the end.
+- Final submit should be done manually after verification.
+
+## Claim Folder Structure
+
+Keep one claim per folder. Include:
+
+- One Excel report file (`.xls` or `.xlsx`)
+- Claim document files (PDF/images)
+- Assessment-related files (invoice/report photos etc.)
+
+Example:
 
 ```text
-📁 Your_Claim_Folder/
-│
-├── 📊 new_sample.xlsx                    ← Your Surveyor Report (Excel file)
-│
-├── 📄 Discharge_Voucher.pdf              ← Claim Documents
-├── 📄 Driving_License.pdf
-├── 📄 Registration_Certificate.pdf
-│
-├── 📄 Final_Invoice.pdf                  ← Assessment Documents
-├── 📄 Survey_Report.pdf
-│
-└── 📄 other-Payment_Receipt.pdf          ← Extra docs (auto-numbered)
+Your_Claim_Folder/
+|-- survey_report.xlsx
+|-- Driving_License.pdf
+|-- Registration_Certificate.pdf
+|-- Discharge_Voucher.pdf
+|-- Final_Invoice.pdf
+|-- Survey_Report.pdf
+`-- other-Additional_Doc.pdf
 ```
 
-<br>
+## Excel Data Expectations
 
-### 3️⃣ Running the Automation (Step-by-Step)
+The parser is label-driven (not fixed-cell driven). It scans sheets and extracts values near known labels.
 
-1. **Open** the application window.
-   <br>
-2. **Enter Credentials:** Type your UIIC Portal Username and Password into the top boxes.
-   <br>
-3. **Select Folder:** Click the **Browse** button and select the folder you organized in the step above.
-   <br>
-4. **Start:** Click **Start Automation**.
+Typical labels used by the automation include:
 
-**What the bot will do automatically:**
-* **Login:** Solves the CAPTCHA image and securely logs into the portal.
-* **Navigate:** Finds your specific claim number in your worklist.
-* **Interim Report:** Fills out survey dates, locations, and your observations.
-* **Documents:** Uploads all your PDFs and images to the correct UIIC portal categories.
-* **Assessment:** Calculates and fills out parts depreciation, labour charges, towing fees, and surveyor fees.
+- `Claim no`
+- `Date and Time of Survey`
+- `Workshop`
+- `Mobile:`
+- `e-mail:-`
+- `OBERVATIONS/COMMENTS`
+- `PAYMENT MADE IN THE FAVOUR OF`
+- `NET PAYABLE`
+- `SUB TOTAL`
+- `LABOUR ESTIMATED`
+- `TOWING CHARGES`
+- `LESS SALVAGE VALUE`
+- `CONVEYANCE CHARGES`
+- `PROFESSIONAL FEE`
+- `DAILY ALLOWANCE`
+- `PHOTOGRAPHS`
+- `Ref:`
 
-> ⚠️ **CRITICAL STEP:** The bot will intentionally stop and leave the browser open at the very end. You must manually review the filled data and click the final **Submit** button on the portal yourself!
+If your organization uses a different wording pattern, update mapping files in the `config/` directory.
 
-<br>
+## Configuration
 
-### ⚙️ Adjusting the Typing Speed (Humanizer)
+Project config files:
 
-To prevent the website from blocking the bot, it is programmed to type at a human speed. You can easily make it faster or slower:
+- `config/settings.json`
+- `config/field_mapping.json`
+- `config/doc_mapping.json`
 
-1. Open **File Explorer** and paste this into the address bar at the top:
-   `%LOCALAPPDATA%\UIIC_Surveyor_Automation\config`
-   <br>
-2. Open the `settings.json` file in Notepad.
-   <br>
-3. Find the line that says `"browser_slow_mo_ms": 500`.
-   * Change `500` to `200` to make it type **faster**.
-   * Change `500` to `1000` to make it type **very slowly** (1 full second between actions).
-   <br>
-4. Save the file (Ctrl+S) and restart the application.
+Runtime user settings are stored in:
 
-<br>
+- `%LOCALAPPDATA%\UIIC_Surveyor_Automation\config\settings.json`
 
----
+Useful runtime keys:
 
-## 📊 Excel Formatting Requirements
+- `portal_url`
+- `browser_headless`
+- `browser_slow_mo_ms`
+- `captcha_max_retries`
 
-Your Excel file (`.xls` or `.xlsx`) can be designed however you like! The bot scans the entire sheet for specific text labels, meaning **no fixed row/column positions are required**. 
+## Build Windows EXE
 
-As long as the following text labels exist somewhere in your sheet, the bot will find the value directly next to them:
+Two supported build paths are available.
 
-### Claim Details & Observations
-| Label to write in Excel | What it fills on the Portal |
-| :--- | :--- |
-| `Claim no` | Claim Number |
-| `Date and Time of Survey` | Survey Date + Time |
-| `Workshop` | Place of Survey |
-| `Mobile:` | Mobile Number *(auto-sanitized to 10 digits)* |
-| `e-mail:-` | Email Address |
-| `OBERVATIONS/COMMENTS` | Surveyor Observation |
-| `PAYMENT MADE IN THE FAVOUR OF` | Payment Option *(REPAIRER or INSURED)* |
+### Option A: Preferred scripted release build
 
-### Claim Assessment & Financials
-| Label to write in Excel | What it fills on the Portal |
-| :--- | :--- |
-| `NET PAYABLE` | Initial Loss Amount |
-| `SUB TOTAL` | Parts Depreciation *(Metal/Plastic/Glass columns)* |
-| `LABOUR ESTIMATED` | Labour Charges |
-| `TOWING CHARGES` | Towing Charges |
-| `LESS SALVAGE VALUE` | Salvage Value |
-
-### Surveyor Fees
-| Label to write in Excel | What it fills on the Portal |
-| :--- | :--- |
-| `CONVEYANCE CHARGES` | Traveling Expenses |
-| `PROFESSIONAL FEE` | Professional Fee |
-| `DAILY ALLOWANCE` | Daily Allowance |
-| `PHOTOGRAPHS` | Photo Charges |
-| `Ref:` | Final Report Number |
-
-<br>
-
----
-
-## 💻 For Developers
-
-### 🛠️ Prerequisites
-* **Python 3.12** *(Required for PaddleOCR compatibility on Windows)*
-* **Windows 10/11**
-
-<br>
-
-### 📦 Setup & Installation
-
-```bash
-# 1. Clone the repository
-git clone https://github.com/your-username/uiic_automation.git
-cd uiic_automation
-
-# 2. Create and activate a virtual environment
-python -m venv .venv
-.venv\Scripts\activate
-
-# 3. Install all dependencies
-pip install -r requirements.txt
-pip install -r requirements-build.txt
-
-# 4. Install Playwright browser
-playwright install chromium
-```
-
-<br>
-
-### ▶️ Running Locally
-
-```bash
-python main.py
-```
-
-<br>
-
-### 🏗️ Building the Standalone `.exe`
-
-We use PyInstaller to compile the application into a standalone Windows executable. 
-
-To build the executable, simply run the included batch script:
-
-```bash
+```powershell
 .\build.bat
 ```
 
-This script will bundle the Python app, the Playwright Chromium browser, and the PaddleOCR deep-learning models into a single portable folder. The final production-ready output will be located in `dist\UIIC_Surveyor_Automation`.
+What it does:
 
-<br>
+- Creates/reuses `.venv`
+- Installs pinned build deps from `requirements-build.txt`
+- Prepares Playwright runtime in `build_assets/ms-playwright`
+- Prepares PaddleOCR models in `build_assets/paddleocr`
+- Runs PyInstaller using `uiic_automation.spec`
 
-### 🧪 Testing
+Output:
 
-Run the full suite of 93 unit tests covering Excel parsing, cleaning, and formatting:
+- `dist/UIIC_Surveyor_Automation/UIIC_Surveyor_Automation.exe`
 
-```bash
-python -m pytest tests/test_automation.py -v
+### Option B: uv-based Python build command
+
+Before running this option, install build dependencies in the uv environment:
+
+```powershell
+uv pip install -r requirements-build.txt
 ```
 
-<br>
+Then run:
 
----
+```powershell
+uv run python build.py
+```
 
-## 🏗️ Architecture & Core Modules
+This uses the Python build script and the PyInstaller spec fallback behavior implemented in the repository.
 
-| Module | Description |
-| :--- | :--- |
-| `captcha_solver.py` | Uses a local, bundled PaddleOCR model to instantly extract text from the portal's login canvas. Uses deterministic logic with zero external API calls. |
-| `engine.py` | The master orchestrator. Uses `asyncio` and `playwright` to seamlessly move through the UIIC portal tabs. |
-| `excel_reader.py` | A robust pandas-based parser that scans all sheets for label coordinates rather than relying on hardcoded cell positions. |
-| `login_module.py` | Handles portal navigation, dialog boxes, and login form submission securely. |
+## Testing
 
-<br>
+Run full tests:
 
----
+```powershell
+uv pip install pytest
+uv run pytest -v
+```
 
-## 🔒 Security & Privacy Notes
+Run the primary automation test module only:
 
-* **Local Only:** This application runs entirely on your local machine. No claim data, documents, or credentials are ever sent to a third-party server.
-* **Credentials:** Passwords are stored purely on your local hard drive in `%LOCALAPPDATA%\UIIC_Surveyor_Automation\config\settings.json`.
-* **JS Injection Protection:** All data extracted from Excel is strictly sanitized and escaped before being injected into the Playwright browser to prevent cross-site scripting (XSS) errors on the portal.
+```powershell
+uv run pytest tests/test_automation.py -v
+```
 
-<br>
+## Project Layout
 
----
+```text
+app/
+  automation/      # Playwright steps, login, navigation, form filling
+  data/            # Excel/data model/folder scanning
+  ui/              # PyQt UI and worker threading
+  utils.py         # resource and user-data path helpers
+config/            # field/doc/settings mappings
+tests/             # pytest test suite
+build.py           # Python build entrypoint
+build.bat          # Windows release build pipeline
+main.py            # app startup entrypoint
+```
 
-<div align="center">
-  <b>Built with ❤️ for Insurance Surveyors</b><br>
-  <i>Automate the boring stuff. Focus on what matters.</i>
-</div>
+## Troubleshooting
+
+### 1) Playwright browser not found
+
+Run:
+
+```powershell
+uv run playwright install chromium
+```
+
+### 2) CAPTCHA/OCR issues on first run
+
+- Ensure internet is available for first model/runtime bootstrap if needed.
+- Re-run build prep (`build.bat`) for release artifacts.
+- Keep PaddlePaddle on 2.x branch (`<3.0.0`) as already constrained.
+
+### 3) App starts but cannot find settings or mappings
+
+- Verify `config/` files exist in source checkout.
+- For packaged builds, ensure all bundled data from spec/build process is present.
+- Check user settings path under `%LOCALAPPDATA%\UIIC_Surveyor_Automation\config`.
+
+### 4) Portal flow changed
+
+- Update selectors and navigation logic in `app/automation/` modules.
+- Adjust label mappings in `config/field_mapping.json` and `config/doc_mapping.json`.
+
+### 5) Setup works on one machine but fails on another
+
+- Prefer Python 3.10 for the most stable dependency behavior.
+- Use the stable install path shown above (`uv pip install -r requirements.txt`) instead of `uv sync`.
+- Recreate environment cleanly:
+
+```powershell
+Remove-Item -Recurse -Force .venv
+uv venv --python 3.10
+uv pip install -r requirements.txt
+uv run playwright install chromium
+```
+
+## Security and Privacy
+
+- Local-first execution: claim data processing happens on the local machine.
+- Credentials are stored in local user settings unless your deployment process changes this behavior.
+- Form input strings are sanitized before portal injection paths in automation helpers.
+
+## Maintainer Notes
+
+- Prefer `uv pip install -r requirements*.txt` in docs/onboarding until lockfile workflow is standardized.
+- Use Python 3.10 for release reproducibility.
+- Keep build/runtime dependencies aligned between `pyproject.toml`, `requirements.txt`, and `requirements-build.txt`.
