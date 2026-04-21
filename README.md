@@ -1,43 +1,58 @@
 # UIIC Surveyor Automation
 
-Desktop automation tool for processing UIIC surveyor claims using a PyQt6 UI, Playwright browser automation, and PaddleOCR-based CAPTCHA solving.
+Reliable desktop automation for UIIC surveyor claim processing.
 
-This project is designed for Windows workflows and can be run from source or packaged as a standalone EXE.
+This app combines a PyQt6 desktop UI, Playwright browser automation, and PaddleOCR CAPTCHA solving to reduce repetitive claim-entry work while preserving final human review.
 
-## What This Project Does
+## At a glance
 
-- Logs in to the UIIC surveyor portal.
-- Solves portal CAPTCHA locally using PaddleOCR.
-- Navigates to the target claim in worklist.
-- Fills interim report fields.
-- Uploads claim documents and assessment files.
-- Fills claim assessment values from Excel data.
-- Leaves browser open at the end for final manual review and submit.
+| Area | Details |
+|---|---|
+| Platform | Windows 10/11 |
+| Python | 3.10 to 3.12 (3.10 preferred for release builds) |
+| UI | PyQt6 |
+| Automation | Playwright |
+| OCR | PaddleOCR + PaddlePaddle 2.x |
+| Packaging | PyInstaller |
 
-## Key Tech Stack
+## What the automation does
 
-- Python 3.10 to 3.12
-- PyQt6 (desktop UI)
-- Playwright (browser automation)
-- PaddleOCR / PaddlePaddle (CAPTCHA OCR)
-- pandas + openpyxl + xlrd (Excel ingestion)
-- PyInstaller (Windows packaging)
+1. Logs in to the UIIC surveyor portal.
+2. Solves CAPTCHA locally using OCR.
+3. Opens worklist and navigates to the claim.
+4. Fills interim report values.
+5. Uploads claim and assessment documents.
+6. Fills claim assessment amounts and fields.
+7. Leaves browser open for manual final validation and submit.
 
-## Requirements
+## Quick start (recommended)
 
-- OS: Windows 10/11
-- Python: 3.10 to 3.12
-  - Preferred for release builds: Python 3.10
-  - Supported for local development: Python 3.10/3.11/3.12
-- Microsoft Edge/Chromium runtime support (installed automatically via Playwright command below)
+Use this exact flow on a fresh machine:
 
-## Package Manager: uv (Recommended)
+```powershell
+winget install --id=astral-sh.uv -e
+git clone <your-repo-url>
+cd uiic_automation
+uv venv --python 3.10
+uv pip install -r requirements.txt
+uv run playwright install chromium
+uv run python main.py
+```
 
-This repository uses `uv` as the Python package manager, but installs from the repository requirement files for deterministic Windows behavior.
+## Why this setup path
 
-### 1. Install uv
+This repository includes `pyproject.toml` and requirement files, but current production behavior is most stable when dependencies are installed from:
 
-Pick one method:
+- `requirements.txt` for runtime
+- `requirements-build.txt` for packaging/build
+
+For now, avoid `uv sync` on fresh environments unless you maintain a validated lockfile for your target OS/Python combination.
+
+## Installation and environment (detailed)
+
+### 1) Install uv
+
+Choose one:
 
 ```powershell
 winget install --id=astral-sh.uv -e
@@ -49,67 +64,70 @@ or
 pip install uv
 ```
 
-### 2. Clone and enter project
+### 2) Clone repository
 
 ```powershell
 git clone <your-repo-url>
 cd uiic_automation
 ```
 
-### 3. Create environment and install dependencies (stable path)
+### 3) Create virtual environment
 
 ```powershell
 uv venv --python 3.10
+```
+
+### 4) Install runtime dependencies
+
+```powershell
 uv pip install -r requirements.txt
 ```
 
-Notes:
-- This project currently relies on curated constraints in `requirements.txt` / `requirements-build.txt`.
-- Avoid `uv sync` on fresh machines unless a validated lockfile is maintained for your target environment.
-
-### 4. Install Playwright browser runtime
+### 5) Install browser runtime
 
 ```powershell
 uv run playwright install chromium
 ```
 
-### 5. (Optional) Install test tooling
+### 6) Optional: test tools
 
 ```powershell
 uv pip install pytest
 ```
 
-### 6. Verify installation quickly
+### 7) Sanity check
 
 ```powershell
-uv run python -c "import PyQt6,playwright,paddleocr,pandas; print('OK')"
+uv run python -c "import PyQt6,playwright,paddleocr,pandas; print('Environment OK')"
 ```
 
-## Run the App (Source)
+## Run from source
 
 ```powershell
 uv run python main.py
 ```
 
-## End-User Usage Flow
+## End-user operating flow
 
-1. Enter portal username/password.
-2. Select a single claim folder.
+1. Enter portal username and password.
+2. Browse and select one claim folder.
 3. Start automation.
-4. Wait for the bot to complete all steps.
-5. Perform final manual review and submit in portal.
+4. Wait for all steps to complete.
+5. Review values in portal.
+6. Click final submit manually.
 
 Important:
-- Automation intentionally keeps the browser open at the end.
-- Final submit should be done manually after verification.
+- Browser is intentionally kept open at the end.
+- Final submit is intentionally manual for safety.
 
-## Claim Folder Structure
+## Input folder requirements
 
-Keep one claim per folder. Include:
+Use one folder per claim.
 
-- One Excel report file (`.xls` or `.xlsx`)
-- Claim document files (PDF/images)
-- Assessment-related files (invoice/report photos etc.)
+Required content:
+- One Excel file (`.xls` or `.xlsx`)
+- Claim documents (PDF/image files)
+- Assessment supporting files
 
 Example:
 
@@ -124,11 +142,11 @@ Your_Claim_Folder/
 `-- other-Additional_Doc.pdf
 ```
 
-## Excel Data Expectations
+## Excel label mapping behavior
 
-The parser is label-driven (not fixed-cell driven). It scans sheets and extracts values near known labels.
+The parser is label-driven, not fixed-cell-driven. It scans sheets and extracts nearby values for known labels.
 
-Typical labels used by the automation include:
+Common labels:
 
 - `Claim no`
 - `Date and Time of Survey`
@@ -148,21 +166,21 @@ Typical labels used by the automation include:
 - `PHOTOGRAPHS`
 - `Ref:`
 
-If your organization uses a different wording pattern, update mapping files in the `config/` directory.
+If your branch/region uses different text, update mapping files in `config`.
 
-## Configuration
+## Configuration files
 
-Project config files:
+Project mappings and defaults:
 
 - `config/settings.json`
 - `config/field_mapping.json`
 - `config/doc_mapping.json`
 
-Runtime user settings are stored in:
+Runtime user settings path:
 
 - `%LOCALAPPDATA%\UIIC_Surveyor_Automation\config\settings.json`
 
-Useful runtime keys:
+Common runtime keys:
 
 - `portal_url`
 - `browser_headless`
@@ -171,104 +189,83 @@ Useful runtime keys:
 
 ## Build Windows EXE
 
-Two supported build paths are available.
-
-### Option A: Preferred scripted release build
+### Option A: release build script (preferred)
 
 ```powershell
 .\build.bat
 ```
 
-What it does:
+This script:
 
-- Creates/reuses `.venv`
-- Installs pinned build deps from `requirements-build.txt`
-- Prepares Playwright runtime in `build_assets/ms-playwright`
-- Prepares PaddleOCR models in `build_assets/paddleocr`
-- Runs PyInstaller using `uiic_automation.spec`
+1. Creates/reuses `.venv`.
+2. Installs pinned build dependencies from `requirements-build.txt`.
+3. Prepares Playwright browsers under `build_assets/ms-playwright`.
+4. Prepares PaddleOCR model cache under `build_assets/paddleocr`.
+5. Runs PyInstaller with `uiic_automation.spec`.
 
-Output:
+Expected output:
 
 - `dist/UIIC_Surveyor_Automation/UIIC_Surveyor_Automation.exe`
 
-### Option B: uv-based Python build command
-
-Before running this option, install build dependencies in the uv environment:
+### Option B: uv + Python build script
 
 ```powershell
 uv pip install -r requirements-build.txt
-```
-
-Then run:
-
-```powershell
 uv run python build.py
 ```
 
-This uses the Python build script and the PyInstaller spec fallback behavior implemented in the repository.
-
 ## Testing
 
-Run full tests:
+Install pytest if needed:
 
 ```powershell
 uv pip install pytest
+```
+
+Run full suite:
+
+```powershell
 uv run pytest -v
 ```
 
-Run the primary automation test module only:
+Run primary module only:
 
 ```powershell
 uv run pytest tests/test_automation.py -v
 ```
 
-## Project Layout
+## Project structure
 
 ```text
 app/
-  automation/      # Playwright steps, login, navigation, form filling
-  data/            # Excel/data model/folder scanning
-  ui/              # PyQt UI and worker threading
-  utils.py         # resource and user-data path helpers
-config/            # field/doc/settings mappings
-tests/             # pytest test suite
+  automation/      # Login, navigation, form fill, upload workflow
+  data/            # Data model, Excel reader, folder scanner
+  ui/              # Desktop UI and worker orchestration
+  utils.py         # Resource and user-data path utilities
+config/            # Field/doc/settings mappings
+tests/             # Pytest suite
 build.py           # Python build entrypoint
-build.bat          # Windows release build pipeline
-main.py            # app startup entrypoint
+build.bat          # Windows packaging pipeline
+main.py            # App startup entrypoint
 ```
 
 ## Troubleshooting
 
-### 1) Playwright browser not found
-
-Run:
+### Playwright browser missing
 
 ```powershell
 uv run playwright install chromium
 ```
 
-### 2) CAPTCHA/OCR issues on first run
+### OCR/CAPTCHA startup issues
 
-- Ensure internet is available for first model/runtime bootstrap if needed.
-- Re-run build prep (`build.bat`) for release artifacts.
-- Keep PaddlePaddle on 2.x branch (`<3.0.0`) as already constrained.
+- Ensure internet access for first-time runtime/model bootstrap.
+- Keep PaddlePaddle on 2.x branch (`<3.0.0`) as defined by project constraints.
+- For packaged builds, rerun `build.bat` to repopulate bundled runtime assets.
 
-### 3) App starts but cannot find settings or mappings
+### Works on one PC, fails on another
 
-- Verify `config/` files exist in source checkout.
-- For packaged builds, ensure all bundled data from spec/build process is present.
-- Check user settings path under `%LOCALAPPDATA%\UIIC_Surveyor_Automation\config`.
-
-### 4) Portal flow changed
-
-- Update selectors and navigation logic in `app/automation/` modules.
-- Adjust label mappings in `config/field_mapping.json` and `config/doc_mapping.json`.
-
-### 5) Setup works on one machine but fails on another
-
-- Prefer Python 3.10 for the most stable dependency behavior.
-- Use the stable install path shown above (`uv pip install -r requirements.txt`) instead of `uv sync`.
-- Recreate environment cleanly:
+Reset environment fully:
 
 ```powershell
 Remove-Item -Recurse -Force .venv
@@ -277,14 +274,31 @@ uv pip install -r requirements.txt
 uv run playwright install chromium
 ```
 
-## Security and Privacy
+Then verify:
 
-- Local-first execution: claim data processing happens on the local machine.
-- Credentials are stored in local user settings unless your deployment process changes this behavior.
-- Form input strings are sanitized before portal injection paths in automation helpers.
+```powershell
+uv run python -c "import PyQt6,playwright,paddleocr,pandas; print('Environment OK')"
+```
 
-## Maintainer Notes
+### App cannot find settings/mappings
 
-- Prefer `uv pip install -r requirements*.txt` in docs/onboarding until lockfile workflow is standardized.
-- Use Python 3.10 for release reproducibility.
-- Keep build/runtime dependencies aligned between `pyproject.toml`, `requirements.txt`, and `requirements-build.txt`.
+- Confirm `config` files exist in source workspace.
+- For packaged app, ensure the built folder contains bundled data from spec/build process.
+- Check user settings path under `%LOCALAPPDATA%\UIIC_Surveyor_Automation\config`.
+
+### Portal workflow changed
+
+- Update selectors/navigation in `app/automation` modules.
+- Update label mappings in `config/field_mapping.json` and `config/doc_mapping.json`.
+
+## Security notes
+
+- Data processing is local-first.
+- Credentials are read from local user settings unless deployment policy overrides this.
+- Text is sanitized before form-injection paths in automation helpers.
+
+## Maintainer guidance
+
+1. Prefer `uv pip install -r requirements*.txt` in onboarding docs until lockfile workflow is standardized.
+2. Use Python 3.10 for release reproducibility.
+3. Keep `pyproject.toml`, `requirements.txt`, and `requirements-build.txt` aligned.
