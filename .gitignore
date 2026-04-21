@@ -26,6 +26,15 @@ logs/
 # SECURITY: Never commit credentials
 app/config/settings.json
 
+# User claim folders & docs
+automationfolderuploading/
+*.xlsx
+*.xls
+*.pdf
+*.jpg
+*.jpeg
+*.png
+
 # OS
 Thumbs.db
 .DS_Store
