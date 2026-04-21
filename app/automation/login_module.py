@@ -254,7 +254,16 @@ async def do_login(
             continue
 
         if not candidates or len(candidates[0]) < 3:
-            log_cb("CAPTCHA unreadable. Refreshing...")
+            # Show WHY it's unreadable — helps diagnose on client machines
+            from app.automation.captcha_solver import _init_error
+            if _init_error:
+                log_cb(f"⚠️ OCR ENGINE FAILED: {_init_error}")
+                if "Cython\\Utility" in _init_error or "CppSupport.cpp" in _init_error:
+                    log_cb("The bundled OCR runtime is incomplete. Rebuild the EXE with the updated spec file.")
+                else:
+                    log_cb("The CAPTCHA solver could not initialize. Check the packaged OCR runtime and startup.log.")
+            else:
+                log_cb("CAPTCHA unreadable (OCR returned empty/short text). Refreshing...")
             await _refresh_captcha(page)
             continue
 

@@ -12,6 +12,7 @@ import re
 import os
 import logging
 import tempfile
+import traceback
 from typing import List, Optional
 
 import sys
@@ -19,47 +20,73 @@ import sys
 logger = logging.getLogger(__name__)
 
 # ── PaddleOCR lazy singleton ─────────────────────────────────────────────────
-# Loaded on first use (not at import time) to avoid ~3-5s startup delay.
-# lang='en': English model
-# use_angle_cls=False: CAPTCHA text is never upside-down
-# show_log=False: Suppress noisy PaddlePaddle internals
 _ocr = None
+_init_error = None  # Store init error so we don't retry forever
 
 
 def _get_ocr():
     """Return the PaddleOCR singleton, creating it on first call.
 
-    When running as a frozen exe, explicitly point PaddleOCR to the
-    bundled model directories inside _internal/.paddleocr/whl/.
+    In frozen exe mode: registers paddle DLL paths so import works,
+    then lets PaddleOCR handle models normally (downloads to ~/.paddleocr
+    on first run, cached for all subsequent runs).
     """
-    global _ocr
+    global _ocr, _init_error
+    if _init_error is not None:
+        raise RuntimeError(f"PaddleOCR previously failed: {_init_error}")
+
     if _ocr is None:
-        from paddleocr import PaddleOCR
-
-        kwargs = dict(use_angle_cls=False, lang='en', show_log=False)
-
-        if getattr(sys, "frozen", False):
-            # Frozen exe: models are bundled at sys._MEIPASS/.paddleocr/whl/
-            model_root = os.path.join(sys._MEIPASS, ".paddleocr", "whl")
-            det_dir = os.path.join(model_root, "det", "en", "en_PP-OCRv3_det_infer")
-            rec_dir = os.path.join(model_root, "rec", "en", "en_PP-OCRv4_rec_infer")
-            cls_dir = os.path.join(model_root, "cls", "ch_ppocr_mobile_v2.0_cls_infer")
-
-            if os.path.isdir(det_dir):
-                kwargs["det_model_dir"] = det_dir
-                logger.info(f"Using bundled det model: {det_dir}")
-            if os.path.isdir(rec_dir):
-                kwargs["rec_model_dir"] = rec_dir
-                logger.info(f"Using bundled rec model: {rec_dir}")
-            if os.path.isdir(cls_dir):
-                kwargs["cls_model_dir"] = cls_dir
-                logger.info(f"Using bundled cls model: {cls_dir}")
-
         try:
+            logger.info("Initializing PaddleOCR...")
+
+            # ── Frozen EXE: register paddle DLL paths ────────────────────
+            if getattr(sys, "frozen", False):
+                base = sys._MEIPASS
+                paddle_libs = os.path.join(base, 'paddle', 'libs')
+                if os.path.isdir(paddle_libs):
+                    os.environ['PATH'] = paddle_libs + os.pathsep + os.environ.get('PATH', '')
+                    try:
+                        os.add_dll_directory(paddle_libs)
+                    except (OSError, AttributeError):
+                        pass
+                    logger.info(f"Paddle DLL path registered: {paddle_libs}")
+                    # Also register the _internal dir itself (some DLLs land there)
+                    try:
+                        os.add_dll_directory(base)
+                    except (OSError, AttributeError):
+                        pass
+                else:
+                    logger.warning(f"Paddle libs dir NOT found: {paddle_libs}")
+
+            from paddleocr import PaddleOCR
+
+            kwargs = dict(use_angle_cls=False, lang='en', show_log=False)
+
+            # If bundled models exist, use them (avoids download)
+            if getattr(sys, "frozen", False):
+                model_root = os.path.join(sys._MEIPASS, ".paddleocr", "whl")
+                det_dir = os.path.join(model_root, "det", "en", "en_PP-OCRv3_det_infer")
+                rec_dir = os.path.join(model_root, "rec", "en", "en_PP-OCRv4_rec_infer")
+                cls_dir = os.path.join(model_root, "cls", "ch_ppocr_mobile_v2.0_cls_infer")
+
+                if os.path.isdir(det_dir):
+                    kwargs["det_model_dir"] = det_dir
+                if os.path.isdir(rec_dir):
+                    kwargs["rec_model_dir"] = rec_dir
+                if os.path.isdir(cls_dir):
+                    kwargs["cls_model_dir"] = cls_dir
+
+                if os.path.isdir(model_root):
+                    logger.info(f"Using bundled OCR models from: {model_root}")
+                else:
+                    logger.info("No bundled models — PaddleOCR will download on first run.")
+
             _ocr = PaddleOCR(**kwargs)
             logger.info("PaddleOCR initialized successfully.")
         except Exception as exc:
+            _init_error = f"{type(exc).__name__}: {exc}"
             logger.error(f"PaddleOCR initialization FAILED: {exc}")
+            logger.error(traceback.format_exc())
             raise
     return _ocr
 
@@ -124,7 +151,9 @@ def get_captcha_candidates(img_bytes: bytes) -> List[str]:
         return candidates
 
     except Exception as exc:
-        logger.error(f"CAPTCHA solve error: {exc}")
+        # CRITICAL: Log the full error so it appears in the UI log panel
+        logger.error(f"CAPTCHA solve FAILED: {exc}")
+        logger.error(traceback.format_exc())
         return []
 
 
@@ -132,3 +161,4 @@ def solve_captcha_from_bytes(img_bytes: bytes) -> Optional[str]:
     """Return the single best guess, or None on failure."""
     candidates = get_captcha_candidates(img_bytes)
     return candidates[0] if candidates else None
+

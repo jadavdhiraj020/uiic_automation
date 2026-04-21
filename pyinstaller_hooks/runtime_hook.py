@@ -1,8 +1,7 @@
 """
 PyInstaller runtime hook.
 
-Runs BEFORE your app imports execute (critical for Playwright/Paddle/PaddleOCR).
-Keeps the frozen app deterministic across machines.
+Runs before app imports execute and keeps the frozen app deterministic.
 """
 
 from __future__ import annotations
@@ -29,15 +28,16 @@ def _set_if_dir(env_key: str, path: str) -> None:
 if _is_frozen():
     base = getattr(sys, "_MEIPASS", "")
 
-    # 1) Playwright: force bundled browsers (so no external install needed)
-    _set_if_dir("PLAYWRIGHT_BROWSERS_PATH", os.path.join(base, "playwright_browsers"))
+    bundled_browsers = os.path.join(base, "playwright_browsers")
+    _set_if_dir("PLAYWRIGHT_BROWSERS_PATH", bundled_browsers)
+    if os.path.isdir(bundled_browsers):
+        os.environ.setdefault("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", "1")
 
-    # 2) Writable locations (avoid writing into _MEIPASS)
     user_base = _user_data_base()
     os.makedirs(os.path.join(user_base, "config"), exist_ok=True)
     os.makedirs(os.path.join(user_base, "logs"), exist_ok=True)
+    os.makedirs(os.path.join(user_base, "cache"), exist_ok=True)
 
-    # 3) PaddleOCR: steer any downloads/cache to user data if the library tries.
-    # (Your captcha solver already points directly at bundled models when present.)
+    os.environ.setdefault("PADDLE_HOME", os.path.join(user_base, ".paddle"))
     os.environ.setdefault("PADDLEOCR_HOME", os.path.join(user_base, ".paddleocr"))
-
+    os.environ.setdefault("XDG_CACHE_HOME", os.path.join(user_base, "cache"))
