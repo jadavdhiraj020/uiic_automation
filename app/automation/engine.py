@@ -224,7 +224,7 @@ class AutomationEngine:
         password = settings["password"]
         claim_type = settings.get("claim_type", "Non Maruti")
         headless = settings.get("browser_headless", False)
-        slow_mo = settings.get("browser_slow_mo_ms", 200)  # 200ms = visible but not sluggish
+        slow_mo = settings.get("browser_slow_mo_ms", 500)  # 500ms = slower, human-like typing/clicking to avoid bot blocks
         max_retries = settings.get("captcha_max_retries", 5)
 
         steps = ["Login", "Navigate to Claim", "Interim Report", "Claim Documents", "Claim Assessment"]

@@ -223,7 +223,7 @@ async def do_login(
     Navigate to the portal and perform login.
     Returns True on success, False otherwise.
     """
-    from app.automation.captcha_solver import get_captcha_candidates
+    from app.automation.captcha_solver import solve_captcha_from_bytes
 
     page.on("dialog", lambda dialog: asyncio.create_task(_accept_dialog(dialog, log_cb)))
 
@@ -247,13 +247,13 @@ async def do_login(
 
         try:
             img_bytes = await _get_captcha_bytes(page)
-            candidates = get_captcha_candidates(img_bytes)
+            captcha_text = solve_captcha_from_bytes(img_bytes)
         except Exception as exc:
             log_cb(f"CAPTCHA screenshot error: {exc}")
             await _refresh_captcha(page)
             continue
 
-        if not candidates or len(candidates[0]) < 3:
+        if not captcha_text or len(captcha_text) < 3:
             # Show WHY it's unreadable — helps diagnose on client machines
             from app.automation.captcha_solver import _init_error
             if _init_error:
@@ -267,62 +267,40 @@ async def do_login(
             await _refresh_captcha(page)
             continue
 
-        log_cb(f"CAPTCHA candidates: {candidates}")
-
-        logged_in = False
-        for variant_idx, captcha_text in enumerate(candidates):
-            if stop_cb():
-                return False
-
-            if captcha_text == captcha_text.upper() and any(c.isalpha() for c in captcha_text):
-                case_label = "ALL-UPPER"
-            elif captcha_text == captcha_text.lower() and any(c.isalpha() for c in captcha_text):
-                case_label = "all-lower"
-            else:
-                case_label = "Mixed-Case"
-
-            variant_label = f"{'primary' if variant_idx == 0 else 'fallback'} / {case_label}"
-            log_cb(f"Trying CAPTCHA [{variant_label}]: '{captcha_text}'")
-
-            clicked = await _try_login_with_captcha(page, username, password, captcha_text, log_cb)
-            if not clicked:
-                break
-
-            await asyncio.sleep(2)
-            if stop_cb():
-                return False
-
-            login_ok, outcome = await _wait_for_login_outcome(page, log_cb)
-            if login_ok:
-                log_cb(f"Login confirmed. CAPTCHA variant: {variant_label}")
-                log_cb(f"  Success signal: {outcome}")
-                await _dismiss_alert(page)
-                await asyncio.sleep(1.5)
-                logged_in = True
-                break
-
-            err = outcome.strip()
-            if err:
-                log_cb(f"  Login not confirmed: {err[:140]}")
-                if "password" in err.lower() and "captcha" not in err.lower():
-                    log_cb("  Wrong password detected. Not retrying more CAPTCHA variants.")
-                    break
-
-            if variant_idx < len(candidates) - 1:
-                log_cb("  Variant failed, trying the next candidate...")
-                try:
-                    await page.locator(SEL_CAPTCHA_IN).fill("")
-                    await asyncio.sleep(0.3)
-                except Exception:
-                    pass
-
-        if logged_in:
-            return True
+        log_cb(f"Trying CAPTCHA: '{captcha_text}'")
 
         if stop_cb():
             return False
 
-        log_cb(f"All variants failed on attempt {attempt}. Refreshing CAPTCHA...")
+        clicked = await _try_login_with_captcha(page, username, password, captcha_text, log_cb)
+        if not clicked:
+            log_cb(f"Login attempt failed on attempt {attempt}. Refreshing CAPTCHA...")
+            await _refresh_captcha(page)
+            continue
+
+        await asyncio.sleep(2)
+        if stop_cb():
+            return False
+
+        login_ok, outcome = await _wait_for_login_outcome(page, log_cb)
+        if login_ok:
+            log_cb(f"Login confirmed.")
+            log_cb(f"  Success signal: {outcome}")
+            await _dismiss_alert(page)
+            await asyncio.sleep(1.5)
+            return True
+
+        err = outcome.strip()
+        if err:
+            log_cb(f"  Login not confirmed: {err[:140]}")
+            if "password" in err.lower() and "captcha" not in err.lower():
+                log_cb("  Wrong password detected. Not retrying more.")
+                break
+
+        if stop_cb():
+            return False
+
+        log_cb(f"Login failed on attempt {attempt}. Refreshing CAPTCHA...")
         await _refresh_captcha(page)
         await asyncio.sleep(1)
 

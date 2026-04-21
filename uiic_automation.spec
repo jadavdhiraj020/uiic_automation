@@ -178,6 +178,7 @@ for package_name in (
     "pdfplumber",
     "pandas",
     "openpyxl",
+    "docx",
 ):
     add_package(package_name, datas, binaries, hiddenimports)
 
@@ -232,6 +233,7 @@ hiddenimports.extend(
         "six",
         "Cython",
         "setuptools",
+        "docx",
     ]
 )
 
