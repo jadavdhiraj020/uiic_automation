@@ -110,7 +110,7 @@ pip install uv
 ### Step 2 — Clone the Repository
 
 ```powershell
-git clone <your-repo-url>
+git clone https://github.com/jadavdhiraj020/uiic_automation.git
 cd uiic_automation
 ```
 
