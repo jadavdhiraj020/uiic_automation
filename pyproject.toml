@@ -41,6 +41,7 @@ dependencies = [
     "requests>=2.31.0",
     # PaddlePaddle imports setuptools at runtime (cpp_extension)
     "setuptools",
+    "pytest>=9.0.3",
 ]
 
 [tool.hatch.build.targets.wheel]

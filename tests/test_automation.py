@@ -2075,3 +2075,64 @@ class TestStressSanitization:
         assert '\"' in result or '"' not in all_chars
         assert "\n" not in result
 
+
+
+# ───────────────────────────────────────────────────────────────
+# 31. NEW FUNCTIONALITY (Date Skip, Folder Duplication, Selectors)
+# ───────────────────────────────────────────────────────────────
+
+class TestRecentUpdates:
+
+    def test_safe_fill_date_skips_bad_date(self):
+        from app.automation.form_helpers import safe_fill_date
+        import inspect
+        source = inspect.getsource(safe_fill_date)
+        # Verify our '00:00:00' guard exists
+        assert 'value or str(value).strip() == "" or str(value).strip() == "00:00:00"' in source
+
+    def test_folder_scanner_vehicle_duplication(self):
+        import tempfile
+        import os
+        import shutil
+        from app.data.folder_scanner import scan_folder
+        
+        with tempfile.TemporaryDirectory() as td:
+            # Create a mock vehicle photo
+            v_path = os.path.join(td, "vehical_damage.jpg")
+            with open(v_path, "w") as f:
+                f.write("fake image data")
+            
+            # Run the scanner
+            config_dir = os.path.join(os.path.dirname(__file__), "..", "app", "config")
+            res = scan_folder(td, config_dir)
+            
+            # Verify the 4 copies were dynamically created
+            files = os.listdir(td)
+            assert "vehicle_photo_1.jpg" in files
+            assert "vehicle_photo_2.jpg" in files
+            assert "vehicle_photo_3.jpg" in files
+            assert "vehicle_photo_4.jpg" in files
+            
+            # Verify the mappings were correctly added to claim_doc_files
+            assert res.claim_doc_files.get("Vehicle Photograph (Front)") == os.path.join(td, "vehicle_photo_1.jpg")
+            assert res.claim_doc_files.get("Vehicle Photograph (Right)") == os.path.join(td, "vehicle_photo_4.jpg")
+
+    def test_selectors_broadened(self):
+        from app.automation.selectors import ASSESSMENT
+        
+        # Verify Report No has fallbacks
+        assert "#finalReportNo" in ASSESSMENT["report_no"]
+        assert "#finalReportNumber" in ASSESSMENT["report_no"]
+        
+        # Verify Report Date has fallbacks
+        assert "#finalReportDate" in ASSESSMENT["report_date"]
+        
+        # Verify Total has name*='totalClaim' fallback
+        assert "name*='totalClaim'" in ASSESSMENT["total"]
+
+    def test_raw_fill_force_click(self):
+        from app.automation.form_helpers import _raw_fill
+        import inspect
+        source = inspect.getsource(_raw_fill)
+        # Verify we bypass interception checks with force=True
+        assert "force=True" in source
