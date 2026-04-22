@@ -25,14 +25,14 @@ import asyncio
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore    import Qt, QThread, pyqtSignal, QObject, QSize
+from PyQt6.QtCore    import Qt, QThread, pyqtSignal, QObject, QSize, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui     import QFont, QColor, QTextCursor, QIcon
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QLineEdit, QPushButton, QProgressBar, QTextEdit,
     QFileDialog, QFrame, QSizePolicy, QScrollArea, QComboBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
-    QSpacerItem, QApplication, QStackedWidget,
+    QSpacerItem, QApplication, QStackedWidget, QGraphicsOpacityEffect
 )
 
 from app.utils import resource_path, save_settings, settings_paths, user_data_dir, ensure_dir
@@ -100,7 +100,7 @@ class MainWindow(QMainWindow):
         bar.setObjectName("topBar")
         bar.setFixedHeight(56)
         lay = QHBoxLayout(bar)
-        lay.setContentsMargins(24, 0, 24, 0)
+        lay.setContentsMargins(32, 0, 32, 0)
 
         # Left: Logo
         logo_container = QWidget()
@@ -120,23 +120,23 @@ class MainWindow(QMainWindow):
         lay.addStretch()
 
         # Center: Nav buttons
-        nav = QWidget()
+        nav = QFrame()
         nav.setObjectName("navContainer")
         nav_lay = QHBoxLayout(nav)
         nav_lay.setContentsMargins(4, 4, 4, 4)
-        nav_lay.setSpacing(4)
+        nav_lay.setSpacing(8)
 
         self.btn_home = QPushButton("⌂  Home")
         self.btn_home.setObjectName("navBtn")
         self.btn_home.setProperty("active", True)
-        self.btn_home.setMinimumHeight(36)
+        self.btn_home.setMinimumHeight(34)
         self.btn_home.setMinimumWidth(110)
         self.btn_home.clicked.connect(lambda: self._switch_page(0))
 
         self.btn_progress = QPushButton("◎  Progress")
         self.btn_progress.setObjectName("navBtn")
         self.btn_progress.setProperty("active", False)
-        self.btn_progress.setMinimumHeight(36)
+        self.btn_progress.setMinimumHeight(34)
         self.btn_progress.setMinimumWidth(110)
         self.btn_progress.clicked.connect(lambda: self._switch_page(1))
 
@@ -150,9 +150,22 @@ class MainWindow(QMainWindow):
         ver = QLabel("v3.0")
         ver.setObjectName("appVersion")
 
-        self.status_pill = QLabel("● Ready")
+        self.status_pill = QFrame()
         self.status_pill.setObjectName("statusPill")
         self.status_pill.setProperty("status", "ready")
+        status_lay = QHBoxLayout(self.status_pill)
+        status_lay.setContentsMargins(12, 0, 12, 0)
+        status_lay.setSpacing(8)
+
+        self.status_dot = QLabel("")
+        self.status_dot.setObjectName("statusDot")
+        self.status_dot.setFixedSize(6, 6)
+
+        self.status_text = QLabel("Ready")
+        self.status_text.setObjectName("statusText")
+
+        status_lay.addWidget(self.status_dot)
+        status_lay.addWidget(self.status_text)
 
         lay.addWidget(ver)
         lay.addWidget(self.status_pill)
@@ -161,7 +174,21 @@ class MainWindow(QMainWindow):
 
     # ── PAGE SWITCHING ─────────────────────────────────────────────────
     def _switch_page(self, idx):
+        if self.stack.currentIndex() == idx:
+            return
+            
         self.stack.setCurrentIndex(idx)
+        
+        # Smooth fade transition
+        effect = QGraphicsOpacityEffect(self.stack.currentWidget())
+        self.stack.currentWidget().setGraphicsEffect(effect)
+        self.anim = QPropertyAnimation(effect, b"opacity")
+        self.anim.setDuration(200)
+        self.anim.setStartValue(0.0)
+        self.anim.setEndValue(1.0)
+        self.anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        self.anim.start()
+        
         self.btn_home.setProperty("active", idx == 0)
         self.btn_progress.setProperty("active", idx == 1)
         for btn in [self.btn_home, self.btn_progress]:
@@ -180,7 +207,7 @@ class MainWindow(QMainWindow):
         inner = QWidget()
         inner.setObjectName("homePage")
         lay = QVBoxLayout(inner)
-        lay.setContentsMargins(24, 20, 24, 20)
+        lay.setContentsMargins(32, 28, 32, 28)
         lay.setSpacing(16)
 
         # ── Page heading ────────────────────────────────────────────
@@ -224,7 +251,7 @@ class MainWindow(QMainWindow):
         inner = QWidget()
         inner.setObjectName("progressPage")
         lay = QVBoxLayout(inner)
-        lay.setContentsMargins(24, 20, 24, 20)
+        lay.setContentsMargins(32, 28, 32, 28)
         lay.setSpacing(16)
 
         # Step pipeline (horizontal)
@@ -259,8 +286,22 @@ class MainWindow(QMainWindow):
         grid.addWidget(self.inp_username, 1, 0)
 
         grid.addWidget(_field_label("PASSWORD"), 2, 0)
+        
+        pwd_container = QWidget()
+        pwd_lay = QHBoxLayout(pwd_container)
+        pwd_lay.setContentsMargins(0, 0, 0, 0)
+        pwd_lay.setSpacing(6)
+        
         self.inp_password = _input("Portal password", echo_password=True)
-        grid.addWidget(self.inp_password, 3, 0)
+        self.btn_toggle_pwd = QPushButton("👁")
+        self.btn_toggle_pwd.setFixedSize(36, 36)
+        self.btn_toggle_pwd.setCheckable(True)
+        self.btn_toggle_pwd.setStyleSheet("background:transparent; border:none; font-size:12pt; border-radius:18px;")
+        self.btn_toggle_pwd.clicked.connect(self._toggle_password)
+        
+        pwd_lay.addWidget(self.inp_password)
+        pwd_lay.addWidget(self.btn_toggle_pwd)
+        grid.addWidget(pwd_container, 3, 0)
 
         grid.addWidget(_field_label("CLAIM NUMBER"), 0, 1)
         self.inp_claim_no = _input("Auto-detected or enter manually")
@@ -269,11 +310,19 @@ class MainWindow(QMainWindow):
         grid.addWidget(_field_label("CLAIM TYPE"), 2, 1)
         self.inp_claim_type = QComboBox()
         self.inp_claim_type.addItems(["Non Maruti", "Maruti"])
-        self.inp_claim_type.setMinimumHeight(40)
+        self.inp_claim_type.setMinimumHeight(36)
         grid.addWidget(self.inp_claim_type, 3, 1)
 
         return _card(w, title="⚙  Configuration",
                      subtitle="Portal credentials and claim details")
+
+    def _toggle_password(self, checked):
+        if checked:
+            self.inp_password.setEchoMode(QLineEdit.EchoMode.Normal)
+            self.btn_toggle_pwd.setText("🙈")
+        else:
+            self.inp_password.setEchoMode(QLineEdit.EchoMode.Password)
+            self.btn_toggle_pwd.setText("👁")
 
     def _build_folder_card(self):
         w = QWidget()
@@ -289,16 +338,13 @@ class MainWindow(QMainWindow):
         row_lay.setSpacing(10)
 
         self.inp_folder = _input("Click Browse to select the claim folder...")
+        self.inp_folder.setObjectName("folderPathInput")
         self.inp_folder.setReadOnly(True)
-        self.inp_folder.setStyleSheet(
-            "QLineEdit { background:#F1F5F9; border:1.5px solid #E2E8F0; "
-            "border-radius:10px; padding:9px 14px; color:#64748B; }"
-        )
 
         btn = QPushButton("Browse...")
         btn.setObjectName("btnBrowse")
         btn.setFixedWidth(110)
-        btn.setMinimumHeight(40)
+        btn.setMinimumHeight(36)
         btn.clicked.connect(self._browse_folder)
 
         row_lay.addWidget(self.inp_folder, 1)
@@ -307,10 +353,8 @@ class MainWindow(QMainWindow):
 
         # Document status
         self.doc_status_label = QLabel("No folder selected — click Browse to begin.")
+        self.doc_status_label.setObjectName("helperTextItalic")
         self.doc_status_label.setWordWrap(True)
-        self.doc_status_label.setStyleSheet(
-            "color:#8894A7; font-size:8.5pt; padding:4px 0;"
-        )
         lay.addWidget(self.doc_status_label)
 
         return _card(w, title="📂  Claim Folder",
@@ -363,8 +407,8 @@ class MainWindow(QMainWindow):
         self.preview_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         self.preview_table.setShowGrid(False)
         self.preview_table.setAlternatingRowColors(True)
-        self.preview_table.setMinimumHeight(300)
-        self.preview_table.setMaximumHeight(500)
+        self.preview_table.setMinimumHeight(350)
+        # Max height removed to allow expanding
         vlay.addWidget(self.preview_table)
 
         return _card(container, title="📊  Extracted Data",
@@ -384,7 +428,7 @@ class MainWindow(QMainWindow):
         vlay.addWidget(self.progress_bar)
 
         self.progress_label = QLabel("Waiting for folder selection...")
-        self.progress_label.setStyleSheet("color:#8894A7; font-size:9.5pt;")
+        self.progress_label.setObjectName("helperText")
         vlay.addWidget(self.progress_label)
 
         return _card(container, title="📈  Progress")
@@ -393,8 +437,8 @@ class MainWindow(QMainWindow):
         self.log_panel = QTextEdit()
         self.log_panel.setObjectName("logPanel")
         self.log_panel.setReadOnly(True)
-        self.log_panel.setMinimumHeight(300)
-        self.log_panel.setMaximumHeight(500)
+        self.log_panel.setMinimumHeight(450)
+        # Max height removed to allow expanding
 
         return _card(self.log_panel, title="🖥  Live Log",
                      subtitle="Real-time automation output")
@@ -403,10 +447,10 @@ class MainWindow(QMainWindow):
     def _build_action_bar(self):
         bar = QFrame()
         bar.setObjectName("actionBar")
-        bar.setMinimumHeight(68)
-        bar.setMaximumHeight(68)
+        bar.setMinimumHeight(84)
+        bar.setMaximumHeight(84)
         lay = QHBoxLayout(bar)
-        lay.setContentsMargins(28, 0, 28, 0)
+        lay.setContentsMargins(32, 0, 32, 0)
         lay.setSpacing(10)
 
         self.btn_start = QPushButton("  ▶  Start Automation  ")
@@ -712,11 +756,12 @@ class MainWindow(QMainWindow):
             self.doc_status_label.setText("No documents detected — check folder contents.")
 
     def _set_status(self, status: str, text: str):
-        icons = {"ready": "●", "running": "◉", "error": "✕"}
-        self.status_pill.setText(f"{icons.get(status,'●')} {text}")
+        self.status_text.setText(text)
         self.status_pill.setProperty("status", status)
         self.status_pill.style().unpolish(self.status_pill)
         self.status_pill.style().polish(self.status_pill)
+        self.status_dot.style().unpolish(self.status_dot)
+        self.status_dot.style().polish(self.status_dot)
 
     def _start_automation(self):
         if not self._claim:

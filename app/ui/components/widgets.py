@@ -1,6 +1,6 @@
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QLineEdit, QPushButton
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QLineEdit, QPushButton, QSizePolicy
 )
 
 STEPS = [
@@ -11,6 +11,17 @@ STEPS = [
     ("Claim Assessment",  "5"),
     ("Complete",          "6"),
 ]
+
+# ── Small helpers ─────────────────────────────────────────────────────
+def _hex_to_rgba(hex_color: str, alpha: float) -> str:
+    """Convert '#RRGGBB' to 'rgba(r,g,b,a)' for Qt stylesheets."""
+    h = (hex_color or "").lstrip("#")
+    if len(h) != 6:
+        return f"rgba(99,102,241,{alpha})"  # indigo fallback
+    r = int(h[0:2], 16)
+    g = int(h[2:4], 16)
+    b = int(h[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
 
 # ── Reusable Widgets ─────────────────────────────────────────────────
 def hline():
@@ -44,7 +55,8 @@ def create_input(placeholder="", echo_password=False):
     inp.setPlaceholderText(placeholder)
     if echo_password:
         inp.setEchoMode(QLineEdit.EchoMode.Password)
-    inp.setMinimumHeight(40)
+    # Match the tighter Tailwind `h-9` control height used in the Figma export.
+    inp.setMinimumHeight(36)
     return inp
 
 
@@ -82,30 +94,60 @@ def card(content_widget, title=None, subtitle=None, icon=None):
 
 
 def stat_card(value_text, label_text, accent_color):
-    """Create a single stat KPI card with colored left border."""
+    """Create a stat KPI card closer to the Figma layout (icon tile + text)."""
     outer = QFrame()
+    outer.setObjectName("statCard")
+    # QSS can't reliably bind dynamic colors from properties, so we set the accent via inline style.
     outer.setStyleSheet(
-        f"QFrame {{ background-color: #FFFFFF; border: 1px solid #E8ECF0; "
-        f"border-left: 3px solid {accent_color}; border-radius: 14px; }}"
+        "QFrame#statCard {"
+        "  background-color:#FFFFFF;"
+        "  border:1px solid #E2E8F0;"
+        f" border-left:4px solid {accent_color};"
+        "  border-radius:12px;"
+        "}"
     )
-    lay = QVBoxLayout(outer)
-    lay.setContentsMargins(20, 16, 20, 16)
-    lay.setSpacing(2)
+    outer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+    outer.setMinimumHeight(84)
+
+    lay = QHBoxLayout(outer)
+    lay.setContentsMargins(20, 18, 20, 18)
+    lay.setSpacing(14)
+
+    icon_map = {
+        "Fields Extracted": "📄",
+        "Documents Found": "✅",
+        "Missing Critical": "⚠",
+        "Status": "⏱",
+    }
+    icon_tile = QLabel(icon_map.get(label_text, ""))
+    icon_tile.setObjectName("statIconTile")
+    icon_tile.setFixedSize(44, 44)
+    # Soft tint for the icon tile like Tailwind `*-100`
+    icon_tile.setStyleSheet(
+        f"background-color: {_hex_to_rgba(accent_color, 0.18)}; border-radius:12px;"
+    )
+    icon_tile.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    text_col = QWidget()
+    text_lay = QVBoxLayout(text_col)
+    text_lay.setContentsMargins(0, 0, 0, 0)
+    text_lay.setSpacing(2)
+    text_lay.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
     value = QLabel(value_text)
-    value.setStyleSheet(
-        f"color: {accent_color}; font-size: 22pt; font-weight: 800; "
-        f"background: transparent; border: none;"
-    )
+    value.setObjectName("statValue")
+    # Value text is neutral in the Figma export except for the Status card;
+    # keep accent only for the 4th card (caller can still override later).
+    value.setStyleSheet("background:transparent;")
 
     label = QLabel(label_text.upper())
-    label.setStyleSheet(
-        "color: #8894A7; font-size: 8pt; font-weight: 700; "
-        "letter-spacing: 1px; background: transparent; border: none;"
-    )
+    label.setObjectName("statLabel")
 
-    lay.addWidget(value)
-    lay.addWidget(label)
+    text_lay.addWidget(value)
+    text_lay.addWidget(label)
+
+    lay.addWidget(icon_tile, 0, Qt.AlignmentFlag.AlignVCenter)
+    lay.addWidget(text_col, 1)
 
     return outer, value
 
@@ -117,33 +159,53 @@ class StepPipeline(QWidget):
         super().__init__(parent)
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(10)
-        self._buttons = []
+        lay.setSpacing(14)
+        self._items: list[tuple[QFrame, QLabel, QLabel]] = []
 
-        for i, (name, icon) in enumerate(STEPS):
-            btn = QPushButton(f"  {icon}  {name}")
-            btn.setObjectName("stepPill")
-            btn.setProperty("state", "pending")
-            btn.setMinimumHeight(44)
-            btn.setCheckable(False)
-            btn.setFlat(True)
-            btn.setCursor(Qt.CursorShape.ArrowCursor)
-            self._buttons.append(btn)
-            lay.addWidget(btn, 1)
+        for i, (name, number) in enumerate(STEPS):
+            card = QFrame()
+            card.setObjectName("stepCard")
+            card.setProperty("state", "pending")
+
+            v = QVBoxLayout(card)
+            v.setContentsMargins(12, 18, 12, 18)
+            v.setSpacing(10)
+            v.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            badge = QLabel(number)
+            badge.setObjectName("stepBadge")
+            badge.setFixedSize(36, 36)
+            badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            badge.setProperty("state", "pending")
+
+            lbl = QLabel(name)
+            lbl.setObjectName("stepText")
+            lbl.setWordWrap(True)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setProperty("state", "pending")
+
+            v.addWidget(badge, 0, Qt.AlignmentFlag.AlignCenter)
+            v.addWidget(lbl, 0, Qt.AlignmentFlag.AlignCenter)
+
+            self._items.append((card, badge, lbl))
+            lay.addWidget(card, 1)
 
     def set_step(self, active_idx: int):
-        for i, btn in enumerate(self._buttons):
+        for i, (card, badge, lbl) in enumerate(self._items):
             if i < active_idx:
-                btn.setProperty("state", "done")
-                btn.setText(f"  ✓  {STEPS[i][0]}")
+                state = "done"
+                badge.setText("✓")
             elif i == active_idx:
-                btn.setProperty("state", "active")
-                btn.setText(f"  ●  {STEPS[i][0]}")
+                state = "active"
+                badge.setText(str(i + 1))
             else:
-                btn.setProperty("state", "pending")
-                btn.setText(f"  {STEPS[i][1]}  {STEPS[i][0]}")
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
+                state = "pending"
+                badge.setText(str(i + 1))
+
+            for w in (card, badge, lbl):
+                w.setProperty("state", state)
+                w.style().unpolish(w)
+                w.style().polish(w)
 
 
 # Keep backward compatibility
