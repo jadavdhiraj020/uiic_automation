@@ -14,7 +14,7 @@
   "mobile_no":              { "sheet": "Sheet1", "search_label": "Mobile:",               "row_offset": 0, "col_offset": 1 },
   "email_id":               { "sheet": "Sheet1", "search_label": "e-mail:-",              "row_offset": 0, "col_offset": 1 },
 
-  "initial_loss_amount":    { "sheet": "Sheet1", "search_label": "NET PAYABLE",           "row_offset": 0, "col_offset": 4 },
+  "initial_loss_amount":    { "sheet": "ALL",    "search_label": "initial loss assessment", "row_offset": 0, "col_offset": 1 },
   "compulsory_excess":      { "sheet": "Sheet1", "search_label": "Less Compulsory Excess", "row_offset": 0, "col_offset": 1 },
   "voluntary_excess":       { "sheet": "Sheet1", "search_label": "LESS EXCESS CLAUSE",    "row_offset": 0, "col_offset": 5 },
   "salvage_value":          { "sheet": "Sheet1", "search_label": "LESS SALVAGE VALUE",    "row_offset": 0, "col_offset": 5 },
