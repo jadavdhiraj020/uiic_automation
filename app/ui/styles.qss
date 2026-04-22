@@ -20,6 +20,12 @@ QMainWindow, #rootWidget, #homePage, #progressPage {
     max-height: 54px;
 }
 
+/* Strip any inherited frame borders inside the topbar */
+#topBar QFrame {
+    border: none;
+    outline: none;
+}
+
 #appLogo {
     color: #FFFFFF;
     font-size: 11pt;
@@ -43,6 +49,7 @@ QMainWindow, #rootWidget, #homePage, #progressPage {
     background-color: #1E293B; /* slate-800 pill background */
     border-radius: 17px;
     border: none;
+    margin: 0;
 }
 
 #navBtn {
@@ -120,6 +127,10 @@ QScrollArea > QWidget > QWidget { background: transparent; }
     background-color: #FFFFFF;
     border: 1px solid #E2E8F0; /* slate-200 */
     border-radius: 12px;
+}
+
+#card:hover {
+    border-color: #CBD5E1;
 }
 
 #cardTitle {
@@ -218,13 +229,21 @@ QComboBox {
 QComboBox:hover { border-color: #CBD5E1; }
 QComboBox:focus { border-color: #6366F1; background-color: #FFFFFF; }
 
-QComboBox::drop-down { border: none; width: 28px; }
+QComboBox::drop-down { 
+    border: none; 
+    width: 32px;
+    subcontrol-origin: padding;
+    subcontrol-position: center right;
+}
+
+/* Default arrow fallback (overridden per-widget when custom icon is set) */
 QComboBox::down-arrow {
     image: none;
-    border-left: 4px solid transparent;
-    border-right: 4px solid transparent;
-    border-top: 5px solid #64748B;
-    margin-right: 12px;
+    width: 0px;
+    height: 0px;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 6px solid #64748B;
 }
 
 QComboBox QAbstractItemView {
@@ -452,7 +471,7 @@ QToolTip {
 
 /* ── Action Bar ────────────────────── */
 #actionBar {
-    background-color: rgba(255, 255, 255, 0.85);
+    background-color: rgba(255, 255, 255, 0.92);
     border-top: 1px solid #E2E8F0;
 }
 
@@ -461,6 +480,10 @@ QToolTip {
     background-color: #FFFFFF;
     border: 1px solid #E2E8F0;
     border-radius: 12px;
+}
+
+#statCard:hover {
+    border-color: #CBD5E1;
 }
 
 /* NOTE: QSS can't easily use the custom "accent" property as a color value.
@@ -490,3 +513,18 @@ QToolTip {
 QMessageBox { background-color: #FFFFFF; }
 QMessageBox QLabel { color: #1A1A2E; }
 QMessageBox QPushButton { min-width: 80px; }
+
+/* ── Done / Processing status ──────── */
+#statusPill[status="done"] {
+    background-color: rgba(16, 185, 129, 0.15);
+    border: 1px solid rgba(16, 185, 129, 0.30);
+}
+#statusPill[status="done"] #statusText { color: #10B981; font-weight: 700; }
+#statusPill[status="done"] #statusDot  { background-color: #10B981; }
+
+#statusPill[status="processing"] {
+    background-color: rgba(99, 102, 241, 0.10);
+    border: 1px solid rgba(99, 102, 241, 0.20);
+}
+#statusPill[status="processing"] #statusText { color: #818CF8; }
+#statusPill[status="processing"] #statusDot  { background-color: #818CF8; }

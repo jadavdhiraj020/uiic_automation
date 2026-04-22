@@ -25,8 +25,8 @@ import asyncio
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore    import Qt, QThread, pyqtSignal, QObject, QSize, QPropertyAnimation, QEasingCurve
-from PyQt6.QtGui     import QFont, QColor, QTextCursor, QIcon
+from PyQt6.QtCore    import Qt, QThread, pyqtSignal, QObject, QSize, QPropertyAnimation, QEasingCurve, QPointF
+from PyQt6.QtGui     import QFont, QColor, QTextCursor, QIcon, QPainter, QPen, QPixmap, QPainterPath
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QLineEdit, QPushButton, QProgressBar, QTextEdit,
@@ -63,8 +63,116 @@ class MainWindow(QMainWindow):
         # B3/P1: Single log file handle opened once, closed on exit
         self._log_file    = None
         self._open_log_file()
+        self._create_icons()
         self._setup_ui()
         self._load_settings()
+        self._setup_animations()
+
+    def _create_icons(self):
+        """Create custom-painted icons that render perfectly on every Windows system."""
+        # ── Eye icons (password toggle) ──────────────────────────
+        def _draw_eye(closed=False):
+            s = 28
+            px = QPixmap(s, s)
+            px.fill(QColor(0, 0, 0, 0))
+            p = QPainter(px)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            pen = QPen(QColor("#475569"))
+            pen.setWidthF(1.8)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            p.setPen(pen)
+            cy = s / 2
+            mx = 4
+            path = QPainterPath()
+            path.moveTo(mx, cy)
+            path.quadTo(s / 2, cy - 9, s - mx, cy)
+            path.quadTo(s / 2, cy + 9, mx, cy)
+            p.drawPath(path)
+            p.setBrush(QColor("#475569"))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawEllipse(QPointF(s / 2, cy), 3.5, 3.5)
+            if closed:
+                pen2 = QPen(QColor("#EF4444"))
+                pen2.setWidthF(2.0)
+                pen2.setCapStyle(Qt.PenCapStyle.RoundCap)
+                p.setPen(pen2)
+                p.drawLine(7, 6, s - 7, s - 6)
+            p.end()
+            return QIcon(px)
+
+        self._icon_eye_open = _draw_eye(closed=False)
+        self._icon_eye_closed = _draw_eye(closed=True)
+
+        # ── Chevron-down icon (dropdown arrow) ───────────────────
+        s = 16
+        px = QPixmap(s, s)
+        px.fill(QColor(0, 0, 0, 0))
+        p = QPainter(px)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(QColor("#475569"))
+        pen.setWidthF(2.2)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        p.setPen(pen)
+        p.drawLine(3, 5, 8, 10)
+        p.drawLine(8, 10, 13, 5)
+        p.end()
+        icon_dir = ensure_dir(os.path.join(user_data_dir("cache"), "icons"))
+        self._chevron_path = os.path.join(icon_dir, "chevron_down.png").replace("\\", "/")
+        px.save(self._chevron_path, "PNG")
+
+        # ── Nav icons (Home / Progress) ──────────────────────────
+        def _draw_nav_icon(draw_fn):
+            s = 18
+            px2 = QPixmap(s, s)
+            px2.fill(QColor(0, 0, 0, 0))
+            p2 = QPainter(px2)
+            p2.setRenderHint(QPainter.RenderHint.Antialiasing)
+            draw_fn(p2, s)
+            p2.end()
+            return QIcon(px2)
+
+        def _draw_home(p2, s):
+            pen = QPen(QColor("#94A3B8"))
+            pen.setWidthF(1.6)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            p2.setPen(pen)
+            # Roof triangle
+            p2.drawLine(2, 9, 9, 3)
+            p2.drawLine(9, 3, 16, 9)
+            # Walls
+            p2.drawLine(4, 9, 4, 15)
+            p2.drawLine(14, 9, 14, 15)
+            # Floor
+            p2.drawLine(4, 15, 14, 15)
+
+        def _draw_progress(p2, s):
+            pen = QPen(QColor("#94A3B8"))
+            pen.setWidthF(1.6)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            p2.setPen(pen)
+            # Circle
+            p2.drawEllipse(3, 3, 12, 12)
+            # Progress arc indicator (small dot at top)
+            p2.setBrush(QColor("#94A3B8"))
+            p2.setPen(Qt.PenStyle.NoPen)
+            p2.drawEllipse(QPointF(9, 4), 1.5, 1.5)
+
+        self._icon_home = _draw_nav_icon(_draw_home)
+        self._icon_progress = _draw_nav_icon(_draw_progress)
+
+    def _setup_animations(self):
+        # Pulse animation for status dot
+        self._pulse_eff = QGraphicsOpacityEffect(self.status_dot)
+        self.status_dot.setGraphicsEffect(self._pulse_eff)
+        self.pulse_anim = QPropertyAnimation(self._pulse_eff, b"opacity")
+        self.pulse_anim.setDuration(800)
+        self.pulse_anim.setStartValue(0.3)
+        self.pulse_anim.setEndValue(1.0)
+        self.pulse_anim.setLoopCount(-1)
+        self.pulse_anim.setEasingCurve(QEasingCurve.Type.InOutSine)
 
     # ══════════════════════════════════════════════════════════════════
     # BUILD UI
@@ -122,22 +230,29 @@ class MainWindow(QMainWindow):
         # Center: Nav buttons
         nav = QFrame()
         nav.setObjectName("navContainer")
+        nav.setFrameShape(QFrame.Shape.NoFrame)
         nav_lay = QHBoxLayout(nav)
         nav_lay.setContentsMargins(4, 4, 4, 4)
         nav_lay.setSpacing(8)
 
-        self.btn_home = QPushButton("⌂  Home")
+        self.btn_home = QPushButton("  Home")
+        self.btn_home.setIcon(self._icon_home)
+        self.btn_home.setIconSize(QSize(16, 16))
         self.btn_home.setObjectName("navBtn")
         self.btn_home.setProperty("active", True)
         self.btn_home.setMinimumHeight(34)
         self.btn_home.setMinimumWidth(110)
+        self.btn_home.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_home.clicked.connect(lambda: self._switch_page(0))
 
-        self.btn_progress = QPushButton("◎  Progress")
+        self.btn_progress = QPushButton("  Progress")
+        self.btn_progress.setIcon(self._icon_progress)
+        self.btn_progress.setIconSize(QSize(16, 16))
         self.btn_progress.setObjectName("navBtn")
         self.btn_progress.setProperty("active", False)
         self.btn_progress.setMinimumHeight(34)
         self.btn_progress.setMinimumWidth(110)
+        self.btn_progress.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_progress.clicked.connect(lambda: self._switch_page(1))
 
         nav_lay.addWidget(self.btn_home)
@@ -293,12 +408,30 @@ class MainWindow(QMainWindow):
         pwd_lay.setSpacing(6)
         
         self.inp_password = _input("Portal password", echo_password=True)
-        self.btn_toggle_pwd = QPushButton("👁")
-        self.btn_toggle_pwd.setFixedSize(36, 36)
+        self.btn_toggle_pwd = QPushButton()
+        self.btn_toggle_pwd.setIcon(self._icon_eye_closed)
+        self.btn_toggle_pwd.setIconSize(QSize(22, 22))
+        self.btn_toggle_pwd.setFixedSize(38, 38)
         self.btn_toggle_pwd.setCheckable(True)
-        self.btn_toggle_pwd.setStyleSheet("background:transparent; border:none; font-size:12pt; border-radius:18px;")
+        self.btn_toggle_pwd.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_toggle_pwd.setToolTip("Show / Hide password")
+        self.btn_toggle_pwd.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: 1px solid #E2E8F0;
+                border-radius: 10px;
+            }
+            QPushButton:hover {
+                background-color: #F1F5F9;
+                border-color: #CBD5E1;
+            }
+            QPushButton:checked {
+                background-color: #EEF2FF;
+                border-color: #A5B4FC;
+            }
+        """)
         self.btn_toggle_pwd.clicked.connect(self._toggle_password)
-        
+
         pwd_lay.addWidget(self.inp_password)
         pwd_lay.addWidget(self.btn_toggle_pwd)
         grid.addWidget(pwd_container, 3, 0)
@@ -311,6 +444,20 @@ class MainWindow(QMainWindow):
         self.inp_claim_type = QComboBox()
         self.inp_claim_type.addItems(["Non Maruti", "Maruti"])
         self.inp_claim_type.setMinimumHeight(36)
+        # Apply custom chevron icon for the dropdown arrow
+        self.inp_claim_type.setStyleSheet(f"""
+            QComboBox::drop-down {{
+                border: none;
+                width: 36px;
+                subcontrol-origin: padding;
+                subcontrol-position: center right;
+            }}
+            QComboBox::down-arrow {{
+                image: url({self._chevron_path});
+                width: 12px;
+                height: 12px;
+            }}
+        """)
         grid.addWidget(self.inp_claim_type, 3, 1)
 
         return _card(w, title="⚙  Configuration",
@@ -319,10 +466,10 @@ class MainWindow(QMainWindow):
     def _toggle_password(self, checked):
         if checked:
             self.inp_password.setEchoMode(QLineEdit.EchoMode.Normal)
-            self.btn_toggle_pwd.setText("🙈")
+            self.btn_toggle_pwd.setIcon(self._icon_eye_open)
         else:
             self.inp_password.setEchoMode(QLineEdit.EchoMode.Password)
-            self.btn_toggle_pwd.setText("👁")
+            self.btn_toggle_pwd.setIcon(self._icon_eye_closed)
 
     def _build_folder_card(self):
         w = QWidget()
@@ -628,13 +775,13 @@ class MainWindow(QMainWindow):
         # Run validation and show errors/warnings
         errors, warnings = self._claim.validate()
         if errors:
-            err_text = "❌ MISSING CRITICAL FIELDS — Automation cannot start:\n" + \
+            err_text = "⚠  MISSING FIELDS — Review before starting:\n" + \
                        "\n".join(f"  • {e}" for e in errors)
             if warnings:
-                err_text += "\n⚠️  Warnings: " + " | ".join(warnings)
+                err_text += "\n   Also: " + " | ".join(warnings)
             self.validation_bar.setStyleSheet(
-                "background:#FEF2F2; color:#DC2626; "
-                "border:1px solid #FECACA; "
+                "background:#FFF7ED; color:#C2410C; "
+                "border:1px solid #FED7AA; "
                 "border-radius:10px; padding:10px 14px; font-size:8.5pt;"
             )
             self.validation_bar.setText(err_text)
@@ -775,17 +922,21 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Claim No Required", "Enter the Claim Number.")
             return
 
-        # ── Validation gate — block start if critical fields missing ──────────
+        # ── Validation gate — warn (but allow) if critical fields missing ────────
         errors, warnings = self._claim.validate()
         if errors:
             error_list = "\n".join(f"  • {e}" for e in errors)
-            QMessageBox.critical(
-                self, "Data Validation Failed",
-                f"Cannot start — the following critical fields are missing from Excel:\n\n"
+            reply = QMessageBox.warning(
+                self, "Critical Fields Missing",
+                f"The following fields are missing from Excel:\n\n"
                 f"{error_list}\n\n"
-                f"Fix the Excel file or enter values manually and re-scan."
+                f"The portal may reject the submission.\n"
+                f"Do you still want to proceed?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
             )
-            return
+            if reply != QMessageBox.StandardButton.Yes:
+                return
         if warnings:
             warn_list = "\n".join(f"  • {w}" for w in warnings)
             reply = QMessageBox.question(
