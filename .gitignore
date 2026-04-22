@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *.pyo
+*.pyd
 *.egg-info/
 dist/
 build/
@@ -12,21 +13,35 @@ build_assets/
 # Virtual environment
 .venv/
 venv/
+env/
+ENV/
 
-# IDE
+# Testing (pytest, coverage, etc.)
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+
+# IDE & Editor
 .idea/
 .vscode/
 *.swp
 *.swo
+.DS_Store
+Thumbs.db
 
-# Logs
+# Logs & Temporary Files
 logs/
 *.log
+tmp/
+temp/
 
-# SECURITY: Never commit credentials
+# SECURITY: Never commit credentials or local overrides
 app/config/settings.json
+.env
 
-# User claim folders & docs
+# User claim folders & uploaded documents
 automationfolderuploading/
 *.xlsx
 *.xls
@@ -34,7 +49,4 @@ automationfolderuploading/
 *.jpg
 *.jpeg
 *.png
-
-# OS
-Thumbs.db
-.DS_Store
+*.puc
