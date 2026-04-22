@@ -62,7 +62,7 @@ class FolderScanResult:
         self.claim_doc_files: Dict[str, str] = {}
         self.assessment_files: Dict[str, str] = {}
         self.unknown_files: List[str] = []
-        self.skipped_files: List[str] = []
+        self.skipped_files: List[Tuple[str, str]] = []
 
     def summary_lines(self) -> List[str]:
         lines = []
@@ -74,6 +74,8 @@ class FolderScanResult:
             lines.append(f"[{key}] -> {Path(value).name}")
         for file_path in self.unknown_files:
             lines.append(f"Unknown: {Path(file_path).name}")
+        for file_path, reason in self.skipped_files:
+            lines.append(f"Skipped: {Path(file_path).name} ({reason})")
         return lines
 
 
@@ -85,12 +87,40 @@ def scan_folder(folder_path: str, config_dir: str) -> FolderScanResult:
         logger.error("Folder not found: %s", folder_path)
         return result
 
+    # ── Pre-scan: Duplicate 'vehicle' files into 4 copies ────────────────────
+    import shutil
+    try:
+        for fname in sorted(os.listdir(folder_path)):
+            if fname in _SKIP_FILES or os.path.isdir(os.path.join(folder_path, fname)):
+                continue
+            fname_lower = fname.lower()
+            if (fname_lower.startswith("vehical") or fname_lower.startswith("vehicle")) and "vehicle_photo_" not in fname_lower:
+                ext = Path(fname).suffix
+                source_path = os.path.join(folder_path, fname)
+                
+                # Create 4 copies
+                for _ in range(4):
+                    idx = 1
+                    while True:
+                        new_name = f"vehicle_photo_{idx}{ext}"
+                        new_path = os.path.join(folder_path, new_name)
+                        if not os.path.exists(new_path):
+                            break
+                        idx += 1
+                    try:
+                        shutil.copy2(source_path, new_path)
+                        logger.info("Generated %s from %s", new_name, fname)
+                    except Exception as e:
+                        logger.error("Failed to copy %s to %s: %s", fname, new_name, e)
+    except Exception as e:
+        logger.error("Error during vehicle photo duplication: %s", e)
+
     # Collect files starting with "other" for sequential Other 1/2/3 assignment
     other_files: List[str] = []
 
     for fname in sorted(os.listdir(folder_path)):
         if fname in _SKIP_FILES:
-            result.skipped_files.append(fname)
+            result.skipped_files.append((full_path if 'full_path' in locals() else fname, "Ignored system file"))
             continue
 
         full_path = os.path.join(folder_path, fname)
@@ -150,7 +180,7 @@ def scan_folder(folder_path: str, config_dir: str) -> FolderScanResult:
                     continue
 
                 logger.warning("Multiple Excel files found. Keeping first: %s", result.excel_path)
-                result.skipped_files.append(full_path)
+                result.skipped_files.append((full_path, "Multiple Excel files found"))
             continue
 
         # ── Non-document files ────────────────────────────────────────────────
@@ -163,7 +193,7 @@ def scan_folder(folder_path: str, config_dir: str) -> FolderScanResult:
         if file_size > MAX_FILE_BYTES:
             mb = file_size / (1024 * 1024)
             logger.warning("File too large (%.1fMB > 2MB), skipping: %s", mb, fname)
-            result.skipped_files.append(full_path)
+            result.skipped_files.append((full_path, f"Size > 2MB ({mb:.1f}MB)"))
             continue
 
         # ── Normalise filename: lowercase, hyphens/spaces → underscores ──────
@@ -180,7 +210,7 @@ def scan_folder(folder_path: str, config_dir: str) -> FolderScanResult:
         if assessment_key:
             if assessment_key in result.assessment_files:
                 logger.warning("Duplicate assessment mapping for [%s], keeping first file.", assessment_key)
-                result.skipped_files.append(full_path)
+                result.skipped_files.append((full_path, f"Duplicate assessment mapping [{assessment_key}]"))
                 continue
             result.assessment_files[assessment_key] = full_path
             logger.info("Assessment file [%s]: %s", assessment_key, fname)
@@ -191,7 +221,7 @@ def scan_folder(folder_path: str, config_dir: str) -> FolderScanResult:
         if claim_type:
             if claim_type in result.claim_doc_files:
                 logger.warning("Duplicate claim document mapping for [%s], keeping first file.", claim_type)
-                result.skipped_files.append(full_path)
+                result.skipped_files.append((full_path, f"Duplicate claim doc mapping [{claim_type}]"))
                 continue
             result.claim_doc_files[claim_type] = full_path
             logger.info("Claim doc [%s]: %s", claim_type, fname)
@@ -209,6 +239,6 @@ def scan_folder(folder_path: str, config_dir: str) -> FolderScanResult:
             logger.info("Claim doc [%s]: %s", slot_label, Path(other_path).name)
         else:
             logger.warning("No Other slot left for: %s (only %d slots)", Path(other_path).name, len(other_slots))
-            result.skipped_files.append(other_path)
+            result.skipped_files.append((other_path, "No 'Other' slots left"))
 
     return result

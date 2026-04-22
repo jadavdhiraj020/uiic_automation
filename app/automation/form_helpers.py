@@ -99,7 +99,7 @@ async def _raw_fill(page, sel: str, value_str: str, label: str,
         try:
             el = page.locator(sel).first
             await el.wait_for(state="visible", timeout=timeout_ms)
-            await el.click(click_count=3)
+            await el.click(click_count=3, force=True)
             await el.fill(value_str)
             await el.press("Tab")
             await asyncio.sleep(0.1)
@@ -159,8 +159,8 @@ async def safe_fill_date(page, sel: str, value, label: str,
 
     Portal expects: DD/MM/YYYY format in these text inputs.
     """
-    if not value or str(value).strip() == "":
-        log_cb(f"  ⏭️  [Skipped] {label} : (Empty in Excel)")
+    if not value or str(value).strip() == "" or str(value).strip() == "00:00:00":
+        log_cb(f"  ⏭️  [Skipped] {label} : (Empty or Invalid Date)")
         return False
 
     iso_date = _to_iso_date(str(value).strip())

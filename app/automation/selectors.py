@@ -123,14 +123,14 @@ ASSESSMENT = {
     "invoice_no":         "#invoiceNo",
     "invoice_date":       "#invoiceDate",
     # Report
-    "report_no":          "#reportNo",
-    "report_date":        "#reportDate",
+    "report_no":          "#reportNo, #finalReportNo, #finalReportNumber, input[ng-model*='finalReportNo']",
+    "report_date":        "#reportDate, #finalReportDate, input[ng-model*='finalReportDate']",
     # Surveyor charges — NOTE: profFeeAmount (not professionalFee)
     "prof_fee":           "#profFeeAmount",
     "travel":             "#travelExpense",
     "daily_allowance":    "#dailyAllowance",
     "photo":              "#photoCharge",
-    "total":              "#totalClaimedAmt, #totalClaimAmt, #totalClaimed, #totalClaimedAmount, input[ng-model*='totalClaimed'], input[ng-model*='totalSurveyorCharges']",
+    "total":              "#totalClaimedAmt, #totalClaimAmt, #totalClaimed, #totalClaimedAmount, input[ng-model*='totalClaimed'], input[ng-model*='totalSurveyorCharges'], input[name*='totalClaim']",
     # Declaration
     "radio_declaration":  "input[name='ynPerused'][value='Y']",
     # Remarks

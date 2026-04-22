@@ -694,6 +694,17 @@ class MainWindow(QMainWindow):
         self._append_log(f"📁 Scanning folder: {folder}")
         try:
             self._scan_result = scan_folder(folder, CONFIG_DIR)
+            
+            if self._scan_result.skipped_files:
+                self._append_log("⚠️  Skipped Files:")
+                for path, reason in self._scan_result.skipped_files:
+                    self._append_log(f"  • {Path(path).name} — {reason}")
+
+            if self._scan_result.unknown_files:
+                self._append_log("❓ Unrecognized Files (No Mapping):")
+                for path in self._scan_result.unknown_files:
+                    self._append_log(f"  • {Path(path).name}")
+
             if not self._scan_result.excel_path:
                 self._append_log("⚠️  No Excel file found in folder!")
                 self._set_status("ready", "No Excel found")
