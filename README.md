@@ -73,7 +73,7 @@ full human control over final submission.
 winget install --id=astral-sh.uv -e
 
 # 2. Clone and enter the project
-git clone <your-repo-url>
+git clone https://github.com/jadavdhiraj020/uiic_automation.git
 cd uiic_automation
 
 # 3. Create virtual environment (Python 3.10 recommended)
