@@ -117,16 +117,22 @@ def scan_folder(folder_path: str, config_dir: str) -> FolderScanResult:
                 spot_path = os.path.join(folder_path, "Re-Inspection Report format.xlsx")
                 if not os.path.exists(spot_path):
                     try:
-                        import pandas as pd
-                        excel_data = pd.ExcelFile(full_path, engine="openpyxl")
-                        all_sheets = excel_data.sheet_names
+                        import openpyxl
+                        # Load workbook into memory (data_only=True evaluates formulas to their last values)
+                        wb = openpyxl.load_workbook(full_path, data_only=True)
+                        all_sheets = wb.sheetnames
                         if len(all_sheets) > 6:
                             target_sheet = all_sheets[6]
-                            logger.info(f"Extracting Sheet 7 ('{target_sheet}') for Re-Inspection Report...")
-                            df = excel_data.parse(sheet_name=target_sheet)
-                            with pd.ExcelWriter(spot_path, engine="openpyxl") as writer:
-                                df.to_excel(writer, sheet_name=target_sheet, index=False)
-                            logger.info(f"✅ Generated {spot_path}")
+                            logger.info(f"Extracting Sheet 7 ('{target_sheet}') for Re-Inspection Report with formatting...")
+                            
+                            # Remove all sheets except the target one
+                            for sheet_name in all_sheets:
+                                if sheet_name != target_sheet:
+                                    wb.remove(wb[sheet_name])
+                                    
+                            # Save as a NEW file. The original file is completely untouched!
+                            wb.save(spot_path)
+                            logger.info(f"✅ Generated {spot_path} (formatting preserved)")
                     except Exception as e:
                         logger.warning(f"Could not extract Sheet 7: {e}")
                 
