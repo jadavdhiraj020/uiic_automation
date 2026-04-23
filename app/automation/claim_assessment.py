@@ -116,8 +116,8 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
         return False
     mb = os.path.getsize(file_path) / (1024 * 1024)
     if mb > MAX_FILE_MB:
-        log_cb(f"  ⚠️  Too large ({mb:.1f}MB): {fname}")
-        return False
+        logger.info("Large assessment file (%.1fMB): %s — portal alert will be auto-accepted", mb, fname)
+
 
     log_cb(f"  ▶ [{upload_label}] ← {fname}")
     abs_path = str(os.path.abspath(file_path))

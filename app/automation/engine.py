@@ -12,6 +12,7 @@ Post-login strategy:
 import asyncio
 import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Callable, List, Optional
 
@@ -263,10 +264,22 @@ class AutomationEngine:
             context.on("page", lambda p: captured_pages.append(p))
 
             try:
+                t_start = time.time()
+                self.log_cb("")
+                self.log_cb("╔" + "═" * 48 + "╗")
+                self.log_cb("║  🚀 UIIC SURVEYOR AUTOMATION                   ║")
+                self.log_cb("╠" + "═" * 48 + "╣")
+                self.log_cb(f"║  Claim:  {claim.claim_no:<38} ║")
+                self.log_cb(f"║  Type:   {claim_type:<38} ║")
+                self.log_cb(f"║  Survey: {claim.date_of_survey or '—':<38} ║")
+                self.log_cb(f"║  Loss:   ₹{claim.initial_loss_amount or '—':<37} ║")
+                self.log_cb("╚" + "═" * 48 + "╝")
+                self.log_cb("")
+
                 self.step_cb(0, steps[0])
-                self.log_cb("-" * 36)
-                self.log_cb("STEP 1 - Login")
-                self.log_cb("-" * 36)
+                self.log_cb("━" * 48)
+                self.log_cb("  📌 STEP 1/5 ─ Login to Portal")
+                self.log_cb("━" * 48)
 
                 success = await do_login(
                     page,
@@ -297,10 +310,15 @@ class AutomationEngine:
                 if self._check_stop():
                     return AutomationRunResult(False, "Automation stopped by user.")
 
+                t1 = time.time() - t_start
+                self.log_cb(f"  ⏱️  Login completed in {t1:.1f}s")
+                self.log_cb("")
+
                 self.step_cb(1, steps[1])
-                self.log_cb("-" * 36)
-                self.log_cb(f"STEP 2 - Navigate to Claim: {claim.claim_no}")
-                self.log_cb("-" * 36)
+                self.log_cb("━" * 48)
+                self.log_cb(f"  🔎 STEP 2/5 ─ Navigate to Claim")
+                self.log_cb(f"  Claim No: {claim.claim_no}")
+                self.log_cb("━" * 48)
 
                 claim_page = await navigate_to_claim(page, claim.claim_no, claim_type, log_cb=self.log_cb)
                 if claim_page is None:
@@ -313,10 +331,11 @@ class AutomationEngine:
 
                 await asyncio.sleep(1.5)
 
+                self.log_cb("")
                 self.step_cb(2, steps[2])
-                self.log_cb("-" * 36)
-                self.log_cb("STEP 3 - Fill Interim Report")
-                self.log_cb("-" * 36)
+                self.log_cb("━" * 48)
+                self.log_cb("  ✏️  STEP 3/5 ─ Fill Interim Report")
+                self.log_cb("━" * 48)
                 await page.bring_to_front()
                 await page.evaluate("window.scrollTo(0, 0)")
                 await fill_interim_report(page, claim, log_cb=self.log_cb)
@@ -326,10 +345,11 @@ class AutomationEngine:
                 await asyncio.sleep(1.0)
                 await page.bring_to_front()
 
+                self.log_cb("")
                 self.step_cb(3, steps[3])
-                self.log_cb("-" * 36)
-                self.log_cb("STEP 4 - Upload Claim Documents")
-                self.log_cb("-" * 36)
+                self.log_cb("━" * 48)
+                self.log_cb("  📤 STEP 4/5 ─ Upload Claim Documents")
+                self.log_cb("━" * 48)
                 await page.evaluate("window.scrollTo(0, 0)")
                 await fill_claim_documents(page, claim, log_cb=self.log_cb)
                 if self._check_stop():
@@ -338,19 +358,28 @@ class AutomationEngine:
                 await asyncio.sleep(1.0)
                 await page.bring_to_front()
 
+                self.log_cb("")
                 self.step_cb(4, steps[4])
-                self.log_cb("-" * 36)
-                self.log_cb("STEP 5 - Fill Claim Assessment")
-                self.log_cb("-" * 36)
+                self.log_cb("━" * 48)
+                self.log_cb("  📊 STEP 5/5 ─ Fill Claim Assessment")
+                self.log_cb("━" * 48)
                 await page.evaluate("window.scrollTo(0, 0)")
                 await fill_claim_assessment(page, claim, log_cb=self.log_cb)
                 if self._check_stop():
                     return AutomationRunResult(False, "Automation stopped by user.")
 
+                t_total = time.time() - t_start
                 self.step_cb(5, "Complete")
                 self.log_cb("")
-                self.log_cb("AUTOMATION COMPLETE")
-                self.log_cb("Please review all tabs in the browser, then click Final Submit manually.")
+                self.log_cb("╔" + "═" * 48 + "╗")
+                self.log_cb("║  🎉 AUTOMATION COMPLETE                        ║")
+                self.log_cb("╠" + "═" * 48 + "╣")
+                self.log_cb(f"║  Claim:    {claim.claim_no:<36} ║")
+                self.log_cb(f"║  Duration: {t_total:.0f}s ({t_total/60:.1f} min){' ' * max(0, 28-len(f'{t_total:.0f}s ({t_total/60:.1f} min)'))} ║")
+                self.log_cb("║                                                 ║")
+                self.log_cb("║  ⚠️  Review all tabs in browser, then click     ║")
+                self.log_cb("║     'Final Submit' manually.                    ║")
+                self.log_cb("╚" + "═" * 48 + "╝")
                 self.log_cb("")
 
                 await self._wait_for_manual_review(browser)

@@ -14,6 +14,7 @@ UPDATED 2026-04-20:
   - Files starting with 'other' auto-assigned to Other 1/2/3 slots
   - Max file size check (2MB portal limit)
   - Assessment keywords also use longest-first matching
+  - Comprehensive scan summary log for client visibility
 """
 
 import json
@@ -44,15 +45,28 @@ def load_doc_mapping(config_dir: str) -> Tuple[Dict[str, str], Dict[str, str], L
     return claim_map, assessment_map, other_slots
 
 
+import re
+
 def _match_keyword(filename_lower: str, mapping: Dict[str, str]) -> Optional[str]:
     """
     Match filename against keyword mapping.
     Tries longest keywords first so 'veh_front' wins over 'front'.
-    Returns the mapped doc_type value, or None.
+    For short keywords (<= 3 chars like 'fir', 'rc', 'pan'), requires word boundaries
+    to prevent false matches (e.g. 'confirm.pdf' matching 'fir').
     """
+    # Create a version of the filename with only alphanumeric chars separated by spaces
+    spaced_name = " " + re.sub(r'[^a-z0-9]', ' ', filename_lower) + " "
+
     for keyword in sorted(mapping.keys(), key=len, reverse=True):
-        if keyword in filename_lower:
-            return mapping[keyword]
+        if len(keyword) <= 3:
+            # Strict word boundary match for short keywords
+            spaced_kw = " " + re.sub(r'[^a-z0-9]', ' ', keyword.lower()) + " "
+            if spaced_kw in spaced_name:
+                return mapping[keyword]
+        else:
+            # Normal substring match for longer keywords
+            if keyword in filename_lower:
+                return mapping[keyword]
     return None
 
 
@@ -87,7 +101,7 @@ def scan_folder(folder_path: str, config_dir: str) -> FolderScanResult:
         logger.error("Folder not found: %s", folder_path)
         return result
 
-    # ── Pre-scan: Duplicate 'vehicle' files into 4 copies ────────────────────
+    # ── Pre-scan: Duplicate 'vehicle' files into 5 copies (Front/Rear/Left/Right/Roof)
     import shutil
     try:
         for fname in sorted(os.listdir(folder_path)):
@@ -97,16 +111,22 @@ def scan_folder(folder_path: str, config_dir: str) -> FolderScanResult:
             if (fname_lower.startswith("vehical") or fname_lower.startswith("vehicle")) and "vehicle_photo_" not in fname_lower:
                 ext = Path(fname).suffix
                 source_path = os.path.join(folder_path, fname)
-                
-                # Create 4 copies
-                for _ in range(4):
-                    idx = 1
-                    while True:
-                        new_name = f"vehicle_photo_{idx}{ext}"
-                        new_path = os.path.join(folder_path, new_name)
-                        if not os.path.exists(new_path):
-                            break
-                        idx += 1
+
+                # Check if all 5 copies already exist — skip duplication if so
+                all_exist = all(
+                    os.path.exists(os.path.join(folder_path, f"vehicle_photo_{n}{ext}"))
+                    for n in range(1, 6)
+                )
+                if all_exist:
+                    logger.info("All 5 vehicle_photo copies already exist — skipping duplication for %s", fname)
+                    continue
+
+                # Create 5 copies (Front, Rear, Left, Right, Roof)
+                for copy_num in range(1, 6):
+                    new_name = f"vehicle_photo_{copy_num}{ext}"
+                    new_path = os.path.join(folder_path, new_name)
+                    if os.path.exists(new_path):
+                        continue  # Don't overwrite existing copies
                     try:
                         shutil.copy2(source_path, new_path)
                         logger.info("Generated %s from %s", new_name, fname)
@@ -120,7 +140,7 @@ def scan_folder(folder_path: str, config_dir: str) -> FolderScanResult:
 
     for fname in sorted(os.listdir(folder_path)):
         if fname in _SKIP_FILES:
-            result.skipped_files.append((full_path if 'full_path' in locals() else fname, "Ignored system file"))
+            result.skipped_files.append((os.path.join(folder_path, fname), "Ignored system file"))
             continue
 
         full_path = os.path.join(folder_path, fname)
@@ -173,12 +193,6 @@ def scan_folder(folder_path: str, config_dir: str) -> FolderScanResult:
                     result.assessment_files["reinspection_report"] = spot_path
                     logger.info("Assessment file [reinspection_report]: %s", spot_path)
             else:
-                # ── Handle our generated subset excel directly so it doesn't get skipped if it shows up second ──
-                if fname_lower == "re-inspection report format.xlsx":
-                    result.assessment_files["reinspection_report"] = full_path
-                    logger.info("Assessment file [reinspection_report]: %s (previously generated)", full_path)
-                    continue
-
                 logger.warning("Multiple Excel files found. Keeping first: %s", result.excel_path)
                 result.skipped_files.append((full_path, "Multiple Excel files found"))
             continue
@@ -188,13 +202,11 @@ def scan_folder(folder_path: str, config_dir: str) -> FolderScanResult:
             result.unknown_files.append(full_path)
             continue
 
-        # ── File size check ───────────────────────────────────────────────────
+        # ── File size info (no skip — portal accepts >2MB with alert popup) ───
         file_size = os.path.getsize(full_path)
         if file_size > MAX_FILE_BYTES:
             mb = file_size / (1024 * 1024)
-            logger.warning("File too large (%.1fMB > 2MB), skipping: %s", mb, fname)
-            result.skipped_files.append((full_path, f"Size > 2MB ({mb:.1f}MB)"))
-            continue
+            logger.info("Large file (%.1fMB): %s — portal will show size alert", mb, fname)
 
         # ── Normalise filename: lowercase, hyphens/spaces → underscores ──────
         fname_lower = fname.lower().replace("-", "_").replace(" ", "_")
@@ -241,4 +253,93 @@ def scan_folder(folder_path: str, config_dir: str) -> FolderScanResult:
             logger.warning("No Other slot left for: %s (only %d slots)", Path(other_path).name, len(other_slots))
             result.skipped_files.append((other_path, "No 'Other' slots left"))
 
+    # ── Generate comprehensive scan summary log ──────────────────────────────
+    _log_scan_summary(result, claim_map)
+
     return result
+
+
+# ── Expected mandatory portal documents ──────────────────────────────────────
+_EXPECTED_CLAIM_DOCS = [
+    "PAN Card",
+    "Aadhaar Card",
+    "Cancelled Cheque Or Bank Details",
+    "Driving License",
+    "RC Book",
+    "Vehicle Photograph (Front)",
+    "Vehicle Photograph(Rear)",
+    "Vehicle Photograph (Left)",
+    "Vehicle Photograph (Right)",
+    "Vehicle Photograph (Roof)",
+    "Claim Form",
+    "CKYC Form",
+    "CSR and Certificate",
+    "Discharge or Satisfaction Voucher",
+]
+
+
+def _log_scan_summary(result: FolderScanResult, claim_map: Dict[str, str]) -> None:
+    """
+    Generate a detailed summary of the folder scan results.
+    This helps the client understand exactly what was found, what's missing,
+    and what couldn't be matched.
+    """
+    lines = []
+    lines.append("")
+    lines.append("═" * 60)
+    lines.append("📋 DOCUMENT SCAN SUMMARY")
+    lines.append("═" * 60)
+
+    # ── Excel ─────────────────────────────────────────────────────────────────
+    if result.excel_path:
+        lines.append(f"  ✅ Excel: {Path(result.excel_path).name}")
+    else:
+        lines.append("  ❌ Excel: NOT FOUND — data extraction will fail")
+
+    # ── Claim Documents matched ───────────────────────────────────────────────
+    lines.append("")
+    lines.append("  📎 Claim Documents (matched):")
+    if result.claim_doc_files:
+        for doc_type, fpath in result.claim_doc_files.items():
+            mb = os.path.getsize(fpath) / (1024 * 1024) if os.path.isfile(fpath) else 0
+            lines.append(f"    ✅ [{doc_type}] → {Path(fpath).name} ({mb:.1f}MB)")
+    else:
+        lines.append("    ⚠️  No claim documents matched from folder")
+
+    # ── Assessment files matched ──────────────────────────────────────────────
+    lines.append("")
+    lines.append("  📎 Assessment Files (matched):")
+    if result.assessment_files:
+        for doc_type, fpath in result.assessment_files.items():
+            lines.append(f"    ✅ [{doc_type}] → {Path(fpath).name}")
+    else:
+        lines.append("    ⚠️  No assessment files matched from folder")
+
+    # ── Missing mandatory documents ───────────────────────────────────────────
+    matched_types = set(result.claim_doc_files.keys())
+    missing = [d for d in _EXPECTED_CLAIM_DOCS if d not in matched_types]
+    if missing:
+        lines.append("")
+        lines.append("  ⚠️  Missing expected documents (not found in folder):")
+        for doc in missing:
+            lines.append(f"    ❌ {doc}")
+
+    # ── Skipped files ─────────────────────────────────────────────────────────
+    if result.skipped_files:
+        lines.append("")
+        lines.append("  ⏭️  Skipped files:")
+        for fpath, reason in result.skipped_files:
+            lines.append(f"    ⚠️  {Path(fpath).name} — {reason}")
+
+    # ── Unknown / unmatched files ─────────────────────────────────────────────
+    if result.unknown_files:
+        lines.append("")
+        lines.append("  ❓ Unrecognised files (no mapping matched):")
+        for fpath in result.unknown_files:
+            lines.append(f"    ❓ {Path(fpath).name}")
+        lines.append("    ℹ️  Tip: rename files to include keywords like")
+        lines.append("       pan, aadhaar, vehicle_photo_1, claim_form, ckyc, csr, etc.")
+
+    lines.append("═" * 60)
+    summary = "\n".join(lines)
+    logger.info(summary)

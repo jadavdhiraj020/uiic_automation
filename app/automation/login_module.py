@@ -227,29 +227,29 @@ async def do_login(
 
     page.on("dialog", lambda dialog: asyncio.create_task(_accept_dialog(dialog, log_cb)))
 
-    log_cb("Navigating to portal...")
+    log_cb("  🌐 Navigating to portal...")
     await page.goto(portal_url, wait_until="domcontentloaded", timeout=30000)
     await asyncio.sleep(2)
 
     try:
         await page.locator(SEL_USERNAME).wait_for(state="visible", timeout=12000)
-        log_cb("Login page loaded.")
+        log_cb("  ✅ Login page loaded successfully")
     except Exception as exc:
-        log_cb(f"Login page did not load properly: {exc}")
+        log_cb(f"  ❌ Login page did not load: {exc}")
         return False
 
     for attempt in range(1, max_retries + 1):
         if stop_cb():
             return False
 
-        log_cb(f"Login attempt {attempt}/{max_retries}...")
-        log_cb("Reading CAPTCHA from canvas...")
+        log_cb(f"\n  🔄 Attempt {attempt}/{max_retries}")
+        log_cb("    📷 Reading CAPTCHA from canvas...")
 
         try:
             img_bytes = await _get_captcha_bytes(page)
             captcha_text = solve_captcha_from_bytes(img_bytes)
         except Exception as exc:
-            log_cb(f"CAPTCHA screenshot error: {exc}")
+            log_cb(f"    ⚠️  CAPTCHA screenshot error: {exc}")
             await _refresh_captcha(page)
             continue
 
@@ -267,14 +267,14 @@ async def do_login(
             await _refresh_captcha(page)
             continue
 
-        log_cb(f"Trying CAPTCHA: '{captcha_text}'")
+        log_cb(f"    🔑 CAPTCHA text: '{captcha_text}'")
 
         if stop_cb():
             return False
 
         clicked = await _try_login_with_captcha(page, username, password, captcha_text, log_cb)
         if not clicked:
-            log_cb(f"Login attempt failed on attempt {attempt}. Refreshing CAPTCHA...")
+            log_cb(f"    ⚠️  Could not click login button on attempt {attempt}")
             await _refresh_captcha(page)
             continue
 
@@ -284,25 +284,25 @@ async def do_login(
 
         login_ok, outcome = await _wait_for_login_outcome(page, log_cb)
         if login_ok:
-            log_cb(f"Login confirmed.")
-            log_cb(f"  Success signal: {outcome}")
+            log_cb(f"    ✅ Login successful!")
+            log_cb(f"    ℹ️  Signal: {outcome}")
             await _dismiss_alert(page)
             await asyncio.sleep(1.5)
             return True
 
         err = outcome.strip()
         if err:
-            log_cb(f"  Login not confirmed: {err[:140]}")
+            log_cb(f"    ❌ Login failed: {err[:140]}")
             if "password" in err.lower() and "captcha" not in err.lower():
-                log_cb("  Wrong password detected. Not retrying more.")
+                log_cb("    ❌ Wrong password detected — stopping retries")
                 break
 
         if stop_cb():
             return False
 
-        log_cb(f"Login failed on attempt {attempt}. Refreshing CAPTCHA...")
+        log_cb(f"    🔄 Refreshing CAPTCHA for next attempt...")
         await _refresh_captcha(page)
         await asyncio.sleep(1)
 
-    log_cb("Login failed after all retries.")
+    log_cb(f"  ❌ Login failed after {max_retries} attempts")
     return False

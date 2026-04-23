@@ -170,12 +170,32 @@ async def navigate_to_claim(
     # Strategy B: Direct URL navigation
     if not worklist_reached or "Worklist" not in page.url:
         log_cb("🔗 Navigating directly to Worklist URL...")
-        await page.goto(WORKLIST_URL, wait_until="domcontentloaded", timeout=20000)
+        await page.goto(WORKLIST_URL, wait_until="domcontentloaded", timeout=30000)
         await asyncio.sleep(3)
         log_cb(f"📌 URL after navigation: {page.url}")
 
-    await page.wait_for_load_state("domcontentloaded", timeout=10000)
-    await asyncio.sleep(2)
+    await page.wait_for_load_state("domcontentloaded", timeout=15000)
+
+    # ── Wait for Worklist page to be fully loaded (filter controls visible) ───
+    log_cb("📌 Waiting for Worklist page to load...")
+    worklist_ready = False
+    for attempt in range(15):  # up to ~15 seconds
+        for check_sel in SEL_CLAIM_NO_INPUT + SEL_CLAIM_TYPE_DD:
+            try:
+                el = page.locator(check_sel.strip()).first
+                if await el.is_visible(timeout=500):
+                    worklist_ready = True
+                    break
+            except Exception:
+                continue
+        if worklist_ready:
+            break
+        await asyncio.sleep(1)
+    if worklist_ready:
+        log_cb("  ✅ Worklist page loaded")
+    else:
+        log_cb("  ⚠️  Worklist controls not visible after 15s — proceeding anyway")
+    await asyncio.sleep(1)
 
     # ── Step 2: Select Claim Type to "Non Maruti" ─────────────────────────────
     log_cb(f"📌 Selecting Claim Type: {claim_type}")
@@ -218,38 +238,49 @@ async def navigate_to_claim(
         log_cb("📌 Clicking Filter button...")
         if await _click_first_visible(page, SEL_FILTER_BTN):
             log_cb("  ✅ Filter button clicked")
-            await asyncio.sleep(3)  # Wait for results to load
         else:
             log_cb("  ⚠️  Filter button not found — results may already be loaded")
 
-    # ── Step 4: Wait for table to populate ────────────────────────────────────
+    # ── Step 4: Wait for table to populate (polling loop) ─────────────────────
     log_cb("📌 Waiting for search results...")
-    await asyncio.sleep(2)
+    table_loaded = False
+    for wait_attempt in range(15):  # up to ~15 seconds
+        try:
+            rows = page.locator(SEL_RESULT_TABLE)
+            count = await rows.count()
+            if count > 0:
+                # Check it's not just a "No Records" placeholder row
+                first_text = await rows.first.inner_text()
+                if "No Record" not in first_text:
+                    table_loaded = True
+                    log_cb(f"  ✅ Table loaded with {count} rows")
+                    break
+        except Exception:
+            pass
+        await asyncio.sleep(1)
 
-    # Check if "No Records Found" is showing
-    try:
-        no_records = page.locator(SEL_NO_RECORDS).first
-        if await no_records.is_visible(timeout=2000):
-            log_cb("  ⚠️  'No Records Found' — table is empty after filter")
-            # Try without claim number filter (just claim type)
-            if claim_no:
-                log_cb("  🔄 Retrying with Reset + just claim type selection...")
-                await _click_first_visible(page, SEL_RESET_BTN, timeout=3000)
-                await asyncio.sleep(1)
-                await _select_first_visible(page, SEL_CLAIM_TYPE_DD, claim_type)
-                await asyncio.sleep(3)
-    except Exception:
-        pass  # "No Records Found" not visible — good, table has data
+    if not table_loaded:
+        log_cb("  ⚠️  Table still empty after 15s — scanning anyway")
 
-    # ── Step 5: Scan table pages for claim and click Action ───────────────────
+    # IMPORTANT: Wait for Angular to finish rendering Action buttons.
+    # Rows appear before buttons are fully rendered in the DOM.
+    await asyncio.sleep(3)
+
+    # ── Step 5: Scan table pages for claim and click Action ─────────────────
     page_num = 1
     while True:
         log_cb(f"🔎 Scanning table page {page_num} for claim: {claim_no}")
-        claim_page = await _find_and_click_claim(page, claim_no, log_cb)
-        if claim_page is not None:
-            await asyncio.sleep(2)
-            log_cb(f"✅ Claim {claim_no} found and Action clicked!")
-            return claim_page
+
+        # Try up to 2 attempts per page (buttons may render late)
+        for scan_attempt in range(2):
+            claim_page = await _find_and_click_claim(page, claim_no, log_cb)
+            if claim_page is not None:
+                await asyncio.sleep(2)
+                log_cb(f"✅ Claim {claim_no} found and Action clicked!")
+                return claim_page
+            if scan_attempt == 0:
+                log_cb("  🔄 Retrying in 3s (buttons may still be rendering)...")
+                await asyncio.sleep(3)
 
         # Try next pagination page
         has_next = False
@@ -290,8 +321,8 @@ async def _find_and_click_claim(page: Page, claim_no: str, log_cb: Callable) -> 
         count = await rows.count()
 
         if count == 0:
-            log_cb("  ⚠️  No rows found — waiting 3s for table to load...")
-            await asyncio.sleep(3)
+            log_cb("  ⚠️  No rows found — waiting 5s for table to load...")
+            await asyncio.sleep(5)
             count = await rows.count()
 
         log_cb(f"  📊 Found {count} rows in table")
@@ -308,34 +339,73 @@ async def _find_and_click_claim(page: Page, claim_no: str, log_cb: Callable) -> 
                 if claim_no in text:
                     log_cb(f"  ✅ Claim found in row {i + 1}: {text[:80]}...")
 
-                    # Click "Click Here" button in the Action column
                     # The portal may open a NEW TAB — listen for it
                     context = page.context
                     pages_before = set(id(p) for p in context.pages)
 
+                    # Strategy 1: Playwright locator click (proven selectors)
                     for btn_sel in SEL_ACTION_BTN:
                         try:
                             btn = row.locator(btn_sel.strip()).first
-                            if await btn.is_visible(timeout=1500):
-                                await btn.click(timeout=3000)
-                                log_cb(f"  ✅ Clicked Action button for claim {claim_no}")
-                                return await _detect_new_page(page, context, pages_before, log_cb)
+                            # Use wait_for instead of is_visible — more reliable
+                            try:
+                                await btn.wait_for(state="visible", timeout=3000)
+                            except Exception:
+                                continue
+                            await btn.click(timeout=5000)
+                            log_cb(f"  ✅ Clicked Action button for claim {claim_no}")
+                            return await _detect_new_page(page, context, pages_before, log_cb)
                         except Exception:
                             continue
 
-                    # Fallback: click any button/link/icon in the last few TDs
-                    log_cb("  ⚠️  'Click Here' not found — trying any button in row...")
+                    # Strategy 2: Click any <a> or <button> in the last table cell
+                    log_cb("  ⚠️  'Click Here' not found — trying last cell...")
                     try:
                         context = page.context
                         pages_before = set(id(p) for p in context.pages)
-                        # Find the very last clickable element in the row
-                        any_btn = row.locator("a, button, [role='button'], input[type='button'], .btn, .action-icon").last
-                        if await any_btn.is_visible(timeout=1500):
-                            await any_btn.click(timeout=3000, force=True)
-                            log_cb(f"  ✅ Clicked fallback button for claim {claim_no}")
+                        last_td = row.locator("td").last
+                        clickable = last_td.locator("a, button, input[type='button'], span[ng-click], [ng-click]").first
+                        try:
+                            await clickable.wait_for(state="visible", timeout=3000)
+                        except Exception:
+                            pass
+                        if await clickable.count() > 0:
+                            await clickable.click(timeout=5000, force=True)
+                            log_cb(f"  ✅ Clicked last-cell element for claim {claim_no}")
                             return await _detect_new_page(page, context, pages_before, log_cb)
                     except Exception:
                         pass
+
+                    # Strategy 3: JS click on the row's Action column
+                    log_cb("  ⚠️  Trying JS click on action column...")
+                    try:
+                        context = page.context
+                        pages_before = set(id(p) for p in context.pages)
+                        js_clicked = await page.evaluate(f"""
+                            (function() {{
+                                var rows = document.querySelectorAll('table tbody tr');
+                                var row = rows[{i}];
+                                if (!row) return null;
+                                var tds = row.querySelectorAll('td');
+                                if (tds.length === 0) return null;
+                                var lastTd = tds[tds.length - 1];
+                                // Click any clickable element in the last cell
+                                var el = lastTd.querySelector('a, button, input, span, [ng-click]');
+                                if (el) {{
+                                    el.click();
+                                    return el.tagName + ':' + (el.textContent || '').trim().substring(0, 30);
+                                }}
+                                // Fallback: click the td itself
+                                lastTd.click();
+                                return 'TD:clicked';
+                            }})();
+                        """)
+                        if js_clicked:
+                            log_cb(f"  ✅ Clicked via JS: {js_clicked}")
+                            await asyncio.sleep(2)
+                            return await _detect_new_page(page, context, pages_before, log_cb)
+                    except Exception as js_err:
+                        log_cb(f"  ⚠️  JS click failed: {str(js_err)[:60]}")
 
                     log_cb(f"  ⚠️  Found claim row but couldn't click Action button")
                     return None

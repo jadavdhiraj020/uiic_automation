@@ -550,12 +550,39 @@ class MainWindow(QMainWindow):
         self.preview_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.preview_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.preview_table.verticalHeader().setVisible(False)
+        self.preview_table.verticalHeader().setDefaultSectionSize(40)  # Taller, breathable rows
         self.preview_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.preview_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        self.preview_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.preview_table.setShowGrid(False)
         self.preview_table.setAlternatingRowColors(True)
-        self.preview_table.setMinimumHeight(350)
-        # Max height removed to allow expanding
+        self.preview_table.setMinimumHeight(400)
+
+        # Custom styling for a modern, clean table design
+        self.preview_table.setStyleSheet("""
+            QTableWidget {
+                border: 1px solid #E2E8F0;
+                border-radius: 8px;
+                background-color: #FFFFFF;
+                alternate-background-color: #F8FAFC;
+                color: #334155;
+            }
+            QHeaderView::section {
+                background-color: #F1F5F9;
+                color: #64748B;
+                font-weight: bold;
+                font-size: 8pt;
+                letter-spacing: 1px;
+                padding: 12px 10px;
+                border: none;
+                border-bottom: 2px solid #E2E8F0;
+                text-transform: uppercase;
+            }
+            QTableWidget::item {
+                padding: 0 10px;
+                border-bottom: 1px solid #F1F5F9;
+            }
+        """)
         vlay.addWidget(self.preview_table)
 
         return _card(container, title="📊  Extracted Data",
@@ -694,7 +721,33 @@ class MainWindow(QMainWindow):
         self._append_log(f"📁 Scanning folder: {folder}")
         try:
             self._scan_result = scan_folder(folder, CONFIG_DIR)
-            
+
+            # ── UI Document Scan Summary ──────────────────────────────────
+            claim_docs = self._scan_result.claim_doc_files
+            assess_docs = self._scan_result.assessment_files
+
+            if claim_docs:
+                self._append_log("📎 Claim Documents (matched):")
+                for doc_type, fpath in claim_docs.items():
+                    mb = os.path.getsize(fpath) / (1024 * 1024) if os.path.isfile(fpath) else 0
+                    self._append_log(f"  ✅ [{doc_type}] → {Path(fpath).name} ({mb:.1f}MB)")
+            else:
+                self._append_log("⚠️  No claim documents matched from folder")
+
+            if assess_docs:
+                self._append_log("📎 Assessment Files (matched):")
+                for doc_type, fpath in assess_docs.items():
+                    self._append_log(f"  ✅ [{doc_type}] → {Path(fpath).name}")
+
+            # Show missing expected documents
+            from app.data.folder_scanner import _EXPECTED_CLAIM_DOCS
+            matched_types = set(claim_docs.keys())
+            missing_docs = [d for d in _EXPECTED_CLAIM_DOCS if d not in matched_types]
+            if missing_docs:
+                self._append_log("⚠️  Missing expected documents:")
+                for doc in missing_docs:
+                    self._append_log(f"  ❌ {doc}")
+
             if self._scan_result.skipped_files:
                 self._append_log("⚠️  Skipped Files:")
                 for path, reason in self._scan_result.skipped_files:
@@ -704,6 +757,7 @@ class MainWindow(QMainWindow):
                 self._append_log("❓ Unrecognized Files (No Mapping):")
                 for path in self._scan_result.unknown_files:
                     self._append_log(f"  • {Path(path).name}")
+                self._append_log("  ℹ️  Tip: rename files to include keywords like pan, aadhaar, vehicle_photo_1, claim_form, ckyc, csr, etc.")
 
             if not self._scan_result.excel_path:
                 self._append_log("⚠️  No Excel file found in folder!")
@@ -825,36 +879,56 @@ class MainWindow(QMainWindow):
             display = value if value else "—"
             v_item = QTableWidgetItem(display)
             if has_value:
-                v_item.setForeground(QColor("#1A1A2E"))
+                v_item.setForeground(QColor("#0F172A"))
                 font = v_item.font()
                 font.setWeight(QFont.Weight.DemiBold)
                 v_item.setFont(font)
             elif is_critical:
-                v_item.setForeground(QColor("#DC2626"))
+                v_item.setForeground(QColor("#EF4444"))
+                font = v_item.font()
+                font.setItalic(True)
+                v_item.setFont(font)
             else:
-                v_item.setForeground(QColor("#CBD5E1"))
+                v_item.setForeground(QColor("#94A3B8"))
+                font = v_item.font()
+                font.setItalic(True)
+                v_item.setFont(font)
             self.preview_table.setItem(i, 1, v_item)
 
             # Source column
             src_display = source_coord if source_coord else "—"
             src_item = QTableWidgetItem(src_display)
-            src_item.setForeground(QColor("#7C83FF") if source_coord else QColor("#CBD5E1"))
+            if source_coord:
+                src_item.setForeground(QColor("#6366F1"))
+                font = src_item.font()
+                font.setPixelSize(11)
+                src_item.setFont(font)
+            else:
+                src_item.setForeground(QColor("#CBD5E1"))
+            src_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.preview_table.setItem(i, 2, src_item)
 
+            # Status column
             if has_value:
-                status = "✓ OK"
+                status = "✓  OK"
+                s_item = QTableWidgetItem(status)
+                s_item.setForeground(QColor("#059669"))  # Emerald
+                font = s_item.font()
+                font.setWeight(QFont.Weight.Bold)
+                s_item.setFont(font)
             elif is_critical:
-                status = "✕ MISS"
+                status = "⚠  CRITICAL"
+                s_item = QTableWidgetItem(status)
+                s_item.setForeground(QColor("#DC2626"))  # Red
+                font = s_item.font()
+                font.setWeight(QFont.Weight.Bold)
+                s_item.setFont(font)
             else:
-                status = "– OPT"
-            s_item = QTableWidgetItem(status)
+                status = "○  OPTIONAL"
+                s_item = QTableWidgetItem(status)
+                s_item.setForeground(QColor("#94A3B8"))  # Slate
+            
             s_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            if has_value:
-                s_item.setForeground(QColor("#059669"))
-            elif is_critical:
-                s_item.setForeground(QColor("#DC2626"))
-            else:
-                s_item.setForeground(QColor("#CBD5E1"))
             self.preview_table.setItem(i, 3, s_item)
 
         self._update_stats()
@@ -1040,23 +1114,51 @@ class MainWindow(QMainWindow):
         ts = datetime.now().strftime("%H:%M:%S")
         raw_message = "" if message is None else str(message)
         # Colors tuned for dark terminal background (#0F172A)
-        if any(x in raw_message for x in ("✅", "successful", "complete", "found")):
-            color = "#4ADE80"   # green
-        elif any(x in raw_message for x in ("❌", "ERROR", "failed", "STOPPED")):
-            color = "#F87171"   # red
-        elif any(x in raw_message for x in ("⚠️", "warning", "retrying", "⚠")):
-            color = "#FBBF24"   # yellow
+        is_bold = False
+
+        # ── Box-drawing banners (╔═╗║╚╝) ─────────────────────────────────
+        if any(c in raw_message for c in ("╔", "╗", "╚", "╝", "╠", "╣")):
+            color = "#FBBF24"   # gold for box borders
+            is_bold = True
+        elif "║" in raw_message:
+            if any(x in raw_message for x in ("🎉", "COMPLETE")):
+                color = "#4ADE80"   # green for completion banner content
+            elif any(x in raw_message for x in ("🚀", "AUTOMATION")):
+                color = "#7C83FF"   # indigo for startup banner
+            else:
+                color = "#E2E8F0"   # white for banner data
+        # ── Step headers (━━━ lines and STEP X/Y) ────────────────────────
         elif "━" in raw_message:
-            color = "#E2E8F0"   # bright white (bold separators)
+            color = "#A78BFA"   # purple for step separators
+            is_bold = True
+        elif "STEP" in raw_message and "/" in raw_message:
+            color = "#E2E8F0"   # bright white for step titles
+            is_bold = True
+        # ── Status colors ────────────────────────────────────────────────
+        elif any(x in raw_message for x in ("✅", "successful", "complete", "found")):
+            color = "#4ADE80"   # green
+        elif any(x in raw_message for x in ("❌", "ERROR", "FAILED", "failed")):
+            color = "#F87171"   # red
+        elif any(x in raw_message for x in ("⚠️", "warning", "⚠", "MISS")):
+            color = "#FBBF24"   # yellow
+        elif any(x in raw_message for x in ("⏭️", "skipped", "SKIPPED")):
+            color = "#94A3B8"   # muted gray for skips
+        elif any(x in raw_message for x in ("⏱️", "Duration")):
+            color = "#38BDF8"   # sky blue for timing
         elif any(x in raw_message for x in ("🎉", "COMPLETE")):
-            color = "#4ADE80"
-        elif any(x in raw_message for x in ("📤", "📊", "📁", "🔩", "🔧", "🚀", "📋")):
+            color = "#4ADE80"   # green
+        elif any(x in raw_message for x in ("📤", "📊", "📁", "🔩", "🔧", "🚀", "📋", "📎", "📌", "🔎", "✏️", "💰", "💼", "🧾", "👷", "✍️", "📝")):
             color = "#7C83FF"   # indigo for section headers
+        elif any(x in raw_message for x in ("🔄", "🔑", "📷", "🌐", "🔘")):
+            color = "#94A3B8"   # muted for process steps
+        elif "═" in raw_message:
+            color = "#FBBF24"   # gold for summary borders
+            is_bold = True
         else:
             color = "#CBD5E1"   # light slate
 
         display_message = html.escape(raw_message)
-        if "━" in raw_message:
+        if is_bold:
             display_message = f"<b>{display_message}</b>"
 
         log_html = (
