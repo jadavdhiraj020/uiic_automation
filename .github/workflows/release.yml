@@ -114,10 +114,11 @@ jobs:
       - name: Extract version
         id: version
         run: |
-          $version = (python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          $match = Select-String -Path pyproject.toml -Pattern '^\s*version\s*=\s*"([^"]+)"' | Select-Object -First 1
+          $version = if ($match) { $match.Matches.Groups[1].Value } else { "0.0.0" }
           $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
           $short_sha = "${{ github.sha }}".Substring(0,7)
-          $tag = "v${version}+build.${timestamp}"
+          $tag = "v${version}-build.${timestamp}"
           $zip_name = "${{ env.APP_NAME }}_v${version}_${short_sha}"
 
           echo "VERSION=$version"       >> $env:GITHUB_OUTPUT
