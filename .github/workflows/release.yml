@@ -108,6 +108,7 @@ jobs:
           python -m pytest tests/ -v --tb=short --color=yes
         env:
           PYTHONDONTWRITEBYTECODE: "1"
+          QT_QPA_PLATFORM: "offscreen"
 
       # ─── 8. Extract version from pyproject.toml ─────────────────────────
       - name: Extract version
