@@ -46,7 +46,7 @@ jobs:
     steps:
       # ─── 1. Checkout ─────────────────────────────────────────────────────
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0   # Full history for version tagging
 
@@ -58,7 +58,7 @@ jobs:
 
       # ─── 3. Cache pip packages ───────────────────────────────────────────
       - name: Cache pip packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~\AppData\Local\pip\Cache
           key: pip-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('requirements-build.txt') }}
