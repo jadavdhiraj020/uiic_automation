@@ -115,3 +115,91 @@ def save_settings(overrides: dict[str, Any]) -> str:
     current.update(overrides or {})
     write_json_file(paths["user"], current)
     return paths["user"]
+
+
+# ── Field Mapping persistence ─────────────────────────────────────────────
+
+def field_mapping_paths() -> dict[str, str]:
+    """
+    Canonical field-mapping file locations.
+
+    - `default`: bundled read-only mapping shipped with the app
+    - `user`: writable user-specific mapping in AppData
+    """
+    return {
+        "default": resource_path("app", "config", "field_mapping.json"),
+        "user": os.path.join(user_data_dir("config"), "field_mapping.json"),
+    }
+
+
+def load_field_mapping() -> dict[str, Any]:
+    """
+    Load the field mapping with user overrides.
+
+    User-saved mapping fully replaces bundled defaults (it is a complete
+    document, not a sparse override).  If no user file exists yet, the
+    bundled default is returned.
+    """
+    paths = field_mapping_paths()
+    user = read_json_file(paths["user"])
+    if user is not None:
+        return user
+    return read_json_file(paths["default"]) or {}
+
+
+def save_field_mapping(mapping: dict[str, Any]) -> str:
+    """Save a complete field mapping document to the writable user location."""
+    paths = field_mapping_paths()
+    write_json_file(paths["user"], mapping)
+    return paths["user"]
+
+
+def reset_field_mapping() -> None:
+    """Delete user field mapping so the bundled default is used again."""
+    paths = field_mapping_paths()
+    try:
+        if os.path.exists(paths["user"]):
+            os.remove(paths["user"])
+    except OSError:
+        pass
+
+
+# ── Document Mapping persistence ──────────────────────────────────────────
+
+def doc_mapping_paths() -> dict[str, str]:
+    """
+    Canonical doc-mapping file locations.
+
+    - `default`: bundled read-only mapping shipped with the app
+    - `user`: writable user-specific mapping in AppData
+    """
+    return {
+        "default": resource_path("app", "config", "doc_mapping.json"),
+        "user": os.path.join(user_data_dir("config"), "doc_mapping.json"),
+    }
+
+
+def load_doc_mapping() -> dict[str, Any]:
+    """Load doc mapping, preferring user overrides over bundled defaults."""
+    paths = doc_mapping_paths()
+    user = read_json_file(paths["user"])
+    if user is not None:
+        return user
+    return read_json_file(paths["default"]) or {}
+
+
+def save_doc_mapping(mapping: dict[str, Any]) -> str:
+    """Save a complete doc mapping document to the writable user location."""
+    paths = doc_mapping_paths()
+    write_json_file(paths["user"], mapping)
+    return paths["user"]
+
+
+def reset_doc_mapping() -> None:
+    """Delete user doc mapping so the bundled default is used again."""
+    paths = doc_mapping_paths()
+    try:
+        if os.path.exists(paths["user"]):
+            os.remove(paths["user"])
+    except OSError:
+        pass

@@ -1107,7 +1107,7 @@ class TestDocMapping:
     def test_assessment_has_required_keys(self, doc_mapping):
         asses = doc_mapping.get("claim_assessment_tab", {})
         # These keywords must exist in assessment mapping
-        values = set(asses.values())
+        values = set(asses.keys())
         for req in ["assessment_report", "survey_report", "estimate", "invoice"]:
             assert req in values, f"Assessment mapping missing target '{req}'"
 
@@ -1120,12 +1120,14 @@ class TestDocMapping:
 
     def test_claim_doc_mapping_values_are_strings(self, doc_mapping):
         for key, val in doc_mapping.get("claim_documents_tab", {}).items():
-            assert isinstance(val, str), f"claim_documents_tab['{key}'] should be string"
+            assert isinstance(val, list), f"claim_documents_tab['{key}'] should be a list"
+            for v in val:
+                assert isinstance(v, str), f"element in claim_documents_tab['{key}'] should be string"
 
     def test_reinspection_keywords_exist(self, doc_mapping):
         """Re-inspection must have mapping keywords."""
         asses = doc_mapping.get("claim_assessment_tab", {})
-        reinspection_keys = [k for k, v in asses.items() if v == "reinspection_report"]
+        reinspection_keys = asses.get("reinspection_report", [])
         assert len(reinspection_keys) > 0, "No keywords map to reinspection_report"
 
 
@@ -1236,8 +1238,8 @@ class TestFolderScanner:
     def test_keyword_matching_longest_first(self):
         from app.data.folder_scanner import _match_keyword
         mapping = {
-            "front": "veh_front_photo",
-            "veh_front": "veh_front_full",
+            "veh_front_full": ["veh_front"],
+            "veh_front_photo": ["front"],
         }
         # "veh_front" is longer and should win for "veh_front_photo.pdf"
         assert _match_keyword("veh_front_photo.pdf", mapping) == "veh_front_full"
@@ -1249,7 +1251,7 @@ class TestFolderScanner:
 
     def test_keyword_matching_case_sensitive(self):
         from app.data.folder_scanner import _match_keyword
-        mapping = {"assessment": "assessment_report"}
+        mapping = {"assessment_report": ["assessment"]}
         # Function gets lowercase filename, so this should work
         assert _match_keyword("assessment_details.pdf", mapping) == "assessment_report"
 
@@ -1264,26 +1266,26 @@ class TestFolderScanner:
 
     def test_scan_nonexistent_folder(self):
         from app.data.folder_scanner import scan_folder
-        result = scan_folder("/nonexistent/path/xyz", CONFIG_DIR)
+        result = scan_folder("/nonexistent/path/xyz")
         assert result.excel_path is None
         assert result.claim_doc_files == {}
 
     def test_scan_empty_folder(self):
         from app.data.folder_scanner import scan_folder
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = scan_folder(tmpdir, CONFIG_DIR)
+            result = scan_folder(tmpdir)
             assert result.excel_path is None
 
     def test_load_doc_mapping(self):
-        from app.data.folder_scanner import load_doc_mapping
-        claim_map, assessment_map, other_slots = load_doc_mapping(CONFIG_DIR)
+        from app.data.folder_scanner import get_doc_mapping_tuple
+        claim_map, assessment_map, other_slots = get_doc_mapping_tuple()
         assert isinstance(claim_map, dict)
         assert isinstance(assessment_map, dict)
         assert isinstance(other_slots, list)
 
     def test_doc_mapping_other_slots(self):
-        from app.data.folder_scanner import load_doc_mapping
-        _, _, other_slots = load_doc_mapping(CONFIG_DIR)
+        from app.data.folder_scanner import get_doc_mapping_tuple
+        _, _, other_slots = get_doc_mapping_tuple()
         assert len(other_slots) >= 3, "Need at least 3 Other slots"
 
 
@@ -1363,7 +1365,7 @@ class TestCrossModuleConsistency:
         path = os.path.join(PROJECT_ROOT, "app", "config", "doc_mapping.json")
         with open(path, "r", encoding="utf-8") as f:
             doc_mapping = json.load(f)
-        asses_values = set(doc_mapping.get("claim_assessment_tab", {}).values())
+        asses_values = set(doc_mapping.get("claim_assessment_tab", {}).keys())
         for key in ASSESSMENT_UPLOAD_LABELS:
             assert key in asses_values or key == "reinspection_report", \
                 f"Upload key '{key}' not in doc_mapping assessment values"
@@ -2111,7 +2113,7 @@ class TestRecentUpdates:
             
             # Run the scanner
             config_dir = os.path.join(os.path.dirname(__file__), "..", "app", "config")
-            res = scan_folder(td, config_dir)
+            res = scan_folder(td)
             
             # Verify the 4 copies were dynamically created
             files = os.listdir(td)
@@ -2705,7 +2707,7 @@ class TestFinalIntegrationMock:
             
             try:
                 # We need to ensure the system actually reads the excel
-                res = scan_folder(td, config_dir)
+                res = scan_folder(td)
                 
                 # 5. Assertions
                 assert res.claim_no == "C99999"

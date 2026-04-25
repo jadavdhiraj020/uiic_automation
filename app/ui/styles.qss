@@ -528,3 +528,139 @@ QMessageBox QPushButton { min-width: 80px; }
 }
 #statusPill[status="processing"] #statusText { color: #818CF8; }
 #statusPill[status="processing"] #statusDot  { background-color: #818CF8; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   SETTINGS PAGE (in-app light theme)
+   ══════════════════════════════════════════════════════════════════════ */
+
+#settingsPageRoot {
+    background-color: #F8FAFC;
+}
+
+/* ── Settings header ───────────────── */
+#settingsHeader {
+    background-color: #FFFFFF;
+    border-bottom: 1px solid #E2E8F0;
+}
+
+/* ── Settings sub-tab bar ─────────── */
+#settingsTabBar {
+    background-color: #FFFFFF;
+    border-bottom: 1px solid #E2E8F0;
+}
+
+#settingsTabBtn {
+    background: transparent;
+    color: #64748B;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 20px;
+    font-size: 10pt;
+    font-weight: 600;
+}
+
+#settingsTabBtn:hover {
+    color: #334155;
+    background-color: #F1F5F9;
+}
+
+#settingsTabBtn[active="true"] {
+    background-color: #EEF2FF;
+    color: #4F46E5;
+    font-weight: 700;
+}
+
+/* ── Settings page content area ───── */
+#settingsPage {
+    background-color: #F8FAFC;
+}
+
+/* ── Settings input fields ────────── */
+QLineEdit#settingsInput {
+    background-color: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    padding: 8px 14px;
+    color: #334155;
+    font-size: 10pt;
+}
+
+QLineEdit#settingsInput:focus {
+    border-color: #6366F1;
+    background-color: #FFFFFF;
+}
+
+QLineEdit#settingsInput::placeholder {
+    color: #94A3B8;
+}
+
+/* ── Settings tables ──────────────── */
+QTableWidget#settingsTable {
+    background-color: #FFFFFF;
+    alternate-background-color: #F8FAFC;
+    color: #334155;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    gridline-color: transparent;
+}
+
+QTableWidget#settingsTable QHeaderView::section {
+    background-color: #F1F5F9;
+    color: #64748B;
+    font-weight: bold;
+    font-size: 8pt;
+    letter-spacing: 1px;
+    padding: 12px 10px;
+    border: none;
+    border-bottom: 1px solid #E2E8F0;
+}
+
+QTableWidget#settingsTable::item {
+    padding: 0 10px;
+    border-bottom: 1px solid #F1F5F9;
+}
+
+QTableWidget#settingsTable::item:selected {
+    background-color: #EEF2FF;
+    color: #1E1B4B;
+}
+
+/* ── Settings footer ──────────────── */
+#settingsFooter {
+    background-color: #FFFFFF;
+    border-top: 1px solid #E2E8F0;
+}
+
+QPushButton#btnSettingsSave {
+    background-color: #4F46E5;
+    color: #FFFFFF;
+    border: none;
+    font-weight: 700;
+    border-radius: 10px;
+    padding: 10px 28px;
+    font-size: 10pt;
+}
+
+QPushButton#btnSettingsSave:hover {
+    background-color: #4338CA;
+}
+
+QPushButton#btnSettingsSave:pressed {
+    background-color: #3730A3;
+}
+
+QPushButton#btnSettingsReset {
+    background-color: transparent;
+    color: #EF4444;
+    border: 1.5px solid #FECACA;
+    font-weight: 600;
+    border-radius: 10px;
+    padding: 10px 20px;
+    font-size: 10pt;
+}
+
+QPushButton#btnSettingsReset:hover {
+    background-color: #FEF2F2;
+    border-color: #FCA5A5;
+    color: #DC2626;
+}

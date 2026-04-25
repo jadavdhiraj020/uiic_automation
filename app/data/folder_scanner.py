@@ -34,11 +34,10 @@ _DOC_EXTENSIONS = {
 MAX_FILE_BYTES = 2 * 1024 * 1024  # 2 MB portal limit
 
 
-def load_doc_mapping(config_dir: str) -> Tuple[Dict[str, str], Dict[str, str], List[str]]:
-    """Load doc_mapping.json. Returns (claim_map, assessment_map, other_slots)."""
-    path = os.path.join(config_dir, "doc_mapping.json")
-    with open(path, "r", encoding="utf-8") as f:
-        raw = json.load(f)
+def get_doc_mapping_tuple() -> Tuple[Dict[str, List[str]], Dict[str, List[str]], List[str]]:
+    """Load doc_mapping.json from app settings and return tuple."""
+    from app.utils import load_doc_mapping
+    raw = load_doc_mapping()
     claim_map = raw.get("claim_documents_tab", {})
     assessment_map = raw.get("claim_assessment_tab", {})
     other_slots = raw.get("other_slots", ["Other 1", "Other 2", "Other 3"])
@@ -47,7 +46,7 @@ def load_doc_mapping(config_dir: str) -> Tuple[Dict[str, str], Dict[str, str], L
 
 import re
 
-def _match_keyword(filename_lower: str, mapping: Dict[str, str]) -> Optional[str]:
+def _match_keyword(filename_lower: str, mapping: Dict[str, List[str]]) -> Optional[str]:
     """
     Match filename against keyword mapping.
     Tries longest keywords first so 'veh_front' wins over 'front'.
@@ -57,16 +56,24 @@ def _match_keyword(filename_lower: str, mapping: Dict[str, str]) -> Optional[str
     # Create a version of the filename with only alphanumeric chars separated by spaces
     spaced_name = " " + re.sub(r'[^a-z0-9]', ' ', filename_lower) + " "
 
-    for keyword in sorted(mapping.keys(), key=len, reverse=True):
+    # Flatten into (keyword, doc_type) and sort by length of keyword
+    flattened = []
+    for doc_type, keywords in mapping.items():
+        for kw in keywords:
+            flattened.append((kw, doc_type))
+    
+    flattened.sort(key=lambda x: len(x[0]), reverse=True)
+
+    for keyword, doc_type in flattened:
         if len(keyword) <= 3:
             # Strict word boundary match for short keywords
             spaced_kw = " " + re.sub(r'[^a-z0-9]', ' ', keyword.lower()) + " "
             if spaced_kw in spaced_name:
-                return mapping[keyword]
+                return doc_type
         else:
             # Normal substring match for longer keywords
             if keyword in filename_lower:
-                return mapping[keyword]
+                return doc_type
     return None
 
 
@@ -93,15 +100,15 @@ class FolderScanResult:
         return lines
 
 
-def scan_folder(folder_path: str, config_dir: str) -> FolderScanResult:
+def scan_folder(folder_path: str) -> FolderScanResult:
     result = FolderScanResult()
-    claim_map, assessment_map, other_slots = load_doc_mapping(config_dir)
+    claim_map, assessment_map, other_slots = get_doc_mapping_tuple()
 
     if not os.path.isdir(folder_path):
         logger.error("Folder not found: %s", folder_path)
         return result
 
-    # ── Pre-scan: Duplicate 'vehicle' files into 5 copies (Front/Rear/Left/Right/Roof)
+    # ── Pre-scan: Duplicate 'vehicle' files into 4 copies (Front/Rear/Left/Right)
     import shutil
     try:
         for fname in sorted(os.listdir(folder_path)):
@@ -112,17 +119,17 @@ def scan_folder(folder_path: str, config_dir: str) -> FolderScanResult:
                 ext = Path(fname).suffix
                 source_path = os.path.join(folder_path, fname)
 
-                # Check if all 5 copies already exist — skip duplication if so
+                # Check if all 4 copies already exist — skip duplication if so
                 all_exist = all(
                     os.path.exists(os.path.join(folder_path, f"vehicle_photo_{n}{ext}"))
-                    for n in range(1, 6)
+                    for n in range(1, 5)
                 )
                 if all_exist:
-                    logger.info("All 5 vehicle_photo copies already exist — skipping duplication for %s", fname)
+                    logger.info("All 4 vehicle_photo copies already exist — skipping duplication for %s", fname)
                     continue
 
-                # Create 5 copies (Front, Rear, Left, Right, Roof)
-                for copy_num in range(1, 6):
+                # Create 4 copies (Front, Rear, Left, Right)
+                for copy_num in range(1, 5):
                     new_name = f"vehicle_photo_{copy_num}{ext}"
                     new_path = os.path.join(folder_path, new_name)
                     if os.path.exists(new_path):
@@ -270,7 +277,6 @@ _EXPECTED_CLAIM_DOCS = [
     "Vehicle Photograph(Rear)",
     "Vehicle Photograph (Left)",
     "Vehicle Photograph (Right)",
-    "Vehicle Photograph (Roof)",
     "Claim Form",
     "CKYC Form",
     "CSR and Certificate",

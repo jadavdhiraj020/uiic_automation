@@ -295,10 +295,11 @@ def read_excel(excel_path: str, config_dir: str):
       - Logs exactly which cell was read for each field
     """
     from app.data.data_model import ClaimData
+    from app.utils import load_field_mapping
 
-    mapping_path = os.path.join(config_dir, "field_mapping.json")
-    with open(mapping_path, "r", encoding="utf-8") as f:
-        mapping = json.load(f)
+    # Use the user's custom field mapping from AppData if it exists,
+    # otherwise fall back to the bundled default.
+    mapping = load_field_mapping()
 
     wb = _open_workbook(excel_path)
     claim = ClaimData()

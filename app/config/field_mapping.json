@@ -1,41 +1,173 @@
 {
-  "_comment": "field_mapping.json — Maps ClaimData fields to Excel labels. The reader scans the entire sheet for the label text, then reads the first non-empty value to its RIGHT. col_offset is a hint (tried first) but the reader will scan rightward automatically if the hint is wrong — so this works with ANY Excel layout.",
-
-
-  "claim_no":               { "sheet": "ALL",    "search_label": "Claim no",              "row_offset": 0, "col_offset": 1 },
-
-  "vehicle_no":             { "sheet": "Sheet2", "search_label": "VEHICLE REG. NO.",      "row_offset": 0, "col_offset": 4 },
-  "chassis_no":             { "sheet": "ALL",    "search_label": "Chassis Number",        "row_offset": 0, "col_offset": 3 },
-  "engine_no":              { "sheet": "ALL",    "search_label": "Engine Number",         "row_offset": 0, "col_offset": 3 },
-
-  "date_of_survey":         { "sheet": "ALL",    "search_label": "Date and Time of Survey","row_offset": 0, "col_offset": 4 },
-  "place_of_survey":        { "sheet": "ALL",    "search_label": "Workshop",              "row_offset": 0, "col_offset": 4 },
-  "surveyor_observation":   { "sheet": "ALL",    "search_label": "OBERVATIONS/COMMENTS",  "row_offset": 1, "col_offset": 0 },
-  "mobile_no":              { "sheet": "Sheet1", "search_labels": ["surveyor_mobile", "mobile", "Mobile:"], "row_offset": 0, "col_offset": 1 },
-  "email_id":               { "sheet": "Sheet1", "search_labels": ["surveyor_email", "email", "e-mail:-"],  "row_offset": 0, "col_offset": 1 },
-
-  "initial_loss_amount":    { "sheet": "ALL",    "search_label": "initial loss assessment", "row_offset": 0, "col_offset": 1 },
-  "compulsory_excess":      { "sheet": "Sheet1", "search_label": "Less Compulsory Excess", "row_offset": 0, "col_offset": 1 },
-  "voluntary_excess":       { "sheet": "Sheet1", "search_label": "LESS EXCESS CLAUSE",    "row_offset": 0, "col_offset": 5 },
-  "salvage_value":          { "sheet": "Sheet1", "search_label": "LESS SALVAGE VALUE",    "row_offset": 0, "col_offset": 5 },
-
-  "parts_age_dep_excl_gst": { "sheet": "Sheet1", "search_label": "SUB TOTAL",             "row_offset": 0, "col_offset": 5 },
-  "parts_50_dep_excl_gst":  { "sheet": "Sheet1", "search_label": "SUB TOTAL",             "row_offset": 0, "col_offset": 6 },
-  "parts_nil_dep_excl_gst": { "sheet": "Sheet1", "search_label": "SUB TOTAL",             "row_offset": 0, "col_offset": 7 },
-  "parts_gst18_amount":     { "sheet": "Sheet1", "search_label": "SUB TOTAL",             "row_offset": 0, "col_offset": 8 },
-
-  "labour_excl_gst":        { "sheet": "Sheet1", "search_label": "TOTAL (R/R, DENTING, C/W, PAINTING)",      "row_offset": 0, "col_offset": 1 },
-
-  "workshop_invoice_no":    { "sheet": "ALL",    "search_label": "INVOICE NO PART",       "row_offset": 0, "col_offset": 5 },
-  "workshop_invoice_date":  { "sheet": "ALL",    "search_label": "BILL GENERATION DATE",  "row_offset": 0, "col_offset": 4 },
-  "towing_charges":         { "sheet": "ALL",    "search_label": "TOWING CHARGES",        "row_offset": 0, "col_offset": 4 },
-
-  "professional_fee":       { "sheet": "Sheet5", "search_label": "SURVEY FEE",            "row_offset": 0, "col_offset": 5 },
-  "traveling_expenses":     { "sheet": "Sheet5", "search_label": "CONVEYANCE CHARGES",    "row_offset": 0, "col_offset": 5 },
-  "photo_charges":          { "sheet": "Sheet5", "search_label": "PHOTOGRAPHS",           "row_offset": 0, "col_offset": 5 },
-  "daily_allowance":        { "sheet": "Sheet5", "search_label": "DAILY ALLOWANCE",       "row_offset": 0, "col_offset": 5 },
-  "invoice_no":             { "sheet": "Sheet5", "search_label": "Ref:",                  "row_offset": 0, "col_offset": 1 },
-  "invoice_date":           { "sheet": "Sheet5", "search_label": "Date:",                 "row_offset": 0, "col_offset": 1 },
-  "final_report_no":        { "sheet": "Sheet1", "search_label": "Ref:",                  "row_offset": 0, "col_offset": 1 },
-  "final_report_date":      { "sheet": "Sheet1", "search_label": "Date:",                 "row_offset": 0, "col_offset": 1 }
+  "_comment": "field_mapping.json \u00e2\u20ac\u201d Maps ClaimData fields to Excel labels. The reader scans the entire sheet for the label text, then reads the first non-empty value to its RIGHT. col_offset is a hint (tried first) but the reader will scan rightward automatically if the hint is wrong \u00e2\u20ac\u201d so this works with ANY Excel layout.",
+  "claim_no": {
+    "sheet": "ALL",
+    "search_label": "Claim no",
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "vehicle_no": {
+    "sheet": "Sheet2",
+    "search_label": "VEHICLE REG. NO.",
+    "row_offset": 0,
+    "col_offset": 4
+  },
+  "chassis_no": {
+    "sheet": "ALL",
+    "search_label": "Chassis Number",
+    "row_offset": 0,
+    "col_offset": 3
+  },
+  "engine_no": {
+    "sheet": "ALL",
+    "search_label": "Engine Number",
+    "row_offset": 0,
+    "col_offset": 3
+  },
+  "date_of_survey": {
+    "sheet": "ALL",
+    "search_label": "Date and Time of Survey",
+    "row_offset": 0,
+    "col_offset": 4
+  },
+  "place_of_survey": {
+    "sheet": "ALL",
+    "search_label": ["Place of survey"],
+    "row_offset": 0,
+    "col_offset": 4
+  },
+  "surveyor_observation": {
+    "sheet": "ALL",
+    "search_label": "OBERVATIONS/COMMENTS",
+    "row_offset": 1,
+    "col_offset": 0
+  },
+  "mobile_no": {
+    "sheet": "Sheet1",
+    "search_labels": [
+      "surveyor_mobile",
+      "mobile",
+      "Mobile:"
+    ],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "email_id": {
+    "sheet": "Sheet1",
+    "search_labels": [
+      "surveyor_email",
+      "email",
+      "e-mail:-"
+    ],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "initial_loss_amount": {
+    "sheet": "ALL",
+    "search_label": "initial loss assessment",
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "compulsory_excess": {
+    "sheet": "Sheet1",
+    "search_label": "Less Compulsory Excess",
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "voluntary_excess": {
+    "sheet": "Sheet1",
+    "search_label": "LESS EXCESS CLAUSE",
+    "row_offset": 0,
+    "col_offset": 5
+  },
+  "salvage_value": {
+    "sheet": "Sheet1",
+    "search_label": "LESS SALVAGE VALUE",
+    "row_offset": 0,
+    "col_offset": 5
+  },
+  "parts_age_dep_excl_gst": {
+    "sheet": "Sheet1",
+    "search_label": "SUB TOTAL",
+    "row_offset": 0,
+    "col_offset": 5
+  },
+  "parts_50_dep_excl_gst": {
+    "sheet": "Sheet1",
+    "search_label": "SUB TOTAL",
+    "row_offset": 0,
+    "col_offset": 6
+  },
+  "parts_nil_dep_excl_gst": {
+    "sheet": "Sheet1",
+    "search_label": "SUB TOTAL",
+    "row_offset": 0,
+    "col_offset": 7
+  },
+  "parts_gst18_amount": {
+    "sheet": "Sheet1",
+    "search_label": "SUB TOTAL",
+    "row_offset": 0,
+    "col_offset": 8
+  },
+  "labour_excl_gst": {
+    "sheet": "Sheet1",
+    "search_label": "TOTAL (R/R, DENTING, C/W, PAINTING)",
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "towing_charges": {
+    "sheet": "ALL",
+    "search_label": "TOWING CHARGES",
+    "row_offset": 0,
+    "col_offset": 4
+  },
+  "professional_fee": {
+    "sheet": "Sheet5",
+    "search_label": ["professional_fee", "SURVEY FEE", "SURVEY FEES"],
+    "row_offset": 0,
+    "col_offset": 5
+  },
+  "traveling_expenses": {
+    "sheet": "Sheet5",
+    "search_label": ["traveling_expenses", "conveyance", "CONVEYANCE CHARGE", "CONVEYANCE CHARGES"],
+    "row_offset": 0,
+    "col_offset": 5
+  },
+  "photo_charges": {
+    "sheet": "Sheet5",
+    "search_label": ["photocharges", "PHOTOGRAPHS", "PHOTO charge", "photo charges"],
+    "row_offset": 0,
+    "col_offset": 5
+  },
+  "daily_allowance": {
+    "sheet": "Sheet5",
+    "search_label": ["DAILY_ALLOWANCE", "daily allowance", "DAILY allowances"],
+    "row_offset": 0,
+    "col_offset": 5
+  },
+  "invoice_no": {
+    "sheet": "Sheet5",
+    "search_label": "Ref:",
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "invoice_date": {
+    "sheet": "Sheet5",
+    "search_label": "Date:",
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "final_report_no": {
+    "sheet": "Sheet1",
+    "search_label": "Ref:",
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "final_report_date": {
+    "sheet": "Sheet1",
+    "search_label": "Date:",
+    "row_offset": 0,
+    "col_offset": 1
+  }
 }

@@ -35,7 +35,11 @@ from PyQt6.QtWidgets import (
     QSpacerItem, QApplication, QStackedWidget, QGraphicsOpacityEffect
 )
 
-from app.utils import resource_path, save_settings, settings_paths, user_data_dir, ensure_dir
+from app.utils import (
+    resource_path, save_settings, settings_paths, user_data_dir, ensure_dir,
+    load_settings, load_field_mapping, save_field_mapping, reset_field_mapping,
+    field_mapping_paths, load_doc_mapping, save_doc_mapping, reset_doc_mapping,
+)
 
 CONFIG_DIR = resource_path("app", "config")
 _SETTINGS_PATHS = settings_paths()
@@ -122,7 +126,7 @@ class MainWindow(QMainWindow):
         self._chevron_path = os.path.join(icon_dir, "chevron_down.png").replace("\\", "/")
         px.save(self._chevron_path, "PNG")
 
-        # ── Nav icons (Home / Progress) ──────────────────────────
+        # ── Nav icons (Home / Progress / Settings) ─────────────────
         def _draw_nav_icon(draw_fn):
             s = 18
             px2 = QPixmap(s, s)
@@ -139,13 +143,10 @@ class MainWindow(QMainWindow):
             pen.setCapStyle(Qt.PenCapStyle.RoundCap)
             pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
             p2.setPen(pen)
-            # Roof triangle
             p2.drawLine(2, 9, 9, 3)
             p2.drawLine(9, 3, 16, 9)
-            # Walls
             p2.drawLine(4, 9, 4, 15)
             p2.drawLine(14, 9, 14, 15)
-            # Floor
             p2.drawLine(4, 15, 14, 15)
 
         def _draw_progress(p2, s):
@@ -153,15 +154,29 @@ class MainWindow(QMainWindow):
             pen.setWidthF(1.6)
             pen.setCapStyle(Qt.PenCapStyle.RoundCap)
             p2.setPen(pen)
-            # Circle
             p2.drawEllipse(3, 3, 12, 12)
-            # Progress arc indicator (small dot at top)
             p2.setBrush(QColor("#94A3B8"))
             p2.setPen(Qt.PenStyle.NoPen)
             p2.drawEllipse(QPointF(9, 4), 1.5, 1.5)
 
+        def _draw_settings(p2, s):
+            import math
+            pen = QPen(QColor("#94A3B8"))
+            pen.setWidthF(1.6)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            p2.setPen(pen)
+            p2.setBrush(Qt.BrushStyle.NoBrush)
+            p2.drawEllipse(QPointF(9, 9), 5.0, 5.0)
+            p2.drawEllipse(QPointF(9, 9), 2.2, 2.2)
+            for angle_deg in range(0, 360, 45):
+                rad = math.radians(angle_deg)
+                x1, y1 = 9 + 4.2 * math.cos(rad), 9 + 4.2 * math.sin(rad)
+                x2, y2 = 9 + 7.0 * math.cos(rad), 9 + 7.0 * math.sin(rad)
+                p2.drawLine(QPointF(x1, y1), QPointF(x2, y2))
+
         self._icon_home = _draw_nav_icon(_draw_home)
         self._icon_progress = _draw_nav_icon(_draw_progress)
+        self._icon_settings = _draw_nav_icon(_draw_settings)
 
     def _setup_animations(self):
         # Pulse animation for status dot
@@ -192,11 +207,12 @@ class MainWindow(QMainWindow):
         # Top bar
         root_layout.addWidget(self._build_topbar())
 
-        # Stacked pages: Home (0) / Progress (1)
+        # Stacked pages: Home (0) / Progress (1) / Settings (2)
         self.stack = QStackedWidget()
         self.stack.setObjectName("pageStack")
         self.stack.addWidget(self._build_home_page())       # index 0
         self.stack.addWidget(self._build_progress_page())    # index 1
+        self.stack.addWidget(self._build_settings_page())    # index 2
         root_layout.addWidget(self.stack, 1)
 
         # Bottom action bar
@@ -240,7 +256,7 @@ class MainWindow(QMainWindow):
         self.btn_home.setIconSize(QSize(16, 16))
         self.btn_home.setObjectName("navBtn")
         self.btn_home.setProperty("active", True)
-        self.btn_home.setMinimumHeight(34)
+        self.btn_home.setMinimumHeight(36)
         self.btn_home.setMinimumWidth(110)
         self.btn_home.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_home.clicked.connect(lambda: self._switch_page(0))
@@ -250,13 +266,24 @@ class MainWindow(QMainWindow):
         self.btn_progress.setIconSize(QSize(16, 16))
         self.btn_progress.setObjectName("navBtn")
         self.btn_progress.setProperty("active", False)
-        self.btn_progress.setMinimumHeight(34)
+        self.btn_progress.setMinimumHeight(36)
         self.btn_progress.setMinimumWidth(110)
         self.btn_progress.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_progress.clicked.connect(lambda: self._switch_page(1))
 
+        self.btn_settings_nav = QPushButton("  Settings")
+        self.btn_settings_nav.setIcon(self._icon_settings)
+        self.btn_settings_nav.setIconSize(QSize(16, 16))
+        self.btn_settings_nav.setObjectName("navBtn")
+        self.btn_settings_nav.setProperty("active", False)
+        self.btn_settings_nav.setMinimumHeight(36)
+        self.btn_settings_nav.setMinimumWidth(110)
+        self.btn_settings_nav.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_settings_nav.clicked.connect(lambda: self._switch_page(2))
+
         nav_lay.addWidget(self.btn_home)
         nav_lay.addWidget(self.btn_progress)
+        nav_lay.addWidget(self.btn_settings_nav)
 
         lay.addWidget(nav)
         lay.addStretch()
@@ -291,9 +318,12 @@ class MainWindow(QMainWindow):
     def _switch_page(self, idx):
         if self.stack.currentIndex() == idx:
             return
-            
+        # Reload settings data when entering the settings page
+        if idx == 2:
+            self._load_settings_page()
+
         self.stack.setCurrentIndex(idx)
-        
+
         # Smooth fade transition
         effect = QGraphicsOpacityEffect(self.stack.currentWidget())
         self.stack.currentWidget().setGraphicsEffect(effect)
@@ -303,10 +333,11 @@ class MainWindow(QMainWindow):
         self.anim.setEndValue(1.0)
         self.anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
         self.anim.start()
-        
+
         self.btn_home.setProperty("active", idx == 0)
         self.btn_progress.setProperty("active", idx == 1)
-        for btn in [self.btn_home, self.btn_progress]:
+        self.btn_settings_nav.setProperty("active", idx == 2)
+        for btn in [self.btn_home, self.btn_progress, self.btn_settings_nav]:
             btn.style().unpolish(btn)
             btn.style().polish(btn)
 
@@ -334,15 +365,8 @@ class MainWindow(QMainWindow):
         lay.addWidget(heading)
         lay.addSpacing(4)
 
-        # ── Row 1: Config | Folder ──────────────────────────────────
-        row1 = QWidget()
-        row1_lay = QHBoxLayout(row1)
-        row1_lay.setContentsMargins(0, 0, 0, 0)
-        row1_lay.setSpacing(16)
-
-        row1_lay.addWidget(self._build_credentials_card(), 1)
-        row1_lay.addWidget(self._build_folder_card(), 1)
-        lay.addWidget(row1)
+        # ── Full-width Folder + Claim card ──────────────────────────
+        lay.addWidget(self._build_folder_card())
 
         # ── Stats Row ───────────────────────────────────────────────
         lay.addWidget(self._build_stats_row())
@@ -385,93 +409,576 @@ class MainWindow(QMainWindow):
         return scroll
 
     # ══════════════════════════════════════════════════════════════════
+    # SETTINGS PAGE (in-app, index 2)
+    # ══════════════════════════════════════════════════════════════════
+    def _build_settings_page(self):
+        page = QWidget()
+        page.setObjectName("settingsPageRoot")
+        root = QVBoxLayout(page)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # ── Header ────────────────────────────────────────────────
+        header = QFrame()
+        header.setObjectName("settingsHeader")
+        header.setFixedHeight(56)
+        h_lay = QHBoxLayout(header)
+        h_lay.setContentsMargins(32, 0, 32, 0)
+
+        title = QLabel("\u2699  Settings")
+        title.setStyleSheet(
+            "font-size:15pt; font-weight:700; color:#1E293B; background:transparent;"
+        )
+        h_lay.addWidget(title)
+        h_lay.addStretch()
+        root.addWidget(header)
+
+        # ── Sub-tab bar ───────────────────────────────────────────
+        tab_bar = QFrame()
+        tab_bar.setObjectName("settingsTabBar")
+        tab_bar_lay = QHBoxLayout(tab_bar)
+        tab_bar_lay.setContentsMargins(32, 10, 32, 0)
+        tab_bar_lay.setSpacing(6)
+
+        self._stab_general = QPushButton("General")
+        self._stab_general.setObjectName("settingsTabBtn")
+        self._stab_general.setProperty("active", True)
+        self._stab_general.setMinimumHeight(38)
+        self._stab_general.setMinimumWidth(150)
+        self._stab_general.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._stab_general.clicked.connect(lambda: self._switch_settings_tab(0))
+
+        self._stab_field = QPushButton("Field Mapping")
+        self._stab_field.setObjectName("settingsTabBtn")
+        self._stab_field.setProperty("active", False)
+        self._stab_field.setMinimumHeight(38)
+        self._stab_field.setMinimumWidth(150)
+        self._stab_field.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._stab_field.clicked.connect(lambda: self._switch_settings_tab(1))
+
+        self._stab_doc = QPushButton("Document Mapping")
+        self._stab_doc.setObjectName("settingsTabBtn")
+        self._stab_doc.setProperty("active", False)
+        self._stab_doc.setMinimumHeight(38)
+        self._stab_doc.setMinimumWidth(150)
+        self._stab_doc.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._stab_doc.clicked.connect(lambda: self._switch_settings_tab(2))
+
+        self._stab_pdf = QPushButton("PDF Mapping")
+        self._stab_pdf.setObjectName("settingsTabBtn")
+        self._stab_pdf.setProperty("active", False)
+        self._stab_pdf.setMinimumHeight(38)
+        self._stab_pdf.setMinimumWidth(150)
+        self._stab_pdf.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._stab_pdf.clicked.connect(lambda: self._switch_settings_tab(3))
+
+        tab_bar_lay.addWidget(self._stab_general)
+        tab_bar_lay.addWidget(self._stab_field)
+        tab_bar_lay.addWidget(self._stab_doc)
+        tab_bar_lay.addWidget(self._stab_pdf)
+        tab_bar_lay.addStretch()
+        root.addWidget(tab_bar)
+
+        # ── Sub-stack ─────────────────────────────────────────────
+        self._settings_stack = QStackedWidget()
+        self._settings_stack.addWidget(self._build_general_settings())   # 0
+        self._settings_stack.addWidget(self._build_field_mapping_tab())  # 1
+        self._settings_stack.addWidget(self._build_doc_mapping_tab())    # 2
+        self._settings_stack.addWidget(self._build_pdf_mapping_tab())    # 3
+        root.addWidget(self._settings_stack, 1)
+
+        # ── Footer ────────────────────────────────────────────────
+        footer = QFrame()
+        footer.setObjectName("settingsFooter")
+        footer.setFixedHeight(68)
+        f_lay = QHBoxLayout(footer)
+        f_lay.setContentsMargins(32, 0, 32, 0)
+        f_lay.setSpacing(12)
+
+        btn_reset = QPushButton("  Reset to Defaults  ")
+        btn_reset.setObjectName("btnSettingsReset")
+        btn_reset.setMinimumHeight(42)
+        btn_reset.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_reset.clicked.connect(self._reset_settings_defaults)
+        f_lay.addWidget(btn_reset)
+        f_lay.addStretch()
+
+        btn_save = QPushButton("  Save All Settings  ")
+        btn_save.setObjectName("btnSettingsSave")
+        btn_save.setMinimumHeight(42)
+        btn_save.setMinimumWidth(180)
+        btn_save.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_save.clicked.connect(self._save_settings_all)
+        f_lay.addWidget(btn_save)
+        root.addWidget(footer)
+
+        return page
+
+    def _switch_settings_tab(self, idx: int):
+        self._settings_stack.setCurrentIndex(idx)
+        for i, btn in enumerate([self._stab_general, self._stab_field, self._stab_doc, self._stab_pdf]):
+            btn.setProperty("active", i == idx)
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    # ── General Settings sub-tab ──────────────────────────────────
+    def _build_general_settings(self):
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        inner = QWidget()
+        inner.setObjectName("settingsPage")
+        lay = QVBoxLayout(inner)
+        lay.setContentsMargins(32, 24, 32, 24)
+        lay.setSpacing(16)
+
+        def _sec(text):
+            lbl = QLabel(text)
+            lbl.setStyleSheet(
+                "color:#64748B; font-size:8.5pt; font-weight:700; "
+                "letter-spacing:1.5px; padding:8px 0 2px 0; background:transparent;"
+            )
+            return lbl
+
+        def _flbl(text):
+            lbl = QLabel(text)
+            lbl.setStyleSheet(
+                "color:#475569; font-size:9.5pt; font-weight:600; background:transparent;"
+            )
+            return lbl
+
+        # ── Credentials ───────────────────────
+        lay.addWidget(_sec("PORTAL CREDENTIALS"))
+        cred_w = QWidget()
+        cg = QGridLayout(cred_w)
+        cg.setContentsMargins(0, 0, 0, 0)
+        cg.setHorizontalSpacing(16)
+        cg.setVerticalSpacing(8)
+        cg.setColumnStretch(0, 1)
+        cg.setColumnStretch(1, 1)
+
+        cg.addWidget(_flbl("Username"), 0, 0)
+        self._set_inp_username = QLineEdit()
+        self._set_inp_username.setMinimumHeight(40)
+        self._set_inp_username.setPlaceholderText("Portal username / ID")
+        self._set_inp_username.setObjectName("settingsInput")
+        cg.addWidget(self._set_inp_username, 1, 0)
+
+        cg.addWidget(_flbl("Password"), 0, 1)
+        pwd_row = QWidget()
+        pw_lay = QHBoxLayout(pwd_row)
+        pw_lay.setContentsMargins(0, 0, 0, 0)
+        pw_lay.setSpacing(6)
+        self._set_inp_password = QLineEdit()
+        self._set_inp_password.setMinimumHeight(40)
+        self._set_inp_password.setPlaceholderText("Portal password")
+        self._set_inp_password.setEchoMode(QLineEdit.EchoMode.Password)
+        self._set_inp_password.setObjectName("settingsInput")
+
+        self._set_btn_eye = QPushButton()
+        self._set_btn_eye.setIcon(self._icon_eye_closed)
+        self._set_btn_eye.setIconSize(QSize(22, 22))
+        self._set_btn_eye.setFixedSize(40, 40)
+        self._set_btn_eye.setCheckable(True)
+        self._set_btn_eye.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._set_btn_eye.setToolTip("Show / Hide password")
+        self._set_btn_eye.setStyleSheet("""
+            QPushButton { background:transparent; border:1px solid #E2E8F0; border-radius:10px; }
+            QPushButton:hover { background:#F1F5F9; border-color:#CBD5E1; }
+            QPushButton:checked { background:#EEF2FF; border-color:#A5B4FC; }
+        """)
+        self._set_btn_eye.clicked.connect(self._toggle_settings_pwd)
+        pw_lay.addWidget(self._set_inp_password)
+        pw_lay.addWidget(self._set_btn_eye)
+        cg.addWidget(pwd_row, 1, 1)
+
+        lay.addWidget(cred_w)
+
+        # ── Portal URL ────────────────────────
+        lay.addWidget(_sec("PORTAL"))
+        url_w = QWidget()
+        ul = QVBoxLayout(url_w)
+        ul.setContentsMargins(0, 0, 0, 0)
+        ul.setSpacing(6)
+        ul.addWidget(_flbl("Portal URL"))
+        self._set_inp_url = QLineEdit()
+        self._set_inp_url.setMinimumHeight(40)
+        self._set_inp_url.setPlaceholderText("https://portal.uiic.in/...")
+        self._set_inp_url.setObjectName("settingsInput")
+        ul.addWidget(self._set_inp_url)
+        lay.addWidget(url_w)
+
+        # ── Browser ───────────────────────────
+        lay.addWidget(_sec("BROWSER"))
+        brow_w = QWidget()
+        bg = QGridLayout(brow_w)
+        bg.setContentsMargins(0, 0, 0, 0)
+        bg.setHorizontalSpacing(16)
+        bg.setVerticalSpacing(8)
+        bg.setColumnStretch(0, 1)
+        bg.setColumnStretch(1, 1)
+
+        bg.addWidget(_flbl("Headless Mode"), 0, 0)
+        self._set_inp_headless = QComboBox()
+        self._set_inp_headless.addItems(["No (Show Browser)", "Yes (Hidden)"])
+        self._set_inp_headless.setMinimumHeight(40)
+        bg.addWidget(self._set_inp_headless, 1, 0)
+
+        bg.addWidget(_flbl("Slow-Mo (ms)"), 0, 1)
+        self._set_inp_slowmo = QLineEdit()
+        self._set_inp_slowmo.setMinimumHeight(40)
+        self._set_inp_slowmo.setPlaceholderText("400")
+        self._set_inp_slowmo.setObjectName("settingsInput")
+        bg.addWidget(self._set_inp_slowmo, 1, 1)
+        lay.addWidget(brow_w)
+
+        # ── Timing ────────────────────────────
+        lay.addWidget(_sec("TIMING & RETRIES"))
+        time_w = QWidget()
+        tg = QGridLayout(time_w)
+        tg.setContentsMargins(0, 0, 0, 0)
+        tg.setHorizontalSpacing(16)
+        tg.setVerticalSpacing(8)
+        tg.setColumnStretch(0, 1)
+        tg.setColumnStretch(1, 1)
+        tg.setColumnStretch(2, 1)
+
+        tg.addWidget(_flbl("Timeout (ms)"), 0, 0)
+        self._set_inp_timeout = QLineEdit()
+        self._set_inp_timeout.setMinimumHeight(40)
+        self._set_inp_timeout.setPlaceholderText("4000")
+        self._set_inp_timeout.setObjectName("settingsInput")
+        tg.addWidget(self._set_inp_timeout, 1, 0)
+
+        tg.addWidget(_flbl("CAPTCHA Retries"), 0, 1)
+        self._set_inp_captcha = QLineEdit()
+        self._set_inp_captcha.setMinimumHeight(40)
+        self._set_inp_captcha.setPlaceholderText("2")
+        self._set_inp_captcha.setObjectName("settingsInput")
+        tg.addWidget(self._set_inp_captcha, 1, 1)
+
+        tg.addWidget(_flbl("Upload Wait (ms)"), 0, 2)
+        self._set_inp_upload = QLineEdit()
+        self._set_inp_upload.setMinimumHeight(40)
+        self._set_inp_upload.setPlaceholderText("3000")
+        self._set_inp_upload.setObjectName("settingsInput")
+        tg.addWidget(self._set_inp_upload, 1, 2)
+
+        tg.addWidget(_flbl("Field Wait (ms)"), 2, 0)
+        self._set_inp_fieldwait = QLineEdit()
+        self._set_inp_fieldwait.setMinimumHeight(40)
+        self._set_inp_fieldwait.setPlaceholderText("600")
+        self._set_inp_fieldwait.setObjectName("settingsInput")
+        tg.addWidget(self._set_inp_fieldwait, 3, 0)
+        lay.addWidget(time_w)
+
+        lay.addWidget(time_w)
+
+        note = QLabel(
+            "\u2139  Settings are saved to your AppData folder and persist across updates."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet(
+            "color:#64748B; font-size:8.5pt; font-style:italic; padding:8px 0; background:transparent;"
+        )
+        lay.addWidget(note)
+        lay.addStretch()
+        scroll.setWidget(inner)
+        return scroll
+
+    def _toggle_settings_pwd(self, checked):
+        if checked:
+            self._set_inp_password.setEchoMode(QLineEdit.EchoMode.Normal)
+            self._set_btn_eye.setIcon(self._icon_eye_open)
+        else:
+            self._set_inp_password.setEchoMode(QLineEdit.EchoMode.Password)
+            self._set_btn_eye.setIcon(self._icon_eye_closed)
+
+    # ── Field Mapping sub-tab ─────────────────────────────────────
+    def _build_field_mapping_tab(self):
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        inner = QWidget()
+        inner.setObjectName("settingsPage")
+        lay = QVBoxLayout(inner)
+        lay.setContentsMargins(32, 24, 32, 24)
+        lay.setSpacing(12)
+
+        desc = QLabel(
+            "Each row maps a ClaimData field to an Excel search label. "
+            "The reader scans for the label text, then reads the value "
+            "to its right using the offsets."
+        )
+        desc.setWordWrap(True)
+        desc.setStyleSheet("color:#64748B; font-size:9pt; padding:4px 0; background:transparent;")
+        lay.addWidget(desc)
+
+        self._mapping_table = QTableWidget(0, 4)
+        self._mapping_table.setHorizontalHeaderLabels(["FIELD NAME", "SEARCH LABEL", "SHEET", "COL OFFSET"])
+        self._mapping_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self._mapping_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self._mapping_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self._mapping_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self._mapping_table.verticalHeader().setVisible(False)
+        self._mapping_table.verticalHeader().setDefaultSectionSize(38)
+        self._mapping_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self._mapping_table.setShowGrid(False)
+        self._mapping_table.setAlternatingRowColors(True)
+        self._mapping_table.setMinimumHeight(400)
+        self._mapping_table.setObjectName("settingsTable")
+        lay.addWidget(self._mapping_table, 1)
+
+        scroll.setWidget(inner)
+        return scroll
+
+    # ── Document Mapping sub-tab ──────────────────────────────────
+    def _build_doc_mapping_tab(self):
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        inner = QWidget()
+        inner.setObjectName("settingsPage")
+        lay = QVBoxLayout(inner)
+        lay.setContentsMargins(32, 24, 32, 24)
+        lay.setSpacing(12)
+
+        desc = QLabel(
+            "Maps filename keywords to document types on the UIIC portal. "
+            "The scanner checks if the keyword appears in the filename (case-insensitive) "
+            "and assigns the matching portal document type."
+        )
+        desc.setWordWrap(True)
+        desc.setStyleSheet("color:#64748B; font-size:9pt; padding:4px 0; background:transparent;")
+        lay.addWidget(desc)
+
+        self._doc_mapping_table = QTableWidget(0, 3)
+        self._doc_mapping_table.setHorizontalHeaderLabels(["SECTION", "PORTAL DOC TYPE", "FILENAME KEYWORDS"])
+        self._doc_mapping_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self._doc_mapping_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self._doc_mapping_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self._doc_mapping_table.verticalHeader().setVisible(False)
+        self._doc_mapping_table.verticalHeader().setDefaultSectionSize(38)
+        self._doc_mapping_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self._doc_mapping_table.setShowGrid(False)
+        self._doc_mapping_table.setAlternatingRowColors(True)
+        self._doc_mapping_table.setMinimumHeight(400)
+        self._doc_mapping_table.setObjectName("settingsTable")
+        lay.addWidget(self._doc_mapping_table, 1)
+
+        scroll.setWidget(inner)
+        return scroll
+
+    # ── PDF Mapping sub-tab ──────────────────────────────────
+    def _build_pdf_mapping_tab(self):
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        inner = QWidget()
+        inner.setObjectName("settingsPage")
+        lay = QVBoxLayout(inner)
+        lay.setContentsMargins(32, 24, 32, 24)
+        lay.setSpacing(12)
+
+        def _sec(text):
+            lbl = QLabel(text)
+            lbl.setStyleSheet(
+                "color:#64748B; font-size:8.5pt; font-weight:700; "
+                "letter-spacing:1.5px; padding:8px 0 2px 0; background:transparent;"
+            )
+            return lbl
+
+        def _flbl(text):
+            lbl = QLabel(text)
+            lbl.setObjectName("fieldLabel")
+            return lbl
+
+        desc = QLabel(
+            "Configure how data is extracted from uploaded PDF documents. "
+            "These labels are searched inside the PDF text to find specific values."
+        )
+        desc.setWordWrap(True)
+        desc.setStyleSheet("color:#64748B; font-size:9pt; padding:4px 0; background:transparent;")
+        lay.addWidget(desc)
+
+        # ── PDF Extraction (Strict) ──────────────────────────
+        lay.addWidget(_sec("WORKSHOP INVOICE EXTRACTION"))
+        pdf_w = QWidget()
+        pg = QGridLayout(pdf_w)
+        pg.setContentsMargins(0, 0, 0, 0)
+        pg.setHorizontalSpacing(16)
+        pg.setVerticalSpacing(8)
+        pg.setColumnStretch(0, 1)
+        pg.setColumnStretch(1, 1)
+
+        pg.addWidget(_flbl("Invoice No Labels (use | to separate)"), 0, 0)
+        self._set_inp_pdf_inv = QLineEdit()
+        self._set_inp_pdf_inv.setMinimumHeight(40)
+        self._set_inp_pdf_inv.setObjectName("settingsInput")
+        pg.addWidget(self._set_inp_pdf_inv, 1, 0)
+
+        pg.addWidget(_flbl("Invoice Date Labels (use | to separate)"), 0, 1)
+        self._set_inp_pdf_date = QLineEdit()
+        self._set_inp_pdf_date.setMinimumHeight(40)
+        self._set_inp_pdf_date.setObjectName("settingsInput")
+        pg.addWidget(self._set_inp_pdf_date, 1, 1)
+        lay.addWidget(pdf_w)
+
+        lay.addStretch()
+        scroll.setWidget(inner)
+        return scroll
+
+    # ── Settings Load / Save / Reset ──────────────────────────────
+    def _load_settings_page(self):
+        """Populate the settings page widgets from current saved data."""
+        s = load_settings()
+        self._set_inp_username.setText(s.get("username", ""))
+        self._set_inp_password.setText(s.get("password", ""))
+        self._set_inp_url.setText(s.get("portal_url", ""))
+        self._set_inp_headless.setCurrentIndex(1 if s.get("browser_headless") else 0)
+        self._set_inp_slowmo.setText(str(s.get("browser_slow_mo_ms", 400)))
+        self._set_inp_timeout.setText(str(s.get("timeout_ms", 4000)))
+        self._set_inp_captcha.setText(str(s.get("captcha_max_retries", 2)))
+        self._set_inp_upload.setText(str(s.get("upload_wait_ms", 3000)))
+        self._set_inp_fieldwait.setText(str(s.get("field_wait_ms", 600)))
+        
+        pdf_inv = s.get("pdf_invoice_no_labels", ["Tax Invoice No.", "Invoice No", "Bill No"])
+        self._set_inp_pdf_inv.setText(" | ".join(pdf_inv) if isinstance(pdf_inv, list) else str(pdf_inv))
+        
+        pdf_date = s.get("pdf_invoice_date_labels", ["Invoice Date and Time", "Bill Date", "Invoice Date"])
+        self._set_inp_pdf_date.setText(" | ".join(pdf_date) if isinstance(pdf_date, list) else str(pdf_date))
+
+        # Field mapping table
+        mapping = load_field_mapping()
+        entries = [(k, v) for k, v in mapping.items() if not k.startswith("_")]
+        self._mapping_table.setRowCount(len(entries))
+        for i, (field_name, cfg) in enumerate(entries):
+            name_item = QTableWidgetItem(field_name)
+            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            name_item.setForeground(QColor("#94A3B8"))
+            self._mapping_table.setItem(i, 0, name_item)
+            labels = cfg.get("search_labels") or [cfg.get("search_label", "")]
+            self._mapping_table.setItem(i, 1, QTableWidgetItem(" | ".join(labels)))
+            self._mapping_table.setItem(i, 2, QTableWidgetItem(cfg.get("sheet", "ALL")))
+            self._mapping_table.setItem(i, 3, QTableWidgetItem(str(cfg.get("col_offset", 1))))
+
+        # Document mapping table
+        dm = load_doc_mapping()
+        rows = []
+        for section_key in ("claim_documents_tab", "claim_assessment_tab"):
+            section = dm.get(section_key, {})
+            label = "Claim Docs" if "claim_doc" in section_key else "Assessment"
+            for doc_type, keywords in section.items():
+                if isinstance(keywords, list):
+                    kw_str = " | ".join(keywords)
+                else:
+                    kw_str = keywords
+                rows.append((label, doc_type, kw_str))
+        self._doc_mapping_table.setRowCount(len(rows))
+        for i, (section, dtype, kws) in enumerate(rows):
+            sec_item = QTableWidgetItem(section)
+            sec_item.setFlags(sec_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            sec_item.setForeground(QColor("#94A3B8"))
+            dtype_item = QTableWidgetItem(dtype)
+            dtype_item.setFlags(dtype_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            dtype_item.setForeground(QColor("#64748B"))
+            self._doc_mapping_table.setItem(i, 0, sec_item)
+            self._doc_mapping_table.setItem(i, 1, dtype_item)
+            self._doc_mapping_table.setItem(i, 2, QTableWidgetItem(kws))
+
+    def _save_settings_all(self):
+        """Save all settings tabs to AppData."""
+        # General settings
+        try:
+            overrides = {
+                "username": self._set_inp_username.text().strip(),
+                "password": self._set_inp_password.text().strip(),
+                "portal_url": self._set_inp_url.text().strip(),
+                "browser_headless": self._set_inp_headless.currentIndex() == 1,
+                "browser_slow_mo_ms": int(self._set_inp_slowmo.text() or 400),
+                "timeout_ms": int(self._set_inp_timeout.text() or 4000),
+                "captcha_max_retries": int(self._set_inp_captcha.text() or 2),
+                "upload_wait_ms": int(self._set_inp_upload.text() or 3000),
+                "field_wait_ms": int(self._set_inp_fieldwait.text() or 600),
+                "pdf_invoice_no_labels": [l.strip() for l in self._set_inp_pdf_inv.text().split("|") if l.strip()],
+                "pdf_invoice_date_labels": [l.strip() for l in self._set_inp_pdf_date.text().split("|") if l.strip()],
+            }
+            save_settings(overrides)
+        except ValueError:
+            QMessageBox.warning(self, "Invalid Input", "Numeric fields must contain valid numbers.")
+            return
+
+        # Field mapping
+        mapping = load_field_mapping()
+        new_mapping = {k: v for k, v in mapping.items() if k.startswith("_")}
+        for row in range(self._mapping_table.rowCount()):
+            fn = self._mapping_table.item(row, 0).text()
+            lt = self._mapping_table.item(row, 1).text().strip()
+            sh = self._mapping_table.item(row, 2).text().strip() or "ALL"
+            try:
+                co = int(self._mapping_table.item(row, 3).text())
+            except (ValueError, TypeError):
+                co = 1
+            old = mapping.get(fn, {})
+            labels = [l.strip() for l in lt.split("|") if l.strip()]
+            if len(labels) > 1:
+                new_mapping[fn] = {"sheet": sh, "search_labels": labels, "row_offset": old.get("row_offset", 0), "col_offset": co}
+            else:
+                new_mapping[fn] = {"sheet": sh, "search_label": labels[0] if labels else "", "row_offset": old.get("row_offset", 0), "col_offset": co}
+        save_field_mapping(new_mapping)
+
+        # Document mapping
+        dm = load_doc_mapping()
+        new_dm = {k: v for k, v in dm.items() if k.startswith("_")}
+        new_dm["other_slots"] = dm.get("other_slots", [])
+        claim_docs = {}
+        assess_docs = {}
+        for row in range(self._doc_mapping_table.rowCount()):
+            sec = self._doc_mapping_table.item(row, 0).text()
+            dtype = self._doc_mapping_table.item(row, 1).text().strip()
+            kws = self._doc_mapping_table.item(row, 2).text().strip()
+            if dtype and kws:
+                kw_list = [k.strip() for k in kws.split("|") if k.strip()]
+                if kw_list:
+                    if "Claim" in sec:
+                        claim_docs[dtype] = kw_list
+                    else:
+                        assess_docs[dtype] = kw_list
+        new_dm["claim_documents_tab"] = claim_docs
+        new_dm["claim_assessment_tab"] = assess_docs
+        save_doc_mapping(new_dm)
+
+        self._append_log("\u2699  All settings saved to AppData.")
+        QMessageBox.information(
+            self, "Settings Saved",
+            "All settings have been saved.\n\nChanges take effect on the next automation run."
+        )
+
+    def _reset_settings_defaults(self):
+        reply = QMessageBox.question(
+            self, "Reset to Defaults",
+            "Discard all custom settings and revert to bundled defaults?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        reset_field_mapping()
+        reset_doc_mapping()
+        try:
+            sp = settings_paths()
+            if os.path.exists(sp["user"]):
+                os.remove(sp["user"])
+        except OSError:
+            pass
+        self._load_settings_page()
+        QMessageBox.information(self, "Reset Complete", "All settings reverted to defaults.")
+
+    # ══════════════════════════════════════════════════════════════════
     # CARD BUILDERS
     # ══════════════════════════════════════════════════════════════════
-    def _build_credentials_card(self):
-        w = QWidget()
-        grid = QGridLayout(w)
-        grid.setContentsMargins(0, 4, 0, 0)
-        grid.setHorizontalSpacing(14)
-        grid.setVerticalSpacing(10)
-        grid.setColumnStretch(0, 1)
-        grid.setColumnStretch(1, 1)
-
-        grid.addWidget(_field_label("USERNAME"), 0, 0)
-        self.inp_username = _input("Portal username / ID")
-        grid.addWidget(self.inp_username, 1, 0)
-
-        grid.addWidget(_field_label("PASSWORD"), 2, 0)
-        
-        pwd_container = QWidget()
-        pwd_lay = QHBoxLayout(pwd_container)
-        pwd_lay.setContentsMargins(0, 0, 0, 0)
-        pwd_lay.setSpacing(6)
-        
-        self.inp_password = _input("Portal password", echo_password=True)
-        self.btn_toggle_pwd = QPushButton()
-        self.btn_toggle_pwd.setIcon(self._icon_eye_closed)
-        self.btn_toggle_pwd.setIconSize(QSize(22, 22))
-        self.btn_toggle_pwd.setFixedSize(38, 38)
-        self.btn_toggle_pwd.setCheckable(True)
-        self.btn_toggle_pwd.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_toggle_pwd.setToolTip("Show / Hide password")
-        self.btn_toggle_pwd.setStyleSheet("""
-            QPushButton {
-                background: transparent;
-                border: 1px solid #E2E8F0;
-                border-radius: 10px;
-            }
-            QPushButton:hover {
-                background-color: #F1F5F9;
-                border-color: #CBD5E1;
-            }
-            QPushButton:checked {
-                background-color: #EEF2FF;
-                border-color: #A5B4FC;
-            }
-        """)
-        self.btn_toggle_pwd.clicked.connect(self._toggle_password)
-
-        pwd_lay.addWidget(self.inp_password)
-        pwd_lay.addWidget(self.btn_toggle_pwd)
-        grid.addWidget(pwd_container, 3, 0)
-
-        grid.addWidget(_field_label("CLAIM NUMBER"), 0, 1)
-        self.inp_claim_no = _input("Auto-detected or enter manually")
-        grid.addWidget(self.inp_claim_no, 1, 1)
-
-        grid.addWidget(_field_label("CLAIM TYPE"), 2, 1)
-        self.inp_claim_type = QComboBox()
-        self.inp_claim_type.addItems(["Non Maruti", "Maruti"])
-        self.inp_claim_type.setMinimumHeight(36)
-        # Apply custom chevron icon for the dropdown arrow
-        self.inp_claim_type.setStyleSheet(f"""
-            QComboBox::drop-down {{
-                border: none;
-                width: 36px;
-                subcontrol-origin: padding;
-                subcontrol-position: center right;
-            }}
-            QComboBox::down-arrow {{
-                image: url({self._chevron_path});
-                width: 12px;
-                height: 12px;
-            }}
-        """)
-        grid.addWidget(self.inp_claim_type, 3, 1)
-
-        return _card(w, title="⚙  Configuration",
-                     subtitle="Portal credentials and claim details")
-
-    def _toggle_password(self, checked):
-        if checked:
-            self.inp_password.setEchoMode(QLineEdit.EchoMode.Normal)
-            self.btn_toggle_pwd.setIcon(self._icon_eye_open)
-        else:
-            self.inp_password.setEchoMode(QLineEdit.EchoMode.Password)
-            self.btn_toggle_pwd.setIcon(self._icon_eye_closed)
-
     def _build_folder_card(self):
+        """Full-width card: Folder Browse."""
         w = QWidget()
         lay = QVBoxLayout(w)
         lay.setContentsMargins(0, 4, 0, 0)
@@ -479,32 +986,33 @@ class MainWindow(QMainWindow):
 
         lay.addWidget(_field_label("CLAIM FOLDER PATH"))
 
-        row = QWidget()
-        row_lay = QHBoxLayout(row)
-        row_lay.setContentsMargins(0, 0, 0, 0)
-        row_lay.setSpacing(10)
+        folder_row = QWidget()
+        fr_lay = QHBoxLayout(folder_row)
+        fr_lay.setContentsMargins(0, 0, 0, 0)
+        fr_lay.setSpacing(10)
 
         self.inp_folder = _input("Click Browse to select the claim folder...")
         self.inp_folder.setObjectName("folderPathInput")
         self.inp_folder.setReadOnly(True)
+        self.inp_folder.setMinimumHeight(40)
 
         btn = QPushButton("Browse...")
         btn.setObjectName("btnBrowse")
-        btn.setFixedWidth(110)
-        btn.setMinimumHeight(36)
+        btn.setFixedWidth(120)
+        btn.setMinimumHeight(40)
         btn.clicked.connect(self._browse_folder)
 
-        row_lay.addWidget(self.inp_folder, 1)
-        row_lay.addWidget(btn)
-        lay.addWidget(row)
+        fr_lay.addWidget(self.inp_folder, 1)
+        fr_lay.addWidget(btn)
+        lay.addWidget(folder_row)
 
         # Document status
-        self.doc_status_label = QLabel("No folder selected — click Browse to begin.")
+        self.doc_status_label = QLabel("No folder selected \u2014 click Browse to begin.")
         self.doc_status_label.setObjectName("helperTextItalic")
         self.doc_status_label.setWordWrap(True)
         lay.addWidget(self.doc_status_label)
 
-        return _card(w, title="📂  Claim Folder",
+        return _card(w, title="\U0001F4C2  Claim Folder",
                      subtitle="Select folder with Excel file and scanned documents")
 
     def _build_stats_row(self):
@@ -692,12 +1200,9 @@ class MainWindow(QMainWindow):
 
     def _load_settings(self):
         try:
-            # Prefer user settings; fall back to bundled defaults
             path = _SETTINGS_PATHS["user"] if os.path.exists(_SETTINGS_PATHS["user"]) else _SETTINGS_PATHS["default"]
             with open(path, "r", encoding="utf-8") as f:
                 s = json.load(f)
-            self.inp_username.setText(s.get("username", ""))
-            self.inp_password.setText(s.get("password", ""))
             self.inp_claim_type.setCurrentText(s.get("claim_type", "Non Maruti"))
         except Exception:
             pass
@@ -706,7 +1211,7 @@ class MainWindow(QMainWindow):
         try:
             save_settings(overrides)
         except Exception as exc:
-            self._append_log(f"⚠️  Could not save settings: {exc}")
+            self._append_log(f"\u26a0\ufe0f  Could not save settings: {exc}")
 
     def _browse_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Claim Folder")
@@ -720,7 +1225,7 @@ class MainWindow(QMainWindow):
         from app.data.excel_reader   import read_excel
         self._append_log(f"📁 Scanning folder: {folder}")
         try:
-            self._scan_result = scan_folder(folder, CONFIG_DIR)
+            self._scan_result = scan_folder(folder)
 
             # ── UI Document Scan Summary ──────────────────────────────────
             claim_docs = self._scan_result.claim_doc_files
@@ -778,11 +1283,25 @@ class MainWindow(QMainWindow):
                         with pdfplumber.open(invoice_pdf) as pdf:
                             text = pdf.pages[0].extract_text()
                             if text:
-                                inv_match = re.search(r'Tax Invoice No\.(.*?)\(', text, re.IGNORECASE)
-                                if not inv_match:
-                                    inv_match = re.search(r'Tax Invoice No\.?\s*([A-Za-z0-9-]+)', text, re.IGNORECASE)
+                                # Load dynamic labels from settings
+                                s = load_settings()
+                                inv_labels = s.get("pdf_invoice_no_labels", ["Tax Invoice No.", "Invoice No", "Bill No"])
+                                date_labels = s.get("pdf_invoice_date_labels", ["Invoice Date and Time", "Bill Date", "Invoice Date"])
                                 
-                                date_match = re.search(r'Invoice Date and Time\s*(\d{2}/\d{2}/\d{4})', text, re.IGNORECASE)
+                                inv_match = None
+                                for label in inv_labels:
+                                    pattern = re.escape(label) + r'(.*?)\('
+                                    inv_match = re.search(pattern, text, re.IGNORECASE)
+                                    if inv_match: break
+                                    pattern = re.escape(label) + r'?\s*([A-Za-z0-9-]+)'
+                                    inv_match = re.search(pattern, text, re.IGNORECASE)
+                                    if inv_match: break
+                                
+                                date_match = None
+                                for label in date_labels:
+                                    pattern = re.escape(label) + r'\s*(\d{2}/\d{2}/\d{4})'
+                                    date_match = re.search(pattern, text, re.IGNORECASE)
+                                    if date_match: break
                                 
                                 if inv_match:
                                     ext_inv = inv_match.group(1).strip()
@@ -804,20 +1323,11 @@ class MainWindow(QMainWindow):
                     for lg in self._claim._excel_logs:
                         self._append_log(lg)
                 
-                if self.inp_claim_no.text().strip():
-                    self._claim.claim_no = self.inp_claim_no.text().strip()
-                elif self._claim.claim_no:
-                    self.inp_claim_no.setText(self._claim.claim_no)
                 if not self._claim.claim_no:
-                    self._append_log("⚠️  Claim No not found in Excel — enter manually.")
-                # F2: connect claim_no edits to live preview refresh (once)
-                try:
-                    self.inp_claim_no.textChanged.disconnect()
-                except Exception:
-                    pass
-                self.inp_claim_no.textChanged.connect(self._on_claim_no_changed)
+                    self._append_log("\u26a0\ufe0f  Claim No not found in Excel.")
+                
                 self._update_preview()
-                self._set_status("ready", "Folder scanned — ready to start")
+                self._set_status("ready", "Folder scanned \u2014 ready to start")
         except Exception as exc:
             self._claim = None
             self._scan_result = None
@@ -829,13 +1339,6 @@ class MainWindow(QMainWindow):
     def _update_preview(self):
         if not self._claim:
             return
-
-        # Sync claim_no from UI field into claim object before validating
-        typed_claim_no = self.inp_claim_no.text().strip()
-        if typed_claim_no:
-            self._claim.claim_no = typed_claim_no
-        elif self._claim.claim_no:
-            self.inp_claim_no.setText(self._claim.claim_no)
 
         # Run validation and show errors/warnings
         errors, warnings = self._claim.validate()
@@ -999,18 +1502,28 @@ class MainWindow(QMainWindow):
         if not self._claim:
             QMessageBox.warning(self, "No Folder", "Please select a claim folder first.")
             return
-        if not self.inp_username.text().strip() or not self.inp_password.text().strip():
-            QMessageBox.warning(self, "Credentials Required", "Enter the portal username and password.")
-            return
-        self._claim.claim_no = self.inp_claim_no.text().strip() or self._claim.claim_no
-        if not self._claim.claim_no:
-            QMessageBox.warning(self, "Claim No Required", "Enter the Claim Number.")
+
+        # Read credentials from saved settings (configured in Settings page)
+        saved = load_settings()
+        username = saved.get("username", "").strip()
+        password = saved.get("password", "").strip()
+        if not username or not password:
+            QMessageBox.warning(
+                self, "Credentials Required",
+                "Portal username and password are not configured.\n\n"
+                "Go to Settings \u2192 General to enter your credentials first."
+            )
+            self._switch_page(2)  # Navigate to Settings
             return
 
-        # ── Validation gate — warn (but allow) if critical fields missing ────────
+        if not self._claim.claim_no:
+            QMessageBox.warning(self, "Claim No Required", "Could not auto-detect Claim Number from folder. Please rename folder or check contents.")
+            return
+
+        # \u2500\u2500 Validation gate \u2014 warn (but allow) if critical fields missing \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
         errors, warnings = self._claim.validate()
         if errors:
-            error_list = "\n".join(f"  • {e}" for e in errors)
+            error_list = "\n".join(f"  \u2022 {e}" for e in errors)
             reply = QMessageBox.warning(
                 self, "Critical Fields Missing",
                 f"The following fields are missing from Excel:\n\n"
@@ -1023,7 +1536,7 @@ class MainWindow(QMainWindow):
             if reply != QMessageBox.StandardButton.Yes:
                 return
         if warnings:
-            warn_list = "\n".join(f"  • {w}" for w in warnings)
+            warn_list = "\n".join(f"  \u2022 {w}" for w in warnings)
             reply = QMessageBox.question(
                 self, "Optional Fields Missing",
                 f"Some optional fields are missing:\n\n{warn_list}\n\n"
@@ -1034,9 +1547,8 @@ class MainWindow(QMainWindow):
                 return
 
         settings_override = {
-            "username":   self.inp_username.text().strip(),
-            "password":   self.inp_password.text().strip(),
-            "claim_type": self.inp_claim_type.currentText().strip(),
+            "username":   username,
+            "password":   password,
         }
         self._save_settings(settings_override)
         self.progress_bar.setValue(0)

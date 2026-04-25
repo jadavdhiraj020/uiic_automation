@@ -8,5 +8,15 @@
   "timeout_ms": 4000,
   "captcha_max_retries": 2,
   "upload_wait_ms": 3000,
-  "field_wait_ms": 600
+  "field_wait_ms": 600,
+  "pdf_invoice_no_labels": [
+    "Tax Invoice No.",
+    "Invoice No",
+    "Bill No"
+  ],
+  "pdf_invoice_date_labels": [
+    "Invoice Date and Time",
+    "Bill Date",
+    "Invoice Date"
+  ]
 }
