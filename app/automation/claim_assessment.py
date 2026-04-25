@@ -527,7 +527,7 @@ async def fill_claim_assessment(page, claim: ClaimData,
     # Remarks (optional — same text as observation)
     try:
         await safe_fill_portal_text(page, ASSESSMENT["remarks"],
-                             "OK", "Remarks", log_cb,
+                             "Done", "Remarks", log_cb,
                              source="Hardcoded")
     except Exception as e:
         log_cb(f"  ⚠️  Remarks: {e}")

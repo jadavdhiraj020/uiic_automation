@@ -472,6 +472,22 @@ def read_excel(excel_path: str, config_dir: str):
             for r_idx, row in enumerate(sh.rows()):
                 for c_idx, cell in enumerate(row):
                     cell_text = " ".join(str(cell).strip().lower().split())
+                    
+                    if "payment to insured" in cell_text:
+                        claim.payment_to = "INSURED"
+                        src = f"R{r_idx+1}C{c_idx+1} ({sh_name})"
+                        claim._excel_coords["payment_to"] = src
+                        claim._excel_logs.append(f"  📊 payment_to: '{claim.payment_to}' (Source: {src})")
+                        logger.info(f"  [FOUND] payment_to = {claim.payment_to} (keyword scan - payment to insured)")
+                        break
+                    elif "payment to repairer" in cell_text:
+                        claim.payment_to = "REPAIRER"
+                        src = f"R{r_idx+1}C{c_idx+1} ({sh_name})"
+                        claim._excel_coords["payment_to"] = src
+                        claim._excel_logs.append(f"  📊 payment_to: '{claim.payment_to}' (Source: {src})")
+                        logger.info(f"  [FOUND] payment_to = {claim.payment_to} (keyword scan - payment to repairer)")
+                        break
+
                     if "favour" in cell_text and ("repairer" in cell_text or "insured" in cell_text):
                         if "insured" in cell_text:
                             claim.payment_to = "INSURED"

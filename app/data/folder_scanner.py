@@ -100,6 +100,78 @@ class FolderScanResult:
         return lines
 
 
+def _extract_sheet_for_reinspection(full_path: str, folder_path: str, sheet_index: int) -> str | None:
+    """
+    Attempts to export a specific Excel sheet to PDF using native MS Excel via COM.
+    If MS Excel is not installed or the COM call fails, falls back to openpyxl
+    to extract the sheet as a new Excel file.
+    Returns the path to the generated file, or None if extraction failed entirely.
+    """
+    pdf_path = os.path.join(folder_path, "Re-Inspection Report format.pdf")
+    excel_path = os.path.join(folder_path, "Re-Inspection Report format.xlsx")
+
+    # Clean up existing generated files to avoid stale data
+    for p in (pdf_path, excel_path):
+        if os.path.exists(p):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+    # 1. Primary Strategy: Export to PDF via win32com
+    try:
+        import win32com.client
+        import pythoncom
+        pythoncom.CoInitialize()
+
+        excel = None
+        wb = None
+        try:
+            excel = win32com.client.DispatchEx("Excel.Application")
+            excel.Visible = False
+            excel.DisplayAlerts = False
+            
+            wb = excel.Workbooks.Open(os.path.abspath(full_path), ReadOnly=True)
+            if wb.Worksheets.Count >= sheet_index + 1:
+                ws = wb.Worksheets(sheet_index + 1)  # COM uses 1-based indexing
+                ws.Select()
+                # 0 = xlTypePDF
+                ws.ExportAsFixedFormat(0, os.path.abspath(pdf_path))
+                logger.info(f"✅ Generated {pdf_path} via win32com (native PDF export)")
+                return pdf_path
+            else:
+                logger.warning(f"Excel file does not have {sheet_index + 1} sheets. Cannot export PDF.")
+        finally:
+            if wb:
+                wb.Close(SaveChanges=False)
+            if excel:
+                excel.Quit()
+            pythoncom.CoUninitialize()
+    except ImportError:
+        logger.warning("win32com not installed, skipping PDF export.")
+    except Exception as e:
+        logger.warning(f"win32com PDF export failed (fallback to Excel): {e}")
+
+    # 2. Fallback Strategy: Extract to XLSX via openpyxl
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(full_path, data_only=True)
+        all_sheets = wb.sheetnames
+        if len(all_sheets) > sheet_index:
+            target_sheet = all_sheets[sheet_index]
+            logger.info(f"Fallback: Extracting Sheet {sheet_index + 1} ('{target_sheet}') as Excel...")
+            for sheet_name in all_sheets:
+                if sheet_name != target_sheet:
+                    wb.remove(wb[sheet_name])
+            wb.save(excel_path)
+            logger.info(f"✅ Generated {excel_path} (fallback Excel extraction)")
+            return excel_path
+    except Exception as e:
+        logger.warning(f"openpyxl fallback extraction failed: {e}")
+
+    return None
+
+
 def scan_folder(folder_path: str) -> FolderScanResult:
     result = FolderScanResult()
     claim_map, assessment_map, other_slots = get_doc_mapping_tuple()
@@ -157,11 +229,11 @@ def scan_folder(folder_path: str) -> FolderScanResult:
         ext = Path(fname).suffix.lower()
         fname_lower = fname.lower()
 
-        # ── Handle our generated subset excel directly ────────────────────────
-        if fname_lower == "re-inspection report format.xlsx":
+        # ── Handle our generated subset excel/pdf directly ────────────────────────
+        if fname_lower in ["re-inspection report format.xlsx", "re-inspection report format.pdf"]:
             if os.path.exists(full_path) and "reinspection_report" not in result.assessment_files:
                 result.assessment_files["reinspection_report"] = full_path
-                logger.info("Assessment file [reinspection_report]: Re-Inspection Report format.xlsx (previously generated)")
+                logger.info(f"Assessment file [reinspection_report]: {fname} (previously generated)")
             continue
 
         # ── Excel file ────────────────────────────────────────────────────────
@@ -171,32 +243,19 @@ def scan_folder(folder_path: str) -> FolderScanResult:
                 logger.info("Excel found: %s", fname)
 
                 # ── Auto-extract Sheet 7 for Re-Inspection Report ─────────────
-                spot_path = os.path.join(folder_path, "Re-Inspection Report format.xlsx")
-                if not os.path.exists(spot_path):
-                    try:
-                        import openpyxl
-                        # Load workbook into memory (data_only=True evaluates formulas to their last values)
-                        wb = openpyxl.load_workbook(full_path, data_only=True)
-                        all_sheets = wb.sheetnames
-                        if len(all_sheets) > 6:
-                            target_sheet = all_sheets[6]
-                            logger.info(f"Extracting Sheet 7 ('{target_sheet}') for Re-Inspection Report with formatting...")
-                            
-                            # Remove all sheets except the target one
-                            for sheet_name in all_sheets:
-                                if sheet_name != target_sheet:
-                                    wb.remove(wb[sheet_name])
-                                    
-                            # Save as a NEW file. The original file is completely untouched!
-                            wb.save(spot_path)
-                            logger.info(f"✅ Generated {spot_path} (formatting preserved)")
-                    except Exception as e:
-                        logger.warning(f"Could not extract Sheet 7: {e}")
+                # Try to find an existing generated report first
+                pdf_path = os.path.join(folder_path, "Re-Inspection Report format.pdf")
+                excel_path = os.path.join(folder_path, "Re-Inspection Report format.xlsx")
+                spot_path = pdf_path if os.path.exists(pdf_path) else (excel_path if os.path.exists(excel_path) else None)
                 
-                # If we successfully created/found Re-Inspection Report format.xlsx, assign it!
-                if os.path.exists(spot_path):
+                if not spot_path:
+                    # User confirmed Sheet 7 (index 6) is the correct target
+                    spot_path = _extract_sheet_for_reinspection(full_path, folder_path, sheet_index=6)
+                
+                # If we successfully created/found a report, assign it!
+                if spot_path and os.path.exists(spot_path):
                     if "reinspection_report" in result.assessment_files:
-                        logger.warning("Overriding previous reinspection_report with generated Excel Sheet 7.")
+                        logger.warning(f"Overriding previous reinspection_report with generated {os.path.basename(spot_path)}.")
                     result.assessment_files["reinspection_report"] = spot_path
                     logger.info("Assessment file [reinspection_report]: %s", spot_path)
             else:

@@ -2,7 +2,7 @@
   "_comment": "field_mapping.json \u00e2\u20ac\u201d Maps ClaimData fields to Excel labels. The reader scans the entire sheet for the label text, then reads the first non-empty value to its RIGHT. col_offset is a hint (tried first) but the reader will scan rightward automatically if the hint is wrong \u00e2\u20ac\u201d so this works with ANY Excel layout.",
   "claim_no": {
     "sheet": "ALL",
-    "search_label": "Claim no",
+    "search_label": ["Claim no","Claim Number","claim_number", "claim_no"],
     "row_offset": 0,
     "col_offset": 1
   },
@@ -65,7 +65,7 @@
   },
   "salvage_value": {
     "sheet": "Sheet1",
-    "search_label": "LESS SALVAGE VALUE",
+    "search_label": ["LESS SALVAGE VALUE","Less Salvage Value","salvage value","Salvage_value"],
     "row_offset": 0,
     "col_offset": 5
   },
@@ -88,7 +88,7 @@
     "col_offset": 7
   },
   "nil_depreciation": {
-    "sheet": "ALL",
+    "sheet": "Sheet1",
     "search_label": "Nil Depreciation",
     "row_offset": 0,
     "col_offset": 1,
@@ -107,14 +107,14 @@
     "col_offset": 1
   },
   "towing_charges": {
-    "sheet": "ALL",
-    "search_label": "TOWING CHARGES",
+    "sheet": "Sheet1",
+    "search_label": ["TOWING CHARGE", "TOWING CHARGES"],
     "row_offset": 0,
     "col_offset": 4
   },
   "professional_fee": {
     "sheet": "Sheet5",
-    "search_label": ["professional_fee", "SURVEY FEE", "SURVEY FEES"],
+    "search_label": ["professional_fee", "professional fee", "SURVEY FEE", "SURVEY FEES"],
     "row_offset": 0,
     "col_offset": 5
   },
@@ -138,13 +138,13 @@
   },
   "invoice_no": {
     "sheet": "Sheet5",
-    "search_label": "Ref:",
+    "search_label": ["invoice_no", "Invoice No", "Ref:"],
     "row_offset": 0,
     "col_offset": 1
   },
   "invoice_date": {
     "sheet": "Sheet5",
-    "search_label": "Date:",
+    "search_label": ["invoice_date", "invoice date", "Date:"],
     "row_offset": 0,
     "col_offset": 1
   },

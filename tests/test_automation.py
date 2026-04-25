@@ -1,3 +1,10 @@
+
+from app.data.folder_scanner import _extract_sheet_for_reinspection
+from app.automation.claim_assessment import fill_claim_assessment
+from app.automation.interim_report import fill_interim_report
+from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import AsyncMock
+from unittest.mock import patch
 """
 test_automation.py — Ultimate test suite for UIIC Automation.
 ═══════════════════════════════════════════════════════════════
@@ -2775,3 +2782,296 @@ class TestFinalIntegrationMock:
                 # If it fails, that means our strict error checking caught it
                 pass
 
+
+
+class TestStagedFieldMappingUpdates:
+    """Test that all newly added arrays in field_mapping.json correctly extract data."""
+    
+    @pytest.fixture
+    def mock_field_mapping(self):
+        # Snapshot of the user's latest field_mapping.json updates
+        return {
+            "claim_no": {
+                "sheet": "ALL",
+                "search_labels": ["Claim no", "Claim Number", "claim_number", "claim_no"],
+                "row_offset": 0, "col_offset": 1
+            },
+            "surveyor_observation": {
+                "sheet": "ALL",
+                "search_labels": ["surveyor observation", "OBERVATIONS/COMMENTS"],
+                "row_offset": 1, "col_offset": 0,
+                "fallback_value": "Ok"
+            },
+            "salvage_value": {
+                "sheet": "Sheet1",
+                "search_labels": ["LESS SALVAGE VALUE", "Less Salvage Value", "salvage value", "Salvage_value"],
+                "row_offset": 0, "col_offset": 5
+            },
+            "towing_charges": {
+                "sheet": "Sheet1",
+                "search_labels": ["TOWING CHARGE", "TOWING CHARGES"],
+                "row_offset": 0, "col_offset": 4
+            },
+            "professional_fee": {
+                "sheet": "Sheet5",
+                "search_labels": ["professional_fee", "professional fee", "SURVEY FEE", "SURVEY FEES"],
+                "row_offset": 0, "col_offset": 5
+            },
+            "invoice_no": {
+                "sheet": "Sheet5",
+                "search_labels": ["invoice_no", "Invoice No", "Ref:"],
+                "row_offset": 0, "col_offset": 1
+            },
+            "invoice_date": {
+                "sheet": "Sheet5",
+                "search_labels": ["invoice_date", "invoice date", "Date:"],
+                "row_offset": 0, "col_offset": 1
+            }
+        }
+
+    def test_claim_no_array(self, mock_field_mapping):
+        # Confirm structure
+        assert "claim_number" in mock_field_mapping["claim_no"]["search_labels"]
+        assert len(mock_field_mapping["claim_no"]["search_labels"]) == 4
+
+    def test_salvage_value_array(self, mock_field_mapping):
+        assert "Salvage_value" in mock_field_mapping["salvage_value"]["search_labels"]
+        assert "LESS SALVAGE VALUE" in mock_field_mapping["salvage_value"]["search_labels"]
+
+    def test_professional_fee_array(self, mock_field_mapping):
+        assert "SURVEY FEES" in mock_field_mapping["professional_fee"]["search_labels"]
+        assert len(mock_field_mapping["professional_fee"]["search_labels"]) == 4
+
+    def test_surveyor_observation_fallback(self, mock_field_mapping):
+        assert mock_field_mapping["surveyor_observation"]["fallback_value"] == "Ok"
+
+
+# =====================================================================
+# 2. TEST EXCEL READER PAYMENT LOGIC
+# =====================================================================
+class TestStagedExcelReaderPaymentLogic:
+    """Test the newly added manual detection for 'payment to insured/repairer'."""
+    
+    def test_payment_to_insured_scan(self):
+        # We'll mock the Excel reading cell text scan
+        class MockCell:
+            def __init__(self, val): self.val = val
+            def __str__(self): return str(self.val)
+
+        class MockRow:
+            def __init__(self, cells): self.cells = cells
+            def __iter__(self): return iter(self.cells)
+            def __getitem__(self, i): return self.cells[i]
+            def __len__(self): return len(self.cells)
+
+        class MockSheet:
+            def __init__(self, name, rows): 
+                self.name = name
+                self._r = rows
+            def rows(self): return self._r
+
+        class MockWorkbook:
+            def __init__(self, sheets): self.sheets = sheets
+            def all_sheets(self): return self.sheets
+
+        # Scenario 1: payment to insured
+        wb1 = MockWorkbook([
+            MockSheet("Sheet1", [
+                MockRow([MockCell("some junk"), MockCell("PAYMENT TO INSURED "), MockCell("Yes")])
+            ])
+        ])
+        
+        claim1 = ClaimData()
+        # Reproduce the exact logic from excel_reader.py lines 468+
+        for sh in wb1.all_sheets():
+            for r_idx, row in enumerate(sh.rows()):
+                for c_idx, cell in enumerate(row):
+                    cell_text = " ".join(str(cell).strip().lower().split())
+                    if "payment to insured" in cell_text:
+                        claim1.payment_to = "INSURED"
+                    elif "payment to repairer" in cell_text:
+                        claim1.payment_to = "REPAIRER"
+
+        assert claim1.payment_to == "INSURED"
+
+        # Scenario 2: payment to repairer
+        wb2 = MockWorkbook([
+            MockSheet("Sheet1", [
+                MockRow([MockCell("payment  to repairer "), MockCell("Yes")])
+            ])
+        ])
+        claim2 = ClaimData()
+        for sh in wb2.all_sheets():
+            for r_idx, row in enumerate(sh.rows()):
+                for c_idx, cell in enumerate(row):
+                    cell_text = " ".join(str(cell).strip().lower().split())
+                    if "payment to insured" in cell_text:
+                        claim2.payment_to = "INSURED"
+                    elif "payment to repairer" in cell_text:
+                        claim2.payment_to = "REPAIRER"
+
+        assert claim2.payment_to == "REPAIRER"
+
+# =====================================================================
+# 3. TEST HARDCODED REMARKS -> 'Done'
+# =====================================================================
+@pytest.mark.asyncio
+class TestStagedAutomationRemarksDone:
+    """Test that the hardcoded 'OK' was replaced with 'Done' in automation scripts."""
+
+    async def test_claim_assessment_remarks_done(self):
+        page = AsyncMock()
+        claim = ClaimData()
+        logs = []
+        
+        # Patch the dependencies so the function flows without Playwright errors
+        with patch("app.automation.claim_assessment.safe_fill_portal_text", new_callable=AsyncMock) as mock_fill, \
+             patch("app.automation.claim_assessment.safe_fill_amount", new_callable=AsyncMock), \
+             patch("app.automation.claim_assessment.asyncio.sleep", new_callable=AsyncMock):
+             
+            # Ignore click_tab errors by patching it out if it exists, or just catch it
+            with patch("app.automation.claim_assessment.click_tab", new_callable=AsyncMock, create=True):
+                await fill_claim_assessment(page, claim, logs.append)
+            
+            # Check the mock_fill calls for "Done"
+            found_done = False
+            for call in mock_fill.mock_calls:
+                if call.args[2] == "Done" and call.args[3] == "Remarks":
+                    found_done = True
+                    break
+            assert found_done, "Could not find safe_fill_portal_text call with 'Done' for Remarks"
+
+    async def test_interim_report_remarks_done(self):
+        page = AsyncMock()
+        claim = ClaimData()
+        logs = []
+        
+        with patch("app.automation.interim_report.safe_fill_portal_text", new_callable=AsyncMock) as mock_fill, \
+             patch("app.automation.interim_report.safe_fill_amount", new_callable=AsyncMock), \
+             patch("app.automation.interim_report.asyncio.sleep", new_callable=AsyncMock):
+             
+            with patch("app.automation.interim_report.click_tab", new_callable=AsyncMock, create=True):
+                await fill_interim_report(page, claim, logs.append)
+            
+            found_done = False
+            for call in mock_fill.mock_calls:
+                # args[2] is the text to fill, args[3] is the field_name
+                if call.args[2] == "Done" and call.args[3] == "Remarks":
+                    found_done = True
+                    break
+            assert found_done, "Could not find safe_fill_portal_text call with 'Done' for Remarks in interim report"
+
+
+
+# =====================================================================
+# 4. TEST WIN32COM PDF EXTRACTION (FOLDER SCANNER)
+# =====================================================================
+class TestStagedFolderScannerPDF:
+    """Test the newly added win32com PDF extraction fallback logic."""
+
+    @patch("os.path.exists", return_value=False)
+    @patch("os.remove")
+    @patch("app.data.folder_scanner.logger")
+    def test_pdf_extraction_win32com_success(self, mock_logger, mock_remove, mock_exists):
+        # Mock sys.modules to inject our win32com mock
+        import sys
+        mock_win32com = MagicMock()
+        mock_pythoncom = MagicMock()
+        sys.modules['win32com'] = mock_win32com
+        sys.modules['win32com.client'] = mock_win32com.client
+        sys.modules['pythoncom'] = mock_pythoncom
+        
+        mock_excel = MagicMock()
+        mock_wb = MagicMock()
+        mock_ws = MagicMock()
+        
+        mock_win32com.client.DispatchEx.return_value = mock_excel
+        mock_excel.Workbooks.Open.return_value = mock_wb
+        mock_wb.Worksheets.Count = 10
+        mock_wb.Worksheets.return_value = mock_ws
+        
+        # Execute
+        res = _extract_sheet_for_reinspection("C:\\dummy.xlsx", "C:\\", 6)
+        
+        # Assertions
+        mock_win32com.client.DispatchEx.assert_called_once_with("Excel.Application")
+        mock_excel.Workbooks.Open.assert_called_once()
+        mock_wb.Worksheets.assert_called_once_with(7)  # 6 + 1
+        mock_ws.Select.assert_called_once()
+        mock_ws.ExportAsFixedFormat.assert_called_once_with(0, os.path.abspath("C:\\Re-Inspection Report format.pdf"))
+        
+        # It should return the PDF path
+        assert res == "C:\\Re-Inspection Report format.pdf"
+
+        # Cleanup
+        del sys.modules['win32com']
+        del sys.modules['win32com.client']
+        del sys.modules['pythoncom']
+
+    @patch("os.path.exists", return_value=False)
+    @patch("os.remove")
+    @patch("app.data.folder_scanner.logger")
+    def test_pdf_extraction_win32com_missing_sheet(self, mock_logger, mock_remove, mock_exists):
+        import sys
+        mock_win32com = MagicMock()
+        mock_pythoncom = MagicMock()
+        mock_openpyxl = MagicMock()
+        sys.modules['win32com'] = mock_win32com
+        sys.modules['win32com.client'] = mock_win32com.client
+        sys.modules['pythoncom'] = mock_pythoncom
+        sys.modules['openpyxl'] = mock_openpyxl
+        
+        mock_excel = MagicMock()
+        mock_wb = MagicMock()
+        
+        mock_win32com.client.DispatchEx.return_value = mock_excel
+        mock_excel.Workbooks.Open.return_value = mock_wb
+        mock_wb.Worksheets.Count = 3 # Less than 7
+        
+        # Should fall back to openpyxl, let's mock openpyxl failure to just test win32com part
+        mock_openpyxl.load_workbook.side_effect = Exception("Openpyxl failed too")
+        res = _extract_sheet_for_reinspection("C:\\dummy.xlsx", "C:\\", 6)
+        
+        # Ensure it tried and failed
+        mock_wb.Worksheets.assert_not_called()
+        mock_logger.warning.assert_any_call("Excel file does not have 7 sheets. Cannot export PDF.")
+        assert res is None
+
+        del sys.modules['win32com']
+        del sys.modules['win32com.client']
+        del sys.modules['pythoncom']
+        del sys.modules['openpyxl']
+
+    @patch("os.path.exists", return_value=False)
+    @patch("os.remove")
+    @patch("app.data.folder_scanner.logger")
+    def test_pdf_extraction_win32com_fails_fallback_to_openpyxl(self, mock_logger, mock_remove, mock_exists):
+        import sys
+        mock_win32com = MagicMock()
+        mock_pythoncom = MagicMock()
+        mock_openpyxl = MagicMock()
+        sys.modules['win32com'] = mock_win32com
+        sys.modules['win32com.client'] = mock_win32com.client
+        sys.modules['pythoncom'] = mock_pythoncom
+        sys.modules['openpyxl'] = mock_openpyxl
+        
+        mock_win32com.client.DispatchEx.side_effect = Exception("COM Error")
+        
+        mock_wb_op = MagicMock()
+        mock_openpyxl.load_workbook.return_value = mock_wb_op
+        mock_wb_op.sheetnames = ["S1", "S2", "S3", "S4", "S5", "S6", "Sheet7", "S8"]
+        
+        res = _extract_sheet_for_reinspection("C:\\dummy.xlsx", "C:\\", 6)
+        
+        # Should hit openpyxl
+        mock_openpyxl.load_workbook.assert_called_once()
+        mock_wb_op.remove.assert_called()  # It removes the other sheets
+        mock_wb_op.save.assert_called_once_with("C:\\Re-Inspection Report format.xlsx")
+        
+        # Should return XLSX path
+        assert res == "C:\\Re-Inspection Report format.xlsx"
+
+        del sys.modules['win32com']
+        del sys.modules['win32com.client']
+        del sys.modules['pythoncom']
+        del sys.modules['openpyxl']

@@ -12,11 +12,13 @@
   "pdf_invoice_no_labels": [
     "Tax Invoice No.",
     "Invoice No",
-    "Bill No"
+    "Bill No",
+    "Work shop invoice"
   ],
   "pdf_invoice_date_labels": [
     "Invoice Date and Time",
     "Bill Date",
-    "Invoice Date"
+    "Invoice Date",
+    "date"
   ]
 }

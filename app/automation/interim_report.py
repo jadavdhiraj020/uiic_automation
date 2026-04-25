@@ -239,7 +239,7 @@ async def fill_interim_report(page, claim: ClaimData,
     
     # User requested 'Remarks *' field is blank on interim report
     await safe_fill_portal_text(page, "#remarks, textarea[ng-model*='remark'], textarea[name*='emarks']",
-                                "OK",
+                                "Done",
                                 "Remarks", log_cb, T,
                                 source="Hardcoded")
 
