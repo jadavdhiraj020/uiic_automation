@@ -142,8 +142,14 @@ class SettingsPage(QWidget):
         for i, (fn, cfg) in enumerate(entries):
             self.mapping_table.setItem(i, 0, QTableWidgetItem(fn))
             self.mapping_table.item(i, 0).setFlags(Qt.ItemFlag.ItemIsEnabled)
-            labels = cfg.get("search_labels") or [cfg.get("search_label", "")]
-            self.mapping_table.setItem(i, 1, QTableWidgetItem(" | ".join(labels)))
+            raw_labels = cfg.get("search_labels")
+            if not raw_labels:
+                raw_label = cfg.get("search_label", "")
+                labels = raw_label if isinstance(raw_label, list) else [raw_label]
+            else:
+                labels = raw_labels
+
+            self.mapping_table.setItem(i, 1, QTableWidgetItem(" | ".join([str(l) for l in labels if l])))
             self.mapping_table.setItem(i, 2, QTableWidgetItem(cfg.get("sheet", "ALL")))
             self.mapping_table.setItem(i, 3, QTableWidgetItem(str(cfg.get("col_offset", 1))))
 

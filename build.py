@@ -206,10 +206,14 @@ def build():
         excludes = [
             "matplotlib",
             "scipy",
-            "pandas",  # only used optionally in folder_scanner
+            "pandas",
             "tkinter",
             "unittest",
             "test",
+            "IPython",
+            "jupyter",
+            "notebook",
+            "sphinx",
         ]
         for e in excludes:
             cmd.extend(["--exclude-module", e])
