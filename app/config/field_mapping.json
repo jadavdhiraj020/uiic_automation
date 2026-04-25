@@ -6,24 +6,6 @@
     "row_offset": 0,
     "col_offset": 1
   },
-  "vehicle_no": {
-    "sheet": "Sheet2",
-    "search_label": "VEHICLE REG. NO.",
-    "row_offset": 0,
-    "col_offset": 4
-  },
-  "chassis_no": {
-    "sheet": "ALL",
-    "search_label": "Chassis Number",
-    "row_offset": 0,
-    "col_offset": 3
-  },
-  "engine_no": {
-    "sheet": "ALL",
-    "search_label": "Engine Number",
-    "row_offset": 0,
-    "col_offset": 3
-  },
   "date_of_survey": {
     "sheet": "ALL",
     "search_label": "Date and Time of Survey",

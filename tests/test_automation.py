@@ -2252,33 +2252,6 @@ class TestExcelReaderEnhancements:
         finally:
             os.remove(excel_path)
 
-    def test_safety_disabled_strategy_3(self):
-        import tempfile
-        import openpyxl
-        from app.data.excel_reader import read_excel
-        
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "ALL"
-        
-        # Put label on row 3
-        ws.cell(row=3, column=2, value="Chassis Number")
-        
-        # Intentionally put the value on row 4 (Strategy 3 used to grab this, now disabled for safety)
-        ws.cell(row=4, column=5, value="ABCDEFG123456")
-        
-        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
-            excel_path = tmp.name
-        wb.save(excel_path)
-        
-        try:
-            config_dir = os.path.join(PROJECT_ROOT, "app", "config")
-            claim = read_excel(excel_path, config_dir)
-            
-            # Should be empty because it is on the wrong row
-            assert claim.chassis_no == "", "Safety feature failed! It grabbed data from the wrong row."
-        finally:
-            os.remove(excel_path)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -2298,7 +2271,7 @@ class TestDataModelDeepEdgeCases:
     def test_xss_payloads(self):
         c = ClaimData()
         c.surveyor_observation = "<script>alert('XSS')</script>"
-        c.chassis_no = "'; DROP TABLE claims; --"
+        c.claim_no = "'; DROP TABLE claims; --"
         errors, warnings = c.validate()
         assert len(errors) > 0 # Should fail validation due to missing required fields
         # But should store perfectly fine
@@ -2790,10 +2763,6 @@ class TestFinalIntegrationMock:
                 
                 # 5. Assertions
                 assert res.claim_no == "C99999"
-                # Vehicle no is supposed to be on Sheet2 in standard mapping!
-                # Wait, standard config has vehicle_no on Sheet2.
-                # So here it should be empty since Sheet2 doesn't exist.
-                assert res.vehicle_no == ""
                 
                 # Professional fee is on Sheet5, col_offset 5. (B=2 -> +5 = 7(G)).
                 assert res.professional_fee == "1500"

@@ -17,9 +17,6 @@ class ClaimData:
     # ── Identification ────────────────────────────────────────────────────────
     claim_no: str = ""
     payment_to: str = ""               # "REPAIRER" → Cashless, "INSURED" → Reimbursement
-    vehicle_no: str = ""               # From Sheet2 (VEHICLE REG. NO.)
-    chassis_no: str = ""               # From Excel (Chassis Number)
-    engine_no: str = ""                # From Excel (Engine Number)
 
     # ── Interim Report ────────────────────────────────────────────────────────
     type_of_settlement: str = "Partial Loss"  # Default for non-TL motor claims.
