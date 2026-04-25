@@ -19,6 +19,7 @@ UPDATED 2026-04-20:
 
 import json
 import logging
+import ntpath
 import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -32,6 +33,13 @@ _DOC_EXTENSIONS = {
     ".doc", ".docx", ".xls", ".xlsx", ".txt", ".tiff",
 }
 MAX_FILE_BYTES = 2 * 1024 * 1024  # 2 MB portal limit
+
+
+def _join_export_path(folder_path: str, filename: str) -> str:
+    """Join report export paths while preserving Windows-style paths on non-Windows hosts."""
+    if folder_path and (ntpath.splitdrive(folder_path)[0] or folder_path.startswith("\\\\")):
+        return ntpath.join(folder_path, filename)
+    return os.path.join(folder_path, filename)
 
 
 def get_doc_mapping_tuple() -> Tuple[Dict[str, List[str]], Dict[str, List[str]], List[str]]:
@@ -107,8 +115,8 @@ def _extract_sheet_for_reinspection(full_path: str, folder_path: str, sheet_inde
     to extract the sheet as a new Excel file.
     Returns the path to the generated file, or None if extraction failed entirely.
     """
-    pdf_path = os.path.join(folder_path, "Re-Inspection Report format.pdf")
-    excel_path = os.path.join(folder_path, "Re-Inspection Report format.xlsx")
+    pdf_path = _join_export_path(folder_path, "Re-Inspection Report format.pdf")
+    excel_path = _join_export_path(folder_path, "Re-Inspection Report format.xlsx")
 
     # Clean up existing generated files to avoid stale data
     for p in (pdf_path, excel_path):
