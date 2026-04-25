@@ -2617,7 +2617,7 @@ class TestFieldMappingDeepIntegrity:
 
 
     def test_no_extra_keys_in_config(self, mapping):
-        allowed_keys = {"sheet", "search_label", "search_labels", "row_offset", "col_offset", "group_idx", "is_date", "allow_literal_values"}
+        allowed_keys = {"sheet", "search_label", "search_labels", "row_offset", "col_offset", "group_idx", "is_date", "allow_literal_values", "fallback_value"}
         for field, cfg in mapping.items():
             if field.startswith("_"): continue
             for key in cfg.keys():

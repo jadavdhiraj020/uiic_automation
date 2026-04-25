@@ -20,9 +20,10 @@
   },
   "surveyor_observation": {
     "sheet": "ALL",
-    "search_label": "OBERVATIONS/COMMENTS",
+    "search_label": ["surveyor observation", "OBERVATIONS/COMMENTS"],
     "row_offset": 1,
-    "col_offset": 0
+    "col_offset": 0,
+    "fallback_value": "Ok"
   },
   "mobile_no": {
     "sheet": "Sheet1",

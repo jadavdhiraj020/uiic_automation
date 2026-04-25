@@ -443,9 +443,15 @@ def read_excel(excel_path: str, config_dir: str):
             found_count += 1
             logger.info(f"  [FOUND] {field_name} = {value}")
         else:
-            labels_str = ' | '.join(labels)
-            missing_fields.append(f"{field_name} (labels: '{labels_str}')")
-            logger.warning(f"  [MISSING] {field_name}: labels '{labels_str}' not found or value empty")
+            fallback = cfg.get("fallback_value")
+            if fallback is not None:
+                setattr(claim, field_name, fallback)
+                logger.info(f"  [FALLBACK] {field_name} = {fallback}")
+                claim._excel_logs.append(f"  📊 {field_name}: '{fallback}' (Source: Fallback Configuration)")
+            else:
+                labels_str = ' | '.join(labels)
+                missing_fields.append(f"{field_name} (labels: '{labels_str}')")
+                logger.warning(f"  [MISSING] {field_name}: labels '{labels_str}' not found or value empty")
 
     if claim.date_of_survey:
         try:
