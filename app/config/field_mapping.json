@@ -11,8 +11,8 @@
   "date_of_survey":         { "sheet": "ALL",    "search_label": "Date and Time of Survey","row_offset": 0, "col_offset": 4 },
   "place_of_survey":        { "sheet": "ALL",    "search_label": "Workshop",              "row_offset": 0, "col_offset": 4 },
   "surveyor_observation":   { "sheet": "ALL",    "search_label": "OBERVATIONS/COMMENTS",  "row_offset": 1, "col_offset": 0 },
-  "mobile_no":              { "sheet": "Sheet1", "search_label": "Mobile:",               "row_offset": 0, "col_offset": 1 },
-  "email_id":               { "sheet": "Sheet1", "search_label": "e-mail:-",              "row_offset": 0, "col_offset": 1 },
+  "mobile_no":              { "sheet": "Sheet1", "search_labels": ["surveyor_mobile", "mobile", "Mobile:"], "row_offset": 0, "col_offset": 1 },
+  "email_id":               { "sheet": "Sheet1", "search_labels": ["surveyor_email", "email", "e-mail:-"],  "row_offset": 0, "col_offset": 1 },
 
   "initial_loss_amount":    { "sheet": "ALL",    "search_label": "initial loss assessment", "row_offset": 0, "col_offset": 1 },
   "compulsory_excess":      { "sheet": "Sheet1", "search_label": "Less Compulsory Excess", "row_offset": 0, "col_offset": 1 },

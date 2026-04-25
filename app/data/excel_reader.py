@@ -209,20 +209,9 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                         )
                         return result, coord_str
 
-                # ── Strategy 3: If row_offset=0 and no value found on same row,
-                #    try one row below the label (common pattern in Indian Excel reports)
-                if row_offset == 0 and target_r + 1 < len(all_rows):
-                    next_row = all_rows[target_r + 1]
-                    for scan_c in range(max(0, c_idx - 1), min(len(next_row), c_idx + 10)):
-                        val = next_row[scan_c]
-                        result = _extract_value(val, is_date)
-                        if result is not None:
-                            coord_str = f"R{target_r+2}C{scan_c+1}"
-                            logger.info(
-                                f"  [{label}] found at R{r_idx}C{c_idx}, "
-                                f"value at {coord_str} (scan below) = {result}"
-                            )
-                            return result, coord_str
+                # ── Strategy 3: REMOVED FOR SAFETY ─────────────────────────────
+                # We no longer drop down to the next row automatically if row_offset=0.
+                # If the value is not on the expected row, we stop to prevent grabbing wrong data.
 
     return None, None
 
@@ -322,32 +311,48 @@ def read_excel(excel_path: str, config_dir: str):
             continue
 
         sheet_name = cfg.get("sheet", "ALL")
-        label      = cfg.get("search_label", "")
+        
+        labels = cfg.get("search_labels")
+        if not labels:
+            single_label = cfg.get("search_label", "")
+            labels = [single_label] if single_label else []
+            
         row_off    = cfg.get("row_offset", 0)
         col_off    = cfg.get("col_offset", 1)
         is_date    = "date" in field_name
 
         value = None
+        found_label = ""
 
-        if sheet_name == "ALL":
-            for sh in wb.all_sheets():
-                value, coord = _search_label(sh, label, row_off, col_off, is_date)
-                if value:
-                    sh_name = sh.name if hasattr(sh, 'name') else 'Sheet'
-                    src_str = f"{coord} ({sh_name})"
-                    claim._excel_coords[field_name] = src_str
-                    claim._excel_logs.append(f"  📊 {field_name}: '{value}' (Source: {src_str})")
-                    break
-        else:
-            sh = wb.get_sheet(sheet_name)
-            if sh:
-                value, coord = _search_label(sh, label, row_off, col_off, is_date)
-                if value:
-                    src_str = f"{coord} ({sheet_name})"
-                    claim._excel_coords[field_name] = src_str
-                    claim._excel_logs.append(f"  📊 {field_name}: '{value}' (Source: {src_str})")
+        for current_label in labels:
+            if not current_label:
+                continue
+                
+            if sheet_name == "ALL":
+                for sh in wb.all_sheets():
+                    value, coord = _search_label(sh, current_label, row_off, col_off, is_date)
+                    if value:
+                        sh_name = sh.name if hasattr(sh, 'name') else 'Sheet'
+                        src_str = f"{coord} ({sh_name})"
+                        claim._excel_coords[field_name] = src_str
+                        claim._excel_logs.append(f"  📊 {field_name}: '{value}' (Source: {src_str})")
+                        found_label = current_label
+                        break
             else:
-                logger.warning(f"  [{field_name}] Sheet '{sheet_name}' not found in workbook")
+                sh = wb.get_sheet(sheet_name)
+                if sh:
+                    value, coord = _search_label(sh, current_label, row_off, col_off, is_date)
+                    if value:
+                        src_str = f"{coord} ({sheet_name})"
+                        claim._excel_coords[field_name] = src_str
+                        claim._excel_logs.append(f"  📊 {field_name}: '{value}' (Source: {src_str})")
+                        found_label = current_label
+                else:
+                    if current_label == labels[-1]: # Only warn on the last fallback try
+                        logger.warning(f"  [{field_name}] Sheet '{sheet_name}' not found in workbook")
+
+            if value:
+                break  # Found it, stop trying fallback labels
 
         if value:
             if field_name == "date_of_survey":
@@ -382,7 +387,7 @@ def read_excel(excel_path: str, config_dir: str):
                             for r_idx, row in enumerate(sh.rows()):
                                 for c_idx, cell in enumerate(row):
                                     cell_lower = str(cell).strip().lower()
-                                    if label.lower() in cell_lower and cell_lower:
+                                    if found_label.lower() in cell_lower and cell_lower:
                                         # Found the label row — scan cells to the right for time
                                         target_r = r_idx + cfg.get("row_offset", 0)
                                         all_row_data = list(sh.rows())
@@ -436,8 +441,9 @@ def read_excel(excel_path: str, config_dir: str):
             found_count += 1
             logger.info(f"  [FOUND] {field_name} = {value}")
         else:
-            missing_fields.append(f"{field_name} (label: '{label}')")
-            logger.warning(f"  [MISSING] {field_name}: label '{label}' not found or value empty")
+            labels_str = ' | '.join(labels)
+            missing_fields.append(f"{field_name} (labels: '{labels_str}')")
+            logger.warning(f"  [MISSING] {field_name}: labels '{labels_str}' not found or value empty")
 
     # ── Calculated Fields ───────────────────────────────────────────────────
     if claim.date_of_survey:
