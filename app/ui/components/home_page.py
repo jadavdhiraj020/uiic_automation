@@ -53,7 +53,18 @@ class HomePage(QWidget):
         row = QWidget(); rlay = QHBoxLayout(row); rlay.setContentsMargins(0,0,0,0); rlay.setSpacing(10)
         self.inp_folder = _input("Click Browse...")
         self.inp_folder.setReadOnly(True)
-        btn = QPushButton("Browse..."); btn.setObjectName("btnBrowse"); btn.setFixedWidth(120); btn.setMinimumHeight(40)
+        self.inp_folder.setStyleSheet("""
+            QLineEdit { 
+                background: #F8FAFC; 
+                border: 1px solid #CBD5E1; 
+                border-radius: 8px; 
+                padding: 10px 15px; 
+                color: #0F172A; 
+                font-weight: 700; 
+                font-size: 10.5pt;
+            }
+        """)
+        btn = QPushButton("Browse..."); btn.setObjectName("btnBrowse"); btn.setFixedWidth(120); btn.setMinimumHeight(44)
         btn.clicked.connect(self.browse_clicked.emit)
         rlay.addWidget(self.inp_folder, 1); rlay.addWidget(btn)
         lay.addWidget(row)
@@ -80,10 +91,33 @@ class HomePage(QWidget):
         self.preview_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.preview_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.preview_table.verticalHeader().setVisible(False)
-        self.preview_table.setMinimumHeight(400)
+        self.preview_table.verticalHeader().setDefaultSectionSize(44)
+        self.preview_table.setMinimumHeight(450)
+        self.preview_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.preview_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.preview_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.preview_table.setStyleSheet("""
-            QTableWidget { border: 1px solid #E2E8F0; border-radius: 8px; background-color: #FFFFFF; alternate-background-color: #F8FAFC; color: #334155; }
-            QHeaderView::section { background-color: #F1F5F9; color: #64748B; font-weight: bold; font-size: 8pt; letter-spacing: 1px; padding: 12px 10px; border: none; border-bottom: 2px solid #E2E8F0; text-transform: uppercase; }
+            QTableWidget { 
+                border: 2px solid #0F172A; 
+                border-radius: 0px; 
+                background-color: #FFFFFF; 
+                gridline-color: #E2E8F0;
+                color: #0F172A; 
+                font-size: 10pt;
+                font-weight: 600;
+            }
+            QTableWidget::item { padding: 12px; }
+            QTableWidget::item:selected { background-color: #F8FAFC; color: #4F46E5; }
+            QHeaderView::section { 
+                background-color: #FFFFFF; 
+                color: #0F172A; 
+                font-weight: 800; 
+                font-size: 8.5pt; 
+                padding: 14px 10px; 
+                border: none; 
+                border-bottom: 3px solid #0F172A; 
+                text-transform: uppercase; 
+            }
         """)
         lay.addWidget(self.preview_table)
         return _card(w, "📊  Extracted Data", "🔴 Critical missing  /  🟡 Optional  /  🟢 Found")
@@ -93,11 +127,11 @@ class HomePage(QWidget):
         errors, warnings = claim.validate()
         if errors:
             self.validation_bar.setText("⚠  MISSING FIELDS — Review before starting:\n" + "\n".join(f"  • {e}" for e in errors))
-            self.validation_bar.setStyleSheet("background:#FFF7ED; color:#C2410C; border:1px solid #FED7AA; border-radius:10px; padding:10px 14px; font-size:8.5pt;")
+            self.validation_bar.setStyleSheet("background:#FFF7ED; color:#C2410C; border:2px solid #C2410C; border-radius:0px; padding:16px; font-size:10pt; font-weight:800;")
             self.validation_bar.setVisible(True)
         elif warnings:
             self.validation_bar.setText("⚠️  Optional fields missing: " + " | ".join(warnings))
-            self.validation_bar.setStyleSheet("background:#FFFBEB; color:#B45309; border:1px solid #FDE68A; border-radius:10px; padding:10px 14px; font-size:8.5pt;")
+            self.validation_bar.setStyleSheet("background:#FFFBEB; color:#B45309; border:2px solid #B45309; border-radius:0px; padding:16px; font-size:10pt; font-weight:800;")
             self.validation_bar.setVisible(True)
         else:
             self.validation_bar.setVisible(False)

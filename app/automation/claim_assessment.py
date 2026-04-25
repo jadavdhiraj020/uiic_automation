@@ -338,18 +338,44 @@ async def _fill_parts(page, claim: ClaimData, log_cb: Callable, _src) -> None:
         else:
             log_cb("  ⏭️  Nil Depreciation checkbox: skipped (Excel value missing or not Yes/No)")
 
+        # 2. Mathematical Balancing Logic
+        # Rules: Sum(Age, 50, Nil) vs Total. Correct if diff <= 2.
+        try:
+            v_age    = float(claim.parts_age_dep_excl_gst or 0)
+            v_50     = float(claim.parts_50_dep_excl_gst or 0)
+            v_nil    = float(claim.parts_nil_dep_excl_gst or 0)
+            v_target = float(claim.parts_gst18_amount or 0)
+        except ValueError:
+            v_age, v_50, v_nil, v_target = 0, 0, 0, 0
+
+        if should_check:
+            # Nil Depreciation is ON: Simple Sum (100% payout for all)
+            expected_total = v_age + v_50 + v_nil
+            diff = v_target - expected_total
+            if 0 < abs(diff) <= 2.01:
+                v_nil += diff
+                log_cb(f"  ⚖️  Balanced (Nil ON): Adjusted Nil Dep by {diff:+.2f} to match Total ({v_target})")
+        else:
+            # Nil Depreciation is OFF: Apply Depreciation Payout Rules
+            # Rule: 65% of Age-based + 50% of 50%-Parts + 100% of Nil-Parts
+            expected_total = (v_age * 0.65) + (v_50 * 0.50) + v_nil
+            diff = v_target - expected_total
+            if 0 < abs(diff) <= 2.01:
+                v_target = expected_total
+                log_cb(f"  ⚖️  Balanced (Nil OFF): Adjusted Total to {v_target:.2f} based on 65%/50% dep rules")
+
         await safe_fill_amount(page, ASSESSMENT["age_dep"],
-                               claim.parts_age_dep_excl_gst, "Age Dep (Metal)", log_cb,
+                               str(v_age), "Age Dep (Metal)", log_cb,
                                source=_src("parts_age_dep_excl_gst"))
         await safe_fill_amount(page, ASSESSMENT["dep_50"],
-                               claim.parts_50_dep_excl_gst, "50% Dep (Plastic)", log_cb,
+                               str(v_50), "50% Dep (Plastic)", log_cb,
                                source=_src("parts_50_dep_excl_gst"))
 
         await safe_fill_amount(page, ASSESSMENT["nil_dep"],
-                               claim.parts_nil_dep_excl_gst, "Nil Dep", log_cb,
+                               str(v_nil), "Nil Dep", log_cb,
                                source=_src("parts_nil_dep_excl_gst"))
         await safe_fill_amount(page, ASSESSMENT["gst_18_parts"],
-                               claim.parts_gst18_amount, "Parts GST 18%", log_cb,
+                               str(v_target), "Parts GST 18%", log_cb,
                                source=_src("parts_gst18_amount"))
     except Exception as e:
         log_cb(f"  ❌ Parts section error: {e}")

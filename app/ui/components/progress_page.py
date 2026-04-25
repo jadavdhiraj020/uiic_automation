@@ -1,6 +1,7 @@
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QScrollArea, QFrame, QLabel, QProgressBar, QTextEdit
+    QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QFrame, QLabel, QProgressBar, QTextEdit,
+    QApplication, QPushButton
 )
 from app.ui.components.widgets import StepPipeline, card as _card
 
@@ -24,18 +25,41 @@ class ProgressPage(QWidget):
         self.pipeline = StepPipeline()
         lay.addWidget(self.pipeline)
 
-        # Progress Bar
+        # Status Header
+        status_w = QWidget()
+        status_lay = QVBoxLayout(status_w); status_lay.setContentsMargins(0,0,0,0); status_lay.setSpacing(10)
+        self.current_action = QLabel("Waiting to start...")
+        self.current_action.setStyleSheet("font-size: 14pt; font-weight: 700; color: #4F46E5; background: transparent;")
+        status_lay.addWidget(self.current_action)
+        
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(False)
-        lay.addWidget(_card(self.progress_bar, "Automation Progress", "Live tracking of current task"))
+        status_lay.addWidget(self.progress_bar)
+        
+        lay.addWidget(_card(status_w, "Automation Live Status", "Currently executing task and overall progress"))
 
         # Log
         self.log_output = QTextEdit()
+        self.log_output.setObjectName("logPanel")
         self.log_output.setReadOnly(True)
         self.log_output.setMinimumHeight(350)
-        lay.addWidget(_card(self.log_output, "Activity Log", "Detailed execution history"))
+        
+        log_header = QWidget()
+        log_h_lay = QHBoxLayout(log_header); log_h_lay.setContentsMargins(0,0,0,0)
+        btn_copy = QPushButton("📋 Copy Log")
+        btn_copy.setFixedWidth(110); btn_copy.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_copy.clicked.connect(lambda: QApplication.clipboard().setText(self.log_output.toPlainText()))
+        btn_copy.setStyleSheet("QPushButton { border-radius: 0px; padding: 6px 12px; font-size: 8.5pt; font-weight: 800; background: #FFFFFF; color: #0F172A; border: 2px solid #0F172A; } QPushButton:hover { background: #F8FAFC; border-color: #4F46E5; }")
+        log_h_lay.addStretch(); log_h_lay.addWidget(btn_copy)
+
+        log_v_w = QWidget()
+        log_v_lay = QVBoxLayout(log_v_w); log_v_lay.setContentsMargins(0,0,0,0); log_v_lay.setSpacing(10)
+        log_v_lay.addWidget(log_header)
+        log_v_lay.addWidget(self.log_output)
+        
+        lay.addWidget(_card(log_v_w, "Activity Log", "Detailed execution history"))
 
         lay.addStretch()
         scroll.setWidget(inner)
@@ -51,5 +75,7 @@ class ProgressPage(QWidget):
     def set_progress(self, val: int):
         self.progress_bar.setValue(val)
         
-    def set_step(self, idx: int):
+    def set_step(self, idx: int, name: str = ""):
         self.pipeline.set_step(idx)
+        if name:
+            self.current_action.setText(name)

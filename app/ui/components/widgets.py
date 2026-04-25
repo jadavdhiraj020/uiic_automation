@@ -1,6 +1,8 @@
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QRect
+from PyQt6.QtGui import QPainter, QColor, QPen, QFontMetrics
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QLineEdit, QPushButton, QSizePolicy
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QLineEdit, QPushButton, QSizePolicy,
+    QStyledItemDelegate, QStyle
 )
 
 STEPS = [
@@ -101,9 +103,9 @@ def stat_card(value_text, label_text, accent_color):
     outer.setStyleSheet(
         "QFrame#statCard {"
         "  background-color:#FFFFFF;"
-        "  border:1px solid #E2E8F0;"
-        f" border-left:4px solid {accent_color};"
-        "  border-radius:12px;"
+        "  border:2px solid #0F172A;"
+        f" border-left:6px solid {accent_color};"
+        "  border-radius:0px;"
         "}"
     )
     outer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -124,7 +126,7 @@ def stat_card(value_text, label_text, accent_color):
     icon_tile.setFixedSize(44, 44)
     # Soft tint for the icon tile like Tailwind `*-100`
     icon_tile.setStyleSheet(
-        f"background-color: {_hex_to_rgba(accent_color, 0.18)}; border-radius:12px;"
+        f"background-color: {_hex_to_rgba(accent_color, 0.12)}; border:2px solid {accent_color}; border-radius:0px;"
     )
     icon_tile.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -195,12 +197,15 @@ class StepPipeline(QWidget):
             if i < active_idx:
                 state = "done"
                 badge.setText("✓")
+                badge.setStyleSheet("background-color: #10B981; color: white; border: 2px solid #065F46; border-radius: 0px;")
             elif i == active_idx:
                 state = "active"
                 badge.setText(str(i + 1))
+                badge.setStyleSheet("background-color: #4F46E5; color: white; border: 3px solid #312E81; border-radius: 0px;")
             else:
                 state = "pending"
                 badge.setText(str(i + 1))
+                badge.setStyleSheet("background-color: #FFFFFF; color: #94A3B8; border: 2px solid #E2E8F0; border-radius: 0px;")
 
             for w in (card, badge, lbl):
                 w.setProperty("state", state)
@@ -210,3 +215,129 @@ class StepPipeline(QWidget):
 
 # Keep backward compatibility
 SidebarStepList = StepPipeline
+
+
+class TagDelegate(QStyledItemDelegate):
+    """Renders ' | ' separated strings as distinctive tags/chips."""
+    def paint(self, painter: QPainter, option, index):
+        text = index.data(Qt.ItemDataRole.DisplayRole)
+        if not text or not isinstance(text, str):
+            super().paint(painter, option, index)
+            return
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # Draw background (handles selection)
+        if option.state & QStyle.StateFlag.State_Selected:
+            painter.fillRect(option.rect, option.palette.highlight())
+            text_color = option.palette.highlightedText().color()
+            tag_bg = option.palette.highlight().color().lighter(120)
+            tag_border = option.palette.highlight().color().darker(110)
+        else:
+            # Subtle background for the cell itself isn't needed if cards are white
+            # but we follow standard painting for non-selected rows.
+            # painter.fillRect(option.rect, option.palette.base())
+            text_color = QColor("#0F172A")
+            tag_bg = QColor("#FFFFFF")
+            tag_border = QColor("#0F172A")
+
+        tags = [t.strip() for t in text.split("|") if t.strip()]
+        if not tags:
+            painter.restore()
+            super().paint(painter, option, index)
+            return
+
+        margin = 8
+        x = option.rect.x() + margin
+        # Vertically center tags
+        tag_h = 24
+        y = option.rect.y() + (option.rect.height() - tag_h) // 2
+        
+        # Use a slightly smaller font for tags to fit better
+        font = painter.font()
+        font.setPointSize(9)
+        font.setWeight(700) # Bold brutalist look
+        painter.setFont(font)
+        metrics = QFontMetrics(font)
+        
+        for tag in tags:
+            # Add padding inside the tag
+            tw = metrics.horizontalAdvance(tag) + 16
+            tag_rect = QRect(x, y, tw, tag_h)
+            
+            # Skip if we go beyond the column width (simple clipping)
+            if x + tw > option.rect.right() - margin:
+                break
+
+            # Draw tag box
+            painter.setBrush(tag_bg)
+            painter.setPen(QPen(tag_border, 1.5))
+            painter.drawRect(tag_rect)
+            
+            # Draw tag text
+            painter.setPen(text_color)
+            painter.drawText(tag_rect, Qt.AlignmentFlag.AlignCenter, tag)
+            
+            x += tw + 6 # Space between tags
+            
+        painter.restore()
+
+
+class ChipLineEdit(QLineEdit):
+    """A QLineEdit that renders pipe-separated text as tags when not focused."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumHeight(44)
+    
+    def paintEvent(self, event):
+        # Only show chips when NOT focused and has content with pipes
+        if self.hasFocus() or not self.text() or "|" not in self.text():
+            super().paintEvent(event)
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # Draw frame (matching brutalist lineEdit style)
+        painter.setBrush(QColor("#FFFFFF"))
+        painter.setPen(QPen(QColor("#0F172A"), 2))
+        painter.drawRect(self.rect().adjusted(1, 1, -1, -1))
+        
+        tags = [t.strip() for t in self.text().split("|") if t.strip()]
+        if not tags:
+            painter.end()
+            super().paintEvent(event)
+            return
+
+        margin = 10
+        x = margin
+        tag_h = 26
+        y = (self.height() - tag_h) // 2
+        
+        font = self.font()
+        font.setPointSize(9)
+        font.setWeight(800)
+        painter.setFont(font)
+        metrics = QFontMetrics(font)
+        
+        for tag in tags:
+            tw = metrics.horizontalAdvance(tag) + 16
+            tag_rect = QRect(x, y, tw, tag_h)
+            
+            # Clip if too long
+            if x + tw > self.width() - margin:
+                break
+
+            # Tag box
+            painter.setBrush(QColor("#FFFFFF"))
+            painter.setPen(QPen(QColor("#0F172A"), 1.5))
+            painter.drawRect(tag_rect)
+            
+            # Text
+            painter.setPen(QColor("#0F172A"))
+            painter.drawText(tag_rect, Qt.AlignmentFlag.AlignCenter, tag)
+            
+            x += tw + 8
+        
+        painter.end()

@@ -239,7 +239,7 @@ async def fill_claim_documents(page, claim: ClaimData, log_cb: Callable[[str], N
             timeout_ms=wait_timeout_ms,
         )
         if retry_ok:
-            await service.wait_after_upload(row_idx=row_idx, wait_ms=wait_timeout_ms)
+            await service.wait_after_upload(row_index=row_idx, wait_ms=wait_timeout_ms)
             if await service.row_shows_expected_file(row_idx, expected_name, timeout_ms=2000):
                 log_cb(f"  ✅ Row restored: [{doc_type}] → {expected_name}")
                 continue

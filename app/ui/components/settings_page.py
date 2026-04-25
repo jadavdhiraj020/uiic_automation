@@ -13,6 +13,7 @@ from app.utils import (
     load_field_mapping, save_field_mapping, reset_field_mapping,
     load_doc_mapping, save_doc_mapping, reset_doc_mapping
 )
+from app.ui.components.widgets import TagDelegate, ChipLineEdit
 
 class SettingsPage(QWidget):
     def __init__(self, parent=None, append_log_cb=None):
@@ -63,7 +64,9 @@ class SettingsPage(QWidget):
 
         # Footer
         footer = QFrame(); footer.setFixedHeight(68); fl = QHBoxLayout(footer); fl.setContentsMargins(32, 0, 32, 0)
-        br = QPushButton("  Reset to Defaults  "); br.clicked.connect(self._reset_defaults); fl.addWidget(br); fl.addStretch()
+        br = QPushButton("  Reset to Defaults  ")
+        br.setObjectName("btnSettingsReset")
+        br.clicked.connect(self._reset_defaults); fl.addWidget(br); fl.addStretch()
         bs = QPushButton("  Save All Settings  "); bs.setObjectName("btnSettingsSave"); bs.setMinimumSize(180, 42); bs.clicked.connect(self._save_all); fl.addWidget(bs)
         root.addWidget(footer)
 
@@ -84,7 +87,8 @@ class SettingsPage(QWidget):
         l.addWidget(_f("Password"))
         row = QWidget(); rl = QHBoxLayout(row); rl.setContentsMargins(0,0,0,0)
         self.inp_password = QLineEdit(); self.inp_password.setEchoMode(QLineEdit.EchoMode.Password); self.inp_password.setMinimumHeight(40)
-        self.btn_eye = QPushButton(); self.btn_eye.setIcon(self._icon_eye_closed); self.btn_eye.setFixedSize(40, 40); self.btn_eye.setCheckable(True); self.btn_eye.clicked.connect(self._toggle_pwd)
+        self.btn_eye = QPushButton(); self.btn_eye.setIcon(self._icon_eye_closed); self.btn_eye.setFixedSize(44, 44); self.btn_eye.setCheckable(True); self.btn_eye.clicked.connect(self._toggle_pwd)
+        self.btn_eye.setStyleSheet("QPushButton { border: 2px solid #0F172A; border-radius: 0px; background: #FFFFFF; } QPushButton:hover { background: #F8FAFC; border-color: #4F46E5; }")
         rl.addWidget(self.inp_password); rl.addWidget(self.btn_eye); l.addWidget(row)
         l.addWidget(_f("Portal URL"))
         self.inp_url = QLineEdit(); self.inp_url.setMinimumHeight(40); l.addWidget(self.inp_url)
@@ -101,16 +105,37 @@ class SettingsPage(QWidget):
     def _build_field_mapping_tab(self):
         s = QScrollArea(); s.setWidgetResizable(True); s.setFrameShape(QFrame.Shape.NoFrame)
         w = QWidget(); l = QVBoxLayout(w); l.setContentsMargins(32, 24, 32, 24)
+        # Search Bar
+        search_box = QWidget()
+        search_lay = QHBoxLayout(search_box); search_lay.setContentsMargins(0,0,0,10)
+        self.search_input = QLineEdit(); self.search_input.setPlaceholderText("🔍 Filter fields by name or label..."); self.search_input.setObjectName("settingsInput")
+        self.search_input.textChanged.connect(self._filter_table)
+        
+        btn_clear_filter = QPushButton("✕")
+        btn_clear_filter.setFixedWidth(36); btn_clear_filter.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_clear_filter.clicked.connect(lambda: self.search_input.clear())
+        btn_clear_filter.setStyleSheet("QPushButton { border-radius: 8px; padding: 0; background: #F1F5F9; color: #64748B; font-size: 12pt; } QPushButton:hover { background: #E2E8F0; color: #0F172A; }")
+        
+        search_lay.addWidget(self.search_input)
+        search_lay.addWidget(btn_clear_filter)
+        l.addWidget(search_box)
+
         self.mapping_table = QTableWidget(0, 4)
         self.mapping_table.setHorizontalHeaderLabels(["FIELD NAME", "SEARCH LABEL", "SHEET", "COL OFFSET"])
         self.mapping_table.verticalHeader().setVisible(False)
-        self.mapping_table.verticalHeader().setDefaultSectionSize(42)
+        self.mapping_table.verticalHeader().setDefaultSectionSize(48)
         self.mapping_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.mapping_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.mapping_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         self.mapping_table.setColumnWidth(2, 120)
         self.mapping_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
         self.mapping_table.setColumnWidth(3, 100)
+        self.mapping_table.setStyleSheet("""
+            QTableWidget::item { padding: 4px; }
+            QTableWidget::item:selected { background-color: #F1F5F9; color: #1E293B; }
+            QLineEdit { background: white; border: 2px solid #3B82F6; border-radius: 6px; padding: 4px; color: #1E293B; font-weight: 500; }
+        """)
+        self.mapping_table.setItemDelegateForColumn(1, TagDelegate(self.mapping_table))
         l.addWidget(self.mapping_table)
         s.setWidget(w); return s
 
@@ -120,10 +145,16 @@ class SettingsPage(QWidget):
         self.doc_table = QTableWidget(0, 3)
         self.doc_table.setHorizontalHeaderLabels(["SECTION", "PORTAL DOC TYPE", "FILENAME KEYWORDS"])
         self.doc_table.verticalHeader().setVisible(False)
-        self.doc_table.verticalHeader().setDefaultSectionSize(42)
+        self.doc_table.verticalHeader().setDefaultSectionSize(48)
         self.doc_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.doc_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.doc_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.doc_table.setStyleSheet("""
+            QTableWidget::item { padding: 4px; }
+            QTableWidget::item:selected { background-color: #F1F5F9; color: #1E293B; }
+            QLineEdit { background: white; border: 2px solid #3B82F6; border-radius: 6px; padding: 4px; color: #1E293B; font-weight: 500; }
+        """)
+        self.doc_table.setItemDelegateForColumn(2, TagDelegate(self.doc_table))
         l.addWidget(self.doc_table)
         s.setWidget(w); return s
 
@@ -131,9 +162,9 @@ class SettingsPage(QWidget):
         s = QScrollArea(); s.setWidgetResizable(True); s.setFrameShape(QFrame.Shape.NoFrame)
         w = QWidget(); l = QVBoxLayout(w); l.setContentsMargins(32, 24, 32, 24); l.setSpacing(16)
         l.addWidget(QLabel("Invoice No Labels"))
-        self.inp_pdf_inv = QLineEdit(); self.inp_pdf_inv.setMinimumHeight(40); l.addWidget(self.inp_pdf_inv)
+        self.inp_pdf_inv = ChipLineEdit(); l.addWidget(self.inp_pdf_inv)
         l.addWidget(QLabel("Invoice Date Labels"))
-        self.inp_pdf_date = QLineEdit(); self.inp_pdf_date.setMinimumHeight(40); l.addWidget(self.inp_pdf_date)
+        self.inp_pdf_date = ChipLineEdit(); l.addWidget(self.inp_pdf_date)
         l.addStretch(); s.setWidget(w); return s
 
     def _load_data(self):
@@ -165,7 +196,11 @@ class SettingsPage(QWidget):
             # Sheet Dropdown
             sheet_combo = QComboBox()
             sheet_combo.addItems(["ALL", "Sheet1", "Sheet2", "Sheet3", "Sheet4", "Sheet5", "Sheet6", "Sheet7", "Sheet8", "Sheet9", "Sheet10"])
-            sheet_combo.setStyleSheet("QComboBox { padding: 5px; border: 1px solid #CBD5E1; border-radius: 4px; background: white; }")
+            sheet_combo.setStyleSheet("""
+                QComboBox { padding: 5px; border: 1px solid #CBD5E1; border-radius: 4px; background: white; }
+                QComboBox::drop-down { border: 0px; }
+                QComboBox::down-arrow { image: none; border: 0px; }
+            """)
             sheet_val = cfg.get("sheet", "ALL")
             idx = sheet_combo.findText(sheet_val)
             if idx >= 0: sheet_combo.setCurrentIndex(idx)
@@ -177,6 +212,7 @@ class SettingsPage(QWidget):
             # Col Offset SpinBox
             offset_spin = QSpinBox()
             offset_spin.setRange(0, 100) # Prevent negative values as requested
+            offset_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
             offset_spin.setStyleSheet("QSpinBox { padding: 5px; border: 1px solid #CBD5E1; border-radius: 4px; background: white; }")
             offset_spin.setValue(int(cfg.get("col_offset", 1)))
             self.mapping_table.setCellWidget(i, 3, offset_spin)
@@ -196,6 +232,13 @@ class SettingsPage(QWidget):
             self.doc_table.setItem(i, 1, QTableWidgetItem(dt))
             self.doc_table.item(i, 1).setFlags(Qt.ItemFlag.ItemIsEnabled)
             self.doc_table.setItem(i, 2, QTableWidgetItem(kws))
+
+    def _filter_table(self, text):
+        text = text.lower()
+        for i in range(self.mapping_table.rowCount()):
+            field = self.mapping_table.item(i, 0).text().lower()
+            label = self.mapping_table.item(i, 1).text().lower()
+            self.mapping_table.setRowHidden(i, text not in field and text not in label)
 
     def _save_all(self):
         try:

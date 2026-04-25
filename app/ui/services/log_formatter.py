@@ -49,6 +49,6 @@ def format_log_html(raw_message: str, ts: str) -> str:
         display_message = f"<b>{display_message}</b>"
 
     return (
-        f'<span style="color:#64748B; font-size:8pt;">[{ts}]</span>'
+        f'<span style="color:#94A3B8; font-size:8pt;">[{ts}]</span>'
         f'&nbsp;<span style="color:{color};">{display_message}</span>'
     )

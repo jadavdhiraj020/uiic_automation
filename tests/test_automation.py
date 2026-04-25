@@ -1,8 +1,12 @@
 
 from app.data.folder_scanner import _extract_sheet_for_reinspection
-from app.automation.claim_assessment import fill_claim_assessment
+from app.automation.claim_assessment import fill_claim_assessment, _fill_parts
 from app.automation.interim_report import fill_interim_report
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock, patch, ANY
+import sys
+from PyQt6.QtCore import Qt, QRect, QModelIndex
+from PyQt6.QtGui import QPainter, QPalette, QFont, QPixmap
+from PyQt6.QtWidgets import QStyleOptionViewItem, QStyle, QApplication
 """
 test_automation.py — Ultimate test suite for UIIC Automation.
 ═══════════════════════════════════════════════════════════════
@@ -3097,3 +3101,69 @@ class TestStagedFolderScannerPDF:
         del sys.modules['win32com.client']
         del sys.modules['pythoncom']
         del sys.modules['openpyxl']
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 36. ASSESSMENT BALANCING & BRUTALIST UI
+# ═════════════════════════════════════════════════════════════════════════════
+
+_qapp = QApplication.instance() or QApplication(sys.argv)
+
+class MockPage:
+    def __init__(self): self.fills = []
+    async def evaluate(self, js, *args, **kwargs): return {"ok": True}
+    async def wait_for_load_state(self, *args, **kwargs): pass
+    def locator(self, selector):
+        m = MagicMock(); m.first = m; m.count = MagicMock(return_value=1)
+        m.is_visible = MagicMock(return_value=True); m.fill = MagicMock()
+        m.evaluate = MagicMock(); return m
+
+@pytest.mark.asyncio
+async def test_balancing_nil_dep_on_exact_match():
+    claim = ClaimData(nil_depreciation="Yes", parts_age_dep_excl_gst="100", parts_50_dep_excl_gst="200", parts_nil_dep_excl_gst="300", parts_gst18_amount="600")
+    logs = []; page = MockPage()
+    with patch("app.automation.claim_assessment.safe_fill_amount") as mock_fill:
+        await _fill_parts(page, claim, lambda m: logs.append(m), lambda x: "A1")
+        mock_fill.assert_any_call(page, ANY, "100.0", "Age Dep (Metal)", ANY, source="A1")
+        assert not any("⚖️" in l for l in logs)
+
+@pytest.mark.asyncio
+async def test_balancing_nil_dep_on_adjust_plus_one():
+    claim = ClaimData(nil_depreciation="Yes", parts_age_dep_excl_gst="100", parts_50_dep_excl_gst="200", parts_nil_dep_excl_gst="300", parts_gst18_amount="601")
+    logs = []; page = MockPage()
+    with patch("app.automation.claim_assessment.safe_fill_amount") as mock_fill:
+        await _fill_parts(page, claim, lambda m: logs.append(m), lambda x: "A1")
+        mock_fill.assert_any_call(page, ANY, "301.0", "Nil Dep", ANY, source="A1")
+        assert any("⚖️" in l for l in logs)
+
+@pytest.mark.asyncio
+async def test_balancing_nil_dep_off_adjust_total():
+    claim = ClaimData(nil_depreciation="No", parts_age_dep_excl_gst="100", parts_50_dep_excl_gst="200", parts_nil_dep_excl_gst="300", parts_gst18_amount="466")
+    logs = []; page = MockPage()
+    with patch("app.automation.claim_assessment.safe_fill_amount") as mock_fill:
+        await _fill_parts(page, claim, lambda m: logs.append(m), lambda x: "A1")
+        mock_fill.assert_any_call(page, ANY, "465.0", "Parts GST 18%", ANY, source="A1")
+        assert any("⚖️" in l for l in logs)
+
+from app.ui.components.widgets import TagDelegate, ChipLineEdit
+
+def test_tag_delegate_empty_data():
+    delegate = TagDelegate(); pixmap = QPixmap(100, 100); painter = QPainter(pixmap)
+    option = QStyleOptionViewItem(); option.rect = QRect(0, 0, 100, 30); index = QModelIndex()
+    try: delegate.paint(painter, option, index)
+    finally: painter.end()
+
+@pytest.mark.parametrize("age,p50,nil,target,is_nil,expected_nil,expected_total,should_balance", [
+    ("100", "200", "300", "600", "Yes", 300.0, 600.0, False),
+    ("100", "200", "300", "601", "Yes", 301.0, 601.0, True),
+    ("100", "200", "300", "465", "No", 300.0, 465.0, False),
+    ("100", "200", "300", "466", "No", 300.0, 465.0, True),
+])
+@pytest.mark.asyncio
+async def test_balancing_matrix(age, p50, nil, target, is_nil, expected_nil, expected_total, should_balance):
+    claim = ClaimData(nil_depreciation=is_nil, parts_age_dep_excl_gst=age, parts_50_dep_excl_gst=p50, parts_nil_dep_excl_gst=nil, parts_gst18_amount=target)
+    logs = []; page = MockPage()
+    with patch("app.automation.claim_assessment.safe_fill_amount") as mock_fill:
+        await _fill_parts(page, claim, lambda x: logs.append(x), lambda x: "SRC")
+        mock_fill.assert_any_call(page, ANY, str(expected_nil), "Nil Dep", ANY, source=ANY)
+        mock_fill.assert_any_call(page, ANY, str(expected_total), "Parts GST 18%", ANY, source=ANY)
+        assert any("⚖️" in l for l in logs) == should_balance
