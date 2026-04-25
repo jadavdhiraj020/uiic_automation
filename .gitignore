@@ -16,6 +16,8 @@ build_assets/
 venv/
 env/
 ENV/
+.*venv*/
+venv*/
 
 # Testing (pytest, coverage, etc.)
 .pytest_cache/

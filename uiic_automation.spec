@@ -163,9 +163,12 @@ if paddle_libs_dir.exists():
 for package_name in (
     "paddle",
     "paddleocr",
+    "Cython",
     "numpy",
     "PIL",
     "lmdb",
+    "scipy",
+    "scipy.io",
     "skimage",
     "pyclipper",
     "imgaug",
@@ -173,6 +176,7 @@ for package_name in (
     "shapely",
     "playwright",
     "pdfplumber",
+    "pandas",
     "openpyxl",
     "docx",
 ):
@@ -216,6 +220,8 @@ hiddenimports.extend(
         "paddleocr.ppocr.postprocess",
         "paddleocr.ppocr.utils",
         "lmdb",
+        "scipy",
+        "scipy.io",
         "skimage",
         "skimage.morphology",
         "imgaug",
@@ -224,6 +230,7 @@ hiddenimports.extend(
         "requests",
         "sniffio",
         "six",
+        "Cython",
         "setuptools",
         "docx",
     ]
@@ -258,9 +265,6 @@ a = Analysis(
         "pytest",
         "sphinx",
         "tkinter",
-        "pandas",
-        "scipy",
-        "matplotlib",
     ],
     noarchive=False,
 )

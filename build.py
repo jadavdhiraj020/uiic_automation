@@ -205,8 +205,6 @@ def build():
         # Exclude unnecessary heavy packages
         excludes = [
             "matplotlib",
-            "scipy",
-            "pandas",
             "tkinter",
             "unittest",
             "test",

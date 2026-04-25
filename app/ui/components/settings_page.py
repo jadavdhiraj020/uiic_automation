@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel,
     QPushButton, QStackedWidget, QScrollArea, QGridLayout,
     QLineEdit, QTableWidget, QHeaderView, QFileDialog, QMessageBox,
-    QTableWidgetItem
+    QTableWidgetItem, QComboBox, QSpinBox
 )
 import os
 import json
@@ -103,8 +103,15 @@ class SettingsPage(QWidget):
         w = QWidget(); l = QVBoxLayout(w); l.setContentsMargins(32, 24, 32, 24)
         self.mapping_table = QTableWidget(0, 4)
         self.mapping_table.setHorizontalHeaderLabels(["FIELD NAME", "SEARCH LABEL", "SHEET", "COL OFFSET"])
-        self.mapping_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.mapping_table.verticalHeader().setVisible(False); l.addWidget(self.mapping_table)
+        self.mapping_table.verticalHeader().setVisible(False)
+        self.mapping_table.verticalHeader().setDefaultSectionSize(42)
+        self.mapping_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.mapping_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.mapping_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        self.mapping_table.setColumnWidth(2, 120)
+        self.mapping_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        self.mapping_table.setColumnWidth(3, 100)
+        l.addWidget(self.mapping_table)
         s.setWidget(w); return s
 
     def _build_doc_mapping_tab(self):
@@ -112,8 +119,12 @@ class SettingsPage(QWidget):
         w = QWidget(); l = QVBoxLayout(w); l.setContentsMargins(32, 24, 32, 24)
         self.doc_table = QTableWidget(0, 3)
         self.doc_table.setHorizontalHeaderLabels(["SECTION", "PORTAL DOC TYPE", "FILENAME KEYWORDS"])
-        self.doc_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.doc_table.verticalHeader().setVisible(False); l.addWidget(self.doc_table)
+        self.doc_table.verticalHeader().setVisible(False)
+        self.doc_table.verticalHeader().setDefaultSectionSize(42)
+        self.doc_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.doc_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.doc_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        l.addWidget(self.doc_table)
         s.setWidget(w); return s
 
     def _build_pdf_mapping_tab(self):
@@ -150,8 +161,25 @@ class SettingsPage(QWidget):
                 labels = raw_labels
 
             self.mapping_table.setItem(i, 1, QTableWidgetItem(" | ".join([str(l) for l in labels if l])))
-            self.mapping_table.setItem(i, 2, QTableWidgetItem(cfg.get("sheet", "ALL")))
-            self.mapping_table.setItem(i, 3, QTableWidgetItem(str(cfg.get("col_offset", 1))))
+            
+            # Sheet Dropdown
+            sheet_combo = QComboBox()
+            sheet_combo.addItems(["ALL", "Sheet1", "Sheet2", "Sheet3", "Sheet4", "Sheet5", "Sheet6", "Sheet7", "Sheet8", "Sheet9", "Sheet10"])
+            sheet_combo.setStyleSheet("QComboBox { padding: 5px; border: 1px solid #CBD5E1; border-radius: 4px; background: white; }")
+            sheet_val = cfg.get("sheet", "ALL")
+            idx = sheet_combo.findText(sheet_val)
+            if idx >= 0: sheet_combo.setCurrentIndex(idx)
+            else:
+                sheet_combo.addItem(sheet_val)
+                sheet_combo.setCurrentText(sheet_val)
+            self.mapping_table.setCellWidget(i, 2, sheet_combo)
+
+            # Col Offset SpinBox
+            offset_spin = QSpinBox()
+            offset_spin.setRange(0, 100) # Prevent negative values as requested
+            offset_spin.setStyleSheet("QSpinBox { padding: 5px; border: 1px solid #CBD5E1; border-radius: 4px; background: white; }")
+            offset_spin.setValue(int(cfg.get("col_offset", 1)))
+            self.mapping_table.setCellWidget(i, 3, offset_spin)
 
         # Doc Mapping
         dm = load_doc_mapping()
@@ -188,9 +216,14 @@ class SettingsPage(QWidget):
             for r in range(self.mapping_table.rowCount()):
                 fn = self.mapping_table.item(r, 0).text()
                 lt = self.mapping_table.item(r, 1).text().strip()
-                sh = self.mapping_table.item(r, 2).text().strip() or "ALL"
-                try: co = int(self.mapping_table.item(r, 3).text())
-                except: co = 1
+                
+                # Get values from widgets
+                sheet_combo = self.mapping_table.cellWidget(r, 2)
+                sh = sheet_combo.currentText() if sheet_combo else "ALL"
+                
+                offset_spin = self.mapping_table.cellWidget(r, 3)
+                co = offset_spin.value() if offset_spin else 1
+                
                 old = m.get(fn, {})
                 labels = [l.strip() for l in lt.split("|") if l.strip()]
                 nm[fn] = {**old, "sheet": sh, "search_labels": labels, "col_offset": co}
