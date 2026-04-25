@@ -64,19 +64,19 @@
   },
   "initial_loss_amount": {
     "sheet": "ALL",
-    "search_label": "initial loss assessment",
+    "search_label": ["initial loss assessment", "intial losss", "intial loss"],
     "row_offset": 0,
     "col_offset": 1
   },
   "compulsory_excess": {
     "sheet": "Sheet1",
-    "search_label": "Less Compulsory Excess",
+    "search_label": ["Coumpulsary excess", "excess clause", "Less Compulsory Excess"],
     "row_offset": 0,
     "col_offset": 1
   },
   "voluntary_excess": {
     "sheet": "Sheet1",
-    "search_label": "LESS EXCESS CLAUSE",
+    "search_label": ["voluntry excess"],
     "row_offset": 0,
     "col_offset": 5
   },

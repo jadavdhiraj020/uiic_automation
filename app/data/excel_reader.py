@@ -15,7 +15,6 @@ appears in any given Excel file.
 """
 import os
 import re
-import json
 import logging
 from datetime import datetime
 from typing import Any, List, Optional, Tuple
@@ -130,7 +129,7 @@ def _is_junk(val: Any) -> bool:
 
 def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                   is_date: bool = False,
-                  allow_literal_values: bool = False) -> Optional[str]:
+                  allow_literal_values: bool = False) -> Tuple[Optional[str], Optional[str]]:
     """
     Find label text anywhere in the sheet. Then:
       1. Move row_offset rows down.
@@ -166,7 +165,6 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                     if ":" in orig_cell:
                         val = orig_cell.split(":", 1)[-1].strip(" -\n\t")
                     else:
-                        import re
                         val = re.sub(re.escape(label), "", orig_cell, flags=re.IGNORECASE).strip(" -:\n\t")
                     
                     if val:
@@ -193,7 +191,7 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                     if result is not None:
                         coord_str = f"R{target_r+1}C{hint_c+1}"
                         logger.info(
-                            f"  [{label}] found at R{r_idx}C{c_idx}, "
+                            f"  [{label}] found at R{r_idx+1}C{c_idx+1}, "
                             f"value at {coord_str} = {result}"
                         )
                         return result, coord_str
@@ -205,7 +203,7 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                     if result is not None:
                         coord_str = f"R{target_r+1}C{scan_c+1}"
                         logger.info(
-                            f"  [{label}] found at R{r_idx}C{c_idx}, "
+                            f"  [{label}] found at R{r_idx+1}C{c_idx+1}, "
                             f"value at {coord_str} (scan right) = {result}"
                         )
                         return result, coord_str
@@ -277,7 +275,6 @@ def _format_date(raw: str) -> str:
         return ""
     if re.match(r"\d{2}/\d{2}/\d{4}", raw):
         return raw
-    # L2 FIX: removed duplicate "%d.%m.%Y" that was listed twice
     for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%m/%d/%Y", "%d.%m.%Y",
                 "%Y/%m/%d", "%B %d, %Y"):
         try:
@@ -321,9 +318,12 @@ def read_excel(excel_path: str, config_dir: str):
         
         labels = cfg.get("search_labels")
         if not labels:
-            single_label = cfg.get("search_label", "")
-            labels = [single_label] if single_label else []
-            
+            raw_label = cfg.get("search_label", "")
+            if isinstance(raw_label, list):
+                labels = raw_label
+            else:
+                labels = [raw_label] if raw_label else []
+
         row_off    = cfg.get("row_offset", 0)
         col_off    = cfg.get("col_offset", 1)
         is_date    = "date" in field_name
@@ -371,9 +371,6 @@ def read_excel(excel_path: str, config_dir: str):
         if value:
             if field_name == "date_of_survey":
                 # ── Extract time from the date string OR adjacent cells ──────
-                # Excel often has date in one cell (16.02.2026) and time in
-                # the next cell (at 10 a.m.) — so we must check both.
-                import re
                 time_found = False
 
                 # First: try parsing time from the value itself
@@ -392,7 +389,6 @@ def read_excel(excel_path: str, config_dir: str):
 
                 # Second: if no time in value, scan adjacent cells in the row
                 if not time_found:
-                    # Re-scan the sheet to find the row where date was found
                     try:
                         all_sheets = wb.all_sheets() if sheet_name == "ALL" else [wb.get_sheet(sheet_name)]
                         for sh in all_sheets:
@@ -402,7 +398,6 @@ def read_excel(excel_path: str, config_dir: str):
                                 for c_idx, cell in enumerate(row):
                                     cell_lower = str(cell).strip().lower()
                                     if found_label.lower() in cell_lower and cell_lower:
-                                        # Found the label row — scan cells to the right for time
                                         target_r = r_idx + cfg.get("row_offset", 0)
                                         all_row_data = list(sh.rows())
                                         if 0 <= target_r < len(all_row_data):
@@ -423,7 +418,6 @@ def read_excel(excel_path: str, config_dir: str):
                                                     time_found = True
                                                     logger.info(f"  [TIME] Extracted from adjacent cell R{target_r+1}C{tc+1}: {claim.time_hh}:{claim.time_mm}")
                                                     break
-                                                # Also try 24h format like "14:30"
                                                 tm24 = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", tc_str)
                                                 if tm24:
                                                     claim.time_hh = f"{int(tm24.group(1)):02d}"
@@ -431,14 +425,10 @@ def read_excel(excel_path: str, config_dir: str):
                                                     time_found = True
                                                     logger.info(f"  [TIME] Extracted 24h from adjacent cell R{target_r+1}C{tc+1}: {claim.time_hh}:{claim.time_mm}")
                                                     break
-                                            if time_found:
-                                                break
-                                    if time_found:
-                                        break
-                                if time_found:
-                                    break
-                            if time_found:
-                                break
+                                            if time_found: break
+                                    if time_found: break
+                                if time_found: break
+                            if time_found: break
                     except Exception as e:
                         logger.warning(f"  [TIME] Adjacent cell scan failed: {e}")
 
@@ -446,8 +436,6 @@ def read_excel(excel_path: str, config_dir: str):
                     logger.info(f"  [TIME] Survey time set: HH={claim.time_hh} MM={claim.time_mm}")
 
             if is_date:
-                # Clean "at 10 a.m." etc so _format_date works
-                import re
                 clean_date_val = re.sub(r"at.*$", "", str(value), flags=re.IGNORECASE).strip()
                 value = _format_date(clean_date_val)
 
@@ -459,7 +447,6 @@ def read_excel(excel_path: str, config_dir: str):
             missing_fields.append(f"{field_name} (labels: '{labels_str}')")
             logger.warning(f"  [MISSING] {field_name}: labels '{labels_str}' not found or value empty")
 
-    # ── Calculated Fields ───────────────────────────────────────────────────
     if claim.date_of_survey:
         try:
             from datetime import timedelta
@@ -473,9 +460,6 @@ def read_excel(excel_path: str, config_dir: str):
                 f"{len(missing_fields)} missing: {missing_fields}")
 
     # ── Payment Type Detection (keyword scan) ────────────────────────────────
-    # This field can't use _search_label because the cell often contains
-    # multi-line text like "PAYMENT MADE IN THE FAVOUR OF\nREPAIRER".
-    # Instead, scan all cells for keywords.
     if not claim.payment_to:
         for sh in wb.all_sheets():
             sh_name = sh.name if hasattr(sh, 'name') else 'Sheet'
@@ -483,7 +467,6 @@ def read_excel(excel_path: str, config_dir: str):
                 for c_idx, cell in enumerate(row):
                     cell_text = " ".join(str(cell).strip().lower().split())
                     if "favour" in cell_text and ("repairer" in cell_text or "insured" in cell_text):
-                        # Found the payment cell — extract who it's made to
                         if "insured" in cell_text:
                             claim.payment_to = "INSURED"
                         else:
@@ -493,9 +476,7 @@ def read_excel(excel_path: str, config_dir: str):
                         claim._excel_logs.append(f"  📊 payment_to: '{claim.payment_to}' (Source: {src})")
                         logger.info(f"  [FOUND] payment_to = {claim.payment_to} (keyword scan)")
                         break
-                    # Also check adjacent cell: label in one cell, value in next
                     if "favour" in cell_text:
-                        # Check next cells in the same row for REPAIRER/INSURED
                         for nc in range(c_idx + 1, min(c_idx + 5, len(row))):
                             next_text = " ".join(str(row[nc]).strip().lower().split())
                             if "repairer" in next_text:
@@ -510,11 +491,8 @@ def read_excel(excel_path: str, config_dir: str):
                                 claim._excel_coords["payment_to"] = src
                                 claim._excel_logs.append(f"  📊 payment_to: '{claim.payment_to}' (Source: {src})")
                                 break
-                        if claim.payment_to:
-                            break
-                if claim.payment_to:
-                    break
-            if claim.payment_to:
-                break
+                        if claim.payment_to: break
+                if claim.payment_to: break
+            if claim.payment_to: break
 
     return claim

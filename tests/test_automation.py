@@ -990,12 +990,11 @@ class TestFieldMapping:
         for field, cfg in mapping.items():
             if field.startswith("_"):
                 continue
-            
             label_val = cfg.get("search_label")
             if not label_val and "search_labels" in cfg:
                 label_val = tuple(cfg["search_labels"])
                 
-            key = (cfg["sheet"], label_val, cfg["col_offset"])
+            key = (cfg["sheet"], tuple(label_val) if isinstance(label_val, list) else label_val, cfg["col_offset"])
             # Duplicate keys are OK for parts fields (same label, different offset via group_idx)
             if "group_idx" not in cfg:
                 if key in seen:
@@ -2634,8 +2633,15 @@ class TestFieldMappingDeepIntegrity:
                     assert isinstance(label, str)
                     assert len(label.strip()) > 0, f"{field} has empty string in search_labels"
             else:
-                assert isinstance(cfg["search_label"], str)
-                assert len(cfg["search_label"].strip()) > 0, f"{field} has empty search_label"
+                sl = cfg.get("search_label")
+                if isinstance(sl, list):
+                    for item in sl:
+                        assert isinstance(item, str)
+                        assert len(item.strip()) > 0
+                else:
+                    assert isinstance(sl, str)
+                    assert len(sl.strip()) > 0
+
 
     def test_no_extra_keys_in_config(self, mapping):
         allowed_keys = {"sheet", "search_label", "search_labels", "row_offset", "col_offset", "group_idx", "is_date", "allow_literal_values"}
