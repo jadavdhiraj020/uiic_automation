@@ -19,6 +19,7 @@ UPDATED 2026-04-20:
 
 import json
 import logging
+import ntpath
 import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -32,6 +33,13 @@ _DOC_EXTENSIONS = {
     ".doc", ".docx", ".xls", ".xlsx", ".txt", ".tiff",
 }
 MAX_FILE_BYTES = 2 * 1024 * 1024  # 2 MB portal limit
+
+
+def _join_export_path(folder_path: str, filename: str) -> str:
+    """Join report export paths while preserving Windows-style paths on non-Windows hosts."""
+    if folder_path and (ntpath.splitdrive(folder_path)[0] or folder_path.startswith("\\\\")):
+        return ntpath.join(folder_path, filename)
+    return os.path.join(folder_path, filename)
 
 
 def get_doc_mapping_tuple() -> Tuple[Dict[str, List[str]], Dict[str, List[str]], List[str]]:
@@ -107,8 +115,8 @@ def _extract_sheet_for_reinspection(full_path: str, folder_path: str, sheet_inde
     to extract the sheet as a new Excel file.
     Returns the path to the generated file, or None if extraction failed entirely.
     """
-    pdf_path = os.path.join(folder_path, "Re-Inspection Report format.pdf")
-    excel_path = os.path.join(folder_path, "Re-Inspection Report format.xlsx")
+    pdf_path = _join_export_path(folder_path, "Re-Inspection Report format.pdf")
+    excel_path = _join_export_path(folder_path, "Re-Inspection Report format.xlsx")
 
     # Clean up existing generated files to avoid stale data
     for p in (pdf_path, excel_path):
@@ -137,7 +145,7 @@ def _extract_sheet_for_reinspection(full_path: str, folder_path: str, sheet_inde
                 ws.Select()
                 # 0 = xlTypePDF
                 ws.ExportAsFixedFormat(0, os.path.abspath(pdf_path))
-                logger.info(f"✅ Generated {pdf_path} via win32com (native PDF export)")
+                logger.info(f"Generated {pdf_path} via win32com (native PDF export)")
                 return pdf_path
             else:
                 logger.warning(f"Excel file does not have {sheet_index + 1} sheets. Cannot export PDF.")
@@ -164,7 +172,7 @@ def _extract_sheet_for_reinspection(full_path: str, folder_path: str, sheet_inde
                 if sheet_name != target_sheet:
                     wb.remove(wb[sheet_name])
             wb.save(excel_path)
-            logger.info(f"✅ Generated {excel_path} (fallback Excel extraction)")
+            logger.info(f"Generated {excel_path} (fallback Excel extraction)")
             return excel_path
     except Exception as e:
         logger.warning(f"openpyxl fallback extraction failed: {e}")
@@ -180,7 +188,7 @@ def scan_folder(folder_path: str) -> FolderScanResult:
         logger.error("Folder not found: %s", folder_path)
         return result
 
-    # ── Pre-scan: Duplicate 'vehicle' files into 4 copies (Front/Rear/Left/Right)
+    # Pre-scan: Duplicate 'vehicle' files into 4 copies (Front/Rear/Left/Right)
     import shutil
     try:
         for fname in sorted(os.listdir(folder_path)):
@@ -191,13 +199,13 @@ def scan_folder(folder_path: str) -> FolderScanResult:
                 ext = Path(fname).suffix
                 source_path = os.path.join(folder_path, fname)
 
-                # Check if all 4 copies already exist — skip duplication if so
+                # Check if all 4 copies already exist - skip duplication if so
                 all_exist = all(
                     os.path.exists(os.path.join(folder_path, f"vehicle_photo_{n}{ext}"))
                     for n in range(1, 5)
                 )
                 if all_exist:
-                    logger.info("All 4 vehicle_photo copies already exist — skipping duplication for %s", fname)
+                    logger.info("All 4 vehicle_photo copies already exist - skipping duplication for %s", fname)
                     continue
 
                 # Create 4 copies (Front, Rear, Left, Right)
@@ -229,20 +237,20 @@ def scan_folder(folder_path: str) -> FolderScanResult:
         ext = Path(fname).suffix.lower()
         fname_lower = fname.lower()
 
-        # ── Handle our generated subset excel/pdf directly ────────────────────────
+        # Handle our generated subset excel/pdf directly
         if fname_lower in ["re-inspection report format.xlsx", "re-inspection report format.pdf"]:
             if os.path.exists(full_path) and "reinspection_report" not in result.assessment_files:
                 result.assessment_files["reinspection_report"] = full_path
                 logger.info(f"Assessment file [reinspection_report]: {fname} (previously generated)")
             continue
 
-        # ── Excel file ────────────────────────────────────────────────────────
+        # Excel file
         if ext in _EXCEL_EXTENSIONS:
             if result.excel_path is None:
                 result.excel_path = full_path
                 logger.info("Excel found: %s", fname)
 
-                # ── Auto-extract Sheet 7 for Re-Inspection Report ─────────────
+                # Auto-extract Sheet 7 for Re-Inspection Report
                 # Try to find an existing generated report first
                 pdf_path = os.path.join(folder_path, "Re-Inspection Report format.pdf")
                 excel_path = os.path.join(folder_path, "Re-Inspection Report format.xlsx")
@@ -263,27 +271,27 @@ def scan_folder(folder_path: str) -> FolderScanResult:
                 result.skipped_files.append((full_path, "Multiple Excel files found"))
             continue
 
-        # ── Non-document files ────────────────────────────────────────────────
+        # Non-document files
         if ext not in _DOC_EXTENSIONS:
             result.unknown_files.append(full_path)
             continue
 
-        # ── File size info (no skip — portal accepts >2MB with alert popup) ───
+        # File size info (no skip - portal accepts >2MB with alert popup)
         file_size = os.path.getsize(full_path)
         if file_size > MAX_FILE_BYTES:
             mb = file_size / (1024 * 1024)
-            logger.info("Large file (%.1fMB): %s — portal will show size alert", mb, fname)
+            logger.info("Large file (%.1fMB): %s - portal will show size alert", mb, fname)
 
-        # ── Normalise filename: lowercase, hyphens/spaces → underscores ──────
+        # Normalise filename: lowercase, hyphens/spaces -> underscores
         fname_lower = fname.lower().replace("-", "_").replace(" ", "_")
         stem_lower = Path(fname).stem.lower().replace("-", "_").replace(" ", "_")
 
-        # ── Files starting with "other" → queue for Other 1/2/3 slots ────────
+        # Files starting with "other" -> queue for Other 1/2/3 slots
         if stem_lower.startswith("other"):
             other_files.append(full_path)
             continue
 
-        # ── Try Assessment tab match first (more specific labels) ─────────────
+        # Try Assessment tab match first (more specific labels)
         assessment_key = _match_keyword(fname_lower, assessment_map)
         if assessment_key:
             if assessment_key in result.assessment_files:
@@ -294,7 +302,7 @@ def scan_folder(folder_path: str) -> FolderScanResult:
             logger.info("Assessment file [%s]: %s", assessment_key, fname)
             continue
 
-        # ── Try Claim Documents tab match ─────────────────────────────────────
+        # Try Claim Documents tab match
         claim_type = _match_keyword(fname_lower, claim_map)
         if claim_type:
             if claim_type in result.claim_doc_files:
@@ -305,11 +313,11 @@ def scan_folder(folder_path: str) -> FolderScanResult:
             logger.info("Claim doc [%s]: %s", claim_type, fname)
             continue
 
-        # ── No match ──────────────────────────────────────────────────────────
+        # No match
         result.unknown_files.append(full_path)
         logger.warning("Unrecognised file (no mapping): %s", fname)
 
-    # ── Assign "other" files to Other 1/2/3 slots sequentially ────────────────
+    # Assign "other" files to Other 1/2/3 slots sequentially
     for idx, other_path in enumerate(other_files):
         if idx < len(other_slots):
             slot_label = other_slots[idx]
@@ -319,13 +327,13 @@ def scan_folder(folder_path: str) -> FolderScanResult:
             logger.warning("No Other slot left for: %s (only %d slots)", Path(other_path).name, len(other_slots))
             result.skipped_files.append((other_path, "No 'Other' slots left"))
 
-    # ── Generate comprehensive scan summary log ──────────────────────────────
+    # Generate comprehensive scan summary log
     _log_scan_summary(result, claim_map)
 
     return result
 
 
-# ── Expected mandatory portal documents ──────────────────────────────────────
+# Expected mandatory portal documents
 _EXPECTED_CLAIM_DOCS = [
     "PAN Card",
     "Aadhaar Card",
@@ -351,60 +359,60 @@ def _log_scan_summary(result: FolderScanResult, claim_map: Dict[str, str]) -> No
     """
     lines = []
     lines.append("")
-    lines.append("═" * 60)
-    lines.append("📋 DOCUMENT SCAN SUMMARY")
-    lines.append("═" * 60)
+    lines.append("=" * 60)
+    lines.append("DOCUMENT SCAN SUMMARY")
+    lines.append("=" * 60)
 
-    # ── Excel ─────────────────────────────────────────────────────────────────
+    # Excel
     if result.excel_path:
-        lines.append(f"  ✅ Excel: {Path(result.excel_path).name}")
+        lines.append(f"  Excel: {Path(result.excel_path).name}")
     else:
-        lines.append("  ❌ Excel: NOT FOUND — data extraction will fail")
+        lines.append("  Excel: NOT FOUND - data extraction will fail")
 
-    # ── Claim Documents matched ───────────────────────────────────────────────
+    # Claim Documents matched
     lines.append("")
-    lines.append("  📎 Claim Documents (matched):")
+    lines.append("  Claim Documents (matched):")
     if result.claim_doc_files:
         for doc_type, fpath in result.claim_doc_files.items():
             mb = os.path.getsize(fpath) / (1024 * 1024) if os.path.isfile(fpath) else 0
-            lines.append(f"    ✅ [{doc_type}] → {Path(fpath).name} ({mb:.1f}MB)")
+            lines.append(f"    [{doc_type}] -> {Path(fpath).name} ({mb:.1f}MB)")
     else:
-        lines.append("    ⚠️  No claim documents matched from folder")
+        lines.append("    No claim documents matched from folder")
 
-    # ── Assessment files matched ──────────────────────────────────────────────
+    # Assessment files matched
     lines.append("")
-    lines.append("  📎 Assessment Files (matched):")
+    lines.append("  Assessment Files (matched):")
     if result.assessment_files:
         for doc_type, fpath in result.assessment_files.items():
-            lines.append(f"    ✅ [{doc_type}] → {Path(fpath).name}")
+            lines.append(f"    [{doc_type}] -> {Path(fpath).name}")
     else:
-        lines.append("    ⚠️  No assessment files matched from folder")
+        lines.append("    No assessment files matched from folder")
 
-    # ── Missing mandatory documents ───────────────────────────────────────────
+    # Missing mandatory documents
     matched_types = set(result.claim_doc_files.keys())
     missing = [d for d in _EXPECTED_CLAIM_DOCS if d not in matched_types]
     if missing:
         lines.append("")
-        lines.append("  ⚠️  Missing expected documents (not found in folder):")
+        lines.append("  Missing expected documents (not found in folder):")
         for doc in missing:
-            lines.append(f"    ❌ {doc}")
+            lines.append(f"    {doc}")
 
-    # ── Skipped files ─────────────────────────────────────────────────────────
+    # Skipped files
     if result.skipped_files:
         lines.append("")
-        lines.append("  ⏭️  Skipped files:")
+        lines.append("  Skipped files:")
         for fpath, reason in result.skipped_files:
-            lines.append(f"    ⚠️  {Path(fpath).name} — {reason}")
+            lines.append(f"    {Path(fpath).name} - {reason}")
 
-    # ── Unknown / unmatched files ─────────────────────────────────────────────
+    # Unknown / unmatched files
     if result.unknown_files:
         lines.append("")
-        lines.append("  ❓ Unrecognised files (no mapping matched):")
+        lines.append("  Unrecognised files (no mapping matched):")
         for fpath in result.unknown_files:
-            lines.append(f"    ❓ {Path(fpath).name}")
-        lines.append("    ℹ️  Tip: rename files to include keywords like")
+            lines.append(f"    {Path(fpath).name}")
+        lines.append("    Tip: rename files to include keywords like")
         lines.append("       pan, aadhaar, vehicle_photo_1, claim_form, ckyc, csr, etc.")
 
-    lines.append("═" * 60)
+    lines.append("=" * 60)
     summary = "\n".join(lines)
     logger.info(summary)
