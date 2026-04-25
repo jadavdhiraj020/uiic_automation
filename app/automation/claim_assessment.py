@@ -288,6 +288,56 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
 async def _fill_parts(page, claim: ClaimData, log_cb: Callable, _src) -> None:
     log_cb("\n🔩 Parts Depreciation:")
     try:
+        nil_dep_raw = (claim.nil_depreciation or "").strip().lower()
+        if nil_dep_raw in {"yes", "no"}:
+            should_check = nil_dep_raw == "yes"
+            toggle_result = await page.evaluate(
+                """
+                ({ shouldCheck }) => {
+                    const selectors = [
+                        "input[data-ng-model='surveyorClaimSurvey.ClaimEntry.claimAssessment.chkNilDep']",
+                        "input[ng-model*='claimAssessment.chkNilDep']"
+                    ];
+                    let checkbox = null;
+                    for (const sel of selectors) {
+                        checkbox = document.querySelector(sel);
+                        if (checkbox) break;
+                    }
+                    if (!checkbox) {
+                        const labels = Array.from(document.querySelectorAll("label"));
+                        const label = labels.find(l =>
+                            (l.textContent || "").toLowerCase().includes("nil depreciation")
+                        );
+                        checkbox = label ? label.querySelector("input[type='checkbox']") : null;
+                    }
+                    if (!checkbox) return { ok: false, reason: "checkbox not found" };
+
+                    const before = !!checkbox.checked;
+                    if (before !== shouldCheck) {
+                        checkbox.click();
+                    }
+                    checkbox.dispatchEvent(new Event('input', { bubbles: true }));
+                    checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+                    return { ok: true, before, after: !!checkbox.checked };
+                }
+                """,
+                {"shouldCheck": should_check},
+            )
+
+            if toggle_result and toggle_result.get("ok"):
+                state_label = "Yes" if should_check else "No"
+                source = _src("nil_depreciation") or "Excel Data"
+                if toggle_result.get("before") != toggle_result.get("after"):
+                    log_cb(f"  ✅ Nil Depreciation checkbox: set to {state_label} (Source: {source})")
+                else:
+                    log_cb(f"  ✅ Nil Depreciation checkbox: already {state_label} (Source: {source})")
+                await asyncio.sleep(0.3)
+            else:
+                reason = toggle_result.get("reason") if isinstance(toggle_result, dict) else "unknown error"
+                log_cb(f"  ⚠️  Nil Depreciation checkbox: {reason}")
+        else:
+            log_cb("  ⏭️  Nil Depreciation checkbox: skipped (Excel value missing or not Yes/No)")
+
         await safe_fill_amount(page, ASSESSMENT["age_dep"],
                                claim.parts_age_dep_excl_gst, "Age Dep (Metal)", log_cb,
                                source=_src("parts_age_dep_excl_gst"))

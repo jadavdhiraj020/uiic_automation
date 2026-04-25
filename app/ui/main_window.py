@@ -922,9 +922,21 @@ class MainWindow(QMainWindow):
             old = mapping.get(fn, {})
             labels = [l.strip() for l in lt.split("|") if l.strip()]
             if len(labels) > 1:
-                new_mapping[fn] = {"sheet": sh, "search_labels": labels, "row_offset": old.get("row_offset", 0), "col_offset": co}
+                new_mapping[fn] = {
+                    **{k: v for k, v in old.items() if k not in {"sheet", "search_label", "search_labels", "row_offset", "col_offset"}},
+                    "sheet": sh,
+                    "search_labels": labels,
+                    "row_offset": old.get("row_offset", 0),
+                    "col_offset": co,
+                }
             else:
-                new_mapping[fn] = {"sheet": sh, "search_label": labels[0] if labels else "", "row_offset": old.get("row_offset", 0), "col_offset": co}
+                new_mapping[fn] = {
+                    **{k: v for k, v in old.items() if k not in {"sheet", "search_label", "search_labels", "row_offset", "col_offset"}},
+                    "sheet": sh,
+                    "search_label": labels[0] if labels else "",
+                    "row_offset": old.get("row_offset", 0),
+                    "col_offset": co,
+                }
         save_field_mapping(new_mapping)
 
         # Document mapping

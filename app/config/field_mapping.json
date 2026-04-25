@@ -104,6 +104,13 @@
     "row_offset": 0,
     "col_offset": 7
   },
+  "nil_depreciation": {
+    "sheet": "ALL",
+    "search_label": "Nil Depreciation",
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_literal_values": true
+  },
   "parts_gst18_amount": {
     "sheet": "Sheet1",
     "search_label": "SUB TOTAL",

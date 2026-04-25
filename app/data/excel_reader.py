@@ -129,7 +129,8 @@ def _is_junk(val: Any) -> bool:
 # ── Core search — position-independent ───────────────────────────────────────
 
 def _search_label(sheet, label: str, row_offset: int, col_offset: int,
-                  is_date: bool = False) -> Optional[str]:
+                  is_date: bool = False,
+                  allow_literal_values: bool = False) -> Optional[str]:
     """
     Find label text anywhere in the sheet. Then:
       1. Move row_offset rows down.
@@ -169,7 +170,7 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                         val = re.sub(re.escape(label), "", orig_cell, flags=re.IGNORECASE).strip(" -:\n\t")
                     
                     if val:
-                        result = _extract_value(val, is_date)
+                        result = _extract_value(val, is_date, allow_literal_values)
                         if result is not None:
                             coord_str = f"R{r_idx+1}C{c_idx+1}"
                             logger.info(
@@ -188,7 +189,7 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                 hint_c = c_idx + col_offset
                 if 0 <= hint_c < len(target_row):
                     val = target_row[hint_c]
-                    result = _extract_value(val, is_date)
+                    result = _extract_value(val, is_date, allow_literal_values)
                     if result is not None:
                         coord_str = f"R{target_r+1}C{hint_c+1}"
                         logger.info(
@@ -200,7 +201,7 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                 # ── Strategy 2: Scan right from label col to find first value
                 for scan_c in range(c_idx + 1, len(target_row)):
                     val = target_row[scan_c]
-                    result = _extract_value(val, is_date)
+                    result = _extract_value(val, is_date, allow_literal_values)
                     if result is not None:
                         coord_str = f"R{target_r+1}C{scan_c+1}"
                         logger.info(
@@ -216,13 +217,18 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
     return None, None
 
 
-def _extract_value(val: Any, is_date: bool) -> Optional[str]:
+def _extract_value(val: Any, is_date: bool,
+                   allow_literal_values: bool = False) -> Optional[str]:
     """
     Convert a raw cell value to a usable string.
     Returns None if the value is empty or junk.
     """
     if val == "" or val is None:
         return None
+    if allow_literal_values:
+        s = str(val).strip()
+        if s and s.lower() in {"yes", "no"}:
+            return s
     if _is_junk(val):
         return None
 
@@ -321,6 +327,7 @@ def read_excel(excel_path: str, config_dir: str):
         row_off    = cfg.get("row_offset", 0)
         col_off    = cfg.get("col_offset", 1)
         is_date    = "date" in field_name
+        allow_literal_values = bool(cfg.get("allow_literal_values"))
 
         value = None
         found_label = ""
@@ -331,7 +338,10 @@ def read_excel(excel_path: str, config_dir: str):
                 
             if sheet_name == "ALL":
                 for sh in wb.all_sheets():
-                    value, coord = _search_label(sh, current_label, row_off, col_off, is_date)
+                    value, coord = _search_label(
+                        sh, current_label, row_off, col_off, is_date,
+                        allow_literal_values
+                    )
                     if value:
                         sh_name = sh.name if hasattr(sh, 'name') else 'Sheet'
                         src_str = f"{coord} ({sh_name})"
@@ -342,7 +352,10 @@ def read_excel(excel_path: str, config_dir: str):
             else:
                 sh = wb.get_sheet(sheet_name)
                 if sh:
-                    value, coord = _search_label(sh, current_label, row_off, col_off, is_date)
+                    value, coord = _search_label(
+                        sh, current_label, row_off, col_off, is_date,
+                        allow_literal_values
+                    )
                     if value:
                         src_str = f"{coord} ({sheet_name})"
                         claim._excel_coords[field_name] = src_str

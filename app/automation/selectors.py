@@ -98,6 +98,10 @@ DOCUMENTS = {
 # ─────────────────────────────────────────────────────────────────────────────
 ASSESSMENT = {
     # Parts depreciation
+    "nil_dep_checkbox":   (
+        "input[data-ng-model='surveyorClaimSurvey.ClaimEntry.claimAssessment.chkNilDep'], "
+        "input[ng-model*='claimAssessment.chkNilDep']"
+    ),
     "age_dep":            "#ageBasedDep",
     "dep_50":             "#Dep50",
     "dep_30":             "#dep30",

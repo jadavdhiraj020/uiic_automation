@@ -136,15 +136,16 @@ def load_field_mapping() -> dict[str, Any]:
     """
     Load the field mapping with user overrides.
 
-    User-saved mapping fully replaces bundled defaults (it is a complete
-    document, not a sparse override).  If no user file exists yet, the
-    bundled default is returned.
+    Bundled defaults are the base document. Any user-saved mapping overrides
+    matching keys while preserving newly added default fields that older user
+    files may not contain yet.
     """
     paths = field_mapping_paths()
-    user = read_json_file(paths["user"])
-    if user is not None:
-        return user
-    return read_json_file(paths["default"]) or {}
+    base = read_json_file(paths["default"]) or {}
+    user = read_json_file(paths["user"]) or {}
+    merged = dict(base)
+    merged.update(user)
+    return merged
 
 
 def save_field_mapping(mapping: dict[str, Any]) -> str:

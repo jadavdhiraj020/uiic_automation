@@ -39,6 +39,7 @@ class ClaimData:
     parts_age_dep_excl_gst: str = "0"
     parts_50_dep_excl_gst: str = "0"
     parts_nil_dep_excl_gst: str = "0"
+    nil_depreciation: str = ""
     parts_gst18_amount: str = "0"
 
     # ── Claim Assessment — Labour ─────────────────────────────────────────────
@@ -152,6 +153,7 @@ class ClaimData:
             ("Parts Age Dep (₹)",     self.parts_age_dep_excl_gst, False, _src("parts_age_dep_excl_gst")),
             ("Parts 50% Dep (₹)",     self.parts_50_dep_excl_gst,  False, _src("parts_50_dep_excl_gst")),
             ("Parts Nil Dep (₹)",     self.parts_nil_dep_excl_gst, False, _src("parts_nil_dep_excl_gst")),
+            ("Nil Depreciation",      self.nil_depreciation,       False, _src("nil_depreciation")),
             ("Parts GST 18% (₹)",     self.parts_gst18_amount,     False, _src("parts_gst18_amount")),
             ("Labour (₹)",            self.labour_excl_gst,        True,  _src("labour_excl_gst")),
             ("Workshop Inv No",       self.workshop_invoice_no,   False, _src("workshop_invoice_no")),

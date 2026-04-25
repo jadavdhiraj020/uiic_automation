@@ -35,6 +35,7 @@ import re
 import json
 import tempfile
 import shutil
+import asyncio
 import pytest
 
 # ── Ensure project root is on path ────────────────────────────────────────────
@@ -1011,11 +1012,83 @@ class TestSelectors:
 
     def test_assessment_selectors_exist(self):
         from app.automation.selectors import ASSESSMENT
-        required = ["age_dep", "dep_50", "dep_30", "nil_dep", "labour",
+        required = ["nil_dep_checkbox", "age_dep", "dep_50", "dep_30", "nil_dep", "labour",
                      "towing", "salvage", "report_no", "travel", "prof_fee",
                      "daily_allowance", "photo", "total", "remarks"]
         for key in required:
             assert key in ASSESSMENT, f"ASSESSMENT missing '{key}'"
+
+
+class TestNilDepreciationSync:
+    class FakePage:
+        def __init__(self):
+            self.evaluate_calls = []
+
+        async def evaluate(self, script, arg=None):
+            self.evaluate_calls.append({"script": script, "arg": arg})
+            should_check = bool((arg or {}).get("shouldCheck"))
+            return {"ok": True, "before": not should_check, "after": should_check}
+
+    @staticmethod
+    def _build_claim(nil_depreciation: str) -> ClaimData:
+        claim = ClaimData()
+        claim.nil_depreciation = nil_depreciation
+        claim.parts_age_dep_excl_gst = "100"
+        claim.parts_50_dep_excl_gst = "200"
+        claim.parts_nil_dep_excl_gst = "300"
+        claim.parts_gst18_amount = "400"
+        claim._excel_coords["nil_depreciation"] = "R1C2 (Sheet1)"
+        return claim
+
+    def test_fill_parts_syncs_checkbox_for_yes_without_changing_fill_flow(self, monkeypatch):
+        from app.automation import claim_assessment as mod
+
+        page = self.FakePage()
+        claim = self._build_claim("Yes")
+        fill_calls = []
+
+        async def fake_safe_fill_amount(page_obj, selector, value, label, log_cb, timeout_ms=5000, source=""):
+            fill_calls.append((selector, value, label, source))
+            return True
+
+        monkeypatch.setattr(mod, "safe_fill_amount", fake_safe_fill_amount)
+
+        logs = []
+        asyncio.run(mod._fill_parts(page, claim, logs.append, lambda key: claim._excel_coords.get(key, "")))
+
+        assert page.evaluate_calls, "Expected checkbox sync JS to run"
+        assert page.evaluate_calls[0]["arg"] == {"shouldCheck": True}
+        assert [call[2] for call in fill_calls] == [
+            "Age Dep (Metal)",
+            "50% Dep (Plastic)",
+            "Nil Dep",
+            "Parts GST 18%",
+        ]
+
+    def test_fill_parts_syncs_checkbox_for_no_without_skipping_existing_fills(self, monkeypatch):
+        from app.automation import claim_assessment as mod
+
+        page = self.FakePage()
+        claim = self._build_claim("No")
+        fill_calls = []
+
+        async def fake_safe_fill_amount(page_obj, selector, value, label, log_cb, timeout_ms=5000, source=""):
+            fill_calls.append((selector, value, label, source))
+            return True
+
+        monkeypatch.setattr(mod, "safe_fill_amount", fake_safe_fill_amount)
+
+        logs = []
+        asyncio.run(mod._fill_parts(page, claim, logs.append, lambda key: claim._excel_coords.get(key, "")))
+
+        assert page.evaluate_calls, "Expected checkbox sync JS to run"
+        assert page.evaluate_calls[0]["arg"] == {"shouldCheck": False}
+        assert [call[2] for call in fill_calls] == [
+            "Age Dep (Metal)",
+            "50% Dep (Plastic)",
+            "Nil Dep",
+            "Parts GST 18%",
+        ]
 
     def test_interim_selectors_exist(self):
         from app.automation.selectors import INTERIM
@@ -2565,7 +2638,7 @@ class TestFieldMappingDeepIntegrity:
                 assert len(cfg["search_label"].strip()) > 0, f"{field} has empty search_label"
 
     def test_no_extra_keys_in_config(self, mapping):
-        allowed_keys = {"sheet", "search_label", "search_labels", "row_offset", "col_offset", "group_idx", "is_date"}
+        allowed_keys = {"sheet", "search_label", "search_labels", "row_offset", "col_offset", "group_idx", "is_date", "allow_literal_values"}
         for field, cfg in mapping.items():
             if field.startswith("_"): continue
             for key in cfg.keys():
