@@ -150,10 +150,8 @@ def _extract_sheet_for_reinspection(full_path: str, folder_path: str, sheet_inde
                     ws.Select()
                     # 0 = xlTypePDF
                     ws.ExportAsFixedFormat(0, os.path.abspath(pdf_path))
-                    if os.path.exists(pdf_path):
-                        logger.info(f"✅ Generated {pdf_path} via win32com worksheet export")
-                        return pdf_path
-                    attempt_failures.append("Strategy 1 produced no PDF output")
+                    logger.info(f"✅ Generated {pdf_path} via win32com worksheet export")
+                    return pdf_path
                 except Exception as e:
                     logger.warning(f"PDF strategy 1 failed (worksheet export): {e}")
                     attempt_failures.append(f"Strategy 1 error: {e}")
@@ -165,10 +163,8 @@ def _extract_sheet_for_reinspection(full_path: str, folder_path: str, sheet_inde
                         wb.Worksheets(i).Visible = (i == (sheet_index + 1))
                     wb.Worksheets(sheet_index + 1).Select()
                     wb.ExportAsFixedFormat(0, os.path.abspath(pdf_path))
-                    if os.path.exists(pdf_path):
-                        logger.info(f"✅ Generated {pdf_path} via win32com workbook export")
-                        return pdf_path
-                    attempt_failures.append("Strategy 2 produced no PDF output")
+                    logger.info(f"✅ Generated {pdf_path} via win32com workbook export")
+                    return pdf_path
                 except Exception as e:
                     logger.warning(f"PDF strategy 2 failed (workbook export): {e}")
                     attempt_failures.append(f"Strategy 2 error: {e}")
@@ -180,10 +176,8 @@ def _extract_sheet_for_reinspection(full_path: str, folder_path: str, sheet_inde
                     temp_wb = excel.ActiveWorkbook
                     try:
                         temp_wb.ExportAsFixedFormat(0, os.path.abspath(pdf_path))
-                        if os.path.exists(pdf_path):
-                            logger.info(f"✅ Generated {pdf_path} via win32com temp workbook export")
-                            return pdf_path
-                        attempt_failures.append("Strategy 3 produced no PDF output")
+                        logger.info(f"✅ Generated {pdf_path} via win32com temp workbook export")
+                        return pdf_path
                     finally:
                         temp_wb.Close(SaveChanges=False)
                 except Exception as e:

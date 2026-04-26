@@ -2930,10 +2930,10 @@ class TestStagedAutomationRemarksDone:
         mock_locator.select_option = AsyncMock()
         mock_locator.is_visible = AsyncMock(return_value=True)
         page.locator.return_value = mock_locator
-        
+
         page.evaluate = AsyncMock(return_value=[])
         page.wait_for_selector = AsyncMock()
-        
+
         claim = ClaimData()
         logs = []
 
@@ -2965,7 +2965,7 @@ class TestStagedAutomationRemarksDone:
         mock_locator.select_option = AsyncMock()
         mock_locator.is_visible = AsyncMock(return_value=True)
         page.locator.return_value = mock_locator
-        
+
         page.evaluate = AsyncMock(return_value=[])
         page.wait_for_selector = AsyncMock()
 
@@ -3167,3 +3167,283 @@ async def test_balancing_matrix(age, p50, nil, target, is_nil, expected_nil, exp
         mock_fill.assert_any_call(page, ANY, str(expected_nil), "Nil Dep", ANY, source=ANY)
         mock_fill.assert_any_call(page, ANY, str(expected_total), "Parts GST 18%", ANY, source=ANY)
         assert any("⚖️" in l for l in logs) == should_balance
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 41. CLAIM DOCUMENTS ORCHESTRATION
+# ═════════════════════════════════════════════════════════════════════════════
+from types import SimpleNamespace
+
+from app.automation import claim_documents
+from app.ui.services.claim_folder_service import ClaimFolderService
+
+
+class _FakeUploadService:
+    instances = []
+
+    def __init__(self, page, log_cb):
+        self.page = page
+        self.log_cb = log_cb
+        self.wait_calls = []
+        self.upload_calls = []
+        self.retry_calls = []
+        _FakeUploadService.instances.append(self)
+
+    async def wait_for_upload_section(self, timeout_ms):
+        self.wait_calls.append(timeout_ms)
+
+    async def upload_queue(self, queue, wait_timeout_ms, fallback_option_index):
+        self.upload_calls.append((queue, wait_timeout_ms, fallback_option_index))
+        return (
+            [("PAN Card", "pan.pdf", "OK", "Uploaded successfully")],
+            [(0, "PAN Card", "C:/tmp/pan.pdf")],
+        )
+
+    async def row_shows_expected_file(self, row_idx, expected_name, timeout_ms=2000):
+        return True
+
+    async def select_doc_and_set_file(self, row_index, doc_label, file_path, timeout_ms):
+        self.retry_calls.append((row_index, doc_label, file_path, timeout_ms))
+        return True
+
+    async def wait_after_upload(self, row_idx, wait_ms):
+        return None
+
+
+class _FakePageForDocs:
+    def __init__(self):
+        self.dialog_handlers = []
+
+    def on(self, event_name, handler):
+        if event_name == "dialog":
+            self.dialog_handlers.append(handler)
+
+
+@pytest.mark.asyncio
+async def test_fill_claim_documents_uses_upload_service(monkeypatch, tmp_path):
+    _FakeUploadService.instances = []
+
+    doc_file = tmp_path / "pan.pdf"
+    doc_file.write_text("ok", encoding="utf-8")
+
+    claim = SimpleNamespace(
+        payment_to="REPAIRER",
+        _excel_coords={},
+        claim_doc_files={"PAN Card": str(doc_file)},
+    )
+
+    monkeypatch.setattr(claim_documents, "click_tab", _async_noop)
+    monkeypatch.setattr(claim_documents, "_click_doc_radios", _async_noop)
+    monkeypatch.setattr(claim_documents, "_click_payment_option", _async_noop)
+    monkeypatch.setattr(claim_documents, "DocumentUploadService", _FakeUploadService)
+    monkeypatch.setattr(claim_documents, "load_settings", lambda: {"upload_wait_ms": 3100})
+
+    logs = []
+    page = _FakePageForDocs()
+
+    await claim_documents.fill_claim_documents(page=page, claim=claim, log_cb=logs.append)
+
+    assert len(_FakeUploadService.instances) == 1
+    service = _FakeUploadService.instances[0]
+    assert service.wait_calls == [15000]
+    assert service.upload_calls
+    queued_doc_type = service.upload_calls[0][0][0][0]
+    assert queued_doc_type == "PAN Card"
+    assert any("UPLOAD SUMMARY" in line for line in logs)
+
+
+@pytest.mark.asyncio
+async def test_fill_claim_documents_handles_empty_queue(monkeypatch):
+    claim = SimpleNamespace(payment_to="", _excel_coords={}, claim_doc_files={})
+
+    monkeypatch.setattr(claim_documents, "click_tab", _async_noop)
+    monkeypatch.setattr(claim_documents, "_click_doc_radios", _async_noop)
+    monkeypatch.setattr(claim_documents, "_click_payment_option", _async_noop)
+
+    logs = []
+    await claim_documents.fill_claim_documents(page=_FakePageForDocs(), claim=claim, log_cb=logs.append)
+
+    assert any("No documents to process" in line for line in logs)
+
+
+async def _async_noop(*_args, **_kwargs):
+    return None
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 42. CLAIM FOLDER SERVICE
+# ═════════════════════════════════════════════════════════════════════════════
+def test_process_folder_success_with_excel(monkeypatch, tmp_path):
+    excel_file = tmp_path / "report.xlsx"
+    excel_file.write_text("dummy", encoding="utf-8")
+
+    fake_scan = SimpleNamespace(
+        excel_path=str(excel_file),
+        claim_doc_files={"PAN Card": str(excel_file)},
+        assessment_files={},
+        skipped_files=[],
+        unknown_files=[],
+    )
+
+    fake_claim = SimpleNamespace(
+        claim_no="123",
+        claim_doc_files={},
+        assessment_files={},
+        _excel_logs=["  📊 claim_no: '123' (Source: R1C1)"],
+        _excel_coords={},
+    )
+
+    monkeypatch.setattr("app.data.folder_scanner.scan_folder", lambda _folder: fake_scan)
+    monkeypatch.setattr("app.data.excel_reader.read_excel", lambda _path, _cfg: fake_claim)
+
+    service = ClaimFolderService(config_dir="app/config")
+    result = service.process_folder(str(tmp_path))
+
+    assert result.success is True
+    assert result.scan_result is fake_scan
+    assert result.claim is fake_claim
+    assert any("Excel:" in line for line in result.log_lines)
+
+
+def test_process_folder_without_excel(monkeypatch, tmp_path):
+    fake_scan = SimpleNamespace(
+        excel_path=None,
+        claim_doc_files={},
+        assessment_files={},
+        skipped_files=[],
+        unknown_files=[],
+    )
+
+    monkeypatch.setattr("app.data.folder_scanner.scan_folder", lambda _folder: fake_scan)
+
+    service = ClaimFolderService(config_dir="app/config")
+    result = service.process_folder(str(tmp_path))
+
+    assert result.success is False
+    assert result.scan_result is fake_scan
+    assert result.claim is None
+    assert "No Excel file found" in result.error
+    assert any("No Excel file found" in line for line in result.log_lines)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 43. ENGINE PORTAL TRANSITIONS
+# ═════════════════════════════════════════════════════════════════════════════
+from app.automation.engine import _get_active_page
+
+try:
+    import playwright  # noqa: F401
+    _HAS_PLAYWRIGHT = True
+except Exception:
+    _HAS_PLAYWRIGHT = False
+
+
+class _FakeLocatorForPortal:
+    def __init__(self, visible):
+        self._visible = visible
+        self.first = self
+
+    async def is_visible(self, timeout=0):
+        return self._visible
+
+
+class _FakePageForPortal:
+    def __init__(self, url, login_visible=False):
+        self.url = url
+        self._closed = False
+        self._login_visible = login_visible
+        self.brought_to_front = False
+
+    def is_closed(self):
+        return self._closed
+
+    async def bring_to_front(self):
+        self.brought_to_front = True
+
+    async def goto(self, url, wait_until=None, timeout=None):
+        self.url = url
+
+    async def wait_for_load_state(self, state, timeout=None):
+        return None
+
+    def locator(self, _selector):
+        return _FakeLocatorForPortal(self._login_visible)
+
+    async def close(self):
+        self._closed = True
+
+
+class _FakeContextForPortal:
+    def __init__(self, pages=None, new_pages=None):
+        self.pages = pages or []
+        self._new_pages = list(new_pages or [])
+        self.new_page_calls = 0
+
+    async def new_page(self):
+        self.new_page_calls += 1
+        if self._new_pages:
+            page = self._new_pages.pop(0)
+        else:
+            page = _FakePageForPortal("about:blank")
+        self.pages.append(page)
+        return page
+
+
+@pytest.mark.skipif(not _HAS_PLAYWRIGHT, reason="playwright is not installed")
+@pytest.mark.asyncio
+async def test_get_active_page_prefers_existing_surveyor_tab():
+    login_tab = _FakePageForPortal("https://portal.uiic.in/surveyor/home.jsp")
+    surveyor_tab = _FakePageForPortal("https://portal.uiic.in/surveyor/data/Surveyor.html#/Worklist")
+    context = _FakeContextForPortal(pages=[login_tab, surveyor_tab])
+
+    logs = []
+    page = await _get_active_page(
+        context=context,
+        log_cb=logs.append,
+        captured_pages=[],
+        stop_cb=lambda: False,
+    )
+
+    assert page is surveyor_tab
+    assert surveyor_tab.brought_to_front is True
+    assert context.new_page_calls == 0
+
+
+@pytest.mark.skipif(not _HAS_PLAYWRIGHT, reason="playwright is not installed")
+@pytest.mark.asyncio
+async def test_get_active_page_falls_back_to_new_worklist_page(monkeypatch):
+    login_tab = _FakePageForPortal("https://portal.uiic.in/surveyor/home.jsp", login_visible=True)
+    new_worklist_page = _FakePageForPortal("https://portal.uiic.in/surveyor/data/Surveyor.html#/Worklist", login_visible=False)
+    context = _FakeContextForPortal(pages=[login_tab], new_pages=[new_worklist_page])
+
+    async def _not_login_form(_page):
+        return False
+
+    monkeypatch.setattr("app.automation.engine._page_has_login_form", _not_login_form)
+
+    logs = []
+    page = await _get_active_page(
+        context=context,
+        log_cb=logs.append,
+        captured_pages=[],
+        stop_cb=lambda: False,
+    )
+
+    assert page is new_worklist_page
+    assert context.new_page_calls >= 1
+    assert any("Opening authenticated Worklist page" in line for line in logs)
+
+
+@pytest.mark.skipif(not _HAS_PLAYWRIGHT, reason="playwright is not installed")
+@pytest.mark.asyncio
+async def test_get_active_page_honors_stop_request():
+    context = _FakeContextForPortal(pages=[_FakePageForPortal("https://portal.uiic.in/surveyor/home.jsp")])
+
+    page = await _get_active_page(
+        context=context,
+        log_cb=lambda _msg: None,
+        captured_pages=[],
+        stop_cb=lambda: True,
+    )
+
+    assert page is None
