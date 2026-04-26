@@ -1,16 +1,23 @@
 """
 excel_reader.py
 Reads the Excel file (.xls / .xlsx) from the scanned folder.
-Uses label-search strategy: scans all cells in the configured sheet for the
-search_label text, then reads the value at (row + row_offset, col + col_offset).
-Populates and returns a ClaimData instance.
+
+SEARCH STRATEGY (position-independent):
+  1. Scan all cells in the sheet for the search_label text.
+  2. From that label cell, look RIGHT across the same row for the first
+     non-junk value (handles any column layout).
+  3. If row_offset > 0, move down that many rows first, then scan right.
+  4. col_offset is used ONLY as a tiebreaker hint — it no longer causes
+     failures when the Excel layout shifts between claims.
+
+This makes the reader robust regardless of where the label or value
+appears in any given Excel file.
 """
 import os
 import re
-import json
 import logging
 from datetime import datetime
-from typing import Any, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -83,48 +90,160 @@ class _OpenpyxlSheetWrapper:
             yield [v if v is not None else "" for v in row]
 
 
-# ── Junk values that should never be returned as field values ────────────────
-_JUNK_VALUES = {':', 'rs', 'rs.', 'inr', '-', '--', 'n/a', 'nil', 'na', 'attached', 'yes', 'no'}
+# ── Junk values — never returned as a field value ─────────────────────────────
+_JUNK_VALUES = {
+    ':', 'rs', 'rs.', 'inr', '-', '--', 'n/a', 'nil', 'na',
+    'attached', 'yes', 'no', 'period:', 'date:', 'amount',
+    'estimated', 'assessed', 'particulars', 'description',
+}
+
+# Junk patterns — text that looks like a label, not a value
+_JUNK_PATTERNS = [
+    re.compile(r'^[a-z\s/&()%,.:]+$'),      # Pure text with no digits
+    re.compile(r'^rs\.?\s*$', re.I),         # "Rs" or "Rs."
+    re.compile(r'^\s*:\s*$'),                 # Just ":"
+]
 
 
-# ── Core search helper ────────────────────────────────────────────────────────
+def _is_junk(val: Any) -> bool:
+    """Return True if val should NOT be treated as a field value."""
+    # 0 and 0.0 are valid numeric values — never junk
+    if val == 0 or val == 0.0:
+        return False
+    if val in (None, ""):
+        return True
+    s = str(val).strip()
+    if not s:
+        return True
+    sl = s.lower()
+    if sl in _JUNK_VALUES:
+        return True
+    # Pure alphabetic strings with no digits are junk (they are labels)
+    for pat in _JUNK_PATTERNS:
+        if pat.match(sl) and not any(c.isdigit() for c in s):
+            return True
+    return False
+
+
+# ── Core search — position-independent ───────────────────────────────────────
+
 def _search_label(sheet, label: str, row_offset: int, col_offset: int,
-                  is_date: bool = False) -> Optional[str]:
+                  is_date: bool = False,
+                  allow_literal_values: bool = False) -> Tuple[Optional[str], Optional[str]]:
     """
-    Scan every cell in sheet. If cell text contains label (case-insensitive),
-    return the value at (row+row_offset, col+col_offset).
-    is_date=True → try xlrd date-serial conversion on the target cell.
+    Find label text anywhere in the sheet. Then:
+      1. Move row_offset rows down.
+      2. Try col_offset first (exact hint from config).
+      3. If that's empty/junk, scan RIGHT from the label column to find
+         the first non-junk value.
+      4. This makes the search position-independent: the label can be in
+         any column; the value just needs to be to the right on the same row.
+
+    Returns tuple (cleaned string value, coordinate info string) or (None, None).
     """
-    label_lower = label.lower().strip()
+    label_lower = " ".join(label.lower().split())  # normalize whitespace
     all_rows = list(sheet.rows())
+
     for r_idx, row in enumerate(all_rows):
         for c_idx, cell in enumerate(row):
-            cell_str = str(cell).strip().lower()
-            if label_lower in cell_str and cell_str:
+            cell_str = " ".join(str(cell).strip().lower().split())  # collapse \n, \t, multi-space
+            if cell_str and label_lower in cell_str:
+                # Word-boundary check: prevent "TOTAL" matching "SUBTOTAL"
+                idx = cell_str.find(label_lower)
+                before_ok = (idx == 0) or not cell_str[idx - 1].isalnum()
+                after_end = idx + len(label_lower)
+                after_ok = (after_end >= len(cell_str)) or not cell_str[after_end].isalnum()
+                if not (before_ok and after_ok):
+                    continue
+                # Found the label at (r_idx, c_idx)
+                
+                # ── Strategy 0: Inline value (e.g., "Mobile: 098761-35253" in one cell)
+                inline_content = cell_str.replace(label_lower, "").strip(" :-\n\t")
+                if len(inline_content) > 3:
+                    orig_cell = str(cell)
+                    # Try splitting by colon or just removing the label text
+                    if ":" in orig_cell:
+                        val = orig_cell.split(":", 1)[-1].strip(" -\n\t")
+                    else:
+                        val = re.sub(re.escape(label), "", orig_cell, flags=re.IGNORECASE).strip(" -:\n\t")
+                    
+                    if val:
+                        result = _extract_value(val, is_date, allow_literal_values)
+                        if result is not None:
+                            coord_str = f"R{r_idx+1}C{c_idx+1}"
+                            logger.info(
+                                f"  [{label}] found inline at {coord_str} = {result}"
+                            )
+                            return result, coord_str
+
                 target_r = r_idx + row_offset
-                target_c = c_idx + col_offset
-                if 0 <= target_r < len(all_rows):
-                    target_row = all_rows[target_r]
-                    if 0 <= target_c < len(target_row):
-                        val = target_row[target_c]
-                        if val in (0, 0.0):
-                            return '0'
-                        if val in (None, ""):
-                            return None
-                        val_str = str(val).strip()
-                        if val_str.lower() in _JUNK_VALUES:
-                            return None
-                        # For date fields try serial conversion first
-                        if is_date:
-                            date_str = _try_date_serial(val)
-                            if date_str:
-                                return date_str
-                        return _clean_value(val)
-    return None
+
+                if not (0 <= target_r < len(all_rows)):
+                    continue
+
+                target_row = all_rows[target_r]
+
+                # ── Strategy 1: Try col_offset hint first ──────────────────
+                hint_c = c_idx + col_offset
+                if 0 <= hint_c < len(target_row):
+                    val = target_row[hint_c]
+                    result = _extract_value(val, is_date, allow_literal_values)
+                    if result is not None:
+                        coord_str = f"R{target_r+1}C{hint_c+1}"
+                        logger.info(
+                            f"  [{label}] found at R{r_idx+1}C{c_idx+1}, "
+                            f"value at {coord_str} = {result}"
+                        )
+                        return result, coord_str
+
+                # ── Strategy 2: Scan right from label col to find first value
+                for scan_c in range(c_idx + 1, len(target_row)):
+                    val = target_row[scan_c]
+                    result = _extract_value(val, is_date, allow_literal_values)
+                    if result is not None:
+                        coord_str = f"R{target_r+1}C{scan_c+1}"
+                        logger.info(
+                            f"  [{label}] found at R{r_idx+1}C{c_idx+1}, "
+                            f"value at {coord_str} (scan right) = {result}"
+                        )
+                        return result, coord_str
+
+                # ── Strategy 3: REMOVED FOR SAFETY ─────────────────────────────
+                # We no longer drop down to the next row automatically if row_offset=0.
+                # If the value is not on the expected row, we stop to prevent grabbing wrong data.
+
+    return None, None
+
+
+def _extract_value(val: Any, is_date: bool,
+                   allow_literal_values: bool = False) -> Optional[str]:
+    """
+    Convert a raw cell value to a usable string.
+    Returns None if the value is empty or junk.
+    """
+    if val == "" or val is None:
+        return None
+    if allow_literal_values:
+        s = str(val).strip()
+        if s and s.lower() in {"yes", "no"}:
+            return s
+    if _is_junk(val):
+        return None
+
+    # Special case: val == 0 or 0.0 IS a valid value
+    if val == 0 or val == 0.0:
+        return "0"
+
+    if is_date:
+        date_result = _try_date_serial(val)
+        if date_result:
+            return date_result
+
+    return _clean_value(val)
 
 
 def _clean_value(val: Any) -> str:
-    """Convert Excel cell value to clean string (NO date conversion — handled separately)."""
+    """Convert Excel cell value to a clean string."""
     if val is None:
         return ""
     if isinstance(val, float):
@@ -135,10 +254,10 @@ def _clean_value(val: Any) -> str:
 
 
 def _try_date_serial(val: Any) -> Optional[str]:
-    """Try to convert xlrd float date serial to DD/MM/YYYY. Returns None if not a date."""
+    """Try to convert xlrd float date serial to DD/MM/YYYY."""
     if not isinstance(val, float):
         return None
-    # xlrd date serials for years 1990-2040 fall in range ~32874-51544
+    # xlrd date serials for years 1990-2040 fall in ~32874-51544
     if 32874 < val < 51544:
         try:
             import xlrd
@@ -151,64 +270,251 @@ def _try_date_serial(val: Any) -> Optional[str]:
 
 
 def _format_date(raw: str) -> str:
-    """Try to normalise date to DD/MM/YYYY for the portal."""
+    """Normalise any date string to DD/MM/YYYY for the portal."""
     if not raw:
         return ""
-    # Already correct format
     if re.match(r"\d{2}/\d{2}/\d{4}", raw):
         return raw
-    # Try common formats
-    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%m/%d/%Y", "%d.%m.%Y", "%Y/%m/%d"):
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%m/%d/%Y", "%d.%m.%Y",
+                "%Y/%m/%d", "%B %d, %Y"):
         try:
             dt = datetime.strptime(raw.strip(), fmt)
             return dt.strftime("%d/%m/%Y")
         except ValueError:
             continue
-    return raw  # Return as-is if unparseable
+    return raw
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
+
 def read_excel(excel_path: str, config_dir: str):
     """
-    Read Excel file and return a populated ClaimData instance.
-    Imports ClaimData here to avoid circular imports.
+    Read Excel file and return a fully populated ClaimData instance.
+
+    For each field in field_mapping.json:
+      - Finds the label text anywhere in the configured sheet
+      - Reads the value to the right of the label (position-independent)
+      - Falls back to scanning right and then scanning below
+      - Logs exactly which cell was read for each field
     """
     from app.data.data_model import ClaimData
+    from app.utils import load_field_mapping
 
-    mapping_path = os.path.join(config_dir, "field_mapping.json")
-    with open(mapping_path, "r", encoding="utf-8") as f:
-        mapping = json.load(f)
+    # Use the user's custom field mapping from AppData if it exists,
+    # otherwise fall back to the bundled default.
+    mapping = load_field_mapping()
 
     wb = _open_workbook(excel_path)
     claim = ClaimData()
+
+    found_count = 0
+    missing_fields = []
 
     for field_name, cfg in mapping.items():
         if field_name.startswith("_"):
             continue
 
         sheet_name = cfg.get("sheet", "ALL")
-        label      = cfg.get("search_label", "")
+        
+        labels = cfg.get("search_labels")
+        if not labels:
+            raw_label = cfg.get("search_label", "")
+            if isinstance(raw_label, list):
+                labels = raw_label
+            else:
+                labels = [raw_label] if raw_label else []
+
         row_off    = cfg.get("row_offset", 0)
         col_off    = cfg.get("col_offset", 1)
         is_date    = "date" in field_name
+        allow_literal_values = bool(cfg.get("allow_literal_values"))
 
         value = None
-        if sheet_name == "ALL":
-            for sh in wb.all_sheets():
-                value = _search_label(sh, label, row_off, col_off, is_date)
-                if value:
-                    break
-        else:
-            sh = wb.get_sheet(sheet_name)
-            if sh:
-                value = _search_label(sh, label, row_off, col_off, is_date)
+        found_label = ""
+
+        for current_label in labels:
+            if not current_label:
+                continue
+                
+            if sheet_name == "ALL":
+                for sh in wb.all_sheets():
+                    value, coord = _search_label(
+                        sh, current_label, row_off, col_off, is_date,
+                        allow_literal_values
+                    )
+                    if value:
+                        sh_name = sh.name if hasattr(sh, 'name') else 'Sheet'
+                        src_str = f"{coord} ({sh_name})"
+                        claim._excel_coords[field_name] = src_str
+                        claim._excel_logs.append(f"  📊 {field_name}: '{value}' (Source: {src_str})")
+                        found_label = current_label
+                        break
+            else:
+                sh = wb.get_sheet(sheet_name)
+                if sh:
+                    value, coord = _search_label(
+                        sh, current_label, row_off, col_off, is_date,
+                        allow_literal_values
+                    )
+                    if value:
+                        src_str = f"{coord} ({sheet_name})"
+                        claim._excel_coords[field_name] = src_str
+                        claim._excel_logs.append(f"  📊 {field_name}: '{value}' (Source: {src_str})")
+                        found_label = current_label
+                else:
+                    if current_label == labels[-1]: # Only warn on the last fallback try
+                        logger.warning(f"  [{field_name}] Sheet '{sheet_name}' not found in workbook")
+
+            if value:
+                break  # Found it, stop trying fallback labels
 
         if value:
+            if field_name == "date_of_survey":
+                # ── Extract time from the date string OR adjacent cells ──────
+                time_found = False
+
+                # First: try parsing time from the value itself
+                time_match = re.search(r"(\d{1,2})[.:]?(\d{2})?\s*([aA]\.?[mM]\.?|[pP]\.?[mM]\.?)", value)
+                if time_match:
+                    h = int(time_match.group(1))
+                    m = time_match.group(2) or "00"
+                    ampm = time_match.group(3).replace(".", "").lower()
+                    if ampm == "pm" and h < 12:
+                        h += 12
+                    elif ampm == "am" and h == 12:
+                        h = 0
+                    claim.time_hh = f"{h:02d}"
+                    claim.time_mm = f"{int(m):02d}"
+                    time_found = True
+
+                # Second: if no time in value, scan adjacent cells in the row
+                if not time_found:
+                    try:
+                        all_sheets = wb.all_sheets() if sheet_name == "ALL" else [wb.get_sheet(sheet_name)]
+                        for sh in all_sheets:
+                            if sh is None:
+                                continue
+                            for r_idx, row in enumerate(sh.rows()):
+                                for c_idx, cell in enumerate(row):
+                                    cell_lower = str(cell).strip().lower()
+                                    if found_label.lower() in cell_lower and cell_lower:
+                                        target_r = r_idx + cfg.get("row_offset", 0)
+                                        all_row_data = list(sh.rows())
+                                        if 0 <= target_r < len(all_row_data):
+                                            target_row = all_row_data[target_r]
+                                            for tc in range(c_idx + 1, len(target_row)):
+                                                tc_str = str(target_row[tc]).strip()
+                                                tm = re.search(r"(\d{1,2})[.:]?(\d{2})?\s*([aA]\.?[mM]\.?|[pP]\.?[mM]\.?)", tc_str)
+                                                if tm:
+                                                    h = int(tm.group(1))
+                                                    m = tm.group(2) or "00"
+                                                    ampm = tm.group(3).replace(".", "").lower()
+                                                    if ampm == "pm" and h < 12:
+                                                        h += 12
+                                                    elif ampm == "am" and h == 12:
+                                                        h = 0
+                                                    claim.time_hh = f"{h:02d}"
+                                                    claim.time_mm = f"{int(m):02d}"
+                                                    time_found = True
+                                                    logger.info(f"  [TIME] Extracted from adjacent cell R{target_r+1}C{tc+1}: {claim.time_hh}:{claim.time_mm}")
+                                                    break
+                                                tm24 = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", tc_str)
+                                                if tm24:
+                                                    claim.time_hh = f"{int(tm24.group(1)):02d}"
+                                                    claim.time_mm = f"{int(tm24.group(2)):02d}"
+                                                    time_found = True
+                                                    logger.info(f"  [TIME] Extracted 24h from adjacent cell R{target_r+1}C{tc+1}: {claim.time_hh}:{claim.time_mm}")
+                                                    break
+                                            if time_found: break
+                                    if time_found: break
+                                if time_found: break
+                            if time_found: break
+                    except Exception as e:
+                        logger.warning(f"  [TIME] Adjacent cell scan failed: {e}")
+
+                if time_found:
+                    logger.info(f"  [TIME] Survey time set: HH={claim.time_hh} MM={claim.time_mm}")
+
             if is_date:
-                value = _format_date(value)
+                clean_date_val = re.sub(r"at.*$", "", str(value), flags=re.IGNORECASE).strip()
+                value = _format_date(clean_date_val)
+
             setattr(claim, field_name, value)
-            logger.info(f"  [{field_name}] = {value}")
+            found_count += 1
+            logger.info(f"  [FOUND] {field_name} = {value}")
         else:
-            logger.warning(f"  [{field_name}] NOT FOUND in Excel (label: '{label}')")
+            fallback = cfg.get("fallback_value")
+            if fallback is not None:
+                setattr(claim, field_name, fallback)
+                logger.info(f"  [FALLBACK] {field_name} = {fallback}")
+                claim._excel_logs.append(f"  📊 {field_name}: '{fallback}' (Source: Fallback Configuration)")
+            else:
+                labels_str = ' | '.join(labels)
+                missing_fields.append(f"{field_name} (labels: '{labels_str}')")
+                logger.warning(f"  [MISSING] {field_name}: labels '{labels_str}' not found or value empty")
+
+    if claim.date_of_survey:
+        try:
+            from datetime import timedelta
+            dt = datetime.strptime(claim.date_of_survey, "%d/%m/%Y")
+            claim.expected_completion_date = (dt + timedelta(days=10)).strftime("%d/%m/%Y")
+            logger.info(f"  [CALC] expected_completion_date = {claim.expected_completion_date} (+10 days)")
+        except Exception:
+            pass
+
+    logger.info(f"Excel read complete: {found_count} fields found, "
+                f"{len(missing_fields)} missing: {missing_fields}")
+
+    # ── Payment Type Detection (keyword scan) ────────────────────────────────
+    if not claim.payment_to:
+        for sh in wb.all_sheets():
+            sh_name = sh.name if hasattr(sh, 'name') else 'Sheet'
+            for r_idx, row in enumerate(sh.rows()):
+                for c_idx, cell in enumerate(row):
+                    cell_text = " ".join(str(cell).strip().lower().split())
+                    
+                    if "payment to insured" in cell_text:
+                        claim.payment_to = "INSURED"
+                        src = f"R{r_idx+1}C{c_idx+1} ({sh_name})"
+                        claim._excel_coords["payment_to"] = src
+                        claim._excel_logs.append(f"  📊 payment_to: '{claim.payment_to}' (Source: {src})")
+                        logger.info(f"  [FOUND] payment_to = {claim.payment_to} (keyword scan - payment to insured)")
+                        break
+                    elif "payment to repairer" in cell_text:
+                        claim.payment_to = "REPAIRER"
+                        src = f"R{r_idx+1}C{c_idx+1} ({sh_name})"
+                        claim._excel_coords["payment_to"] = src
+                        claim._excel_logs.append(f"  📊 payment_to: '{claim.payment_to}' (Source: {src})")
+                        logger.info(f"  [FOUND] payment_to = {claim.payment_to} (keyword scan - payment to repairer)")
+                        break
+
+                    if "favour" in cell_text and ("repairer" in cell_text or "insured" in cell_text):
+                        if "insured" in cell_text:
+                            claim.payment_to = "INSURED"
+                        else:
+                            claim.payment_to = "REPAIRER"
+                        src = f"R{r_idx+1}C{c_idx+1} ({sh_name})"
+                        claim._excel_coords["payment_to"] = src
+                        claim._excel_logs.append(f"  📊 payment_to: '{claim.payment_to}' (Source: {src})")
+                        logger.info(f"  [FOUND] payment_to = {claim.payment_to} (keyword scan)")
+                        break
+                    if "favour" in cell_text:
+                        for nc in range(c_idx + 1, min(c_idx + 5, len(row))):
+                            next_text = " ".join(str(row[nc]).strip().lower().split())
+                            if "repairer" in next_text:
+                                claim.payment_to = "REPAIRER"
+                                src = f"R{r_idx+1}C{nc+1} ({sh_name})"
+                                claim._excel_coords["payment_to"] = src
+                                claim._excel_logs.append(f"  📊 payment_to: '{claim.payment_to}' (Source: {src})")
+                                break
+                            elif "insured" in next_text:
+                                claim.payment_to = "INSURED"
+                                src = f"R{r_idx+1}C{nc+1} ({sh_name})"
+                                claim._excel_coords["payment_to"] = src
+                                claim._excel_logs.append(f"  📊 payment_to: '{claim.payment_to}' (Source: {src})")
+                                break
+                        if claim.payment_to: break
+                if claim.payment_to: break
+            if claim.payment_to: break
 
     return claim

@@ -1,192 +1,247 @@
 """
-interim_report.py
-Fills the "Interim Report" tab of the Claim Survey form.
-All 14+ fields are filled from the ClaimData object.
+interim_report.py — Fills the "Interim Report" tab.
+
+PRODUCTION FIX 2026-04-18:
+  - Radios: Use JS to set .checked + dispatch 'change' (AngularJS listens to 'change' not 'click')
+  - Datepickers: JS injection of value + input/change events, then Tab to confirm
+  - Time dropdowns: Angular 'number:X' / 'string:HH' option value prefix support
+  - Place of Survey: commas now preserved in address (fixed _clean_text_for_portal)
+  - Mobile/Email: filled unconditionally when present; skipped gracefully when absent
+  - Robust wait after tab-click so Angular re-renders all fields before filling
 """
 import asyncio
 import logging
 from typing import Callable
+
 from app.data.data_model import ClaimData
+from app.automation.form_helpers import (
+    safe_fill, safe_fill_amount, safe_fill_date, safe_fill_text,
+    safe_fill_portal_text, safe_select,
+)
+from app.automation.selectors import INTERIM
+from app.automation.tab_utils import click_tab
+
+import re
 
 logger = logging.getLogger(__name__)
 
-SEL_TAB_INTERIM = "a:has-text('Interim Report'), li a[href*='interim'], .nav-tabs a:has-text('Interim')"
+
+def _clean_mobile(raw: str) -> str:
+    """Strip to digits only, take last 10 (removes leading 0 and dashes).
+    Also handles Excel float format (e.g. '9876135253.0') by stripping '.0' first.
+    """
+    s = str(raw).strip()
+    # Excel stores phone numbers as floats — strip trailing .0 before digit extraction
+    if re.match(r'^\d+\.0$', s):
+        s = s[:-2]
+    digits = re.sub(r"[^\d]", "", s)
+    return digits[-10:] if len(digits) >= 10 else digits
 
 
-async def _click_tab(page, log_cb):
-    log_cb("📑 Clicking 'Interim Report' tab...")
-    await page.locator(SEL_TAB_INTERIM).first.click()
-    await asyncio.sleep(2)
+# ── Radio name attributes confirmed from live portal DOM ──────────────────────
+INTERIM_RADIO_NAMES = [
+    "ynVehicleInspected",
+    "ynSurveyCompleted",
+    "ynDLApplicable",
+    "ynDLVerified",
+    "ynRCBookVerified",
+]
 
 
-async def _fill_text(page, selectors: list, value: str, label: str, log_cb: Callable):
-    """Try each selector until one works. Clears, types, and blurs."""
-    if not value:
-        return
-    for sel in selectors:
-        try:
-            el = page.locator(sel).first
-            await el.wait_for(state="visible", timeout=3000)
-            await el.triple_click()
-            await el.fill(value)
-            await el.press("Tab")
-            await asyncio.sleep(0.3)
-            log_cb(f"  ✅ {label}: {value}")
-            return
-        except Exception:
-            continue
-    log_cb(f"  ⚠️  Could not fill '{label}' — selector not found")
+# ─────────────────────────────────────────────────────────────────────────────
+# Radio button handling (AngularJS-compatible)
+# ─────────────────────────────────────────────────────────────────────────────
 
 
-async def _select_option(page, selectors: list, value: str, label: str, log_cb: Callable):
-    for sel in selectors:
-        try:
-            el = page.locator(sel).first
-            await el.wait_for(state="visible", timeout=3000)
+# ─────────────────────────────────────────────────────────────────────────────
+# Radio button handling (AngularJS-compatible)
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _click_yes_radios(page, log_cb: Callable) -> None:
+    """
+    Click all 'Yes' radio buttons on the Interim Report tab.
+
+    AngularJS does NOT respond to native .click() on hidden/styled radios.
+    The reliable approach:
+      1. JS: find the radio, set .checked = true, dispatch 'change' event.
+      2. Fallback: Playwright locator click on visible radios.
+    """
+    log_cb("  🔘 Setting Yes radios...")
+
+    # Strategy 1: Pure JS — set checked + fire 'change' for Angular ng-model
+    js_result = await page.evaluate("""
+        (function() {
+            var names = [
+                'ynVehicleInspected',
+                'ynSurveyCompleted',
+                'ynDLApplicable',
+                'ynDLVerified',
+                'ynRCBookVerified'
+            ];
+            var clicked = [];
+            names.forEach(function(name) {
+                // Try multiple selector patterns
+                var selectors = [
+                    'input[name="' + name + '"][value="Y"]',
+                    'input[ng-model*="' + name + '"][value="Y"]',
+                    'input[data-ng-model*="' + name + '"][value="Y"]',
+                ];
+                for (var s of selectors) {
+                    var r = document.querySelector(s);
+                    if (r) {
+                        r.checked = true;
+                        // AngularJS listens to 'change' for ng-model updates
+                        r.dispatchEvent(new Event('change', {bubbles: true}));
+                        // Also try click() as a secondary signal
+                        try { r.click(); } catch(e) {}
+                        clicked.push(name);
+                        break;
+                    }
+                }
+            });
+            return clicked;
+        })();
+    """)
+    clicked_names = js_result or []
+    log_cb(f"  🔘 JS radios set: {len(clicked_names)}/{len(INTERIM_RADIO_NAMES)} → {clicked_names}")
+
+    # Strategy 2: Playwright click fallback for any radio that JS missed
+    if len(clicked_names) < len(INTERIM_RADIO_NAMES):
+        radio_sel_map = {
+            "ynVehicleInspected": INTERIM["radio_vehicle"],
+            "ynSurveyCompleted":  INTERIM["radio_survey_done"],
+            "ynDLApplicable":     INTERIM["radio_dl_appl"],
+            "ynDLVerified":       INTERIM["radio_dl_ver"],
+            "ynRCBookVerified":   INTERIM["radio_rc_book"],
+        }
+        for name in INTERIM_RADIO_NAMES:
+            if name in clicked_names:
+                continue
+            sel = radio_sel_map.get(name, "")
+            if not sel:
+                continue
             try:
-                await el.select_option(label=value)
-            except Exception:
-                await el.select_option(value=value)
-            await asyncio.sleep(0.3)
-            log_cb(f"  ✅ {label}: {value}")
-            return
-        except Exception:
-            continue
-    log_cb(f"  ⚠️  Could not select '{label}'")
+                r = page.locator(sel).first
+                if await r.is_visible(timeout=800):
+                    await r.click(force=True)
+                    await asyncio.sleep(0.1)
+                    log_cb(f"  ✅ Radio fallback clicked: {name}")
+                else:
+                    # Final resort: force JS click
+                    await page.evaluate(f"""
+                        (function() {{
+                            var r = document.querySelector('{sel}');
+                            if (r) {{
+                                r.checked = true;
+                                r.dispatchEvent(new Event('change', {{bubbles: true}}));
+                            }}
+                        }})();
+                    """)
+                    log_cb(f"  ✅ Radio force-JS: {name}")
+            except Exception as e:
+                log_cb(f"  ⚠️  Radio {name}: {str(e)[:60]}")
 
 
-async def _click_radio_yes(page, field_label_contains: str, log_cb: Callable):
-    """Find a Yes radio near a label containing field_label_contains."""
-    try:
-        # Strategy 1: label-adjacent radio
-        label_el = page.locator(f"label:has-text('{field_label_contains}'), td:has-text('{field_label_contains}')").first
-        parent = label_el.locator("xpath=ancestor::tr | ancestor::div[contains(@class,'form-group')]").first
-        yes_radio = parent.locator("input[type='radio'][value='Y'], input[type='radio'][value='Yes'], input[type='radio']:near(label:has-text('Yes'))").first
-        await yes_radio.click()
-        await asyncio.sleep(0.2)
-        log_cb(f"  ✅ {field_label_contains}: Yes")
-        return
-    except Exception:
-        pass
-    # Strategy 2: use ng-model attribute
-    try:
-        yes_radio = page.locator(
-            f"[ng-model*='{field_label_contains.lower().replace(' ', '')}'] input[value='Y'],"
-            f"[ng-model*='{field_label_contains.lower().replace(' ', '')}'] input[value='Yes']"
-        ).first
-        await yes_radio.click()
-        await asyncio.sleep(0.2)
-        log_cb(f"  ✅ {field_label_contains}: Yes (ng-model)")
-    except Exception as e:
-        log_cb(f"  ⚠️  Could not set Yes for '{field_label_contains}': {e}")
+# ─────────────────────────────────────────────────────────────────────────────
+# Main fill function
+# ─────────────────────────────────────────────────────────────────────────────
 
+async def fill_interim_report(page, claim: ClaimData,
+                               log_cb: Callable[[str], None] = print) -> None:
+    await click_tab(page, "interim", log_cb)
+    # Brief additional wait for Angular digest cycle
+    await asyncio.sleep(0.2)
 
-async def fill_interim_report(
-    page,
-    claim: ClaimData,
-    log_cb: Callable[[str], None] = print,
-):
-    await _click_tab(page, log_cb)
-    log_cb("✏️  Filling Interim Report fields...")
+    log_cb("✏️  Filling Interim Report...")
 
-    # Type of Settlement
-    await _select_option(
-        page,
-        ["select[ng-model*='settlement'], select[ng-model*='Settlement'], #typeOfSettlement"],
-        claim.type_of_settlement,
-        "Type of Settlement", log_cb
-    )
+    T = 5000  # field timeout ms — use 5s for safety after tab switch
 
-    # Date of Survey
-    await _fill_text(
-        page,
-        ["input[ng-model*='dateOfSurvey'], input[name*='dateOfSurvey'], #dateOfSurvey"],
-        claim.date_of_survey,
-        "Date of Survey", log_cb
-    )
+    # Helper to look up Excel source coordinate for a field
+    def _src(key: str) -> str:
+        return claim._excel_coords.get(key, "")
 
-    # Time HH
-    await _select_option(
-        page,
-        ["select[ng-model*='surveyTimeHH'], select[ng-model*='timeHH'], #surveyTimeHH"],
-        claim.time_hh,
-        "Time HH", log_cb
-    )
+    # ── 1. Type of Settlement (dropdown) ─────────────────────────────────────
+    await safe_select(page, INTERIM["settlement_type"],
+                      claim.type_of_settlement, "Type of Settlement", log_cb, T,
+                      source=_src("type_of_settlement"))
 
-    # Time MM
-    await _select_option(
-        page,
-        ["select[ng-model*='surveyTimeMM'], select[ng-model*='timeMM'], #surveyTimeMM"],
-        claim.time_mm,
-        "Time MM", log_cb
-    )
+    # ── 2. Date of Survey (Angular datepicker — text input) ──────────────────
+    await safe_fill_date(page, INTERIM["survey_date"],
+                         claim.date_of_survey, "Date of Survey", log_cb, T,
+                         source=_src("date_of_survey"))
 
-    # Odometer
-    await _fill_text(
-        page,
-        ["input[ng-model*='odometer'], input[ng-model*='Odometer'], #odometerReading"],
-        claim.odometer,
-        "Odometer Reading", log_cb
-    )
+    # ── 3. Time of Survey — HH and MM dropdowns ──────────────────────────────
+    # These are Angular <select> elements with options like:
+    #   <option value="string:HH">HH</option>
+    #   <option value="number:0">00</option>  ... <option value="number:23">23</option>
+    if claim.time_hh:
+        await safe_select(page, INTERIM["time_hours"],
+                          claim.time_hh, "Time HH", log_cb, T,
+                          source=_src("date_of_survey"))
+    else:
+        log_cb("  ⏭️  Time HH: skipped (not set in Excel)")
 
-    # Place of Survey
-    await _fill_text(
-        page,
-        ["input[ng-model*='placeOfSurvey'], input[ng-model*='PlaceOfSurvey'], #placeOfSurvey"],
-        claim.place_of_survey,
-        "Place of Survey", log_cb
-    )
+    if claim.time_mm:
+        await safe_select(page, INTERIM["time_minutes"],
+                          claim.time_mm, "Time MM", log_cb, T,
+                          source=_src("date_of_survey"))
+    else:
+        log_cb("  ⏭️  Time MM: skipped (not set in Excel)")
 
-    # Yes/No radio fields
-    radio_fields = [
-        "vehicle is inspected",
-        "Survey Completed",
-        "driving license applicable",
-        "Driving License verified",
-        "RC Book verified",
-    ]
-    for field in radio_fields:
-        await _click_radio_yes(page, field, log_cb)
+    # ── 4. Odometer reading (READ ONLY - skip unconditionally) ─────────────────
+    # Portal field is read-only. Attempting to fill it wastes 30s timeout.
+    log_cb("  ⏭️  Odometer Reading: skipped (portal field is read-only)")
 
-    # Initial Loss Assessment Amount
-    await _fill_text(
-        page,
-        ["input[ng-model*='initialLoss'], input[ng-model*='InitialLoss'], #initialLossAmount"],
-        claim.initial_loss_amount,
-        "Initial Loss Amount", log_cb
-    )
+    # ── 5. Place of Survey (portal: no special chars incl commas) ────────────────
+    await safe_fill_portal_text(page, INTERIM["place"],
+                                claim.place_of_survey, "Place of Survey", log_cb, T,
+                                source=_src("place_of_survey"))
 
-    # Mobile No
-    await _fill_text(
-        page,
-        ["input[ng-model*='mobileNo'], input[ng-model*='mobile'], #mobileNo"],
-        claim.mobile_no,
-        "Mobile No", log_cb
-    )
+    # ── 6. Yes/No Radio buttons ───────────────────────────────────────────────
+    await _click_yes_radios(page, log_cb)
 
-    # Email ID
-    await _fill_text(
-        page,
-        ["input[ng-model*='emailId'], input[ng-model*='email'], #emailId"],
-        claim.email_id,
-        "Email ID", log_cb
-    )
+    # ── 7. Initial Loss Assessment Amount ────────────────────────────────────
+    await safe_fill_amount(page, INTERIM["initial_loss"],
+                           claim.initial_loss_amount, "Initial Loss Amount", log_cb, T,
+                           source=_src("initial_loss_amount"))
 
-    # Expected Date of Completion
-    await _fill_text(
-        page,
-        ["input[ng-model*='expectedDate'], input[ng-model*='Expected'], #expectedCompletionDate"],
-        claim.expected_completion_date,
-        "Expected Completion Date", log_cb
-    )
+    # ── 8. Mobile No (mandatory on portal — clean to 10 digits) ──────────────
+    if claim.mobile_no and str(claim.mobile_no).strip():
+        clean_mobile = _clean_mobile(claim.mobile_no)
+        await safe_fill(page, INTERIM["mobile"],
+                        clean_mobile, "Mobile No", log_cb, T,
+                        source=_src("mobile_no"))
+    else:
+        log_cb("  ⏭️  Mobile No: not in Excel (fill manually if required)")
 
-    # Surveyor's Observation
-    await _fill_text(
-        page,
-        ["textarea[ng-model*='observation'], textarea[ng-model*='Observation'], #surveyorObservation"],
-        claim.surveyor_observation,
-        "Surveyor's Observation", log_cb
-    )
+    # ── 9. Email ID (optional) ────────────────────────────────────────────────
+    if claim.email_id and str(claim.email_id).strip():
+        await safe_fill(page, INTERIM["email"],
+                        str(claim.email_id).strip(), "Email ID", log_cb, T,
+                        source=_src("email_id"))
+    else:
+        log_cb("  ⏭️  Email ID: not in Excel")
 
-    log_cb("✅ Interim Report tab complete.")
-    await asyncio.sleep(0.5)
+    # ── 10. Expected date of completion of repair (Angular datepicker) ────────
+    if claim.expected_completion_date and str(claim.expected_completion_date).strip():
+        await safe_fill_date(page, INTERIM["repair_date"],
+                             claim.expected_completion_date,
+                             "Expected Completion Date", log_cb, T,
+                             source=_src("date_of_survey") + " +10d" if _src("date_of_survey") else "Calculated")
+    else:
+        log_cb("  ⏭️  Expected Completion Date: not in Excel")
+
+    # ── 11. Surveyor's Observation & Remarks (no special chars) ───────────────────
+    await safe_fill_portal_text(page, INTERIM["observation"],
+                                claim.surveyor_observation,
+                                "Surveyor's Observation", log_cb, T,
+                                source=_src("surveyor_observation"))
+    
+    # User requested 'Remarks *' field is blank on interim report
+    await safe_fill_portal_text(page, "#remarks, textarea[ng-model*='remark'], textarea[name*='emarks']",
+                                "Done",
+                                "Remarks", log_cb, T,
+                                source="Hardcoded")
+
+    log_cb("✅ Interim Report complete.")
+

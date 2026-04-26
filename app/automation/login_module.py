@@ -32,19 +32,6 @@ SEL_DASHBOARD_MARKERS = (
     "a:has-text('Interim Report')"
 )
 
-_DEBUG_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "logs", "captcha_debug")
-
-
-async def _save_debug_captcha(img_bytes: bytes, attempt: int):
-    try:
-        os.makedirs(_DEBUG_DIR, exist_ok=True)
-        path = os.path.join(_DEBUG_DIR, f"captcha_attempt_{attempt}.png")
-        with open(path, "wb") as f:
-            f.write(img_bytes)
-        logger.info("CAPTCHA saved: %s", path)
-    except Exception:
-        pass
-
 
 async def _get_captcha_bytes(page) -> bytes:
     await asyncio.sleep(1.0)
@@ -236,101 +223,86 @@ async def do_login(
     Navigate to the portal and perform login.
     Returns True on success, False otherwise.
     """
-    from app.automation.captcha_solver import get_captcha_candidates
+    from app.automation.captcha_solver import solve_captcha_from_bytes
 
     page.on("dialog", lambda dialog: asyncio.create_task(_accept_dialog(dialog, log_cb)))
 
-    log_cb("Navigating to portal...")
+    log_cb("  🌐 Navigating to portal...")
     await page.goto(portal_url, wait_until="domcontentloaded", timeout=30000)
     await asyncio.sleep(2)
 
     try:
         await page.locator(SEL_USERNAME).wait_for(state="visible", timeout=12000)
-        log_cb("Login page loaded.")
+        log_cb("  ✅ Login page loaded successfully")
     except Exception as exc:
-        log_cb(f"Login page did not load properly: {exc}")
+        log_cb(f"  ❌ Login page did not load: {exc}")
         return False
 
     for attempt in range(1, max_retries + 1):
         if stop_cb():
             return False
 
-        log_cb(f"Login attempt {attempt}/{max_retries}...")
-        log_cb("Reading CAPTCHA from canvas...")
+        log_cb(f"\n  🔄 Attempt {attempt}/{max_retries}")
+        log_cb("    📷 Reading CAPTCHA from canvas...")
 
         try:
             img_bytes = await _get_captcha_bytes(page)
-            await _save_debug_captcha(img_bytes, attempt)
-            candidates = get_captcha_candidates(img_bytes)
+            captcha_text = solve_captcha_from_bytes(img_bytes)
         except Exception as exc:
-            log_cb(f"CAPTCHA screenshot error: {exc}")
+            log_cb(f"    ⚠️  CAPTCHA screenshot error: {exc}")
             await _refresh_captcha(page)
             continue
 
-        if not candidates or len(candidates[0]) < 3:
-            log_cb("CAPTCHA unreadable. Refreshing...")
-            await _refresh_captcha(page)
-            continue
-
-        log_cb(f"CAPTCHA candidates: {candidates}")
-
-        logged_in = False
-        for variant_idx, captcha_text in enumerate(candidates):
-            if stop_cb():
-                return False
-
-            if captcha_text == captcha_text.upper() and any(c.isalpha() for c in captcha_text):
-                case_label = "ALL-UPPER"
-            elif captcha_text == captcha_text.lower() and any(c.isalpha() for c in captcha_text):
-                case_label = "all-lower"
+        if not captcha_text or len(captcha_text) < 3:
+            # Show WHY it's unreadable — helps diagnose on client machines
+            from app.automation.captcha_solver import _init_error
+            if _init_error:
+                log_cb(f"⚠️ OCR ENGINE FAILED: {_init_error}")
+                if "Cython\\Utility" in _init_error or "CppSupport.cpp" in _init_error:
+                    log_cb("The bundled OCR runtime is incomplete. Rebuild the EXE with the updated spec file.")
+                else:
+                    log_cb("The CAPTCHA solver could not initialize. Check the packaged OCR runtime and startup.log.")
             else:
-                case_label = "Mixed-Case"
+                log_cb("CAPTCHA unreadable (OCR returned empty/short text). Refreshing...")
+            await _refresh_captcha(page)
+            continue
 
-            variant_label = f"{'primary' if variant_idx == 0 else 'fallback'} / {case_label}"
-            log_cb(f"Trying CAPTCHA [{variant_label}]: '{captcha_text}'")
-
-            clicked = await _try_login_with_captcha(page, username, password, captcha_text, log_cb)
-            if not clicked:
-                break
-
-            await asyncio.sleep(2)
-            if stop_cb():
-                return False
-
-            login_ok, outcome = await _wait_for_login_outcome(page, log_cb)
-            if login_ok:
-                log_cb(f"Login confirmed. CAPTCHA variant: {variant_label}")
-                log_cb(f"  Success signal: {outcome}")
-                await _dismiss_alert(page)
-                await asyncio.sleep(1.5)
-                logged_in = True
-                break
-
-            err = outcome.strip()
-            if err:
-                log_cb(f"  Login not confirmed: {err[:140]}")
-                if "password" in err.lower() and "captcha" not in err.lower():
-                    log_cb("  Wrong password detected. Not retrying more CAPTCHA variants.")
-                    break
-
-            if variant_idx < len(candidates) - 1:
-                log_cb("  Variant failed, trying the next candidate...")
-                try:
-                    await page.locator(SEL_CAPTCHA_IN).fill("")
-                    await asyncio.sleep(0.3)
-                except Exception:
-                    pass
-
-        if logged_in:
-            return True
+        log_cb(f"    🔑 CAPTCHA text: '{captcha_text}'")
 
         if stop_cb():
             return False
 
-        log_cb(f"All variants failed on attempt {attempt}. Refreshing CAPTCHA...")
+        clicked = await _try_login_with_captcha(page, username, password, captcha_text, log_cb)
+        if not clicked:
+            log_cb(f"    ⚠️  Could not click login button on attempt {attempt}")
+            await _refresh_captcha(page)
+            continue
+
+        await asyncio.sleep(2)
+        if stop_cb():
+            return False
+
+        login_ok, outcome = await _wait_for_login_outcome(page, log_cb)
+        if login_ok:
+            log_cb(f"    ✅ Login successful!")
+            log_cb(f"    ℹ️  Signal: {outcome}")
+            await _dismiss_alert(page)
+            await asyncio.sleep(1.5)
+            return True
+
+        err = outcome.strip()
+        if err:
+            log_cb(f"    ❌ Login failed: {err[:140]}")
+            if "password" in err.lower() and "captcha" not in err.lower():
+                log_cb("    ❌ Wrong password detected — stopping retries")
+                break
+
+        if stop_cb():
+            return False
+
+        log_cb(f"    🔄 Refreshing CAPTCHA for next attempt...")
         await _refresh_captcha(page)
         await asyncio.sleep(1)
 
-    log_cb("Login failed after all retries.")
-    log_cb("Check captured CAPTCHA images in: logs/captcha_debug/")
+    log_cb(f"  ❌ Login failed after {max_retries} attempts")
     return False
