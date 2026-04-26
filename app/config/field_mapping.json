@@ -14,9 +14,10 @@
   },
   "place_of_survey": {
     "sheet": "ALL",
-    "search_label": ["Place of survey"],
+    "search_label": ["Place of survey", "address"],
     "row_offset": 0,
-    "col_offset": 4
+    "col_offset": 4,
+    "allow_text_values": true
   },
   "surveyor_observation": {
     "sheet": "ALL",

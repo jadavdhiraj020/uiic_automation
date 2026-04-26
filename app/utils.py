@@ -136,15 +136,28 @@ def load_field_mapping() -> dict[str, Any]:
     """
     Load the field mapping with user overrides.
 
-    Bundled defaults are the base document. Any user-saved mapping overrides
-    matching keys while preserving newly added default fields that older user
-    files may not contain yet.
+    Bundled defaults are the base document. Per-field deep merge ensures:
+      - User label/offset overrides are respected
+      - New bundled keys (e.g. allow_text_values) carry through even if
+        the user's saved copy predates them
     """
     paths = field_mapping_paths()
     base = read_json_file(paths["default"]) or {}
     user = read_json_file(paths["user"]) or {}
-    merged = dict(base)
-    merged.update(user)
+    merged = {}
+    all_keys = set(base) | set(user)
+    for key in all_keys:
+        b = base.get(key)
+        u = user.get(key)
+        if isinstance(b, dict) and isinstance(u, dict):
+            # Per-field deep merge: bundled defaults + user overrides
+            field = dict(b)
+            field.update(u)
+            merged[key] = field
+        elif u is not None:
+            merged[key] = u
+        else:
+            merged[key] = b
     return merged
 
 

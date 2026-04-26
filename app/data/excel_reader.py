@@ -129,7 +129,8 @@ def _is_junk(val: Any) -> bool:
 
 def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                   is_date: bool = False,
-                  allow_literal_values: bool = False) -> Tuple[Optional[str], Optional[str]]:
+                  allow_literal_values: bool = False,
+                  allow_text_values: bool = False) -> Tuple[Optional[str], Optional[str]]:
     """
     Find label text anywhere in the sheet. Then:
       1. Move row_offset rows down.
@@ -168,7 +169,7 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                         val = re.sub(re.escape(label), "", orig_cell, flags=re.IGNORECASE).strip(" -:\n\t")
                     
                     if val:
-                        result = _extract_value(val, is_date, allow_literal_values)
+                        result = _extract_value(val, is_date, allow_literal_values, allow_text_values)
                         if result is not None:
                             coord_str = f"R{r_idx+1}C{c_idx+1}"
                             logger.info(
@@ -187,7 +188,7 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                 hint_c = c_idx + col_offset
                 if 0 <= hint_c < len(target_row):
                     val = target_row[hint_c]
-                    result = _extract_value(val, is_date, allow_literal_values)
+                    result = _extract_value(val, is_date, allow_literal_values, allow_text_values)
                     if result is not None:
                         coord_str = f"R{target_r+1}C{hint_c+1}"
                         logger.info(
@@ -199,7 +200,7 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                 # ── Strategy 2: Scan right from label col to find first value
                 for scan_c in range(c_idx + 1, len(target_row)):
                     val = target_row[scan_c]
-                    result = _extract_value(val, is_date, allow_literal_values)
+                    result = _extract_value(val, is_date, allow_literal_values, allow_text_values)
                     if result is not None:
                         coord_str = f"R{target_r+1}C{scan_c+1}"
                         logger.info(
@@ -216,7 +217,8 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
 
 
 def _extract_value(val: Any, is_date: bool,
-                   allow_literal_values: bool = False) -> Optional[str]:
+                   allow_literal_values: bool = False,
+                   allow_text_values: bool = False) -> Optional[str]:
     """
     Convert a raw cell value to a usable string.
     Returns None if the value is empty or junk.
@@ -227,6 +229,11 @@ def _extract_value(val: Any, is_date: bool,
         s = str(val).strip()
         if s and s.lower() in {"yes", "no"}:
             return s
+    if allow_text_values:
+        # Accept any non-empty text — skip the junk/pattern checks entirely
+        # But still reject trivial separators like ":" or "-"
+        s = str(val).strip().strip(":- ")
+        return s if s else None
     if _is_junk(val):
         return None
 
@@ -328,6 +335,7 @@ def read_excel(excel_path: str, config_dir: str):
         col_off    = cfg.get("col_offset", 1)
         is_date    = "date" in field_name
         allow_literal_values = bool(cfg.get("allow_literal_values"))
+        allow_text_values    = bool(cfg.get("allow_text_values"))
 
         value = None
         found_label = ""
@@ -340,7 +348,7 @@ def read_excel(excel_path: str, config_dir: str):
                 for sh in wb.all_sheets():
                     value, coord = _search_label(
                         sh, current_label, row_off, col_off, is_date,
-                        allow_literal_values
+                        allow_literal_values, allow_text_values
                     )
                     if value:
                         sh_name = sh.name if hasattr(sh, 'name') else 'Sheet'
@@ -354,7 +362,7 @@ def read_excel(excel_path: str, config_dir: str):
                 if sh:
                     value, coord = _search_label(
                         sh, current_label, row_off, col_off, is_date,
-                        allow_literal_values
+                        allow_literal_values, allow_text_values
                     )
                     if value:
                         src_str = f"{coord} ({sheet_name})"
