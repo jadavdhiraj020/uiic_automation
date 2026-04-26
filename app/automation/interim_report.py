@@ -222,14 +222,14 @@ async def fill_interim_report(page, claim: ClaimData,
     else:
         log_cb("  ⏭️  Email ID: not in Excel")
 
-    # ── 10. Expected date of completion of repair (Angular datepicker) ────────
+    # ── 10. Expected date of completion of repair (same as Date of Survey) ────
     if claim.expected_completion_date and str(claim.expected_completion_date).strip():
         await safe_fill_date(page, INTERIM["repair_date"],
                              claim.expected_completion_date,
                              "Expected Completion Date", log_cb, T,
-                             source=_src("date_of_survey") + " +10d" if _src("date_of_survey") else "Calculated")
+                             source=_src("expected_completion_date") or _src("date_of_survey"))
     else:
-        log_cb("  ⏭️  Expected Completion Date: not in Excel")
+        log_cb("  ⏭️  Expected Completion Date: not set")
 
     # ── 11. Surveyor's Observation & Remarks (no special chars) ───────────────────
     await safe_fill_portal_text(page, INTERIM["observation"],

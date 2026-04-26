@@ -143,7 +143,7 @@ class ClaimData:
             ("Place of Survey",       self.place_of_survey,       True,  _src("place_of_survey")),
             ("Mobile No",             self.mobile_no,             False, _src("mobile_no")),
             ("Email ID",              self.email_id,              False, _src("email_id")),
-            ("Expected Compl. Date",  self.expected_completion_date, False, _src("expected_completion_date") or ("Calculated from Survey Date" if self.date_of_survey else "")),
+            ("Expected Compl. Date",  self.expected_completion_date, False, _src("expected_completion_date") or _src("date_of_survey")),
             ("Type of Settlement",    self.type_of_settlement,    True,  _src("type_of_settlement")),
             ("Odometer Reading",      self.odometer,              False, _src("odometer")),
             ("Initial Loss (₹)",      self.initial_loss_amount,   True,  _src("initial_loss_amount")),

@@ -461,14 +461,16 @@ def read_excel(excel_path: str, config_dir: str):
                 missing_fields.append(f"{field_name} (labels: '{labels_str}')")
                 logger.warning(f"  [MISSING] {field_name}: labels '{labels_str}' not found or value empty")
 
+    # Expected completion date no longer needs separate Excel extraction or +10 day calculation.
+    # Keep it aligned with Date of Survey so every downstream consumer sees the same value.
     if claim.date_of_survey:
-        try:
-            from datetime import timedelta
-            dt = datetime.strptime(claim.date_of_survey, "%d/%m/%Y")
-            claim.expected_completion_date = (dt + timedelta(days=10)).strftime("%d/%m/%Y")
-            logger.info(f"  [CALC] expected_completion_date = {claim.expected_completion_date} (+10 days)")
-        except Exception:
-            pass
+        claim.expected_completion_date = claim.date_of_survey
+        if "expected_completion_date" not in claim._excel_coords:
+            claim._excel_coords["expected_completion_date"] = claim._excel_coords.get("date_of_survey", "")
+        logger.info(
+            "  [SYNC] expected_completion_date = %s (same as date_of_survey)",
+            claim.expected_completion_date,
+        )
 
     logger.info(f"Excel read complete: {found_count} fields found, "
                 f"{len(missing_fields)} missing: {missing_fields}")
