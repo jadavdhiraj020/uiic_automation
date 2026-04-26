@@ -220,6 +220,16 @@ class MainWindow(QMainWindow):
         self._append_log(msg)
         if success: self.progress_page.set_step(5); self.progress_page.set_progress(100); self._set_status("ready", "Complete ✓")
         else: self._set_status("error", "Failed")
+        
+        # Cleanup worker thread to prevent memory leak
+        if self._thread:
+            self._thread.quit()
+            self._thread.wait(2000)
+            self._thread.deleteLater()
+        if self._worker:
+            self._worker.deleteLater()
+        self._thread = None
+        self._worker = None
 
     def closeEvent(self, event):
         if self._log_file: self._log_file.close()

@@ -20,6 +20,7 @@ from app.automation.form_helpers import (
 )
 from app.automation.selectors import ASSESSMENT, ASSESSMENT_SLOTS, TABS, TAB_SEL
 from app.automation.tab_utils import click_tab
+from app.utils import load_settings
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +111,10 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
 
     Also handles Angular's data-ng-disabled by removing disabled attr via JS.
     """
+    settings = load_settings()
+    upload_wait_s = settings.get("upload_wait_ms", 3000) / 1000.0
+    timeout_ms = settings.get("timeout_ms", 4000)
+
     fname = os.path.basename(file_path)
     if not os.path.isfile(file_path):
         log_cb(f"  ⚠️  Not found: {fname}")
@@ -145,7 +150,7 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
                     await inp.evaluate("el => el.dispatchEvent(new Event('change', { bubbles: true }))")
                 except Exception:
                     pass
-                await asyncio.sleep(3.0)
+                await asyncio.sleep(upload_wait_s)
                 log_cb(f"  ✅ Uploaded: {fname} (li.clearfix relative selector)")
                 return True
     except Exception as e:
@@ -198,7 +203,7 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
                     await page.evaluate("el => el.dispatchEvent(new Event('change', { bubbles: true }))", arg=element)
                 except Exception:
                     pass
-                await asyncio.sleep(3.0)
+                await asyncio.sleep(upload_wait_s)
                 log_cb(f"  ✅ Uploaded: {fname} (JS DOM scan)")
                 return True
     except Exception as e:
@@ -219,7 +224,7 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
                     await page.evaluate("el => el.dispatchEvent(new Event('change', { bubbles: true }))", arg=file_input)
                 except Exception:
                     pass
-                await asyncio.sleep(3.0)
+                await asyncio.sleep(upload_wait_s)
                 log_cb(f"  ✅ Uploaded: {fname} (li.clearfix)")
                 return True
     except Exception:
@@ -239,7 +244,7 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
                     await page.evaluate("el => el.dispatchEvent(new Event('change', { bubbles: true }))", arg=sibling_input.first)
                 except Exception:
                     pass
-                await asyncio.sleep(3.0)
+                await asyncio.sleep(upload_wait_s)
                 log_cb(f"  ✅ Uploaded: {fname} (label parent)")
                 return True
             grandparent = parent.locator("xpath=..")
@@ -250,7 +255,7 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
                     await page.evaluate("el => el.dispatchEvent(new Event('change', { bubbles: true }))", arg=gp_input.first)
                 except Exception:
                     pass
-                await asyncio.sleep(3.0)
+                await asyncio.sleep(upload_wait_s)
                 log_cb(f"  ✅ Uploaded: {fname} (label grandparent)")
                 return True
     except Exception:
@@ -270,12 +275,12 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
                 "xpath=following::input[@type='file'][1]"
             ).first
             if await fi.count() > 0:
-                await fi.wait_for(state="attached", timeout=4000)
+                await fi.wait_for(state="attached", timeout=timeout_ms)
                 await fi.set_input_files(abs_path)
                 try:
-                    await page.wait_for_load_state("networkidle", timeout=4000)
+                    await page.wait_for_load_state("networkidle", timeout=timeout_ms)
                 except Exception:
-                    await asyncio.sleep(1.5)
+                    await asyncio.sleep(upload_wait_s / 2.0)
                 log_cb(f"  ✅ Uploaded: {fname} (XPath following)")
                 return True
         except Exception:
@@ -467,8 +472,10 @@ async def _fill_report_details(page, claim: ClaimData, log_cb: Callable, _src) -
     try:
         import re
         raw_ref = claim.final_report_no or ""
-        if len(claim.invoice_no or "") > len(raw_ref):
-            raw_ref = claim.invoice_no
+        
+        # Safe Fallback: Only use invoice number if final report number is completely empty
+        if not raw_ref.strip():
+            raw_ref = claim.invoice_no or ""
             
         # The user requested to only enter the last value after dash/slash (e.g., '116')
         clean_report_no = re.split(r'[/\\-]', raw_ref)[-1].strip() if raw_ref else ""
@@ -501,14 +508,10 @@ async def _fill_surveyor_charges(page, claim: ClaimData, log_cb: Callable, _src)
         await safe_fill_amount(page, ASSESSMENT["photo"],
                                claim.photo_charges, "Photo Charges", log_cb,
                                source=_src("photo_charges"))
-        # Total Claimed = sum of the 4 surveyor charge fields
-        total = sum(
-            int(float(v or 0))
-            for v in [claim.traveling_expenses, claim.professional_fee,
-                      claim.daily_allowance, claim.photo_charges]
-        )
+        # Total Claimed is now calculated during Excel extraction to ensure
+        # the UI preview and the automation submit exact matching values.
         await safe_fill_amount(page, ASSESSMENT["total"],
-                               str(total), "Total Claimed Amount", log_cb,
+                               str(claim.total_claimed_amount or 0), "Total Claimed Amount", log_cb,
                                source="Calculated")
     except Exception as e:
         log_cb(f"  ❌ Surveyor charges error: {e}")

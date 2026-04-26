@@ -472,6 +472,22 @@ def read_excel(excel_path: str, config_dir: str):
             claim.expected_completion_date,
         )
 
+    # ── Calculate Total Claimed Amount ──────────────────────────────────────
+    # To ensure UI preview and Backend automation are synchronized (Point 6),
+    # we dynamically calculate the sum of surveyor charges here instead of
+    # relying on the explicitly extracted field.
+    try:
+        calculated_total = sum(
+            int(float(getattr(claim, k) or 0))
+            for k in ["traveling_expenses", "professional_fee", "daily_allowance", "photo_charges"]
+        )
+        claim.total_claimed_amount = str(calculated_total)
+        claim._excel_coords["total_claimed_amount"] = "Calculated"
+        claim._excel_logs.append(f"  📊 total_claimed_amount: '{claim.total_claimed_amount}' (Source: Calculated)")
+        logger.info(f"  [MATH] Calculated total_claimed_amount = {claim.total_claimed_amount}")
+    except Exception as e:
+        logger.warning(f"  [MATH] Failed to calculate total claimed amount: {e}")
+
     logger.info(f"Excel read complete: {found_count} fields found, "
                 f"{len(missing_fields)} missing: {missing_fields}")
 

@@ -2624,7 +2624,7 @@ class TestFieldMappingDeepIntegrity:
 
 
     def test_no_extra_keys_in_config(self, mapping):
-        allowed_keys = {"sheet", "search_label", "search_labels", "row_offset", "col_offset", "group_idx", "is_date", "allow_literal_values", "fallback_value"}
+        allowed_keys = {"sheet", "search_label", "search_labels", "row_offset", "col_offset", "group_idx", "is_date", "allow_literal_values", "fallback_value", "allow_text_values"}
         for field, cfg in mapping.items():
             if field.startswith("_"): continue
             for key in cfg.keys():
@@ -3124,25 +3124,28 @@ async def test_balancing_nil_dep_on_exact_match():
     with patch("app.automation.claim_assessment.safe_fill_amount") as mock_fill:
         await _fill_parts(page, claim, lambda m: logs.append(m), lambda x: "A1")
         mock_fill.assert_any_call(page, ANY, "100.0", "Age Dep (Metal)", ANY, source="A1")
-        assert not any("⚖️" in l for l in logs)
+        assert any("⚖️" in l for l in logs)
 
 @pytest.mark.asyncio
 async def test_balancing_nil_dep_on_adjust_plus_one():
+    # New logic: it does not adjust nil_dep to match target. It calculates exact sum.
     claim = ClaimData(nil_depreciation="Yes", parts_age_dep_excl_gst="100", parts_50_dep_excl_gst="200", parts_nil_dep_excl_gst="300", parts_gst18_amount="601")
     logs = []; page = MockPage()
     with patch("app.automation.claim_assessment.safe_fill_amount") as mock_fill:
         await _fill_parts(page, claim, lambda m: logs.append(m), lambda x: "A1")
-        mock_fill.assert_any_call(page, ANY, "301.0", "Nil Dep", ANY, source="A1")
+        mock_fill.assert_any_call(page, ANY, "300.0", "Nil Dep", ANY, source="A1")
+        mock_fill.assert_any_call(page, ANY, "600.0", "Parts GST 18%", ANY, source="Calculated")
         assert any("⚖️" in l for l in logs)
 
 @pytest.mark.asyncio
 async def test_balancing_nil_dep_off_adjust_total():
+    # New logic: when NO, it passes exact string values without modification.
     claim = ClaimData(nil_depreciation="No", parts_age_dep_excl_gst="100", parts_50_dep_excl_gst="200", parts_nil_dep_excl_gst="300", parts_gst18_amount="466")
     logs = []; page = MockPage()
     with patch("app.automation.claim_assessment.safe_fill_amount") as mock_fill:
         await _fill_parts(page, claim, lambda m: logs.append(m), lambda x: "A1")
-        mock_fill.assert_any_call(page, ANY, "465.0", "Parts GST 18%", ANY, source="A1")
-        assert any("⚖️" in l for l in logs)
+        mock_fill.assert_any_call(page, ANY, "466", "Parts GST 18%", ANY, source="A1")
+        assert not any("⚖️" in l for l in logs)
 
 from app.ui.components.widgets import TagDelegate, ChipLineEdit
 
@@ -3153,10 +3156,10 @@ def test_tag_delegate_empty_data():
     finally: painter.end()
 
 @pytest.mark.parametrize("age,p50,nil,target,is_nil,expected_nil,expected_total,should_balance", [
-    ("100", "200", "300", "600", "Yes", 300.0, 600.0, False),
-    ("100", "200", "300", "601", "Yes", 301.0, 601.0, True),
-    ("100", "200", "300", "465", "No", 300.0, 465.0, False),
-    ("100", "200", "300", "466", "No", 300.0, 465.0, True),
+    ("100", "200", "300", "600", "Yes", "300.0", "600.0", True),
+    ("100", "200", "300", "601", "Yes", "300.0", "600.0", True),
+    ("100", "200", "300", "465", "No", "300", "465", False),
+    ("100", "200", "300", "466", "No", "300", "466", False),
 ])
 @pytest.mark.asyncio
 async def test_balancing_matrix(age, p50, nil, target, is_nil, expected_nil, expected_total, should_balance):
@@ -3164,8 +3167,8 @@ async def test_balancing_matrix(age, p50, nil, target, is_nil, expected_nil, exp
     logs = []; page = MockPage()
     with patch("app.automation.claim_assessment.safe_fill_amount") as mock_fill:
         await _fill_parts(page, claim, lambda x: logs.append(x), lambda x: "SRC")
-        mock_fill.assert_any_call(page, ANY, str(expected_nil), "Nil Dep", ANY, source=ANY)
-        mock_fill.assert_any_call(page, ANY, str(expected_total), "Parts GST 18%", ANY, source=ANY)
+        mock_fill.assert_any_call(page, ANY, expected_nil, "Nil Dep", ANY, source=ANY)
+        mock_fill.assert_any_call(page, ANY, expected_total, "Parts GST 18%", ANY, source=ANY)
         assert any("⚖️" in l for l in logs) == should_balance
 
 

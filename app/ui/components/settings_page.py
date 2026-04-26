@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel,
     QPushButton, QStackedWidget, QScrollArea, QGridLayout,
     QLineEdit, QTableWidget, QHeaderView, QFileDialog, QMessageBox,
-    QTableWidgetItem, QComboBox, QSpinBox
+    QTableWidgetItem, QComboBox, QSpinBox, QCheckBox
 )
 import os
 import json
@@ -92,10 +92,26 @@ class SettingsPage(QWidget):
         rl.addWidget(self.inp_password); rl.addWidget(self.btn_eye); l.addWidget(row)
         l.addWidget(_f("Portal URL"))
         self.inp_url = QLineEdit(); self.inp_url.setMinimumHeight(40); l.addWidget(self.inp_url)
-        l.addWidget(_f("Slow-Mo (ms)"))
+        
+        # New inputs for previously hidden settings
+        self.chk_headless = QCheckBox("Run Browser Headless (Invisible)"); self.chk_headless.setStyleSheet("color:#475569; font-weight:600; padding-top: 8px;")
+        l.addWidget(self.chk_headless)
+
+        l.addWidget(_f("Slow-Mo (ms) - Time between clicks"))
         self.inp_slowmo = QLineEdit(); self.inp_slowmo.setMinimumHeight(40); l.addWidget(self.inp_slowmo)
-        l.addWidget(_f("Timeout (ms)"))
+        
+        l.addWidget(_f("Timeout (ms) - General max wait time"))
         self.inp_timeout = QLineEdit(); self.inp_timeout.setMinimumHeight(40); l.addWidget(self.inp_timeout)
+        
+        l.addWidget(_f("Captcha Max Retries"))
+        self.inp_captcha = QLineEdit(); self.inp_captcha.setMinimumHeight(40); l.addWidget(self.inp_captcha)
+        
+        l.addWidget(_f("Upload Wait (ms)"))
+        self.inp_upload_wait = QLineEdit(); self.inp_upload_wait.setMinimumHeight(40); l.addWidget(self.inp_upload_wait)
+        
+        l.addWidget(_f("Field Wait (ms)"))
+        self.inp_field_wait = QLineEdit(); self.inp_field_wait.setMinimumHeight(40); l.addWidget(self.inp_field_wait)
+
         l.addStretch(); s.setWidget(w); return s
 
     def _toggle_pwd(self, ch):
@@ -172,8 +188,15 @@ class SettingsPage(QWidget):
         self.inp_username.setText(s.get("username", ""))
         self.inp_password.setText(s.get("password", ""))
         self.inp_url.setText(s.get("portal_url", ""))
+        
+        self.chk_headless.setChecked(s.get("browser_headless", False))
+        
         self.inp_slowmo.setText(str(s.get("browser_slow_mo_ms", 400)))
         self.inp_timeout.setText(str(s.get("timeout_ms", 4000)))
+        self.inp_captcha.setText(str(s.get("captcha_max_retries", 2)))
+        self.inp_upload_wait.setText(str(s.get("upload_wait_ms", 3000)))
+        self.inp_field_wait.setText(str(s.get("field_wait_ms", 600)))
+        
         self.inp_pdf_inv.setText(" | ".join(s.get("pdf_invoice_no_labels", [])))
         self.inp_pdf_date.setText(" | ".join(s.get("pdf_invoice_date_labels", [])))
 
@@ -242,16 +265,23 @@ class SettingsPage(QWidget):
 
     def _save_all(self):
         try:
-            overrides = {
+            current_settings = load_settings()
+            
+            # Update only from UI widgets, keeping other keys (if any) intact
+            current_settings.update({
                 "username": self.inp_username.text().strip(),
                 "password": self.inp_password.text().strip(),
                 "portal_url": self.inp_url.text().strip(),
+                "browser_headless": self.chk_headless.isChecked(),
                 "browser_slow_mo_ms": int(self.inp_slowmo.text() or 400),
                 "timeout_ms": int(self.inp_timeout.text() or 4000),
+                "captcha_max_retries": int(self.inp_captcha.text() or 2),
+                "upload_wait_ms": int(self.inp_upload_wait.text() or 3000),
+                "field_wait_ms": int(self.inp_field_wait.text() or 600),
                 "pdf_invoice_no_labels": [l.strip() for l in self.inp_pdf_inv.text().split("|") if l.strip()],
                 "pdf_invoice_date_labels": [l.strip() for l in self.inp_pdf_date.text().split("|") if l.strip()],
-            }
-            save_settings(overrides)
+            })
+            save_settings(current_settings)
 
             # Field Mapping Save
             m = load_field_mapping()
@@ -275,7 +305,6 @@ class SettingsPage(QWidget):
 
             # Doc Mapping Save
             dm = load_doc_mapping()
-            ndm = {k: v for k, v in dm.items() if k.startswith("_")}
             cd, ad = {}, {}
             for r in range(self.doc_table.rowCount()):
                 sec = self.doc_table.item(r, 0).text()
@@ -283,8 +312,10 @@ class SettingsPage(QWidget):
                 kws = [k.strip() for k in self.doc_table.item(r, 2).text().split("|") if k.strip()]
                 if "Claim" in sec: cd[dt] = kws
                 else: ad[dt] = kws
-            ndm["claim_documents_tab"], ndm["claim_assessment_tab"] = cd, ad
-            save_doc_mapping(ndm)
+            # Preserve all other schema keys in dm, only overwrite the two tabs
+            dm["claim_documents_tab"] = cd
+            dm["claim_assessment_tab"] = ad
+            save_doc_mapping(dm)
 
             self.append_log("\u2705  Settings saved.")
             QMessageBox.information(self, "Success", "All settings saved.")
