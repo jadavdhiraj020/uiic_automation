@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.spec
+!uiic_automation.spec
+build_assets/
+
+# Virtual environment
+.venv/
+venv/
+env/
+ENV/
+.*venv*/
+venv*/
+
+# Testing (pytest, coverage, etc.)
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+
+# IDE & Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs & Temporary Files
+logs/
+*.log
+tmp/
+temp/
+
+# SECURITY: Never commit credentials or local overrides
+app/config/settings.json
+.env
+
+# User claim folders & uploaded documents
+automationfolderuploading/
+*.xlsx
+*.xls
+*.pdf
+*.jpg
+*.jpeg
+*.png
+*.puc

@@ -1,34 +1,163 @@
 {
-  "_comment": "Label-search mapping — fully verified against sample_excel.xls. col_offset is relative to the column where the label text was found.",
-
-  "vehicle_no":             { "sheet": "Sheet2", "search_label": "VEHICLE REG. NO.",    "row_offset": 0, "col_offset": 4 },
-  "chassis_no":             { "sheet": "Sheet1", "search_label": "Chassis Number",      "row_offset": 0, "col_offset": 3 },
-  "engine_no":              { "sheet": "Sheet1", "search_label": "Engine Number",       "row_offset": 0, "col_offset": 3 },
-
-  "date_of_survey":         { "sheet": "Sheet1", "search_label": "Date and Time of Survey", "row_offset": 0, "col_offset": 4 },
-  "place_of_survey":        { "sheet": "Sheet1", "search_label": "Workshop",            "row_offset": 0, "col_offset": 4 },
-  "surveyor_observation":   { "sheet": "Sheet1", "search_label": "OBERVATIONS/COMMENTS","row_offset": 1, "col_offset": 0 },
-
-  "initial_loss_amount":    { "sheet": "Sheet1", "search_label": "NET PAYABLE AMOUNT",  "row_offset": 0, "col_offset": 5 },
-  "compulsory_excess":      { "sheet": "Sheet1", "search_label": "COMPULSORY DEDUCTIBLE","row_offset": 0, "col_offset": 6 },
-  "voluntary_excess":       { "sheet": "Sheet1", "search_label": "LESS EXCESS CLAUSE",  "row_offset": 0, "col_offset": 5 },
-  "salvage_value":          { "sheet": "Sheet1", "search_label": "LESS SALVAGE VALUE",  "row_offset": 0, "col_offset": 4 },
-
-  "parts_nil_dep_excl_gst": { "sheet": "Sheet1", "search_label": "TOTAL NET FOR PARTS", "row_offset": 0, "col_offset": 4 },
-  "parts_age_dep_excl_gst": { "sheet": "Sheet1", "search_label": "TOTAL NET FOR PARTS", "row_offset": 0, "col_offset": 4 },
-  "parts_30_dep_excl_gst":  { "sheet": "Sheet1", "search_label": "TOTAL NET FOR PARTS", "row_offset": 0, "col_offset": 4 },
-  "parts_50_dep_excl_gst":  { "sheet": "Sheet1", "search_label": "TOTAL NET FOR PARTS", "row_offset": 0, "col_offset": 4 },
-
-  "labour_excl_gst":        { "sheet": "Sheet1", "search_label": "LABOUR ESTIMATED",   "row_offset": 0, "col_offset": 7 },
-
-  "towing_charges":         { "sheet": "Sheet3", "search_label": "TOWING CHARGES",     "row_offset": 0, "col_offset": 4 },
-  "workshop_invoice_no":    { "sheet": "Sheet3", "search_label": "INVOICE NO PART",    "row_offset": 0, "col_offset": 5 },
-  "workshop_invoice_date":  { "sheet": "Sheet3", "search_label": "BILL GENERATION DATE","row_offset": 0, "col_offset": 5 },
-
-  "professional_fee":       { "sheet": "Sheet5", "search_label": "PROFESSIONAL FEE",   "row_offset": 0, "col_offset": 5 },
-  "traveling_expenses":     { "sheet": "Sheet5", "search_label": "CONVEYANCE CHARGES", "row_offset": 0, "col_offset": 5 },
-  "photo_charges":          { "sheet": "Sheet5", "search_label": "PHOTOGRAPHS",        "row_offset": 0, "col_offset": 5 },
-  "daily_allowance":        { "sheet": "Sheet5", "search_label": "DAILY ALLOWANCE",    "row_offset": 0, "col_offset": 4 },
-  "total_claimed_amount":   { "sheet": "Sheet5", "search_label": "TOTAL",              "row_offset": 0, "col_offset": 2 },
-  "final_report_no":        { "sheet": "Sheet5", "search_label": "Ref:",               "row_offset": 0, "col_offset": 1 }
+  "_comment": "field_mapping.json \u00e2\u20ac\u201d Maps ClaimData fields to Excel labels. The reader scans the entire sheet for the label text, then reads the first non-empty value to its RIGHT. col_offset is a hint (tried first) but the reader will scan rightward automatically if the hint is wrong \u00e2\u20ac\u201d so this works with ANY Excel layout.",
+  "claim_no": {
+    "sheet": "ALL",
+    "search_label": ["Claim no","Claim Number","claim_number", "claim_no"],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "date_of_survey": {
+    "sheet": "ALL",
+    "search_label": "Date and Time of Survey",
+    "row_offset": 0,
+    "col_offset": 4
+  },
+  "place_of_survey": {
+    "sheet": "ALL",
+    "search_label": ["Place of survey"],
+    "row_offset": 0,
+    "col_offset": 4
+  },
+  "surveyor_observation": {
+    "sheet": "ALL",
+    "search_label": ["surveyor observation", "OBERVATIONS/COMMENTS"],
+    "row_offset": 1,
+    "col_offset": 0,
+    "fallback_value": "Ok"
+  },
+  "mobile_no": {
+    "sheet": "Sheet1",
+    "search_labels": [
+      "surveyor_mobile",
+      "mobile",
+      "Mobile:"
+    ],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "email_id": {
+    "sheet": "Sheet1",
+    "search_labels": [
+      "surveyor_email",
+      "email",
+      "e-mail:-"
+    ],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "initial_loss_amount": {
+    "sheet": "ALL",
+    "search_label": ["initial loss assessment", "intial losss", "intial loss"],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "compulsory_excess": {
+    "sheet": "Sheet1",
+    "search_label": ["Coumpulsary excess", "excess clause", "Less Compulsory Excess"],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "voluntary_excess": {
+    "sheet": "Sheet1",
+    "search_label": ["voluntry excess"],
+    "row_offset": 0,
+    "col_offset": 5
+  },
+  "salvage_value": {
+    "sheet": "Sheet1",
+    "search_label": ["LESS SALVAGE VALUE","Less Salvage Value","salvage value","Salvage_value"],
+    "row_offset": 0,
+    "col_offset": 5
+  },
+  "parts_age_dep_excl_gst": {
+    "sheet": "Sheet1",
+    "search_label": "SUB TOTAL",
+    "row_offset": 0,
+    "col_offset": 5
+  },
+  "parts_50_dep_excl_gst": {
+    "sheet": "Sheet1",
+    "search_label": "SUB TOTAL",
+    "row_offset": 0,
+    "col_offset": 6
+  },
+  "parts_nil_dep_excl_gst": {
+    "sheet": "Sheet1",
+    "search_label": "SUB TOTAL",
+    "row_offset": 0,
+    "col_offset": 7
+  },
+  "nil_depreciation": {
+    "sheet": "Sheet1",
+    "search_label": "Nil Depreciation",
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_literal_values": true
+  },
+  "parts_gst18_amount": {
+    "sheet": "Sheet1",
+    "search_label": "SUB TOTAL",
+    "row_offset": 0,
+    "col_offset": 8
+  },
+  "labour_excl_gst": {
+    "sheet": "Sheet1",
+    "search_label": "TOTAL (R/R, DENTING, C/W, PAINTING)",
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "towing_charges": {
+    "sheet": "Sheet1",
+    "search_label": ["TOWING CHARGE", "TOWING CHARGES"],
+    "row_offset": 0,
+    "col_offset": 4
+  },
+  "professional_fee": {
+    "sheet": "Sheet5",
+    "search_label": ["professional_fee", "professional fee", "SURVEY FEE", "SURVEY FEES"],
+    "row_offset": 0,
+    "col_offset": 5
+  },
+  "traveling_expenses": {
+    "sheet": "Sheet5",
+    "search_label": ["traveling_expenses", "conveyance", "CONVEYANCE CHARGE", "CONVEYANCE CHARGES"],
+    "row_offset": 0,
+    "col_offset": 5
+  },
+  "photo_charges": {
+    "sheet": "Sheet5",
+    "search_label": ["photocharges", "PHOTOGRAPHS", "PHOTO charge", "photo charges"],
+    "row_offset": 0,
+    "col_offset": 5
+  },
+  "daily_allowance": {
+    "sheet": "Sheet5",
+    "search_label": ["DAILY_ALLOWANCE", "daily allowance", "DAILY allowances"],
+    "row_offset": 0,
+    "col_offset": 5
+  },
+  "invoice_no": {
+    "sheet": "Sheet5",
+    "search_label": ["invoice_no", "Invoice No", "Ref:"],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "invoice_date": {
+    "sheet": "Sheet5",
+    "search_label": ["invoice_date", "invoice date", "Date:"],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "final_report_no": {
+    "sheet": "Sheet1",
+    "search_label": "Ref:",
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "final_report_date": {
+    "sheet": "Sheet1",
+    "search_label": "Date:",
+    "row_offset": 0,
+    "col_offset": 1
+  }
 }
