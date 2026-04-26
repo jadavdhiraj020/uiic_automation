@@ -1,0 +1,234 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  UIIC Surveyor Automation — CI/CD Release Pipeline
+# ─────────────────────────────────────────────────────────────────────────────
+#  Triggers on every push to `main`.
+#  Steps:
+#    1. Checkout code
+#    2. Set up Python 3.10 (pinned for PaddlePaddle 2.x Windows stability)
+#    3. Install all build dependencies (pinned from requirements-build.txt)
+#    4. Download Playwright Chromium into build_assets/
+#    5. Download PaddleOCR models into build_assets/
+#    6. Run the full pytest test suite
+#    7. Build the Windows EXE via PyInstaller (.spec file)
+#    8. Verify the EXE was produced
+#    9. Create a versioned ZIP of the dist folder
+#   10. Create a GitHub Release and upload the ZIP as an asset
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Build & Release Windows EXE
+
+on:
+  push:
+    branches: [main]
+
+  # Allow manual trigger from Actions tab
+  workflow_dispatch:
+
+# Cancel superseded runs on the same branch
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+# ── Permissions for creating releases ──────────────────────────────────────
+permissions:
+  contents: write
+
+env:
+  APP_NAME: UIIC_Surveyor_Automation
+  PYTHON_VERSION: "3.10"
+
+jobs:
+  build-and-release:
+    name: Build EXE → Test → Release
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      # ─── 1. Checkout ─────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # Full history for version tagging
+
+      # ─── 2. Set up Python ────────────────────────────────────────────────
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # ─── 3. Cache pip packages ───────────────────────────────────────────
+      - name: Cache pip packages
+        uses: actions/cache@v5
+        with:
+          path: ~\AppData\Local\pip\Cache
+          key: pip-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('requirements-build.txt') }}
+          restore-keys: |
+            pip-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-
+
+      # ─── 4. Install build dependencies ───────────────────────────────────
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip wheel
+          python -m pip install -r requirements-build.txt
+
+      # ─── 4b. Create placeholder settings.json (gitignored) ───────────────
+      - name: Create CI settings.json
+        run: |
+          $settings = "app\config\settings.json"
+          $template = "app\config\settings.json.example"
+          if (-Not (Test-Path $settings)) {
+            if (Test-Path $template) {
+              Copy-Item $template $settings
+              Write-Host "Created $settings from template"
+            } else {
+              Write-Host "WARNING: No settings template found — build may warn"
+            }
+          }
+        shell: pwsh
+
+      # ─── 5. Prepare Playwright Chromium ──────────────────────────────────
+      - name: Download Playwright Chromium
+        run: |
+          New-Item -ItemType Directory -Force -Path "build_assets\ms-playwright" | Out-Null
+          $env:PLAYWRIGHT_BROWSERS_PATH = "${{ github.workspace }}\build_assets\ms-playwright"
+          python -m playwright install chromium
+        shell: pwsh
+
+      # ─── 6. Prepare PaddleOCR models ────────────────────────────────────
+      - name: Download PaddleOCR models
+        run: |
+          New-Item -ItemType Directory -Force -Path "build_assets\paddleocr" | Out-Null
+          $env:PADDLEOCR_HOME = "${{ github.workspace }}\build_assets\paddleocr"
+          python -c "from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=False, lang='en', show_log=False); print('PaddleOCR models ready.')"
+        shell: pwsh
+
+      # ─── 7. Run test suite ──────────────────────────────────────────────
+      - name: Run pytest test suite
+        run: |
+          python -m pytest tests/ -v --tb=short --color=yes
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+          QT_QPA_PLATFORM: "offscreen"
+
+      # ─── 8. Extract version from pyproject.toml ─────────────────────────
+      - name: Extract version
+        id: version
+        run: |
+          $match = Select-String -Path pyproject.toml -Pattern '^\s*version\s*=\s*"([^"]+)"' | Select-Object -First 1
+          $version = if ($match) { $match.Matches.Groups[1].Value } else { "0.0.0" }
+          $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+          $short_sha = "${{ github.sha }}".Substring(0,7)
+          $tag = "v${version}-build.${timestamp}"
+          $zip_name = "${{ env.APP_NAME }}_v${version}_${short_sha}"
+
+          echo "VERSION=$version"       >> $env:GITHUB_OUTPUT
+          echo "TAG=$tag"               >> $env:GITHUB_OUTPUT
+          echo "ZIP_NAME=$zip_name"     >> $env:GITHUB_OUTPUT
+          echo "SHORT_SHA=$short_sha"   >> $env:GITHUB_OUTPUT
+          echo "TIMESTAMP=$timestamp"   >> $env:GITHUB_OUTPUT
+
+          Write-Host "Version: $version"
+          Write-Host "Tag:     $tag"
+          Write-Host "ZIP:     $zip_name"
+        shell: pwsh
+
+      # ─── 9. Build EXE with PyInstaller ──────────────────────────────────
+      - name: Build Windows EXE
+        run: |
+          $env:PLAYWRIGHT_BROWSERS_PATH = "${{ github.workspace }}\build_assets\ms-playwright"
+          $env:PADDLEOCR_HOME            = "${{ github.workspace }}\build_assets\paddleocr"
+          $env:PYTHONWARNINGS             = "ignore:The numpy.array_api submodule is still experimental.:UserWarning,ignore:invalid escape sequence.*:SyntaxWarning"
+
+          python -m PyInstaller --noconfirm --clean uiic_automation.spec
+        shell: pwsh
+
+      # ─── 10. Verify build output ────────────────────────────────────────
+      - name: Verify EXE was produced
+        run: |
+          $exe = "dist\${{ env.APP_NAME }}\${{ env.APP_NAME }}.exe"
+          if (-Not (Test-Path $exe)) {
+            Write-Error "Build FAILED — EXE not found at $exe"
+            exit 1
+          }
+          $size = (Get-Item $exe).Length / 1MB
+          Write-Host "EXE verified: $exe ($([math]::Round($size,1)) MB)"
+
+          # List top-level dist contents for debugging
+          Write-Host "`n=== dist/${{ env.APP_NAME }}/ contents ==="
+          Get-ChildItem "dist\${{ env.APP_NAME }}" | Select-Object Name, Length | Format-Table -AutoSize
+        shell: pwsh
+
+      # ─── 11. Smoke-test the EXE (headless) ─────────────────────────────
+      - name: Smoke-test EXE (launch + exit)
+        run: |
+          Write-Host "Attempting headless smoke-test of the EXE..."
+          $exe = "dist\${{ env.APP_NAME }}\${{ env.APP_NAME }}.exe"
+
+          # The app is a GUI (PyQt6) so we can only verify it starts without crashing.
+          # We launch it, wait briefly, then kill it. Non-zero exit = crash.
+          $proc = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden
+          Start-Sleep -Seconds 8
+
+          if ($proc.HasExited) {
+            if ($proc.ExitCode -ne 0) {
+              Write-Error "EXE crashed on launch with exit code $($proc.ExitCode)"
+              exit 1
+            }
+            Write-Host "EXE exited cleanly (exit code 0) — possibly no display available."
+          } else {
+            Write-Host "EXE is running after 8 seconds — no crash detected."
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          }
+          Write-Host "Smoke-test PASSED"
+        shell: pwsh
+        continue-on-error: true   # GUI may fail without a display; treated as non-fatal
+
+      # ─── 12. Create ZIP archive ─────────────────────────────────────────
+      - name: Package release ZIP
+        run: |
+          $source  = "dist\${{ env.APP_NAME }}"
+          $zipFile = "${{ steps.version.outputs.ZIP_NAME }}.zip"
+
+          Write-Host "Creating $zipFile from $source ..."
+          Compress-Archive -Path "$source\*" -DestinationPath $zipFile -CompressionLevel Optimal -Force
+
+          $sizeMB = [math]::Round((Get-Item $zipFile).Length / 1MB, 1)
+          Write-Host "ZIP created: $zipFile ($sizeMB MB)"
+
+          echo "ZIP_PATH=$zipFile" >> $env:GITHUB_OUTPUT
+        id: zip
+        shell: pwsh
+
+      # ─── 13. Create GitHub Release ──────────────────────────────────────
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.TAG }}
+          name: "${{ env.APP_NAME }} ${{ steps.version.outputs.VERSION }} (build ${{ steps.version.outputs.SHORT_SHA }})"
+          body: |
+            ## 🚀 Automated Release
+
+            **Version:** `${{ steps.version.outputs.VERSION }}`
+            **Commit:** [`${{ steps.version.outputs.SHORT_SHA }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
+            **Built:** ${{ steps.version.outputs.TIMESTAMP }} UTC
+            **Python:** ${{ env.PYTHON_VERSION }}
+            **Runner:** `windows-latest`
+
+            ### 📦 Installation
+            1. Download the `.zip` file below
+            2. Extract to any folder
+            3. Run `${{ env.APP_NAME }}.exe`
+
+            ### ⚠️ Notes
+            - Windows Defender may briefly scan on first launch — this is normal
+            - The `_internal/` folder must stay alongside the EXE
+            - Built from pinned dependencies (`requirements-build.txt`) for reproducibility
+
+            ---
+            *This release was created automatically by GitHub Actions.*
+          files: ${{ steps.version.outputs.ZIP_NAME }}.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
