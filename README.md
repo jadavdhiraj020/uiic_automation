@@ -59,7 +59,7 @@ full human control over final submission.
 
 > The application features a clean, modern interface designed for daily professional use.
 
-**Home Page** — Configure credentials, select claim folder, preview extracted data  
+**Home Page** — Configure credentials, select claim folder, preview extracted data
 **Progress Page** — Real-time step pipeline, live log output, and automation status
 
 ---
