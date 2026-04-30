@@ -1,13 +1,16 @@
+import re
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QFrame, QLabel, QProgressBar, QTextEdit,
     QApplication, QPushButton
 )
-from app.ui.components.widgets import StepPipeline, card as _card
+from app.ui.components.widgets import StepPipeline, card as _card, search_row as _search_row
 
 class ProgressPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._log_entries = []
         self._setup_ui()
 
     def _setup_ui(self):
@@ -56,6 +59,11 @@ class ProgressPage(QWidget):
 
         log_v_w = QWidget()
         log_v_lay = QVBoxLayout(log_v_w); log_v_lay.setContentsMargins(0,0,0,0); log_v_lay.setSpacing(10)
+        search, self.log_search_input = _search_row(
+            "Filter activity log...",
+            self._filter_log,
+        )
+        log_v_lay.addWidget(search)
         log_v_lay.addWidget(log_header)
         log_v_lay.addWidget(self.log_output)
         
@@ -69,7 +77,27 @@ class ProgressPage(QWidget):
         main_lay.addWidget(scroll)
         
     def append_log(self, html_text: str):
-        self.log_output.append(html_text)
+        self._log_entries.append(html_text)
+        if self._log_matches_filter(html_text, self.log_search_input.text()):
+            self.log_output.append(html_text)
+        self.log_output.ensureCursorVisible()
+
+    def clear_logs(self):
+        self._log_entries.clear()
+        self.log_output.clear()
+
+    def _plain_log_text(self, html_text: str) -> str:
+        return re.sub(r"<[^>]+>", " ", html_text).lower()
+
+    def _log_matches_filter(self, html_text: str, text: str) -> bool:
+        text = (text or "").strip().lower()
+        return not text or text in self._plain_log_text(html_text)
+
+    def _filter_log(self, text):
+        self.log_output.clear()
+        for entry in self._log_entries:
+            if self._log_matches_filter(entry, text):
+                self.log_output.append(entry)
         self.log_output.ensureCursorVisible()
 
     def set_progress(self, val: int):

@@ -6,7 +6,8 @@ from PyQt6.QtWidgets import (
 )
 from app.ui.components.widgets import (
     create_label as _label, field_label as _field_label,
-    create_input as _input, card as _card, stat_card as _stat_card
+    create_input as _input, card as _card, stat_card as _stat_card,
+    search_row as _search_row
 )
 
 class HomePage(QWidget):
@@ -84,6 +85,11 @@ class HomePage(QWidget):
 
     def _build_preview_card(self):
         w = QWidget(); lay = QVBoxLayout(w); lay.setContentsMargins(0, 4, 0, 0); lay.setSpacing(8)
+        search, self.preview_search_input = _search_row(
+            "Filter extracted data by field, value, source, or status...",
+            self._filter_preview_table,
+        )
+        lay.addWidget(search)
         self.preview_table = QTableWidget(0, 4)
         self.preview_table.setHorizontalHeaderLabels(["FIELD", "VALUE", "SOURCE", "STATUS"])
         self.preview_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
@@ -121,6 +127,16 @@ class HomePage(QWidget):
         """)
         lay.addWidget(self.preview_table)
         return _card(w, "📊  Extracted Data", "🔴 Critical missing  /  🟡 Optional  /  🟢 Found")
+
+    def _filter_preview_table(self, text):
+        text = (text or "").strip().lower()
+        for row in range(self.preview_table.rowCount()):
+            values = []
+            for col in range(self.preview_table.columnCount()):
+                item = self.preview_table.item(row, col)
+                if item:
+                    values.append(item.text().lower())
+            self.preview_table.setRowHidden(row, bool(text) and text not in " ".join(values))
 
     def update_data(self, claim, scan_result):
         if not claim: return
@@ -160,6 +176,8 @@ class HomePage(QWidget):
             s_item = QTableWidgetItem(status)
             s_item.setForeground(QColor("#059669") if has_val else (QColor("#DC2626") if is_critical else QColor("#94A3B8")))
             self.preview_table.setItem(i, 3, s_item)
+
+        self._filter_preview_table(self.preview_search_input.text())
 
         self.stat_fields.setText(f"{filled_count}/{len(all_fields)}")
         self.stat_missing.setText(str(missing_critical))

@@ -62,6 +62,33 @@ def create_input(placeholder="", echo_password=False):
     return inp
 
 
+def search_row(placeholder: str, on_change):
+    """Create the compact search bar used above data lists."""
+    row = QWidget()
+    lay = QHBoxLayout(row)
+    lay.setContentsMargins(0, 0, 0, 10)
+    lay.setSpacing(8)
+
+    inp = QLineEdit()
+    inp.setPlaceholderText(placeholder)
+    inp.setObjectName("settingsInput")
+    inp.textChanged.connect(on_change)
+
+    btn_clear = QPushButton("X")
+    btn_clear.setFixedWidth(36)
+    btn_clear.setCursor(Qt.CursorShape.PointingHandCursor)
+    btn_clear.clicked.connect(inp.clear)
+    btn_clear.setStyleSheet(
+        "QPushButton { border-radius: 8px; padding: 0; background: #F1F5F9; "
+        "color: #64748B; font-size: 10pt; font-weight: 800; } "
+        "QPushButton:hover { background: #E2E8F0; color: #0F172A; }"
+    )
+
+    lay.addWidget(inp)
+    lay.addWidget(btn_clear)
+    return row, inp
+
+
 def card(content_widget, title=None, subtitle=None, icon=None):
     """Wrap a widget in a clean white card with title header."""
     outer = QWidget()

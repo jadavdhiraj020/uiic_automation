@@ -124,7 +124,7 @@ class MainWindow(QMainWindow):
         
         self.btn_start = QPushButton("  ▶  Start Automation  "); self.btn_start.setObjectName("btnStart"); self.btn_start.setMinimumHeight(44); self.btn_start.clicked.connect(self._start_automation)
         self.btn_stop = QPushButton("■  Stop"); self.btn_stop.setEnabled(False); self.btn_stop.setMinimumHeight(44); self.btn_stop.clicked.connect(self._stop_automation)
-        self.btn_clear = QPushButton("Clear Log"); self.btn_clear.setFixedWidth(110); self.btn_clear.clicked.connect(lambda: self.progress_page.log_output.clear())
+        self.btn_clear = QPushButton("Clear Log"); self.btn_clear.setFixedWidth(110); self.btn_clear.clicked.connect(self.progress_page.clear_logs)
         self.btn_export = QPushButton("Export Log"); self.btn_export.setFixedWidth(120); self.btn_export.clicked.connect(self._export_log)
         
         lay.addWidget(self.btn_start); lay.addWidget(self.btn_stop); lay.addStretch(); lay.addWidget(self.btn_clear); lay.addWidget(self.btn_export)

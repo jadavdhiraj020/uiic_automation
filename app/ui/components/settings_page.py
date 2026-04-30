@@ -13,7 +13,7 @@ from app.utils import (
     load_field_mapping, save_field_mapping, reset_field_mapping,
     load_doc_mapping, save_doc_mapping, reset_doc_mapping
 )
-from app.ui.components.widgets import TagDelegate, ChipLineEdit
+from app.ui.components.widgets import TagDelegate, ChipLineEdit, search_row as _search_row
 
 class SettingsPage(QWidget):
     def __init__(self, parent=None, append_log_cb=None):
@@ -158,6 +158,11 @@ class SettingsPage(QWidget):
     def _build_doc_mapping_tab(self):
         s = QScrollArea(); s.setWidgetResizable(True); s.setFrameShape(QFrame.Shape.NoFrame)
         w = QWidget(); l = QVBoxLayout(w); l.setContentsMargins(32, 24, 32, 24)
+        search, self.doc_search_input = _search_row(
+            "Filter documents by section, portal type, or filename keyword...",
+            self._filter_doc_table,
+        )
+        l.addWidget(search)
         self.doc_table = QTableWidget(0, 3)
         self.doc_table.setHorizontalHeaderLabels(["SECTION", "PORTAL DOC TYPE", "FILENAME KEYWORDS"])
         self.doc_table.verticalHeader().setVisible(False)
@@ -239,6 +244,7 @@ class SettingsPage(QWidget):
             offset_spin.setStyleSheet("QSpinBox { padding: 5px; border: 1px solid #CBD5E1; border-radius: 4px; background: white; }")
             offset_spin.setValue(int(cfg.get("col_offset", 1)))
             self.mapping_table.setCellWidget(i, 3, offset_spin)
+        self._filter_table(self.search_input.text())
 
         # Doc Mapping
         dm = load_doc_mapping()
@@ -255,6 +261,7 @@ class SettingsPage(QWidget):
             self.doc_table.setItem(i, 1, QTableWidgetItem(dt))
             self.doc_table.item(i, 1).setFlags(Qt.ItemFlag.ItemIsEnabled)
             self.doc_table.setItem(i, 2, QTableWidgetItem(kws))
+        self._filter_doc_table(self.doc_search_input.text())
 
     def _filter_table(self, text):
         text = text.lower()
@@ -262,6 +269,16 @@ class SettingsPage(QWidget):
             field = self.mapping_table.item(i, 0).text().lower()
             label = self.mapping_table.item(i, 1).text().lower()
             self.mapping_table.setRowHidden(i, text not in field and text not in label)
+
+    def _filter_doc_table(self, text):
+        text = (text or "").strip().lower()
+        for row in range(self.doc_table.rowCount()):
+            values = []
+            for col in range(self.doc_table.columnCount()):
+                item = self.doc_table.item(row, col)
+                if item:
+                    values.append(item.text().lower())
+            self.doc_table.setRowHidden(row, bool(text) and text not in " ".join(values))
 
     def _save_all(self):
         try:
