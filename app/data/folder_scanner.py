@@ -405,6 +405,22 @@ def scan_folder(folder_path: str) -> FolderScanResult:
             logger.warning("No Other slot left for: %s (only %d slots)", Path(other_path).name, len(other_slots))
             result.skipped_files.append((other_path, "No 'Other' slots left"))
 
+    # ── Fallback: Copy Invoice as Cancelled Cheque if missing ──────────────────
+    if "Cancelled Cheque Or Bank Details" not in result.claim_doc_files and "invoice" in result.assessment_files:
+        invoice_path = result.assessment_files["invoice"]
+        ext = Path(invoice_path).suffix
+        cancel_check_name = f"cancel_check_fallback{ext}"
+        cancel_check_path = os.path.join(folder_path, cancel_check_name)
+        
+        try:
+            if not os.path.exists(cancel_check_path):
+                import shutil
+                shutil.copy2(invoice_path, cancel_check_path)
+            result.claim_doc_files["Cancelled Cheque Or Bank Details"] = cancel_check_path
+            logger.info("Generated %s from invoice because cancelled cheque was missing", cancel_check_name)
+        except Exception as e:
+            logger.error("Failed to copy invoice to %s: %s", cancel_check_name, e)
+
     # ── Generate comprehensive scan summary log ──────────────────────────────
     _log_scan_summary(result, claim_map)
 
