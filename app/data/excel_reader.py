@@ -17,6 +17,7 @@ import os
 import re
 import logging
 from datetime import datetime
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -260,6 +261,32 @@ def _clean_value(val: Any) -> str:
     return str(val).strip()
 
 
+def _initial_loss_75_percent(value: Any) -> str:
+    """
+    Use 75% of the Excel "initial loss assessment" amount.
+
+    The portal ultimately wants rounded rupees, so keep UI preview and
+    automation aligned by storing the rounded 75% amount in ClaimData.
+    """
+    raw = str(value).strip()
+    if raw == "":
+        return raw
+
+    cleaned = raw.replace(",", "")
+    match = re.search(r"-?\d+(?:\.\d+)?", cleaned)
+    if not match:
+        return raw
+
+    try:
+        amount = Decimal(match.group(0))
+    except (InvalidOperation, ValueError):
+        logger.warning("  [MATH] Could not calculate 75%% initial loss from '%s'", value)
+        return raw
+
+    adjusted = (amount * Decimal("0.75")).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    return str(int(adjusted))
+
+
 def _try_date_serial(val: Any) -> Optional[str]:
     """Try to convert xlrd float date serial to DD/MM/YYYY."""
     if not isinstance(val, float):
@@ -319,6 +346,14 @@ def read_excel(excel_path: str, config_dir: str):
 
     for field_name, cfg in mapping.items():
         if field_name.startswith("_"):
+            continue
+
+        if field_name == "surveyor_observation":
+            claim.surveyor_observation = "ok"
+            claim._excel_coords["surveyor_observation"] = "Fixed Value"
+            claim._excel_logs.append("  📊 surveyor_observation: 'ok' (Source: Fixed Value)")
+            logger.info("  [FIXED] surveyor_observation = ok")
+            found_count += 1
             continue
 
         sheet_name = cfg.get("sheet", "ALL")
@@ -446,6 +481,19 @@ def read_excel(excel_path: str, config_dir: str):
             if is_date:
                 clean_date_val = re.sub(r"at.*$", "", str(value), flags=re.IGNORECASE).strip()
                 value = _format_date(clean_date_val)
+
+            if field_name == "initial_loss_amount":
+                raw_initial_loss = value
+                value = _initial_loss_75_percent(value)
+                claim._excel_logs.append(
+                    f"  📊 initial_loss_amount_75_percent: '{value}' "
+                    f"(Source: 75% of Excel value '{raw_initial_loss}')"
+                )
+                logger.info(
+                    "  [MATH] initial_loss_amount 75%% = %s (Excel value: %s)",
+                    value,
+                    raw_initial_loss,
+                )
 
             setattr(claim, field_name, value)
             found_count += 1

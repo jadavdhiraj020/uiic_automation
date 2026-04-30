@@ -55,6 +55,7 @@ if PROJECT_ROOT not in sys.path:
 from app.data.data_model import ClaimData
 from app.data.excel_reader import (
     _is_junk, _clean_value, _extract_value, _format_date,
+    _initial_loss_75_percent,
 )
 from app.automation.form_helpers import (
     _js_escape, _clean_text_for_portal, _clean_text_strict, _to_int_amount,
@@ -210,6 +211,22 @@ class TestExtractValue:
     def test_date_value_passthrough(self):
         result = _extract_value("16/02/2026", False)
         assert result == "16/02/2026"
+
+
+class TestInitialLossPercentage:
+    """Initial loss assessment must use 75% of the Excel amount."""
+
+    def test_initial_loss_100_becomes_75(self):
+        assert _initial_loss_75_percent("100") == "75"
+
+    def test_initial_loss_with_currency_and_commas(self):
+        assert _initial_loss_75_percent("Rs. 1,00,000") == "75000"
+
+    def test_initial_loss_decimal_rounds_to_rupees(self):
+        assert _initial_loss_75_percent("100.50") == "75"
+
+    def test_initial_loss_empty_stays_empty(self):
+        assert _initial_loss_75_percent("") == ""
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -2256,6 +2273,63 @@ class TestExcelReaderEnhancements:
 
             # mobile_no should be found via "mobile"
             assert claim.mobile_no == "9876543210", "Fallback label for mobile failed!"
+        finally:
+            os.remove(excel_path)
+
+    def test_initial_loss_from_excel_is_reduced_to_75_percent(self):
+        openpyxl = pytest.importorskip("openpyxl")
+        from app.data.excel_reader import read_excel
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Sheet1"
+        ws.cell(row=1, column=1, value="initial loss assessment")
+        ws.cell(row=1, column=2, value=100)
+        ws.cell(row=2, column=1, value="net payable")
+        ws.cell(row=2, column=2, value=100)
+
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+            excel_path = tmp.name
+        wb.save(excel_path)
+
+        try:
+            config_dir = os.path.join(PROJECT_ROOT, "app", "config")
+            claim = read_excel(excel_path, config_dir)
+
+            assert claim.initial_loss_amount == "75"
+            initial_loss_row = [
+                row for row in claim.all_fields_for_preview()
+                if row[0].startswith("Initial Loss")
+            ][0]
+            assert initial_loss_row[1] == "75"
+        finally:
+            os.remove(excel_path)
+
+    def test_surveyor_observation_uses_fixed_ok_not_excel_value(self):
+        openpyxl = pytest.importorskip("openpyxl")
+        from app.data.excel_reader import read_excel
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Sheet1"
+        ws.cell(row=1, column=1, value="surveyor observation")
+        ws.cell(row=2, column=1, value="This Excel text should be ignored")
+
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+            excel_path = tmp.name
+        wb.save(excel_path)
+
+        try:
+            config_dir = os.path.join(PROJECT_ROOT, "app", "config")
+            claim = read_excel(excel_path, config_dir)
+
+            assert claim.surveyor_observation == "ok"
+            observation_row = [
+                row for row in claim.all_fields_for_preview()
+                if row[0] == "Observation"
+            ][0]
+            assert observation_row[1] == "ok"
+            assert observation_row[3] == "Fixed Value"
         finally:
             os.remove(excel_path)
 
