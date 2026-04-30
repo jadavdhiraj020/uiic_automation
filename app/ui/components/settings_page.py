@@ -15,6 +15,16 @@ from app.utils import (
 )
 from app.ui.components.widgets import TagDelegate, ChipLineEdit, search_row as _search_row
 
+class SafeComboBox(QComboBox):
+    """Dropdown that ignores mouse wheel (prevents accidental changes while scrolling)."""
+    def wheelEvent(self, event):
+        event.ignore() # Pass to parent scroll area
+
+class SafeSpinBox(QSpinBox):
+    """Spinbox that ignores mouse wheel."""
+    def wheelEvent(self, event):
+        event.ignore()
+
 class SettingsPage(QWidget):
     def __init__(self, parent=None, append_log_cb=None):
         super().__init__(parent)
@@ -222,7 +232,7 @@ class SettingsPage(QWidget):
             self.mapping_table.setItem(i, 1, QTableWidgetItem(" | ".join([str(l) for l in labels if l])))
             
             # Sheet Dropdown
-            sheet_combo = QComboBox()
+            sheet_combo = SafeComboBox()
             sheet_combo.addItems(["ALL", "Sheet1", "Sheet2", "Sheet3", "Sheet4", "Sheet5", "Sheet6", "Sheet7", "Sheet8", "Sheet9", "Sheet10"])
             sheet_combo.setStyleSheet("""
                 QComboBox { padding: 5px; border: 1px solid #CBD5E1; border-radius: 4px; background: white; }
@@ -238,7 +248,7 @@ class SettingsPage(QWidget):
             self.mapping_table.setCellWidget(i, 2, sheet_combo)
 
             # Col Offset SpinBox
-            offset_spin = QSpinBox()
+            offset_spin = SafeSpinBox()
             offset_spin.setRange(0, 100) # Prevent negative values as requested
             offset_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
             offset_spin.setStyleSheet("QSpinBox { padding: 5px; border: 1px solid #CBD5E1; border-radius: 4px; background: white; }")

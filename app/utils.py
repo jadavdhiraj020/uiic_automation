@@ -145,7 +145,14 @@ def load_field_mapping() -> dict[str, Any]:
     base = read_json_file(paths["default"]) or {}
     user = read_json_file(paths["user"]) or {}
     merged = {}
-    all_keys = set(base) | set(user)
+    
+    # Maintain the precise order from the base config file
+    all_keys = list(base.keys())
+    # Append any custom keys the user might have added that aren't in base
+    for k in user.keys():
+        if k not in base:
+            all_keys.append(k)
+            
     for key in all_keys:
         b = base.get(key)
         u = user.get(key)

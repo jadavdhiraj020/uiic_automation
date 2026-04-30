@@ -2,7 +2,12 @@
   "_comment": "field_mapping.json \u00e2\u20ac\u201d Maps ClaimData fields to Excel labels. The reader scans the entire sheet for the label text, then reads the first non-empty value to its RIGHT. col_offset is a hint (tried first) but the reader will scan rightward automatically if the hint is wrong \u00e2\u20ac\u201d so this works with ANY Excel layout.",
   "claim_no": {
     "sheet": "ALL",
-    "search_label": ["Claim no","Claim Number","claim_number", "claim_no"],
+    "search_label": [
+      "Claim no",
+      "Claim Number",
+      "claim_number",
+      "claim_no"
+    ],
     "row_offset": 0,
     "col_offset": 1
   },
@@ -14,17 +19,13 @@
   },
   "place_of_survey": {
     "sheet": "ALL",
-    "search_label": ["Place of survey", "address"],
+    "search_label": [
+      "Place of survey",
+      "address"
+    ],
     "row_offset": 0,
     "col_offset": 4,
     "allow_text_values": true
-  },
-  "surveyor_observation": {
-    "sheet": "ALL",
-    "search_label": ["surveyor observation", "OBERVATIONS/COMMENTS"],
-    "row_offset": 1,
-    "col_offset": 0,
-    "fallback_value": "Ok"
   },
   "mobile_no": {
     "sheet": "Sheet1",
@@ -48,33 +49,13 @@
   },
   "initial_loss_amount": {
     "sheet": "ALL",
-    "search_label": ["initial loss assessment", "intial losss", "intial loss"],
+    "search_label": [
+      "initial loss assessment",
+      "intial losss",
+      "intial loss"
+    ],
     "row_offset": 0,
     "col_offset": 1
-  },
-  "compulsory_excess": {
-    "sheet": "Sheet1",
-    "search_label": ["Coumpulsary excess", "excess clause", "Less Compulsory Excess"],
-    "row_offset": 0,
-    "col_offset": 1
-  },
-  "voluntary_excess": {
-    "sheet": "Sheet1",
-    "search_label": ["voluntry excess"],
-    "row_offset": 0,
-    "col_offset": 5
-  },
-  "imposed_excess": {
-    "sheet": "Sheet1",
-    "search_label": ["Imposed Excess", "imposed excess", "Less Imposed Excess"],
-    "row_offset": 0,
-    "col_offset": 5
-  },
-  "salvage_value": {
-    "sheet": "Sheet1",
-    "search_label": ["LESS SALVAGE VALUE","Less Salvage Value","salvage value","Salvage_value"],
-    "row_offset": 0,
-    "col_offset": 5
   },
   "parts_age_dep_excl_gst": {
     "sheet": "Sheet1",
@@ -115,43 +96,69 @@
   },
   "towing_charges": {
     "sheet": "Sheet1",
-    "search_label": ["TOWING CHARGE", "TOWING CHARGES"],
+    "search_label": [
+      "TOWING CHARGE",
+      "TOWING CHARGES"
+    ],
     "row_offset": 0,
     "col_offset": 4
   },
-  "professional_fee": {
-    "sheet": "Sheet5",
-    "search_label": ["professional_fee", "professional fee", "SURVEY FEE", "SURVEY FEES"],
+  "voluntary_excess": {
+    "sheet": "Sheet1",
+    "search_label": [
+      "voluntry excess"
+    ],
     "row_offset": 0,
     "col_offset": 5
   },
-  "traveling_expenses": {
-    "sheet": "Sheet5",
-    "search_label": ["traveling_expenses", "conveyance", "CONVEYANCE CHARGE", "CONVEYANCE CHARGES"],
+  "compulsory_excess": {
+    "sheet": "Sheet1",
+    "search_label": [
+      "Coumpulsary excess",
+      "excess clause",
+      "Less Compulsory Excess"
+    ],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "imposed_excess": {
+    "sheet": "Sheet1",
+    "search_label": [
+      "Imposed Excess",
+      "imposed excess",
+      "Less Imposed Excess"
+    ],
     "row_offset": 0,
     "col_offset": 5
   },
-  "photo_charges": {
-    "sheet": "Sheet5",
-    "search_label": ["photocharges", "PHOTOGRAPHS", "PHOTO charge", "photo charges"],
-    "row_offset": 0,
-    "col_offset": 5
-  },
-  "daily_allowance": {
-    "sheet": "Sheet5",
-    "search_label": ["DAILY_ALLOWANCE", "daily allowance", "DAILY allowances"],
+  "salvage_value": {
+    "sheet": "Sheet1",
+    "search_label": [
+      "LESS SALVAGE VALUE",
+      "Less Salvage Value",
+      "salvage value",
+      "Salvage_value"
+    ],
     "row_offset": 0,
     "col_offset": 5
   },
   "invoice_no": {
     "sheet": "Sheet5",
-    "search_label": ["invoice_no", "Invoice No", "Ref:"],
+    "search_label": [
+      "invoice_no",
+      "Invoice No",
+      "Ref:"
+    ],
     "row_offset": 0,
     "col_offset": 1
   },
   "invoice_date": {
     "sheet": "Sheet5",
-    "search_label": ["invoice_date", "invoice date", "Date:"],
+    "search_label": [
+      "invoice_date",
+      "invoice date",
+      "Date:"
+    ],
     "row_offset": 0,
     "col_offset": 1
   },
@@ -166,5 +173,58 @@
     "search_label": "Date:",
     "row_offset": 0,
     "col_offset": 1
+  },
+  "traveling_expenses": {
+    "sheet": "Sheet5",
+    "search_label": [
+      "traveling_expenses",
+      "conveyance",
+      "CONVEYANCE CHARGE",
+      "CONVEYANCE CHARGES"
+    ],
+    "row_offset": 0,
+    "col_offset": 5
+  },
+  "professional_fee": {
+    "sheet": "Sheet5",
+    "search_label": [
+      "professional_fee",
+      "professional fee",
+      "SURVEY FEE",
+      "SURVEY FEES"
+    ],
+    "row_offset": 0,
+    "col_offset": 5
+  },
+  "daily_allowance": {
+    "sheet": "Sheet5",
+    "search_label": [
+      "DAILY_ALLOWANCE",
+      "daily allowance",
+      "DAILY allowances"
+    ],
+    "row_offset": 0,
+    "col_offset": 5
+  },
+  "photo_charges": {
+    "sheet": "Sheet5",
+    "search_label": [
+      "photocharges",
+      "PHOTOGRAPHS",
+      "PHOTO charge",
+      "photo charges"
+    ],
+    "row_offset": 0,
+    "col_offset": 5
+  },
+  "surveyor_observation": {
+    "sheet": "ALL",
+    "search_label": [
+      "surveyor observation",
+      "OBERVATIONS/COMMENTS"
+    ],
+    "row_offset": 1,
+    "col_offset": 0,
+    "fallback_value": "Ok"
   }
 }
