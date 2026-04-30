@@ -64,6 +64,12 @@
     "row_offset": 0,
     "col_offset": 5
   },
+  "imposed_excess": {
+    "sheet": "Sheet1",
+    "search_label": ["Imposed Excess", "imposed excess", "Less Imposed Excess"],
+    "row_offset": 0,
+    "col_offset": 5
+  },
   "salvage_value": {
     "sheet": "Sheet1",
     "search_label": ["LESS SALVAGE VALUE","Less Salvage Value","salvage value","Salvage_value"],
