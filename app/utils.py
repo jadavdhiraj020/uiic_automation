@@ -17,6 +17,15 @@ from typing import Any, Optional
 APP_SLUG = "UIIC_Surveyor_Automation"
 
 
+def _get_portal_registry():
+    """Lazy import to avoid circular dependency (registry imports utils)."""
+    try:
+        from app.portals import registry
+        return registry
+    except ImportError:
+        return None
+
+
 def is_frozen() -> bool:
     return bool(getattr(sys, "frozen", False))
 
@@ -71,7 +80,16 @@ def settings_paths() -> dict[str, str]:
 
     - `default`: bundled default settings shipped with the app
     - `user`: writable user-specific settings (preferred at runtime)
+
+    Portal-aware: when a portal is active via the registry, paths resolve
+    to the portal-specific config directory automatically.
     """
+    reg = _get_portal_registry()
+    if reg is not None:
+        try:
+            return reg.portal_settings_paths()
+        except Exception:
+            pass
     return {
         "default": resource_path("app", "config", "settings.json"),
         "user": os.path.join(user_data_dir("config"), "settings.json"),
@@ -125,7 +143,15 @@ def field_mapping_paths() -> dict[str, str]:
 
     - `default`: bundled read-only mapping shipped with the app
     - `user`: writable user-specific mapping in AppData
+
+    Portal-aware: routes to portal-specific config when active.
     """
+    reg = _get_portal_registry()
+    if reg is not None:
+        try:
+            return reg.portal_field_mapping_paths()
+        except Exception:
+            pass
     return {
         "default": resource_path("app", "config", "field_mapping.json"),
         "user": os.path.join(user_data_dir("config"), "field_mapping.json"),
@@ -193,7 +219,15 @@ def doc_mapping_paths() -> dict[str, str]:
 
     - `default`: bundled read-only mapping shipped with the app
     - `user`: writable user-specific mapping in AppData
+
+    Portal-aware: routes to portal-specific config when active.
     """
+    reg = _get_portal_registry()
+    if reg is not None:
+        try:
+            return reg.portal_doc_mapping_paths()
+        except Exception:
+            pass
     return {
         "default": resource_path("app", "config", "doc_mapping.json"),
         "user": os.path.join(user_data_dir("config"), "doc_mapping.json"),

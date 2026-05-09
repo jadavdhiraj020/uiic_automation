@@ -1,0 +1,588 @@
+{
+  "_comment": "field_mapping.json — New India Assurance portal. Maps ClaimData fields to Excel labels. search_labels lists fallback labels tried in order. '_mandatory': true marks fields required for automation.",
+
+  "registered_owner_name": {
+    "sheet": "ALL",
+    "search_labels": ["Registered Owner Name", "Owner Name", "Name of Owner", "Insured Name", "NAME OF INSURED"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": true
+  },
+  "vehicle_registration_number": {
+    "sheet": "ALL",
+    "search_labels": ["Vehicle Registration Number", "Registration No", "Regn No", "Vehicle No"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "date_of_registration": {
+    "sheet": "ALL",
+    "search_labels": ["Date of Registration", "Regn Date", "Registration Date"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "engine_no": {
+    "sheet": "ALL",
+    "search_labels": ["Engine No", "Engine Number", "Eng No"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "chassis_no": {
+    "sheet": "ALL",
+    "search_labels": ["Chassis No", "Chassis Number", "Ch No"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "physically_verified": {
+    "sheet": "ALL",
+    "search_labels": ["Physically Verified", "Physical Verification"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_literal_values": true,
+    "fallback_value": "Yes",
+    "_mandatory": true
+  },
+  "vehicle_make": {
+    "sheet": "ALL",
+    "search_labels": ["Vehicle Make", "Make of Vehicle", "Make"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": true
+  },
+  "vehicle_model": {
+    "sheet": "ALL",
+    "search_labels": ["Model", "Vehicle Model", "Model of Vehicle"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": true
+  },
+  "type_of_body": {
+    "sheet": "ALL",
+    "search_labels": ["Type of Body", "Body Type"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": true
+  },
+  "class_of_vehicle": {
+    "sheet": "ALL",
+    "search_labels": ["Class of Vehicle", "Vehicle Class"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": true
+  },
+  "pre_accident_condition": {
+    "sheet": "ALL",
+    "search_labels": ["Pre-Accident Condition", "Pre Accident Condition", "Condition before Accident"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "fallback_value": "Good",
+    "_mandatory": true
+  },
+  "rto_name": {
+    "sheet": "ALL",
+    "search_labels": ["RTO Name", "RTO", "Registering Authority"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": true
+  },
+  "odometer_reading": {
+    "sheet": "ALL",
+    "search_labels": ["Odometer Reading", "Odometer", "KM Reading"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "vehicle_color": {
+    "sheet": "ALL",
+    "search_labels": ["Vehicle Color", "Colour", "Color of Vehicle", "Vehicle Colour"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": true
+  },
+  "vehicle_color_type": {
+    "sheet": "ALL",
+    "search_labels": ["Vehicle Color Type", "Color Type", "Colour Type"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "fallback_value": "Solid",
+    "_mandatory": true
+  },
+  "type_of_vehicle": {
+    "sheet": "ALL",
+    "search_labels": ["Type of Vehicle", "Vehicle Type"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": true
+  },
+  "type_of_fuel": {
+    "sheet": "ALL",
+    "search_labels": ["Type of Fuel", "Fuel Type", "Fuel"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": true
+  },
+  "vehicle_details_matching_policy": {
+    "sheet": "ALL",
+    "search_labels": ["Whether Vehicle Details are matching", "Vehicle Details matching", "Details matching with policy"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_literal_values": true,
+    "fallback_value": "Yes",
+    "_mandatory": true
+  },
+  "vehicle_details_mismatch_remarks": {
+    "sheet": "ALL",
+    "search_labels": ["Vehicle Details Mismatch Remarks", "Mismatch Remarks"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "cause_nature_of_accident": {
+    "sheet": "ALL",
+    "search_labels": ["Cause and Nature of Accident", "Nature of Accident", "Cause of Accident", "Nature of Loss"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": true
+  },
+  "vehicle_parked_during_accident": {
+    "sheet": "ALL",
+    "search_labels": ["Was the vehicle parked", "Vehicle parked during accident"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_literal_values": true,
+    "fallback_value": "No",
+    "_mandatory": true
+  },
+  "route_area_of_operation": {
+    "sheet": "ALL",
+    "search_labels": ["Route/Area of Operation", "Route", "Area of Operation"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "tax_paid_upto": {
+    "sheet": "ALL",
+    "search_labels": ["Tax Paid Upto", "Tax Paid Up to", "Tax Valid"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": false
+  },
+  "transfer_date": {
+    "sheet": "ALL",
+    "search_labels": ["Transfer Date", "Date of Transfer"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": false
+  },
+  "driver_relationship_with_insured": {
+    "sheet": "ALL",
+    "search_labels": ["Relationship of the driver", "Driver Relationship", "Relation with Insured"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "fallback_value": "Self",
+    "_mandatory": true
+  },
+  "license_type_of_driver": {
+    "sheet": "ALL",
+    "search_labels": ["License Type of Driver", "License Type", "Type of License", "DL Type"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": true
+  },
+  "dob_of_driver": {
+    "sheet": "ALL",
+    "search_labels": ["DOB of Driver", "Driver DOB", "Date of Birth of Driver", "Driver Date of Birth"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "driver_name": {
+    "sheet": "ALL",
+    "search_labels": ["Driver Name", "Name of Driver", "Name of the Driver"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": true
+  },
+  "age_of_driver": {
+    "sheet": "ALL",
+    "search_labels": ["Age of Driver", "Driver Age"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "is_license_valid": {
+    "sheet": "ALL",
+    "search_labels": ["Is the motor driving license valid", "License Valid", "DL Valid"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_literal_values": true,
+    "fallback_value": "Yes",
+    "_mandatory": true
+  },
+  "license_issuing_authority": {
+    "sheet": "ALL",
+    "search_labels": ["License Issuing Authority", "Issuing Authority", "DL Issuing Authority"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": true
+  },
+  "driver_license_number": {
+    "sheet": "ALL",
+    "search_labels": ["Driver Driving License Number", "Driving License Number", "DL Number", "DL No", "License No"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "driver_license_issue_date": {
+    "sheet": "ALL",
+    "search_labels": ["Driver Driving License Issue Date", "DL Issue Date", "License Issue Date"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "driver_license_expiry_date": {
+    "sheet": "ALL",
+    "search_labels": ["Driver Driving License Expiry Date", "DL Expiry Date", "License Expiry Date", "License Valid Till"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "badge_number": {
+    "sheet": "ALL",
+    "search_labels": ["Badge Number", "Badge No"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": false
+  },
+  "charged_us_motor_vehicle_act": {
+    "sheet": "ALL",
+    "search_labels": ["Charged U/S Motor Vehicle Act", "Charged under MV Act"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "charged_us_ipc": {
+    "sheet": "ALL",
+    "search_labels": ["Charged U/S IPC", "Charged under IPC"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "fir_number": {
+    "sheet": "ALL",
+    "search_labels": ["FIR Number", "FIR No", "F.I.R. No"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "fir_date": {
+    "sheet": "ALL",
+    "search_labels": ["FIR Date", "Date of FIR", "F.I.R. Date"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "police_station_name": {
+    "sheet": "ALL",
+    "search_labels": ["Police Station Name", "Police Station", "PS Name"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "name_of_informant": {
+    "sheet": "ALL",
+    "search_labels": ["Name of the Informant", "Informant Name"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "sections_of_law": {
+    "sheet": "ALL",
+    "search_labels": ["Sections of Law", "Section of Law"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "remarks": {
+    "sheet": "ALL",
+    "search_labels": ["Remarks", "Remark"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "bank_payment_to": {
+    "sheet": "ALL",
+    "search_labels": ["Provide bank details for payment to", "Payment to", "Bank details for"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": true
+  },
+  "ifsc_code": {
+    "sheet": "ALL",
+    "search_labels": ["IFSC Code", "IFSC", "IFS Code"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "bank_name": {
+    "sheet": "ALL",
+    "search_labels": ["Bank Name", "Name of Bank"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": true
+  },
+  "bank_branch_name": {
+    "sheet": "ALL",
+    "search_labels": ["Bank Branch Name", "Branch Name", "Branch"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": true
+  },
+  "bank_address": {
+    "sheet": "ALL",
+    "search_labels": ["Bank Address", "Branch Address"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": true
+  },
+  "account_number": {
+    "sheet": "ALL",
+    "search_labels": ["Account Number", "Account No", "A/C No", "Acct No"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "account_type": {
+    "sheet": "ALL",
+    "search_labels": ["Account Type", "A/C Type", "Type of Account"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "fallback_value": "Savings",
+    "_mandatory": true
+  },
+  "party_payment_method": {
+    "sheet": "ALL",
+    "search_labels": ["Party Payment Method", "Payment Method", "Mode of Payment"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "fallback_value": "NEFT",
+    "_mandatory": true
+  },
+  "approval_type": {
+    "sheet": "ALL",
+    "search_labels": ["Approval Type", "Type of Approval"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": true
+  },
+  "work_approval_date": {
+    "sheet": "ALL",
+    "search_labels": ["Work Approval Date", "Approval Date"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "work_approval_time": {
+    "sheet": "ALL",
+    "search_labels": ["Work Approval Time", "Approval Time"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "no_of_invoices": {
+    "sheet": "ALL",
+    "search_labels": ["No of invoices available", "Number of Invoices", "No. of Invoices"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "fallback_value": "1",
+    "_mandatory": true
+  },
+  "payment_invoice_in_name_of_nia": {
+    "sheet": "ALL",
+    "search_labels": ["Whether Payment invoice is in name of NIA", "Invoice in name of NIA"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_literal_values": true,
+    "fallback_value": "No",
+    "_mandatory": true
+  },
+  "is_gst_applicable": {
+    "sheet": "ALL",
+    "search_labels": ["Is GST Applicable", "GST Applicable"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_literal_values": true,
+    "fallback_value": "Yes",
+    "_mandatory": true
+  },
+  "vendor_invoice_date": {
+    "sheet": "ALL",
+    "search_labels": ["Vendor/Tax Invoice Date", "Tax Invoice Date", "Invoice Date"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "vendor_invoice_number": {
+    "sheet": "ALL",
+    "search_labels": ["Vendor/Tax Invoice Number", "Tax Invoice Number", "Invoice No", "Invoice Number"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "primary_assessment": {
+    "sheet": "ALL",
+    "search_labels": ["Primary Assessment", "Assessment Amount", "Net Payable", "Net Amount"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "is_supplementary_estimate": {
+    "sheet": "ALL",
+    "search_labels": ["Is there any supplementary estimate", "Supplementary Estimate", "Supplementary"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_literal_values": true,
+    "fallback_value": "No",
+    "_mandatory": true
+  },
+  "painting_work_details": {
+    "sheet": "ALL",
+    "search_labels": ["Painting work details", "Painting Details", "Painting Work"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": true
+  },
+  "re_inspection_required": {
+    "sheet": "ALL",
+    "search_labels": ["Whether Re-Inspection Required", "Re-Inspection Required", "Reinspection Required"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_literal_values": true,
+    "fallback_value": "No",
+    "_mandatory": true
+  },
+  "nil_depreciation_amount": {
+    "sheet": "ALL",
+    "search_labels": ["Nil Depreciation (Zero Dep) Amount", "Zero Dep Amount", "Nil Depreciation Amount"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "engine_protect_amount": {
+    "sheet": "ALL",
+    "search_labels": ["Engine Protect Extension Amount", "Engine Protect Amount", "Engine Protection"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "fallback_value": "0",
+    "_mandatory": true
+  },
+  "consumable_items_amount": {
+    "sheet": "ALL",
+    "search_labels": ["Consumable Items Amount", "Consumables Amount", "Consumable"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "fallback_value": "0",
+    "_mandatory": true
+  },
+  "key_protect_amount": {
+    "sheet": "ALL",
+    "search_labels": ["Key Protect Amount", "Key Protection Amount"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "fallback_value": "0",
+    "_mandatory": true
+  },
+  "net_salvage": {
+    "sheet": "ALL",
+    "search_labels": ["Net Salvage", "Salvage Value", "Salvage"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "fallback_value": "0",
+    "_mandatory": false
+  },
+  "net_salvage_invoice_map": {
+    "sheet": "ALL",
+    "search_labels": ["Net Salvage to map with which Invoice", "Salvage Invoice Mapping"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "fallback_value": "Invoice 1",
+    "_mandatory": true
+  },
+  "less_compulsory_excess": {
+    "sheet": "ALL",
+    "search_labels": ["Less Compulsory Excess", "Compulsory Excess", "Coumpulsary excess"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "fallback_value": "0",
+    "_mandatory": true
+  },
+  "less_voluntary_excess": {
+    "sheet": "ALL",
+    "search_labels": ["Less Voluntary Excess", "Voluntary Excess", "voluntry excess"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "fallback_value": "0",
+    "_mandatory": false
+  },
+  "less_imposed_excess": {
+    "sheet": "ALL",
+    "search_labels": ["Less Imposed Excess", "Imposed Excess"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "fallback_value": "0",
+    "_mandatory": false
+  },
+  "towing_additional_charges": {
+    "sheet": "ALL",
+    "search_labels": ["Towing / Additional Towing Charges", "Towing Charges", "Additional Towing"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "fallback_value": "0",
+    "_mandatory": false
+  },
+  "verification_checkbox": {
+    "sheet": "ALL",
+    "search_labels": ["Verification Checkbox", "Verification"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_literal_values": true,
+    "fallback_value": "Yes",
+    "_mandatory": true
+  }
+}

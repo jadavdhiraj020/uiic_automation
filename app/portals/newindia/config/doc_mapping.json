@@ -1,5 +1,5 @@
 {
-  "_comment": "Maps lowercase filename keywords to Document Type dropdown values on the UIIC portal. filename is matched using 'in' operator (substring match). Keys sorted longest-first for priority matching.",
+  "_comment": "doc_mapping.json — New India Assurance portal. Maps lowercase filename keywords to document categories. Structure mirrors UIIC's mapping but adapted for New India's document upload requirements.",
   "claim_documents_tab": {
     "Driving License": [
       "driving_license",
@@ -18,7 +18,7 @@
       "veh_front",
       "photo_front"
     ],
-    "Vehicle Photograph(Rear)": [
+    "Vehicle Photograph (Rear)": [
       "vehicle_photo_2",
       "veh_rear",
       "photo_rear"
@@ -33,21 +33,9 @@
       "veh_right",
       "photo_right"
     ],
-    "Road Permit for Commercial Vehicle": [
-      "road_permit",
-      "route_permit",
-      "permit"
-    ],
-    "Vehicle Fitness Certificate": [
-      "fitness_certificate",
-      "fitness"
-    ],
-    "FIR": [
+    "FIR Copy": [
       "fir",
       "police_report"
-    ],
-    "CSR and Certificate": [
-      "csr"
     ],
     "PAN Card": [
       "pan_card",
@@ -58,7 +46,7 @@
       "aadhar",
       "uid"
     ],
-    "Cancelled Cheque Or Bank Details": [
+    "Cancelled Cheque / Bank Details": [
       "cancel_check",
       "cancel_cheque",
       "cancelled_cheque",
@@ -71,36 +59,49 @@
       "claim_form",
       "claimform"
     ],
-    "Discharge or Satisfaction Voucher": [
+    "Satisfaction Voucher": [
       "discharge_voucher",
       "discharge",
       "satisfaction_voucher",
       "voucher"
     ],
-    "CKYC Form": [
+    "KYC Document": [
       "ckyc",
       "kyc_form",
       "kyc"
     ],
-    "Investigation Report 1": [
-      "investigation",
-      "inv_report"
+    "CSR Certificate": [
+      "csr"
+    ],
+    "Road Permit": [
+      "road_permit",
+      "route_permit",
+      "permit"
+    ],
+    "Fitness Certificate": [
+      "fitness_certificate",
+      "fitness"
+    ],
+    "Insurance Policy Copy": [
+      "policy_copy",
+      "policy",
+      "insurance_policy"
     ]
   },
   "expected_claim_docs": [
     "PAN Card",
     "Aadhaar Card",
-    "Cancelled Cheque Or Bank Details",
+    "Cancelled Cheque / Bank Details",
     "Driving License",
     "RC Book",
     "Vehicle Photograph (Front)",
-    "Vehicle Photograph(Rear)",
+    "Vehicle Photograph (Rear)",
     "Vehicle Photograph (Left)",
     "Vehicle Photograph (Right)",
     "Claim Form",
-    "CKYC Form",
-    "CSR and Certificate",
-    "Discharge or Satisfaction Voucher"
+    "KYC Document",
+    "CSR Certificate",
+    "Satisfaction Voucher"
   ],
   "other_slots": [
     "Other 1",

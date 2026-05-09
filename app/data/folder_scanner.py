@@ -42,14 +42,15 @@ def _join_export_path(folder_path: str, filename: str) -> str:
     return os.path.join(folder_path, filename)
 
 
-def get_doc_mapping_tuple() -> Tuple[Dict[str, List[str]], Dict[str, List[str]], List[str]]:
+def get_doc_mapping_tuple() -> Tuple[Dict[str, List[str]], Dict[str, List[str]], List[str], List[str]]:
     """Load doc_mapping.json from app settings and return tuple."""
     from app.utils import load_doc_mapping
     raw = load_doc_mapping()
     claim_map = raw.get("claim_documents_tab", {})
     assessment_map = raw.get("claim_assessment_tab", {})
     other_slots = raw.get("other_slots", ["Other 1", "Other 2", "Other 3"])
-    return claim_map, assessment_map, other_slots
+    expected_docs = raw.get("expected_claim_docs", [])
+    return claim_map, assessment_map, other_slots, expected_docs
 
 
 import re
@@ -92,6 +93,7 @@ class FolderScanResult:
         self.assessment_files: Dict[str, str] = {}
         self.unknown_files: List[str] = []
         self.skipped_files: List[Tuple[str, str]] = []
+        self.expected_docs: List[str] = []
 
     def summary_lines(self) -> List[str]:
         lines = []
@@ -231,7 +233,8 @@ def _extract_sheet_for_reinspection(full_path: str, folder_path: str, sheet_inde
 
 def scan_folder(folder_path: str) -> FolderScanResult:
     result = FolderScanResult()
-    claim_map, assessment_map, other_slots = get_doc_mapping_tuple()
+    claim_map, assessment_map, other_slots, expected_docs = get_doc_mapping_tuple()
+    result.expected_docs = expected_docs
 
     if not os.path.isdir(folder_path):
         logger.error("Folder not found: %s", folder_path)
@@ -406,7 +409,8 @@ def scan_folder(folder_path: str) -> FolderScanResult:
             result.skipped_files.append((other_path, "No 'Other' slots left"))
 
     # ── Fallback: Copy Invoice as Cancelled Cheque if missing ──────────────────
-    if "Cancelled Cheque Or Bank Details" not in result.claim_doc_files and "invoice" in result.assessment_files:
+    cancel_key = next((k for k in claim_map.keys() if "cancel" in k.lower() and ("cheque" in k.lower() or "check" in k.lower() or "bank" in k.lower())), None)
+    if cancel_key and cancel_key not in result.claim_doc_files and "invoice" in result.assessment_files:
         invoice_path = result.assessment_files["invoice"]
         ext = Path(invoice_path).suffix
         cancel_check_name = f"cancel_check_fallback{ext}"
@@ -416,7 +420,7 @@ def scan_folder(folder_path: str) -> FolderScanResult:
             if not os.path.exists(cancel_check_path):
                 import shutil
                 shutil.copy2(invoice_path, cancel_check_path)
-            result.claim_doc_files["Cancelled Cheque Or Bank Details"] = cancel_check_path
+            result.claim_doc_files[cancel_key] = cancel_check_path
             logger.info("Generated %s from invoice because cancelled cheque was missing", cancel_check_name)
         except Exception as e:
             logger.error("Failed to copy invoice to %s: %s", cancel_check_name, e)
@@ -427,22 +431,7 @@ def scan_folder(folder_path: str) -> FolderScanResult:
     return result
 
 
-# ── Expected mandatory portal documents ──────────────────────────────────────
-_EXPECTED_CLAIM_DOCS = [
-    "PAN Card",
-    "Aadhaar Card",
-    "Cancelled Cheque Or Bank Details",
-    "Driving License",
-    "RC Book",
-    "Vehicle Photograph (Front)",
-    "Vehicle Photograph(Rear)",
-    "Vehicle Photograph (Left)",
-    "Vehicle Photograph (Right)",
-    "Claim Form",
-    "CKYC Form",
-    "CSR and Certificate",
-    "Discharge or Satisfaction Voucher",
-]
+
 
 
 def _log_scan_summary(result: FolderScanResult, claim_map: Dict[str, str]) -> None:
@@ -484,7 +473,7 @@ def _log_scan_summary(result: FolderScanResult, claim_map: Dict[str, str]) -> No
 
     # ── Missing mandatory documents ───────────────────────────────────────────
     matched_types = set(result.claim_doc_files.keys())
-    missing = [d for d in _EXPECTED_CLAIM_DOCS if d not in matched_types]
+    missing = [d for d in result.expected_docs if d not in matched_types]
     if missing:
         lines.append("")
         lines.append("  ⚠️  Missing expected documents (not found in folder):")

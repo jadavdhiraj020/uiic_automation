@@ -1374,14 +1374,15 @@ class TestFolderScanner:
 
     def test_load_doc_mapping(self):
         from app.data.folder_scanner import get_doc_mapping_tuple
-        claim_map, assessment_map, other_slots = get_doc_mapping_tuple()
+        claim_map, assessment_map, other_slots, expected_docs = get_doc_mapping_tuple()
         assert isinstance(claim_map, dict)
         assert isinstance(assessment_map, dict)
         assert isinstance(other_slots, list)
+        assert isinstance(expected_docs, list)
 
     def test_doc_mapping_other_slots(self):
         from app.data.folder_scanner import get_doc_mapping_tuple
-        _, _, other_slots = get_doc_mapping_tuple()
+        _, _, other_slots, _ = get_doc_mapping_tuple()
         assert len(other_slots) >= 3, "Need at least 3 Other slots"
 
 
@@ -3360,6 +3361,7 @@ def test_process_folder_success_with_excel(monkeypatch, tmp_path):
         assessment_files={},
         skipped_files=[],
         unknown_files=[],
+        expected_docs=["PAN Card"],
     )
 
     fake_claim = SimpleNamespace(
@@ -3389,6 +3391,7 @@ def test_process_folder_without_excel(monkeypatch, tmp_path):
         assessment_files={},
         skipped_files=[],
         unknown_files=[],
+        expected_docs=[],
     )
 
     monkeypatch.setattr("app.data.folder_scanner.scan_folder", lambda _folder: fake_scan)
@@ -3493,7 +3496,7 @@ async def test_get_active_page_falls_back_to_new_worklist_page(monkeypatch):
     new_worklist_page = _FakePageForPortal("https://portal.uiic.in/surveyor/data/Surveyor.html#/Worklist", login_visible=False)
     context = _FakeContextForPortal(pages=[login_tab], new_pages=[new_worklist_page])
 
-    async def _not_login_form(_page):
+    async def _not_login_form(_page, portal_id="uiic"):
         return False
 
     monkeypatch.setattr("app.automation.engine._page_has_login_form", _not_login_form)

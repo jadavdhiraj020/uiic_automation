@@ -21,13 +21,21 @@ from PyQt6.QtWidgets import (
 from app.utils import (
     resource_path, load_settings, settings_paths, user_data_dir, ensure_dir,
 )
+from app.portals.registry import (
+    list_portals, set_active_portal, get_active_portal, get_active_portal_id,
+)
 
 from app.ui.worker import AutomationWorker
 from app.ui.components.home_page import HomePage
 from app.ui.components.progress_page import ProgressPage
 from app.ui.components.settings_page import SettingsPage
-
 CONFIG_DIR = resource_path("app", "config")
+
+# Set UIIC as default portal on startup (backward compatible)
+try:
+    set_active_portal("uiic")
+except Exception:
+    pass
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -108,6 +116,30 @@ class MainWindow(QMainWindow):
             lay.addWidget(b); self.btns.append(b)
 
         lay.addStretch()
+
+        # Portal selector dropdown
+        portal_frame = QFrame()
+        portal_frame.setStyleSheet("QFrame { background: transparent; }")
+        pl = QHBoxLayout(portal_frame); pl.setContentsMargins(0, 0, 0, 0); pl.setSpacing(6)
+        portal_label = QLabel("Portal:"); portal_label.setStyleSheet("color: #64748B; font-size: 8.5pt; font-weight: 600;")
+        self.portal_combo = QComboBox(); self.portal_combo.setObjectName("portalCombo")
+        self.portal_combo.setMinimumWidth(180); self.portal_combo.setFixedHeight(32)
+        self.portal_combo.setStyleSheet("""
+            QComboBox {
+                background: #FFFFFF; border: 2px solid #CBD5E1; border-radius: 6px;
+                padding: 4px 10px; color: #0F172A; font-weight: 700; font-size: 9pt;
+            }
+            QComboBox:hover { border-color: #4F46E5; }
+            QComboBox::drop-down { border: none; width: 24px; }
+            QComboBox::down-arrow { image: none; border: none; }
+        """)
+        for portal in list_portals():
+            self.portal_combo.addItem(portal.display_name, portal.portal_id)
+        self.portal_combo.currentIndexChanged.connect(self._on_portal_changed)
+        pl.addWidget(portal_label); pl.addWidget(self.portal_combo)
+        lay.addWidget(portal_frame)
+        lay.addSpacing(12)
+
         ver = QLabel("v3.0"); ver.setObjectName("appVersion"); lay.addWidget(ver)
         
         self.status_pill = QFrame(); self.status_pill.setObjectName("statusPill"); self.status_pill.setProperty("status", "ready")
@@ -135,6 +167,37 @@ class MainWindow(QMainWindow):
         for i, b in enumerate(self.btns):
             b.setProperty("active", i == idx); b.style().unpolish(b); b.style().polish(b)
 
+    def _on_portal_changed(self, index):
+        """Handle portal dropdown change — switch all config resolution."""
+        portal_id = self.portal_combo.itemData(index)
+        if portal_id is None:
+            return
+        try:
+            set_active_portal(portal_id)
+        except ValueError:
+            return
+
+        portal = get_active_portal()
+        self._append_log(f"🔄 Portal switched to: {portal.display_name}")
+
+        # Update window title to show active portal
+        self.setWindowTitle(f"Surveyor Automation — {portal.display_name}")
+
+        # Reload settings page to show portal-specific settings
+        self.settings_page._load_data()
+
+        # Clear any previously loaded claim data (it may not apply to the new portal)
+        self._claim = None
+        self._scan_result = None
+        self.home_page.inp_folder.setText("")
+        self.home_page.doc_status_label.setText("No folder selected.")
+        self.home_page.preview_table.setRowCount(0)
+        self.home_page.stat_fields.setText("—")
+        self.home_page.stat_docs.setText("—")
+        self.home_page.stat_missing.setText("—")
+        self.home_page.stat_status.setText("Ready")
+        self.home_page.validation_bar.setVisible(False)
+
     def _setup_animations(self):
         self._pulse_eff = QGraphicsOpacityEffect(self.status_dot)
         self.status_dot.setGraphicsEffect(self._pulse_eff)
@@ -157,7 +220,10 @@ class MainWindow(QMainWindow):
 
     def _scan_folder(self, folder):
         from app.ui.services.claim_folder_service import ClaimFolderService
-        service = ClaimFolderService(config_dir=CONFIG_DIR)
+        # Resolve config dir from active portal (backward compatible: falls back to app/config/)
+        portal = get_active_portal()
+        config_dir = portal.bundled_config_dir() if portal else CONFIG_DIR
+        service = ClaimFolderService(config_dir=config_dir)
         res = service.process_folder(folder)
         for line in res.log_lines: self._append_log(line)
         if res.success:
@@ -202,7 +268,8 @@ class MainWindow(QMainWindow):
         self.btn_start.setEnabled(False); self.btn_stop.setEnabled(True); self._switch_page(1)
         self.progress_page.set_progress(0); self.progress_page.set_step(0)
         self._set_status("running", "Running...")
-        self._worker = AutomationWorker(self._claim, s)
+        portal_id = get_active_portal_id() or "uiic"
+        self._worker = AutomationWorker(self._claim, s, portal_id=portal_id)
         self._thread = QThread(); self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.log_signal.connect(self._append_log)

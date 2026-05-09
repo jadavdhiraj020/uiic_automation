@@ -21,11 +21,15 @@ from playwright.async_api import BrowserContext, Page, async_playwright
 from app.automation.claim_assessment import fill_claim_assessment
 from app.automation.claim_documents import fill_claim_documents
 from app.automation.interim_report import fill_interim_report
-from app.automation.login_module import do_login
 from app.automation.navigation_module import WORKLIST_URL, navigate_to_claim
 from app.data.data_model import ClaimData
 
 from app.utils import load_settings, resource_path
+
+try:
+    from app.portals.registry import get_portal
+except ImportError:
+    get_portal = lambda _: None
 
 logger = logging.getLogger(__name__)
 CONFIG_DIR = resource_path("app", "config")
@@ -104,9 +108,10 @@ def _find_surveyor_page(pages: List[Page]) -> Optional[Page]:
     return None
 
 
-async def _page_has_login_form(page: Page) -> bool:
+async def _page_has_login_form(page: Page, portal_id: str = "uiic") -> bool:
     try:
-        return await page.locator("#login-username").first.is_visible(timeout=1500)
+        selector = "#userName" if portal_id == "newindia" else "#login-username"
+        return await page.locator(selector).first.is_visible(timeout=1500)
     except Exception:
         return False
 
@@ -116,6 +121,7 @@ async def _get_active_page(
     log_cb: Callable[[str], None],
     captured_pages: List[Page],
     stop_cb: Callable[[], bool],
+    portal_id: str = "uiic",
 ) -> Optional[Page]:
     """
     Acquire a usable authenticated page after login.
@@ -125,6 +131,15 @@ async def _get_active_page(
     we briefly look for it and then fall back to opening Worklist directly
     in the same authenticated browser context.
     """
+    if portal_id == "newindia":
+        # New India stays in the same browser window/tab after login
+        pages = _collect_alive_pages(context, captured_pages)
+        if pages:
+            page = pages[-1]
+            await page.bring_to_front()
+            return page
+        return None
+
     log_cb("Locating dashboard/worklist page...")
 
     for tick in range(6):
@@ -155,7 +170,7 @@ async def _get_active_page(
             await new_page.goto(WORKLIST_URL, wait_until="domcontentloaded", timeout=30000)
             await asyncio.sleep(2)
 
-            if await _page_has_login_form(new_page):
+            if await _page_has_login_form(new_page, portal_id):
                 log_cb("Login form is still visible after direct navigation; waiting for session to settle.")
                 await new_page.close()
                 await asyncio.sleep(1)
@@ -189,9 +204,11 @@ class AutomationEngine:
         self,
         log_cb: Callable[[str], None] = print,
         step_cb: Callable[[int, str], None] = None,
+        portal_id: str = "uiic",
     ):
         self.log_cb = log_cb
         self.step_cb = step_cb or (lambda i, s: None)
+        self.portal_id = portal_id
         self._stop_requested = False
 
     def request_stop(self):
@@ -265,9 +282,15 @@ class AutomationEngine:
 
             try:
                 t_start = time.time()
+
+                # Resolve portal display name
+                portal_info = get_portal(self.portal_id)
+                portal_display = portal_info.display_name if portal_info else "UIIC"
+
                 self.log_cb("")
                 self.log_cb("╔" + "═" * 48 + "╗")
-                self.log_cb("║  🚀 UIIC SURVEYOR AUTOMATION                   ║")
+                self.log_cb(f"║  🚀 SURVEYOR AUTOMATION                        ║")
+                self.log_cb(f"║  Portal: {portal_display:<38} ║")
                 self.log_cb("╠" + "═" * 48 + "╣")
                 self.log_cb(f"║  Claim:  {claim.claim_no:<38} ║")
                 self.log_cb(f"║  Type:   {claim_type:<38} ║")
@@ -280,6 +303,11 @@ class AutomationEngine:
                 self.log_cb("━" * 48)
                 self.log_cb("  📌 STEP 1/5 ─ Login to Portal")
                 self.log_cb("━" * 48)
+
+                if self.portal_id == "newindia":
+                    from app.portals.newindia.automation.login_module import do_login
+                else:
+                    from app.automation.login_module import do_login
 
                 success = await do_login(
                     page,
@@ -296,7 +324,7 @@ class AutomationEngine:
                 if self._check_stop():
                     return AutomationRunResult(False, "Automation stopped by user.")
 
-                page = await _get_active_page(context, self.log_cb, captured_pages, self._check_stop)
+                page = await _get_active_page(context, self.log_cb, captured_pages, self._check_stop, portal_id=self.portal_id)
                 if page is None:
                     message = "Automation stopped by user." if self._check_stop() else "Could not find an authenticated Worklist page."
                     return AutomationRunResult(False, message)
@@ -310,19 +338,21 @@ class AutomationEngine:
                 if self._check_stop():
                     return AutomationRunResult(False, "Automation stopped by user.")
 
-                t1 = time.time() - t_start
-                self.log_cb(f"  ⏱️  Login completed in {t1:.1f}s")
-                self.log_cb("")
-
                 self.step_cb(1, steps[1])
                 self.log_cb("━" * 48)
                 self.log_cb(f"  🔎 STEP 2/5 ─ Navigate to Claim")
                 self.log_cb(f"  Claim No: {claim.claim_no}")
                 self.log_cb("━" * 48)
 
-                claim_page = await navigate_to_claim(page, claim.claim_no, claim_type, log_cb=self.log_cb)
+                if self.portal_id == "newindia":
+                    from app.portals.newindia.automation.navigation_module import navigate_to_claim
+                    claim_page = await navigate_to_claim(page, claim.claim_no, claim_type, log_cb=self.log_cb, stop_cb=self._check_stop)
+                else:
+                    from app.automation.navigation_module import navigate_to_claim
+                    claim_page = await navigate_to_claim(page, claim.claim_no, claim_type, log_cb=self.log_cb)
+
                 if claim_page is None:
-                    return AutomationRunResult(False, f"Claim '{claim.claim_no}' was not found in Worklist.")
+                    return AutomationRunResult(False, f"Claim '{claim.claim_no}' was not found in Worklist or navigation failed.")
                 # Switch to the claim details page (may be a new tab)
                 page = claim_page
                 self.log_cb(f"📌 Working on page: {page.url}")
@@ -330,6 +360,17 @@ class AutomationEngine:
                     return AutomationRunResult(False, "Automation stopped by user.")
 
                 await asyncio.sleep(1.5)
+
+                # --- NEW INDIA PORTAL HALT AFTER PHASE 2 (Claim Open) ---
+                if self.portal_id == "newindia":
+                    self.log_cb("╔" + "═" * 48 + "╗")
+                    self.log_cb("║  🚧 AUTOMATION PAUSED (PHASE 2)                ║")
+                    self.log_cb("╠" + "═" * 48 + "╣")
+                    self.log_cb("║  New India Phase 2 is complete.                ║")
+                    self.log_cb("║  Navigation and Claim Search finished.         ║")
+                    self.log_cb("╚" + "═" * 48 + "╝")
+                    await self._wait_for_manual_review(browser)
+                    return AutomationRunResult(True, "New India Navigation Phase 2 complete. Session open.")
 
                 self.log_cb("")
                 self.step_cb(2, steps[2])

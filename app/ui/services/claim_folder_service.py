@@ -24,7 +24,7 @@ class ClaimFolderService:
 
     def process_folder(self, folder: str) -> ClaimFolderProcessResult:
         from app.data.excel_reader import read_excel
-        from app.data.folder_scanner import _EXPECTED_CLAIM_DOCS, scan_folder
+        from app.data.folder_scanner import scan_folder
 
         logs: List[str] = [f"📁 Scanning folder: {folder}"]
         try:
@@ -46,7 +46,7 @@ class ClaimFolderService:
                     logs.append(f"  ✅ [{doc_type}] → {Path(fpath).name}")
 
             matched_types = set(claim_docs.keys())
-            missing_docs = [d for d in _EXPECTED_CLAIM_DOCS if d not in matched_types]
+            missing_docs = [d for d in scan_result.expected_docs if d not in matched_types]
             if missing_docs:
                 logs.append("⚠️  Missing expected documents:")
                 for doc in missing_docs:

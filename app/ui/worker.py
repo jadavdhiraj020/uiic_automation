@@ -6,10 +6,11 @@ class AutomationWorker(QObject):
     step_signal = pyqtSignal(int, str)
     done_signal = pyqtSignal(bool, str)
 
-    def __init__(self, claim, settings_override):
+    def __init__(self, claim, settings_override, portal_id: str = "uiic"):
         super().__init__()
         self.claim             = claim
         self.settings_override = settings_override
+        self.portal_id         = portal_id
         self._engine           = None
 
     def run(self):
@@ -17,8 +18,9 @@ class AutomationWorker(QObject):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         self._engine = AutomationEngine(
-            log_cb  = lambda msg: self.log_signal.emit(msg),
-            step_cb = lambda i, s: self.step_signal.emit(i, s),
+            log_cb    = lambda msg: self.log_signal.emit(msg),
+            step_cb   = lambda i, s: self.step_signal.emit(i, s),
+            portal_id = self.portal_id,
         )
         try:
             result = loop.run_until_complete(

@@ -7,9 +7,24 @@ STABILITY POLICY (2026-04-18):
   - String fields default to "" (empty = not filled = portal skips gracefully).
   - REMOVED dangerous defaults: type_of_settlement, compulsory_excess, time_hh/mm
     These had hardcoded "guesses" that could fill wrong values on real claims.
+
+MULTI-PORTAL SUPPORT (2026-05-09):
+  - ClaimData now holds fields for ALL supported portals.
+  - validate() and all_fields_for_preview() are portal-aware via active portal registry.
+  - UIIC fields are unchanged — 100% backward compatible.
+  - New India fields are additive (new attributes with empty defaults).
 """
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
+
+
+def _get_active_portal_id() -> Optional[str]:
+    """Lazy import to avoid circular dependency."""
+    try:
+        from app.portals.registry import get_active_portal_id
+        return get_active_portal_id()
+    except ImportError:
+        return None
 
 
 @dataclass
@@ -75,13 +90,118 @@ class ClaimData:
     claim_doc_files: Dict[str, str] = field(default_factory=dict)
     assessment_files: Dict[str, str] = field(default_factory=dict)
 
+    # ══════════════════════════════════════════════════════════════════════════
+    # NEW INDIA ASSURANCE — Additional Fields
+    # These are only populated when the New India portal is active.
+    # They have no effect on UIIC workflow.
+    # ══════════════════════════════════════════════════════════════════════════
+
+    # ── Vehicle Details ───────────────────────────────────────────────────────
+    registered_owner_name: str = ""
+    vehicle_registration_number: str = ""
+    date_of_registration: str = ""
+    engine_no: str = ""
+    chassis_no: str = ""
+    physically_verified: str = ""
+    vehicle_make: str = ""
+    vehicle_model: str = ""
+    type_of_body: str = ""
+    class_of_vehicle: str = ""
+    pre_accident_condition: str = ""
+    rto_name: str = ""
+    odometer_reading: str = "0"
+    vehicle_color: str = ""
+    vehicle_color_type: str = ""
+    type_of_vehicle: str = ""
+    type_of_fuel: str = ""
+    vehicle_details_matching_policy: str = ""
+    vehicle_details_mismatch_remarks: str = ""  # Optional
+
+    # ── Accident Details ──────────────────────────────────────────────────────
+    cause_nature_of_accident: str = ""
+    vehicle_parked_during_accident: str = ""
+    route_area_of_operation: str = ""    # Optional
+    tax_paid_upto: str = ""              # Optional
+    transfer_date: str = ""              # Optional
+
+    # ── Driver Details ────────────────────────────────────────────────────────
+    driver_relationship_with_insured: str = ""
+    license_type_of_driver: str = ""
+    dob_of_driver: str = ""
+    driver_name: str = ""
+    age_of_driver: str = ""
+    is_license_valid: str = ""
+    license_issuing_authority: str = ""
+    driver_license_number: str = ""
+    driver_license_issue_date: str = ""
+    driver_license_expiry_date: str = ""
+    badge_number: str = ""               # Optional
+    charged_us_motor_vehicle_act: str = ""  # Optional
+    charged_us_ipc: str = ""             # Optional
+
+    # ── FIR Details ───────────────────────────────────────────────────────────
+    fir_number: str = ""
+    fir_date: str = ""
+    police_station_name: str = ""        # Optional
+    name_of_informant: str = ""          # Optional
+    sections_of_law: str = ""            # Optional
+    remarks: str = ""                    # Optional
+
+    # ── Bank Details ──────────────────────────────────────────────────────────
+    bank_payment_to: str = ""
+    ifsc_code: str = ""
+    bank_name: str = ""
+    bank_branch_name: str = ""
+    bank_address: str = ""
+    account_number: str = ""
+    account_type: str = ""
+    party_payment_method: str = ""
+
+    # ── Assessment & Invoice (NIA-specific) ───────────────────────────────────
+    approval_type: str = ""
+    work_approval_date: str = ""
+    work_approval_time: str = ""
+    no_of_invoices: str = ""
+    payment_invoice_in_name_of_nia: str = ""
+    is_gst_applicable: str = ""
+    vendor_invoice_date: str = ""
+    vendor_invoice_number: str = ""
+    primary_assessment: str = ""
+    is_supplementary_estimate: str = ""
+    painting_work_details: str = ""
+    re_inspection_required: str = ""
+
+    # ── Add-on Covers & Deductions (NIA) ──────────────────────────────────────
+    nil_depreciation_amount: str = "0"
+    engine_protect_amount: str = "0"
+    consumable_items_amount: str = "0"
+    key_protect_amount: str = "0"
+    net_salvage: str = "0"               # Optional
+    net_salvage_invoice_map: str = ""
+    less_compulsory_excess: str = "0"
+    less_voluntary_excess: str = "0"     # Optional
+    less_imposed_excess: str = "0"       # Optional
+    towing_additional_charges: str = "0" # Optional
+    verification_checkbox: str = ""
+
     def validate(self) -> Tuple[List[str], List[str]]:
         """
         Validate the claim data before automation starts.
         Returns (errors, warnings).
           errors   — critical missing values, automation should NOT start
           warnings — non-critical missing values, automation can proceed
+
+        Portal-aware: returns different validation rules based on active portal.
         """
+        portal_id = _get_active_portal_id()
+
+        if portal_id == "newindia":
+            return self._validate_newindia()
+        else:
+            return self._validate_uiic()
+
+    def _validate_uiic(self) -> Tuple[List[str], List[str]]:
+        """Original UIIC validation — completely unchanged."""
         errors, warnings = [], []
 
         # ── Critical from Excel (automation cannot proceed without these) ──────
@@ -117,8 +237,87 @@ class ClaimData:
 
         return errors, warnings
 
+    def _validate_newindia(self) -> Tuple[List[str], List[str]]:
+        """New India validation — driven by mandatory field list."""
+        errors, warnings = [], []
+
+        # ── Mandatory fields — automation cannot proceed without these ─────────
+        mandatory_checks = [
+            ("registered_owner_name",          "Registered Owner Name"),
+            ("vehicle_registration_number",    "Vehicle Registration Number"),
+            ("date_of_registration",           "Date of Registration"),
+            ("engine_no",                      "Engine No"),
+            ("chassis_no",                     "Chassis No"),
+            ("vehicle_make",                   "Vehicle Make"),
+            ("vehicle_model",                  "Model"),
+            ("type_of_body",                   "Type of Body"),
+            ("class_of_vehicle",               "Class of Vehicle"),
+            ("rto_name",                       "RTO Name"),
+            ("odometer_reading",               "Odometer Reading"),
+            ("vehicle_color",                  "Vehicle Color"),
+            ("type_of_vehicle",                "Type of Vehicle"),
+            ("type_of_fuel",                   "Type of Fuel"),
+            ("cause_nature_of_accident",       "Cause/Nature of Accident"),
+            ("driver_name",                    "Driver Name"),
+            ("dob_of_driver",                  "DOB of Driver"),
+            ("age_of_driver",                  "Age of Driver"),
+            ("driver_license_number",          "Driver License Number"),
+            ("driver_license_issue_date",      "Driver License Issue Date"),
+            ("driver_license_expiry_date",     "Driver License Expiry Date"),
+            ("fir_number",                     "FIR Number"),
+            ("fir_date",                       "FIR Date"),
+            ("ifsc_code",                      "IFSC Code"),
+            ("bank_name",                      "Bank Name"),
+            ("account_number",                 "Account Number"),
+            ("vendor_invoice_date",            "Vendor/Tax Invoice Date"),
+            ("vendor_invoice_number",          "Vendor/Tax Invoice Number"),
+            ("primary_assessment",             "Primary Assessment"),
+        ]
+
+        for attr, label in mandatory_checks:
+            val = getattr(self, attr, "")
+            if not val or str(val).strip() in ("", "0"):
+                # "0" is valid for amounts but NOT for text fields like names
+                if attr in ("odometer_reading", "primary_assessment"):
+                    if not val or str(val).strip() == "":
+                        errors.append(f"{label} is missing")
+                else:
+                    errors.append(f"{label} is missing")
+
+        # ── Warnings — optional fields that are nice to have ──────────────────
+        optional_checks = [
+            ("vehicle_details_mismatch_remarks", "Vehicle Details Mismatch Remarks"),
+            ("route_area_of_operation",          "Route/Area of Operation"),
+            ("tax_paid_upto",                    "Tax Paid Upto"),
+            ("transfer_date",                    "Transfer Date"),
+            ("badge_number",                     "Badge Number"),
+            ("police_station_name",              "Police Station Name"),
+            ("name_of_informant",                "Name of Informant"),
+            ("net_salvage",                      "Net Salvage"),
+            ("less_voluntary_excess",            "Voluntary Excess"),
+            ("less_imposed_excess",              "Imposed Excess"),
+            ("towing_additional_charges",        "Towing/Additional Charges"),
+        ]
+
+        for attr, label in optional_checks:
+            val = getattr(self, attr, "")
+            if not val or str(val).strip() in ("", "0"):
+                warnings.append(f"{label} not found — optional")
+
+        if not self.claim_doc_files:
+            warnings.append("No claim documents found in folder")
+
+        return errors, warnings
+
     def summary(self) -> str:
         """Human-readable one-liner for UI preview."""
+        portal_id = _get_active_portal_id()
+        if portal_id == "newindia":
+            return (
+                f"Owner: {self.registered_owner_name or 'N/A'} | "
+                f"Vehicle: {self.vehicle_registration_number or '—'} | "
+                f"Assessment: ₹{self.primary_assessment or '—'}"
+            )
         return (
             f"Claim: {self.claim_no or 'N/A'} | "
             f"Survey: {self.date_of_survey or '—'} | "
@@ -130,7 +329,18 @@ class ClaimData:
         """
         Returns list of (label, value, is_critical, source_coord) for UI preview table.
         is_critical=True means field is required for automation success.
+
+        Portal-aware: returns different field sets based on active portal.
         """
+        portal_id = _get_active_portal_id()
+
+        if portal_id == "newindia":
+            return self._preview_newindia()
+        else:
+            return self._preview_uiic()
+
+    def _preview_uiic(self) -> List[Tuple[str, str, bool, str]]:
+        """Original UIIC preview — completely unchanged."""
         def _src(key: str) -> str:
             return self._excel_coords.get(key, "")
 
@@ -170,4 +380,99 @@ class ClaimData:
             ("Daily Allow. (₹)",      self.daily_allowance,       False, _src("daily_allowance")),
             ("Photo Charges (₹)",     self.photo_charges,         False, _src("photo_charges")),
             ("Observation",           self.surveyor_observation,  False, _src("surveyor_observation")),
+        ]
+
+    def _preview_newindia(self) -> List[Tuple[str, str, bool, str]]:
+        """New India preview — organized by form sections."""
+        def _src(key: str) -> str:
+            return self._excel_coords.get(key, "")
+
+        return [
+            # ── Vehicle Details ─────────────────────────────
+            ("Owner Name",            self.registered_owner_name,    True,  _src("registered_owner_name")),
+            ("Vehicle Reg No",        self.vehicle_registration_number, True, _src("vehicle_registration_number")),
+            ("Date of Registration",  self.date_of_registration,     True,  _src("date_of_registration")),
+            ("Engine No",             self.engine_no,                True,  _src("engine_no")),
+            ("Chassis No",            self.chassis_no,               True,  _src("chassis_no")),
+            ("Physically Verified",   self.physically_verified,      True,  _src("physically_verified")),
+            ("Vehicle Make",          self.vehicle_make,             True,  _src("vehicle_make")),
+            ("Model",                 self.vehicle_model,            True,  _src("vehicle_model")),
+            ("Type of Body",          self.type_of_body,             True,  _src("type_of_body")),
+            ("Class of Vehicle",      self.class_of_vehicle,         True,  _src("class_of_vehicle")),
+            ("Pre-Accident Cond.",    self.pre_accident_condition,   True,  _src("pre_accident_condition")),
+            ("RTO Name",              self.rto_name,                 True,  _src("rto_name")),
+            ("Odometer Reading",      self.odometer_reading,         True,  _src("odometer_reading")),
+            ("Vehicle Color",         self.vehicle_color,            True,  _src("vehicle_color")),
+            ("Color Type",            self.vehicle_color_type,       True,  _src("vehicle_color_type")),
+            ("Type of Vehicle",       self.type_of_vehicle,          True,  _src("type_of_vehicle")),
+            ("Type of Fuel",          self.type_of_fuel,             True,  _src("type_of_fuel")),
+            ("Details Match Policy",  self.vehicle_details_matching_policy, True, _src("vehicle_details_matching_policy")),
+            ("Mismatch Remarks",      self.vehicle_details_mismatch_remarks, False, _src("vehicle_details_mismatch_remarks")),
+
+            # ── Accident Details ────────────────────────────
+            ("Cause of Accident",     self.cause_nature_of_accident, True,  _src("cause_nature_of_accident")),
+            ("Vehicle Parked?",       self.vehicle_parked_during_accident, True, _src("vehicle_parked_during_accident")),
+            ("Route/Area",            self.route_area_of_operation,  False, _src("route_area_of_operation")),
+            ("Tax Paid Upto",         self.tax_paid_upto,            False, _src("tax_paid_upto")),
+            ("Transfer Date",         self.transfer_date,            False, _src("transfer_date")),
+
+            # ── Driver Details ──────────────────────────────
+            ("Driver Name",           self.driver_name,              True,  _src("driver_name")),
+            ("Driver DOB",            self.dob_of_driver,            True,  _src("dob_of_driver")),
+            ("Driver Age",            self.age_of_driver,            True,  _src("age_of_driver")),
+            ("Relation w/ Insured",   self.driver_relationship_with_insured, True, _src("driver_relationship_with_insured")),
+            ("License Type",          self.license_type_of_driver,   True,  _src("license_type_of_driver")),
+            ("License Valid?",        self.is_license_valid,         True,  _src("is_license_valid")),
+            ("License Authority",     self.license_issuing_authority, True, _src("license_issuing_authority")),
+            ("DL Number",             self.driver_license_number,    True,  _src("driver_license_number")),
+            ("DL Issue Date",         self.driver_license_issue_date, True, _src("driver_license_issue_date")),
+            ("DL Expiry Date",        self.driver_license_expiry_date, True, _src("driver_license_expiry_date")),
+            ("Badge Number",          self.badge_number,             False, _src("badge_number")),
+            ("Charged MV Act",        self.charged_us_motor_vehicle_act, False, _src("charged_us_motor_vehicle_act")),
+            ("Charged IPC",           self.charged_us_ipc,           False, _src("charged_us_ipc")),
+
+            # ── FIR Details ─────────────────────────────────
+            ("FIR Number",            self.fir_number,               True,  _src("fir_number")),
+            ("FIR Date",              self.fir_date,                 True,  _src("fir_date")),
+            ("Police Station",        self.police_station_name,      False, _src("police_station_name")),
+            ("Informant Name",        self.name_of_informant,        False, _src("name_of_informant")),
+            ("Sections of Law",       self.sections_of_law,          False, _src("sections_of_law")),
+            ("Remarks",               self.remarks,                  False, _src("remarks")),
+
+            # ── Bank Details ────────────────────────────────
+            ("Payment To",            self.bank_payment_to,          True,  _src("bank_payment_to")),
+            ("IFSC Code",             self.ifsc_code,                True,  _src("ifsc_code")),
+            ("Bank Name",             self.bank_name,                True,  _src("bank_name")),
+            ("Branch Name",           self.bank_branch_name,         True,  _src("bank_branch_name")),
+            ("Bank Address",          self.bank_address,             True,  _src("bank_address")),
+            ("Account Number",        self.account_number,           True,  _src("account_number")),
+            ("Account Type",          self.account_type,             True,  _src("account_type")),
+            ("Payment Method",        self.party_payment_method,     True,  _src("party_payment_method")),
+
+            # ── Invoice & Assessment ────────────────────────
+            ("Approval Type",         self.approval_type,            True,  _src("approval_type")),
+            ("Approval Date",         self.work_approval_date,       True,  _src("work_approval_date")),
+            ("Approval Time",         self.work_approval_time,       True,  _src("work_approval_time")),
+            ("No. of Invoices",       self.no_of_invoices,           True,  _src("no_of_invoices")),
+            ("Invoice in NIA Name?",  self.payment_invoice_in_name_of_nia, True, _src("payment_invoice_in_name_of_nia")),
+            ("GST Applicable?",       self.is_gst_applicable,        True,  _src("is_gst_applicable")),
+            ("Invoice Date",          self.vendor_invoice_date,      True,  _src("vendor_invoice_date")),
+            ("Invoice Number",        self.vendor_invoice_number,    True,  _src("vendor_invoice_number")),
+            ("Primary Assessment (₹)",self.primary_assessment,       True,  _src("primary_assessment")),
+            ("Supplementary Est.?",   self.is_supplementary_estimate, True, _src("is_supplementary_estimate")),
+            ("Painting Details",      self.painting_work_details,    True,  _src("painting_work_details")),
+            ("Re-Inspection Req?",    self.re_inspection_required,   True,  _src("re_inspection_required")),
+
+            # ── Add-on Covers & Deductions ──────────────────
+            ("Nil Dep Amount (₹)",    self.nil_depreciation_amount,  True,  _src("nil_depreciation_amount")),
+            ("Engine Protect (₹)",    self.engine_protect_amount,    True,  _src("engine_protect_amount")),
+            ("Consumables (₹)",       self.consumable_items_amount,  True,  _src("consumable_items_amount")),
+            ("Key Protect (₹)",       self.key_protect_amount,       True,  _src("key_protect_amount")),
+            ("Net Salvage (₹)",       self.net_salvage,              False, _src("net_salvage")),
+            ("Salvage Invoice Map",   self.net_salvage_invoice_map,  True,  _src("net_salvage_invoice_map")),
+            ("Compulsory Excess (₹)", self.less_compulsory_excess,   True,  _src("less_compulsory_excess")),
+            ("Voluntary Excess (₹)",  self.less_voluntary_excess,    False, _src("less_voluntary_excess")),
+            ("Imposed Excess (₹)",    self.less_imposed_excess,      False, _src("less_imposed_excess")),
+            ("Towing Charges (₹)",    self.towing_additional_charges, False, _src("towing_additional_charges")),
+            ("Verification",          self.verification_checkbox,    True,  _src("verification_checkbox")),
         ]

@@ -360,6 +360,27 @@ async def safe_radio(page, sel: str, label: str,
         return False
 
 
+async def safe_click(page, sel: str, log_cb: Callable = lambda _: None, label: str = "", timeout_ms: int = 5000, retries: int = 1) -> bool:
+    """Click an element safely with retries."""
+    for attempt in range(retries + 1):
+        try:
+            el = page.locator(sel).first
+            await el.wait_for(state="visible", timeout=timeout_ms)
+            await el.click()
+            if label:
+                log_cb(f"  ✅ [Clicked] {label}")
+            return True
+        except Exception as e:
+            if attempt < retries:
+                if label:
+                    log_cb(f"  🔄 {label}: retry {attempt+1} ({str(e)[:60]})")
+                await asyncio.sleep(0.5)
+            else:
+                if label:
+                    log_cb(f"  ⚠️  {label}: {str(e)[:100]}")
+    return False
+
+
 async def click_all_yes_radios(page, radio_names: list, log_cb: Callable) -> int:
     """
     JS-based click of all Yes (value='Y') radios by ng-model / name attribute.
