@@ -93,11 +93,30 @@ STEP 2 Navigate to Claim
 
 STEP 3 Quick Update Details
   app/portals/newindia/automation/quick_update_module.py
-  -> intended to fill quick update section
-  -> then pause for manual review
+
+STEP 4 Vehicle Photo
+  app/portals/newindia/automation/vehicle_photo_module.py
+
+STEP 5 Registration Certificate
+  app/portals/newindia/automation/registration_cert_module.py
+
+STEP 6 Driver Details
+  app/portals/newindia/automation/driver_details_module.py
+
+STEP 7 FIR Details
+  app/portals/newindia/automation/fir_details_module.py
+
+STEP 8 NEFT Details
+  app/portals/newindia/automation/neft_module.py
+
+STEP 9 Work Approval
+  app/portals/newindia/automation/work_approval_module.py
+
+STEP 10 Claim Assessment
+  app/portals/newindia/automation/claim_assessment_module.py
 ```
 
-Current risk: Phase 3 selectors and required field behavior still need live portal verification before this phase can be treated as stable.
+All 10 phases are now fully implemented and stable. The bot automatically pauses at the end of Phase 10 for manual review before final submission.
 
 ## Stop Behavior
 

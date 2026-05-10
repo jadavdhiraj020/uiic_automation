@@ -60,11 +60,12 @@ Do not treat `"0"` as missing for amount fields. Several helpers and tests exist
 ## New India Field Groups
 
 - Vehicle details
+- Registration Certificate (`reference_no`)
 - Accident details
 - Driver details
 - FIR details
-- Bank details
-- Assessment and invoice
+- Bank details (`bank_payment_to` - Single Source of Truth determined during extraction)
+- Assessment and invoice (`vendor_invoice_date`, `vendor_invoice_number` from PDF extraction)
 - Add-on covers and deductions
 
 These fields are additive and must not change UIIC behavior.

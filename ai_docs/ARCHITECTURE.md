@@ -93,6 +93,13 @@ If no portal is selected, registry path helpers fall back to legacy `app/config/
 - `app/portals/newindia/automation/login_module.py`
 - `app/portals/newindia/automation/navigation_module.py`
 - `app/portals/newindia/automation/quick_update_module.py`
+- `app/portals/newindia/automation/vehicle_photo_module.py`
+- `app/portals/newindia/automation/registration_cert_module.py`
+- `app/portals/newindia/automation/driver_details_module.py`
+- `app/portals/newindia/automation/fir_details_module.py`
+- `app/portals/newindia/automation/neft_module.py`
+- `app/portals/newindia/automation/work_approval_module.py`
+- `app/portals/newindia/automation/claim_assessment_module.py`
 - `app/portals/newindia/config/*`
 
 ## Orchestration Flow
@@ -122,8 +129,9 @@ User clicks Start Automation
 ## Implementation Conventions
 
 - Field values live on `ClaimData`, not in loose dictionaries during automation.
+- **Single Source of Truth (SSOT)**: Core logic/state decisions (like determining Cashless vs Non-Cashless based on cheque presence) happen *once* during the extraction phase (`claim_folder_service.py`), not scattered across automation modules.
 - Excel source coordinates are stored in `claim._excel_coords`.
-- Preview rows come from `ClaimData.all_fields_for_preview()`.
+- Preview rows come from `ClaimData.all_fields_for_preview()` or portal-specific methods.
 - User-facing extraction logs are stored in `claim._excel_logs`.
 - Portal config is JSON-driven: `settings.json`, `field_mapping.json`, `doc_mapping.json`.
 - UIIC selectors should be centralized in `app/automation/selectors.py`.

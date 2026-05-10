@@ -22,7 +22,9 @@ Claim folder path
   -> ClaimFolderService._extract_pdf_invoice_data()
        - parse invoice PDF using pdfplumber
        - OCR fallback if configured libraries exist
-       - override workshop invoice no/date when found
+       - populate BOTH UIIC (workshop) and New India (vendor) invoice fields
+  -> calculate Single Source of Truth (SSOT) state
+       - set `bank_payment_to` (Insured vs Dealer) based on cheque presence
   -> attach scan_result.claim_doc_files and assessment_files
   -> UI preview and validation
 ```
@@ -132,10 +134,17 @@ After Excel extraction, the service looks for assessment file key `invoice`. If 
 - Invoice number and date labels come from settings keys:
   - `pdf_invoice_no_labels`
   - `pdf_invoice_date_labels`
-- Successful extraction overrides:
-  - `claim.workshop_invoice_no`
-  - `claim.workshop_invoice_date`
+- Successful extraction assigns fields for ALL portals to guarantee independence:
+  - `claim.workshop_invoice_no` (UIIC)
+  - `claim.workshop_invoice_date` (UIIC)
+  - `claim.vendor_invoice_number` (New India)
+  - `claim.vendor_invoice_date` (New India)
   - source coordinates become `"PDF Source"`
+
+## State Hardening (Single Source of Truth)
+
+Some automation portals have mutually exclusive flows (e.g., NEFT inputs depend on whether payment is to the Insured or Dealer).
+Rather than calculating this inside the automation modules, the pipeline calculates this state *once* during extraction. For example, if `check` exists in `scan_result.claim_doc_files`, `claim.bank_payment_to = "Insured"`, else `"Dealer"`. This ensures the UI preview and the downstream automation modules always agree.
 
 ## Debugging Extraction
 

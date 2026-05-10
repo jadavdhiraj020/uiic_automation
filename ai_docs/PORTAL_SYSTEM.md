@@ -110,20 +110,17 @@ When changing shared helpers, run UIIC-oriented tests or at minimum reason throu
 
 ## New India Current State
 
-Implemented:
+Implemented and Stable:
 
 - Portal registry entry.
 - Portal-specific settings, field mapping, doc mapping.
 - Login module with manual CAPTCHA.
 - Navigation module through Worklist and edit icon.
-- Quick Update module draft.
+- Full Phase 3 to Phase 10 execution: Quick Update, Vehicle Photo, Registration Certificate, Driver Details, FIR Details, NEFT Details, Work Approval, and Claim Assessment.
+- Single Source of Truth architecture for cross-phase dependencies (e.g. Bank Payment To).
+- Unified PDF Invoice extraction parsing Vendor fields.
 - New India `ClaimData` fields, preview, validation.
+- End-of-run automated pause state for manual portal review.
 
-Incomplete or risky:
-
-- New India Phase 3 selectors and required-field behavior still need live portal verification.
-- Automation stops after Phase 3 by design.
-- Later New India form sections are not implemented.
-- New India document upload flow is not implemented.
-- New India selectors are not centralized in a selector registry yet.
-- Validation requires many mandatory fields, but actual Phase 3 uses only a smaller subset.
+Pending/Future:
+- The actual document upload module for New India is not yet implemented (currently bypasses file attachment).
