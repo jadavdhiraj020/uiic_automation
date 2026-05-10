@@ -42,10 +42,10 @@ def _join_export_path(folder_path: str, filename: str) -> str:
     return os.path.join(folder_path, filename)
 
 
-def get_doc_mapping_tuple() -> Tuple[Dict[str, List[str]], Dict[str, List[str]], List[str], List[str]]:
+def get_doc_mapping_tuple(portal_id: str = "uiic") -> Tuple[Dict[str, List[str]], Dict[str, List[str]], List[str], List[str]]:
     """Load doc_mapping.json from app settings and return tuple."""
     from app.utils import load_doc_mapping
-    raw = load_doc_mapping()
+    raw = load_doc_mapping(portal_id=portal_id)
     claim_map = raw.get("claim_documents_tab", {})
     assessment_map = raw.get("claim_assessment_tab", {})
     other_slots = raw.get("other_slots", ["Other 1", "Other 2", "Other 3"])
@@ -231,9 +231,10 @@ def _extract_sheet_for_reinspection(full_path: str, folder_path: str, sheet_inde
     return None
 
 
-def scan_folder(folder_path: str) -> FolderScanResult:
+def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
+    # 1. Load keywords from doc_mapping.json
     result = FolderScanResult()
-    claim_map, assessment_map, other_slots, expected_docs = get_doc_mapping_tuple()
+    claim_map, assessment_map, other_slots, expected_docs = get_doc_mapping_tuple(portal_id=portal_id)
     result.expected_docs = expected_docs
 
     if not os.path.isdir(folder_path):

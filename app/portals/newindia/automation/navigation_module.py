@@ -19,14 +19,14 @@ SEL_NAV_WORKLIST = "li#navlink-worklist a"
 SEL_FILTER_DROPDOWN = "select#searchType"
 SEL_CLAIM_INPUT = "input#filterWorklistClaimNo"
 SEL_FILTER_BTN = "button[data-ng-click*='filterClaims']"
-# The claim row button (usually an eye or edit icon). Let's assume an eye icon for now based on standard Angular grids
-SEL_CLAIM_VIEW_BTN = "a.view-icon, i.fa-eye, button[title='View']"
+# The claim row edit button based on the provided HTML
+SEL_CLAIM_EDIT_BTN = "a.mdlFire[data-ng-click*='nonMarutiClaimCheck'] svg.icon-tabler-edit"
 
 
 async def navigate_to_claim(
     page,
     claim_no: str,
-    claim_type: str,  # Kept for signature compatibility, unused for NIA Claim No search
+    settings: dict,
     log_cb: Callable[[str], None] = print,
     stop_cb: Callable[[], bool] = lambda: False,
 ) -> Optional:
@@ -66,10 +66,36 @@ async def navigate_to_claim(
     if stop_cb():
         return None
 
-    # 3. Enter the Claim Number
-    log_cb(f"  ✍️ Entering claim number: {claim_no}")
+    # 3. Enter the Claim Number (Dedicated Human-Typing for New India)
+    log_cb(f"  ✍️ Entering claim number: '{claim_no}'")
+    
+    # CRITICAL: Prevent typing an empty string which triggers the Angular Alert
+    if not claim_no or not claim_no.strip():
+        log_cb("  ❌ CRITICAL: Claim number is completely empty! Please check your Excel file or folder name.")
+        return None
+
     try:
-        await safe_fill(page, SEL_CLAIM_INPUT, claim_no, "Claim Number Input", log_cb=log_cb)
+        await asyncio.sleep(1) # Wait for Angular ng-if/ng-model to fully settle
+        
+        claim_input = page.locator(SEL_CLAIM_INPUT).first
+        await claim_input.wait_for(state="visible", timeout=5000)
+        
+        # 1. Click to ensure focus
+        await claim_input.click()
+        await asyncio.sleep(0.2)
+        
+        # 2. Clear field safely using JS to avoid Playwright click-interception issues
+        await claim_input.evaluate("node => node.value = ''")
+        await asyncio.sleep(0.2)
+        
+        # 3. Slowly type like a human
+        await claim_input.press_sequentially(claim_no, delay=150)
+        
+        # 4. Force Angular to register the keystrokes
+        await claim_input.evaluate("node => { node.dispatchEvent(new Event('input', {bubbles: true})); node.dispatchEvent(new Event('change', {bubbles: true})); }")
+        await asyncio.sleep(0.5)
+        
+        log_cb(f"  ✅ [Filled] Claim Number Input : '{claim_no}'")
     except Exception as exc:
         log_cb(f"  ❌ Failed to enter claim number: {exc}")
         return None
@@ -85,6 +111,18 @@ async def navigate_to_claim(
         log_cb("  ✅ Claim search executed.")
     except Exception as exc:
         log_cb(f"  ❌ Failed to click filter button: {exc}")
+        return None
+
+    # 5. Click the Edit icon
+    log_cb("  🖱️ Clicking 'Edit' icon to proceed to claim...")
+    try:
+        # Wait for the search result to render the edit button
+        await page.locator(SEL_CLAIM_EDIT_BTN).first.wait_for(state="visible", timeout=10000)
+        await safe_click(page, SEL_CLAIM_EDIT_BTN, log_cb=log_cb, label="Edit Claim Icon")
+        await asyncio.sleep(3) # Wait for claim details modal or page to load
+        log_cb("  ✅ Claim details opened.")
+    except Exception as exc:
+        log_cb(f"  ❌ Failed to click edit icon: {exc}")
         return None
 
     # Return the page so the engine knows navigation was successful

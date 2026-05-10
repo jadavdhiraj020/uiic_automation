@@ -18,13 +18,15 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 
-def _get_active_portal_id() -> Optional[str]:
+def _get_active_portal_id(override: Optional[str] = None) -> str:
     """Lazy import to avoid circular dependency."""
+    if override:
+        return override
     try:
         from app.portals.registry import get_active_portal_id
-        return get_active_portal_id()
+        return get_active_portal_id() or "uiic"
     except ImportError:
-        return None
+        return "uiic"
 
 
 @dataclass
@@ -76,6 +78,7 @@ class ClaimData:
     final_report_date: str = ""
 
     # ── Internal Metadata ─────────────────────────────────────────────────────
+    portal_id: str = "uiic"            # The portal this data was extracted for
     _excel_logs: List[str] = field(default_factory=list)
     _excel_coords: Dict[str, str] = field(default_factory=dict)
 
@@ -191,9 +194,9 @@ class ClaimData:
           errors   — critical missing values, automation should NOT start
           warnings — non-critical missing values, automation can proceed
 
-        Portal-aware: returns different validation rules based on active portal.
+        Portal-aware: returns different validation rules based on instance portal_id.
         """
-        portal_id = _get_active_portal_id()
+        portal_id = _get_active_portal_id(self.portal_id)
 
         if portal_id == "newindia":
             return self._validate_newindia()
@@ -243,6 +246,7 @@ class ClaimData:
 
         # ── Mandatory fields — automation cannot proceed without these ─────────
         mandatory_checks = [
+            ("claim_no",                       "Claim Number"),
             ("registered_owner_name",          "Registered Owner Name"),
             ("vehicle_registration_number",    "Vehicle Registration Number"),
             ("date_of_registration",           "Date of Registration"),
@@ -311,10 +315,11 @@ class ClaimData:
 
     def summary(self) -> str:
         """Human-readable one-liner for UI preview."""
-        portal_id = _get_active_portal_id()
+        portal_id = _get_active_portal_id(self.portal_id)
         if portal_id == "newindia":
             return (
-                f"Owner: {self.registered_owner_name or 'N/A'} | "
+                f"Claim: {self.claim_no or 'N/A'} | "
+                f"Owner: {self.registered_owner_name or '—'} | "
                 f"Vehicle: {self.vehicle_registration_number or '—'} | "
                 f"Assessment: ₹{self.primary_assessment or '—'}"
             )
@@ -330,9 +335,9 @@ class ClaimData:
         Returns list of (label, value, is_critical, source_coord) for UI preview table.
         is_critical=True means field is required for automation success.
 
-        Portal-aware: returns different field sets based on active portal.
+        Portal-aware: returns different field sets based on instance portal_id.
         """
-        portal_id = _get_active_portal_id()
+        portal_id = _get_active_portal_id(self.portal_id)
 
         if portal_id == "newindia":
             return self._preview_newindia()
@@ -388,6 +393,9 @@ class ClaimData:
             return self._excel_coords.get(key, "")
 
         return [
+            # ── Claim Details ───────────────────────────────
+            ("Claim No",              self.claim_no,                 True,  _src("claim_no")),
+            
             # ── Vehicle Details ─────────────────────────────
             ("Owner Name",            self.registered_owner_name,    True,  _src("registered_owner_name")),
             ("Vehicle Reg No",        self.vehicle_registration_number, True, _src("vehicle_registration_number")),

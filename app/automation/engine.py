@@ -35,11 +35,9 @@ logger = logging.getLogger(__name__)
 CONFIG_DIR = resource_path("app", "config")
 
 
-def _load_settings() -> dict:
-    # Production reliability: in a frozen EXE, bundled config is read-only.
-    # The UI writes user settings into a writable per-user location, so we
-    # must read that (and merge with defaults) here too.
-    return load_settings()
+def _load_settings(portal_id: str = "uiic") -> dict:
+    """Helper to load merged settings (defaults + user overrides)."""
+    return load_settings(portal_id=portal_id)
 
 
 @dataclass
@@ -233,7 +231,7 @@ class AutomationEngine:
             await asyncio.sleep(1)
 
     async def run(self, claim: ClaimData, settings_override: dict = None) -> AutomationRunResult:
-        settings = _load_settings()
+        settings = _load_settings(portal_id=self.portal_id)
         if settings_override:
             settings.update(settings_override)
 
@@ -311,10 +309,7 @@ class AutomationEngine:
 
                 success = await do_login(
                     page,
-                    portal_url,
-                    username,
-                    password,
-                    max_retries=max_retries,
+                    settings=settings,
                     log_cb=self.log_cb,
                     stop_cb=self._check_stop,
                 )
@@ -346,10 +341,10 @@ class AutomationEngine:
 
                 if self.portal_id == "newindia":
                     from app.portals.newindia.automation.navigation_module import navigate_to_claim
-                    claim_page = await navigate_to_claim(page, claim.claim_no, claim_type, log_cb=self.log_cb, stop_cb=self._check_stop)
+                    claim_page = await navigate_to_claim(page, claim.claim_no, settings=settings, log_cb=self.log_cb, stop_cb=self._check_stop)
                 else:
                     from app.automation.navigation_module import navigate_to_claim
-                    claim_page = await navigate_to_claim(page, claim.claim_no, claim_type, log_cb=self.log_cb)
+                    claim_page = await navigate_to_claim(page, claim.claim_no, settings=settings, log_cb=self.log_cb)
 
                 if claim_page is None:
                     return AutomationRunResult(False, f"Claim '{claim.claim_no}' was not found in Worklist or navigation failed.")
@@ -361,16 +356,28 @@ class AutomationEngine:
 
                 await asyncio.sleep(1.5)
 
-                # --- NEW INDIA PORTAL HALT AFTER PHASE 2 (Claim Open) ---
+                # --- NEW INDIA PORTAL PHASE 3 (Quick Update Details) ---
                 if self.portal_id == "newindia":
+                    self.log_cb("")
+                    self.step_cb(2, steps[2])
+                    self.log_cb("━" * 48)
+                    self.log_cb("  ✏️  STEP 3/5 ─ Fill Quick Update Details")
+                    self.log_cb("━" * 48)
+                    
+                    from app.portals.newindia.automation.quick_update_module import fill_quick_update_details
+                    success = await fill_quick_update_details(page, claim, log_cb=self.log_cb, stop_cb=self._check_stop)
+                    if not success:
+                        message = "Automation stopped by user." if self._check_stop() else "Phase 3 failed."
+                        return AutomationRunResult(False, message)
+
                     self.log_cb("╔" + "═" * 48 + "╗")
-                    self.log_cb("║  🚧 AUTOMATION PAUSED (PHASE 2)                ║")
+                    self.log_cb("║  🚧 AUTOMATION PAUSED (PHASE 3)                ║")
                     self.log_cb("╠" + "═" * 48 + "╣")
-                    self.log_cb("║  New India Phase 2 is complete.                ║")
-                    self.log_cb("║  Navigation and Claim Search finished.         ║")
+                    self.log_cb("║  New India Phase 3 is complete.                ║")
+                    self.log_cb("║  Review the Quick Update section now.          ║")
                     self.log_cb("╚" + "═" * 48 + "╝")
                     await self._wait_for_manual_review(browser)
-                    return AutomationRunResult(True, "New India Navigation Phase 2 complete. Session open.")
+                    return AutomationRunResult(True, "New India Phase 3 complete. Session open.")
 
                 self.log_cb("")
                 self.step_cb(2, steps[2])
@@ -379,7 +386,7 @@ class AutomationEngine:
                 self.log_cb("━" * 48)
                 await page.bring_to_front()
                 await page.evaluate("window.scrollTo(0, 0)")
-                await fill_interim_report(page, claim, log_cb=self.log_cb)
+                await fill_interim_report(page, claim, log_cb=self.log_cb, settings=settings)
                 if self._check_stop():
                     return AutomationRunResult(False, "Automation stopped by user.")
 
@@ -392,7 +399,7 @@ class AutomationEngine:
                 self.log_cb("  📤 STEP 4/5 ─ Upload Claim Documents")
                 self.log_cb("━" * 48)
                 await page.evaluate("window.scrollTo(0, 0)")
-                await fill_claim_documents(page, claim, log_cb=self.log_cb)
+                await fill_claim_documents(page, claim, log_cb=self.log_cb, settings=settings)
                 if self._check_stop():
                     return AutomationRunResult(False, "Automation stopped by user.")
 
@@ -405,7 +412,7 @@ class AutomationEngine:
                 self.log_cb("  📊 STEP 5/5 ─ Fill Claim Assessment")
                 self.log_cb("━" * 48)
                 await page.evaluate("window.scrollTo(0, 0)")
-                await fill_claim_assessment(page, claim, log_cb=self.log_cb)
+                await fill_claim_assessment(page, claim, log_cb=self.log_cb, settings=settings)
                 if self._check_stop():
                     return AutomationRunResult(False, "Automation stopped by user.")
 

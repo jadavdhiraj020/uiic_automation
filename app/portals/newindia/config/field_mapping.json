@@ -1,6 +1,14 @@
 {
   "_comment": "field_mapping.json — New India Assurance portal. Maps ClaimData fields to Excel labels. search_labels lists fallback labels tried in order. '_mandatory': true marks fields required for automation.",
 
+  "claim_no": {
+    "sheet": "ALL",
+    "search_labels": ["Claim No.", "Claim no.", "Claim No", "Claim no", "Claim Number", "claim_number", "claim_no"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+
   "registered_owner_name": {
     "sheet": "ALL",
     "search_labels": ["Registered Owner Name", "Owner Name", "Name of Owner", "Insured Name", "NAME OF INSURED"],

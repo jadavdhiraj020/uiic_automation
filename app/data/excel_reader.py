@@ -321,7 +321,7 @@ def _format_date(raw: str) -> str:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def read_excel(excel_path: str, config_dir: str):
+def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
     """
     Read Excel file and return a fully populated ClaimData instance.
 
@@ -336,10 +336,10 @@ def read_excel(excel_path: str, config_dir: str):
 
     # Use the user's custom field mapping from AppData if it exists,
     # otherwise fall back to the bundled default.
-    mapping = load_field_mapping()
+    mapping = load_field_mapping(portal_id=portal_id)
 
     wb = _open_workbook(excel_path)
-    claim = ClaimData()
+    claim = ClaimData(portal_id=portal_id or "uiic")
 
     found_count = 0
     missing_fields = []

@@ -147,7 +147,8 @@ async def _click_yes_radios(page, log_cb: Callable) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def fill_interim_report(page, claim: ClaimData,
-                               log_cb: Callable[[str], None] = print) -> None:
+                               log_cb: Callable[[str], None] = print,
+                               settings: dict = None) -> None:
     await click_tab(page, "interim", log_cb)
     # Brief additional wait for Angular digest cycle
     await asyncio.sleep(0.2)
@@ -244,4 +245,3 @@ async def fill_interim_report(page, claim: ClaimData,
                                 source="Hardcoded")
 
     log_cb("✅ Interim Report complete.")
-

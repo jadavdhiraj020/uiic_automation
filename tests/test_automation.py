@@ -1,4 +1,3 @@
-
 from app.data.folder_scanner import _extract_sheet_for_reinspection
 from app.automation.claim_assessment import fill_claim_assessment, _fill_parts
 from app.automation.interim_report import fill_interim_report
@@ -7,6 +6,7 @@ import sys
 from PyQt6.QtCore import Qt, QRect, QModelIndex
 from PyQt6.QtGui import QPainter, QPalette, QFont, QPixmap
 from PyQt6.QtWidgets import QStyleOptionViewItem, QStyle, QApplication
+
 """
 test_automation.py — Ultimate test suite for UIIC Automation.
 ═══════════════════════════════════════════════════════════════
@@ -54,11 +54,17 @@ if PROJECT_ROOT not in sys.path:
 
 from app.data.data_model import ClaimData
 from app.data.excel_reader import (
-    _is_junk, _clean_value, _extract_value, _format_date,
+    _is_junk,
+    _clean_value,
+    _extract_value,
+    _format_date,
     _initial_loss_75_percent,
 )
 from app.automation.form_helpers import (
-    _js_escape, _clean_text_for_portal, _clean_text_strict, _to_int_amount,
+    _js_escape,
+    _clean_text_for_portal,
+    _clean_text_strict,
+    _to_int_amount,
     _to_iso_date,
 )
 from app.automation.interim_report import _clean_mobile
@@ -69,6 +75,7 @@ CONFIG_DIR = os.path.join(PROJECT_ROOT, "app", "config")
 # ═════════════════════════════════════════════════════════════════════════════
 # 1. JUNK DETECTION — _is_junk
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestJunkDetection:
     """Junk values must be filtered; valid values must pass through."""
@@ -95,8 +102,16 @@ class TestJunkDetection:
         assert _is_junk("RS") is True
 
     def test_label_words_are_junk(self):
-        for j in ["estimated", "description", "particulars", "n/a", "nil",
-                   "amount", "total", "charges"]:
+        for j in [
+            "estimated",
+            "description",
+            "particulars",
+            "n/a",
+            "nil",
+            "amount",
+            "total",
+            "charges",
+        ]:
             assert _is_junk(j) is True, f"'{j}' should be junk"
 
     def test_nan_is_junk(self):
@@ -136,6 +151,7 @@ class TestJunkDetection:
 # ═════════════════════════════════════════════════════════════════════════════
 # 2. CLEAN VALUE — _clean_value
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestCleanValue:
     """_clean_value must properly format floats and strings."""
@@ -182,6 +198,7 @@ class TestCleanValue:
 # ═════════════════════════════════════════════════════════════════════════════
 # 3. EXTRACT VALUE — _extract_value
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestExtractValue:
     """_extract_value must combine junk check + clean_value."""
@@ -233,6 +250,7 @@ class TestInitialLossPercentage:
 # 4. DATE FORMATTING — _format_date
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestFormatDate:
     """Date normalization to DD/MM/YYYY."""
 
@@ -270,29 +288,54 @@ class TestFormatDate:
 # 5. DATA MODEL DEFAULTS — ClaimData
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestClaimDataDefaults:
     """ClaimData defaults must be safe and not inject wrong values."""
 
     def test_empty_string_defaults(self):
         c = ClaimData()
-        for field in ["claim_no", "date_of_survey", "place_of_survey",
-                       "mobile_no", "email_id", "surveyor_observation",
-                       "workshop_invoice_no", "workshop_invoice_date",
-                       "invoice_no", "invoice_date", "final_report_no",
-                       "final_report_date", "time_hh", "time_mm",
-                       "expected_completion_date", "initial_loss_amount",
-                       "payment_to"]:
+        for field in [
+            "claim_no",
+            "date_of_survey",
+            "place_of_survey",
+            "mobile_no",
+            "email_id",
+            "surveyor_observation",
+            "workshop_invoice_no",
+            "workshop_invoice_date",
+            "invoice_no",
+            "invoice_date",
+            "final_report_no",
+            "final_report_date",
+            "time_hh",
+            "time_mm",
+            "expected_completion_date",
+            "initial_loss_amount",
+            "payment_to",
+        ]:
             assert getattr(c, field) == "", f"{field} should default to ''"
 
     def test_zero_amount_defaults(self):
         c = ClaimData()
-        for field in ["parts_age_dep_excl_gst", "parts_50_dep_excl_gst",
-                       "parts_nil_dep_excl_gst", "parts_gst18_amount",
-                       "labour_excl_gst", "towing_charges", "spot_repairs",
-                       "voluntary_excess", "compulsory_excess", "imposed_excess",
-                       "salvage_value", "traveling_expenses", "professional_fee",
-                       "daily_allowance", "photo_charges", "total_claimed_amount",
-                       "odometer"]:
+        for field in [
+            "parts_age_dep_excl_gst",
+            "parts_50_dep_excl_gst",
+            "parts_nil_dep_excl_gst",
+            "parts_gst18_amount",
+            "labour_excl_gst",
+            "towing_charges",
+            "spot_repairs",
+            "voluntary_excess",
+            "compulsory_excess",
+            "imposed_excess",
+            "salvage_value",
+            "traveling_expenses",
+            "professional_fee",
+            "daily_allowance",
+            "photo_charges",
+            "total_claimed_amount",
+            "odometer",
+        ]:
             assert getattr(c, field) == "0", f"{field} should default to '0'"
 
     def test_settlement_type_default(self):
@@ -327,6 +370,7 @@ class TestClaimDataDefaults:
 # ═════════════════════════════════════════════════════════════════════════════
 # 6. DATA MODEL VALIDATE — error/warning paths
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestClaimDataValidate:
     """Validation must block on critical missing fields and warn on optional."""
@@ -409,6 +453,7 @@ class TestClaimDataValidate:
 # 7. DATA MODEL PREVIEW — all_fields_for_preview
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestClaimDataPreview:
     """all_fields_for_preview must return correct tuples."""
 
@@ -432,8 +477,14 @@ class TestClaimDataPreview:
     def test_preview_has_critical_fields(self):
         preview = ClaimData().all_fields_for_preview()
         labels = [p[0] for p in preview]
-        for crit in ["Claim No", "Date of Survey", "Place of Survey",
-                      "Initial Loss (₹)", "Report No", "Labour (₹)"]:
+        for crit in [
+            "Claim No",
+            "Date of Survey",
+            "Place of Survey",
+            "Initial Loss (₹)",
+            "Report No",
+            "Labour (₹)",
+        ]:
             assert crit in labels, f"'{crit}' missing from preview"
 
     def test_preview_payment_cashless_for_repairer(self):
@@ -496,6 +547,7 @@ class TestClaimDataPreview:
 # 8. PAYMENT OPTION DETECTION
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestPaymentOption:
     """REPAIRER→Cashless, INSURED→Reimbursement, default→Cashless."""
 
@@ -534,6 +586,7 @@ class TestPaymentOption:
 # ═════════════════════════════════════════════════════════════════════════════
 # 9. JS ESCAPE — Injection Prevention
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestJsEscape:
     """JS injection prevention — values must be safely escaped."""
@@ -580,6 +633,7 @@ class TestJsEscape:
 # ═════════════════════════════════════════════════════════════════════════════
 # 10. TEXT SANITIZATION
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestCleanTextPortal:
     """Portal text sanitization — remove forbidden chars."""
@@ -647,6 +701,7 @@ class TestCleanTextStrict:
 # 11. AMOUNT ROUNDING — _to_int_amount
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestToIntAmount:
     """Portal requires rounded integer amounts."""
 
@@ -705,6 +760,7 @@ class TestToIntAmount:
 # 12. ISO DATE CONVERSION — _to_iso_date
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestToIsoDate:
     """Convert various date formats to YYYY-MM-DD for HTML date inputs."""
 
@@ -745,6 +801,7 @@ class TestToIsoDate:
 # ═════════════════════════════════════════════════════════════════════════════
 # 13. MOBILE NUMBER CLEANING
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestCleanMobile:
     """Mobile must be exactly 10 digits for the portal."""
@@ -799,14 +856,20 @@ class TestCleanMobile:
 # 14. SURVEYOR CHARGES TOTAL
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestSurveyorChargesTotal:
     """Total Claimed = sum of 4 surveyor charge fields."""
 
     def _calc_total(self, c):
-        return sum(int(float(v or 0)) for v in [
-            c.traveling_expenses, c.professional_fee,
-            c.daily_allowance, c.photo_charges
-        ])
+        return sum(
+            int(float(v or 0))
+            for v in [
+                c.traveling_expenses,
+                c.professional_fee,
+                c.daily_allowance,
+                c.photo_charges,
+            ]
+        )
 
     def test_basic_sum(self):
         c = ClaimData()
@@ -853,6 +916,7 @@ class TestSurveyorChargesTotal:
 # ═════════════════════════════════════════════════════════════════════════════
 # 15. WORD BOUNDARY CHECK
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestWordBoundary:
     """Prevent 'TOTAL' matching 'SUBTOTAL' etc."""
@@ -903,6 +967,7 @@ class TestWordBoundary:
 # 16. WHITESPACE NORMALIZATION
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestWhitespaceNormalization:
     """Cell text with newlines/tabs must still match labels."""
 
@@ -910,8 +975,10 @@ class TestWhitespaceNormalization:
         return " ".join(text.strip().lower().split())
 
     def test_newline_collapsed(self):
-        assert self._normalize("PAYMENT MADE IN\nTHE FAVOUR OF") == \
-               "payment made in the favour of"
+        assert (
+            self._normalize("PAYMENT MADE IN\nTHE FAVOUR OF")
+            == "payment made in the favour of"
+        )
 
     def test_tabs_collapsed(self):
         assert self._normalize("DAILY\tALLOWANCE") == "daily allowance"
@@ -936,6 +1003,7 @@ class TestWhitespaceNormalization:
 # 17. FIELD MAPPING INTEGRITY
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestFieldMapping:
     """Validate field_mapping.json structure and completeness."""
 
@@ -954,18 +1022,31 @@ class TestFieldMapping:
             if field.startswith("_"):
                 continue
             assert "sheet" in cfg, f"{field} missing 'sheet'"
-            assert "search_label" in cfg or "search_labels" in cfg, f"{field} missing 'search_label' or 'search_labels'"
+            assert (
+                "search_label" in cfg or "search_labels" in cfg
+            ), f"{field} missing 'search_label' or 'search_labels'"
             assert "col_offset" in cfg, f"{field} missing 'col_offset'"
 
     def test_critical_fields_present(self, mapping):
-        critical = ["claim_no", "date_of_survey", "initial_loss_amount",
-                     "mobile_no", "email_id", "labour_excl_gst", "final_report_no"]
+        critical = [
+            "claim_no",
+            "date_of_survey",
+            "initial_loss_amount",
+            "mobile_no",
+            "email_id",
+            "labour_excl_gst",
+            "final_report_no",
+        ]
         for f in critical:
             assert f in mapping, f"Critical field '{f}' missing from mapping"
 
     def test_parts_fields_use_sub_total(self, mapping):
-        for f in ["parts_age_dep_excl_gst", "parts_50_dep_excl_gst",
-                   "parts_nil_dep_excl_gst", "parts_gst18_amount"]:
+        for f in [
+            "parts_age_dep_excl_gst",
+            "parts_50_dep_excl_gst",
+            "parts_nil_dep_excl_gst",
+            "parts_gst18_amount",
+        ]:
             label = mapping[f].get("search_label")
             if not label and "search_labels" in mapping[f]:
                 label = mapping[f]["search_labels"][0]
@@ -979,12 +1060,15 @@ class TestFieldMapping:
         for field, cfg in mapping.items():
             if field.startswith("_"):
                 continue
-            assert isinstance(cfg["col_offset"], int), \
-                f"{field} col_offset must be int"
+            assert isinstance(cfg["col_offset"], int), f"{field} col_offset must be int"
 
     def test_surveyor_fields_on_sheet5(self, mapping):
-        for f in ["traveling_expenses", "professional_fee",
-                   "daily_allowance", "photo_charges"]:
+        for f in [
+            "traveling_expenses",
+            "professional_fee",
+            "daily_allowance",
+            "photo_charges",
+        ]:
             assert mapping[f]["sheet"] == "Sheet5", f"{f} should be on Sheet5"
 
     def test_invoice_fields_on_sheet5(self, mapping):
@@ -1005,8 +1089,9 @@ class TestFieldMapping:
         for field, cfg in mapping.items():
             if field.startswith("_"):
                 continue
-            assert cfg["sheet"] in valid_sheets, \
-                f"{field} has invalid sheet '{cfg['sheet']}'"
+            assert (
+                cfg["sheet"] in valid_sheets
+            ), f"{field} has invalid sheet '{cfg['sheet']}'"
 
     def test_no_duplicate_search_configs(self, mapping):
         """No two fields should have identical sheet+label+offset (collision)."""
@@ -1018,7 +1103,11 @@ class TestFieldMapping:
             if not label_val and "search_labels" in cfg:
                 label_val = tuple(cfg["search_labels"])
 
-            key = (cfg["sheet"], tuple(label_val) if isinstance(label_val, list) else label_val, cfg["col_offset"])
+            key = (
+                cfg["sheet"],
+                tuple(label_val) if isinstance(label_val, list) else label_val,
+                cfg["col_offset"],
+            )
             # Duplicate keys are OK for parts fields (same label, different offset via group_idx)
             if "group_idx" not in cfg:
                 if key in seen:
@@ -1030,14 +1119,30 @@ class TestFieldMapping:
 # 18. SELECTOR INTEGRITY
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestSelectors:
     """Verify selector dicts have all required keys."""
 
     def test_assessment_selectors_exist(self):
         from app.automation.selectors import ASSESSMENT
-        required = ["nil_dep_checkbox", "age_dep", "dep_50", "dep_30", "nil_dep", "labour",
-                     "towing", "salvage", "report_no", "travel", "prof_fee",
-                     "daily_allowance", "photo", "total", "remarks"]
+
+        required = [
+            "nil_dep_checkbox",
+            "age_dep",
+            "dep_50",
+            "dep_30",
+            "nil_dep",
+            "labour",
+            "towing",
+            "salvage",
+            "report_no",
+            "travel",
+            "prof_fee",
+            "daily_allowance",
+            "photo",
+            "total",
+            "remarks",
+        ]
         for key in required:
             assert key in ASSESSMENT, f"ASSESSMENT missing '{key}'"
 
@@ -1063,21 +1168,29 @@ class TestNilDepreciationSync:
         claim._excel_coords["nil_depreciation"] = "R1C2 (Sheet1)"
         return claim
 
-    def test_fill_parts_syncs_checkbox_for_yes_without_changing_fill_flow(self, monkeypatch):
+    def test_fill_parts_syncs_checkbox_for_yes_without_changing_fill_flow(
+        self, monkeypatch
+    ):
         from app.automation import claim_assessment as mod
 
         page = self.FakePage()
         claim = self._build_claim("Yes")
         fill_calls = []
 
-        async def fake_safe_fill_amount(page_obj, selector, value, label, log_cb, timeout_ms=5000, source=""):
+        async def fake_safe_fill_amount(
+            page_obj, selector, value, label, log_cb, timeout_ms=5000, source=""
+        ):
             fill_calls.append((selector, value, label, source))
             return True
 
         monkeypatch.setattr(mod, "safe_fill_amount", fake_safe_fill_amount)
 
         logs = []
-        asyncio.run(mod._fill_parts(page, claim, logs.append, lambda key: claim._excel_coords.get(key, "")))
+        asyncio.run(
+            mod._fill_parts(
+                page, claim, logs.append, lambda key: claim._excel_coords.get(key, "")
+            )
+        )
 
         assert page.evaluate_calls, "Expected checkbox sync JS to run"
         assert page.evaluate_calls[0]["arg"] == {"shouldCheck": True}
@@ -1088,21 +1201,29 @@ class TestNilDepreciationSync:
             "Parts GST 18%",
         ]
 
-    def test_fill_parts_syncs_checkbox_for_no_without_skipping_existing_fills(self, monkeypatch):
+    def test_fill_parts_syncs_checkbox_for_no_without_skipping_existing_fills(
+        self, monkeypatch
+    ):
         from app.automation import claim_assessment as mod
 
         page = self.FakePage()
         claim = self._build_claim("No")
         fill_calls = []
 
-        async def fake_safe_fill_amount(page_obj, selector, value, label, log_cb, timeout_ms=5000, source=""):
+        async def fake_safe_fill_amount(
+            page_obj, selector, value, label, log_cb, timeout_ms=5000, source=""
+        ):
             fill_calls.append((selector, value, label, source))
             return True
 
         monkeypatch.setattr(mod, "safe_fill_amount", fake_safe_fill_amount)
 
         logs = []
-        asyncio.run(mod._fill_parts(page, claim, logs.append, lambda key: claim._excel_coords.get(key, "")))
+        asyncio.run(
+            mod._fill_parts(
+                page, claim, logs.append, lambda key: claim._excel_coords.get(key, "")
+            )
+        )
 
         assert page.evaluate_calls, "Expected checkbox sync JS to run"
         assert page.evaluate_calls[0]["arg"] == {"shouldCheck": False}
@@ -1115,59 +1236,88 @@ class TestNilDepreciationSync:
 
     def test_interim_selectors_exist(self):
         from app.automation.selectors import INTERIM
+
         assert isinstance(INTERIM, dict)
         assert len(INTERIM) > 5
 
     def test_interim_has_all_keys(self):
         from app.automation.selectors import INTERIM
-        required = ["settlement_type", "time_hours", "time_minutes",
-                     "survey_date", "odometer", "place", "initial_loss",
-                     "mobile", "email", "observation"]
+
+        required = [
+            "settlement_type",
+            "time_hours",
+            "time_minutes",
+            "survey_date",
+            "odometer",
+            "place",
+            "initial_loss",
+            "mobile",
+            "email",
+            "observation",
+        ]
         for key in required:
             assert key in INTERIM, f"INTERIM missing '{key}'"
 
     def test_total_selector_has_fallbacks(self):
         from app.automation.selectors import ASSESSMENT
+
         sel = ASSESSMENT["total"]
-        assert "totalClaimed" in sel or "totalSurveyor" in sel, \
-            "Total selector needs proper fallbacks"
+        assert (
+            "totalClaimed" in sel or "totalSurveyor" in sel
+        ), "Total selector needs proper fallbacks"
 
     def test_worklist_selectors(self):
         from app.automation.selectors import WORKLIST
+
         required = ["claim_type_dd", "claim_no_input", "filter_btn", "action_btn"]
         for key in required:
             assert key in WORKLIST, f"WORKLIST missing '{key}'"
 
     def test_documents_selectors(self):
         from app.automation.selectors import DOCUMENTS
+
         required = ["doc_type_select", "file_input", "add_row"]
         for key in required:
             assert key in DOCUMENTS, f"DOCUMENTS missing '{key}'"
 
     def test_assessment_slots_complete(self):
         from app.automation.selectors import ASSESSMENT_SLOTS
-        expected = {"assessment_report", "survey_report", "estimate",
-                    "invoice", "reinspection_report"}
+
+        expected = {
+            "assessment_report",
+            "survey_report",
+            "estimate",
+            "invoice",
+            "reinspection_report",
+        }
         assert set(ASSESSMENT_SLOTS.keys()) == expected
 
     def test_assessment_slots_sequential(self):
         from app.automation.selectors import ASSESSMENT_SLOTS
+
         values = sorted(ASSESSMENT_SLOTS.values())
-        assert values == list(range(len(values))), \
-            "Assessment slots must be sequential 0-based indices"
+        assert values == list(
+            range(len(values))
+        ), "Assessment slots must be sequential 0-based indices"
 
     def test_all_selectors_are_strings(self):
         from app.automation.selectors import ASSESSMENT, INTERIM, WORKLIST
-        for name, d in [("ASSESSMENT", ASSESSMENT), ("INTERIM", INTERIM),
-                         ("WORKLIST", WORKLIST)]:
+
+        for name, d in [
+            ("ASSESSMENT", ASSESSMENT),
+            ("INTERIM", INTERIM),
+            ("WORKLIST", WORKLIST),
+        ]:
             for key, val in d.items():
-                assert isinstance(val, (str, dict)), \
-                    f"{name}['{key}'] should be str, got {type(val)}"
+                assert isinstance(
+                    val, (str, dict)
+                ), f"{name}['{key}'] should be str, got {type(val)}"
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 19. DOC MAPPING INTEGRITY
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestDocMapping:
     """Validate doc_mapping.json structure and no collisions."""
@@ -1187,8 +1337,9 @@ class TestDocMapping:
     def test_spot_report_not_reinspection(self, doc_mapping):
         """Spot report should NOT be mistakenly mapped as Re-Inspection."""
         assessment_tab = doc_mapping.get("claim_assessment_tab", {})
-        assert assessment_tab.get("spot_report") != "reinspection_report", \
-            "Spot report must not be mapped to Re-Inspection Report."
+        assert (
+            assessment_tab.get("spot_report") != "reinspection_report"
+        ), "Spot report must not be mapped to Re-Inspection Report."
 
     def test_has_claim_documents_tab(self, doc_mapping):
         assert "claim_documents_tab" in doc_mapping
@@ -1216,9 +1367,13 @@ class TestDocMapping:
 
     def test_claim_doc_mapping_values_are_strings(self, doc_mapping):
         for key, val in doc_mapping.get("claim_documents_tab", {}).items():
-            assert isinstance(val, list), f"claim_documents_tab['{key}'] should be a list"
+            assert isinstance(
+                val, list
+            ), f"claim_documents_tab['{key}'] should be a list"
             for v in val:
-                assert isinstance(v, str), f"element in claim_documents_tab['{key}'] should be string"
+                assert isinstance(
+                    v, str
+                ), f"element in claim_documents_tab['{key}'] should be string"
 
     def test_reinspection_keywords_exist(self, doc_mapping):
         """Re-inspection must have mapping keywords."""
@@ -1231,41 +1386,48 @@ class TestDocMapping:
 # 20. EXPECTED COMPLETION DATE
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestExpectedCompletionDate:
     """Expected completion = survey date + 10 days."""
 
     def test_plus_10_days(self):
         from datetime import datetime, timedelta
+
         dt = datetime.strptime("16/02/2026", "%d/%m/%Y")
         result = (dt + timedelta(days=10)).strftime("%d/%m/%Y")
         assert result == "26/02/2026"
 
     def test_month_rollover(self):
         from datetime import datetime, timedelta
+
         dt = datetime.strptime("25/03/2026", "%d/%m/%Y")
         result = (dt + timedelta(days=10)).strftime("%d/%m/%Y")
         assert result == "04/04/2026"
 
     def test_year_rollover(self):
         from datetime import datetime, timedelta
+
         dt = datetime.strptime("25/12/2025", "%d/%m/%Y")
         result = (dt + timedelta(days=10)).strftime("%d/%m/%Y")
         assert result == "04/01/2026"
 
     def test_leap_year(self):
         from datetime import datetime, timedelta
+
         dt = datetime.strptime("20/02/2024", "%d/%m/%Y")
         result = (dt + timedelta(days=10)).strftime("%d/%m/%Y")
         assert result == "01/03/2024"  # 2024 IS a leap year
 
     def test_non_leap_year(self):
         from datetime import datetime, timedelta
+
         dt = datetime.strptime("20/02/2025", "%d/%m/%Y")
         result = (dt + timedelta(days=10)).strftime("%d/%m/%Y")
         assert result == "02/03/2025"  # 2025 NOT a leap year
 
     def test_end_of_month_30(self):
         from datetime import datetime, timedelta
+
         dt = datetime.strptime("25/04/2026", "%d/%m/%Y")
         result = (dt + timedelta(days=10)).strftime("%d/%m/%Y")
         assert result == "05/05/2026"
@@ -1275,6 +1437,7 @@ class TestExpectedCompletionDate:
 # 21. REPORT NUMBER EXTRACTION
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestReportNumberLogic:
     """Extracting correct report numbers from variable length strings."""
 
@@ -1282,7 +1445,7 @@ class TestReportNumberLogic:
         raw_ref = final_report_no or ""
         if len(invoice_no or "") > len(raw_ref):
             raw_ref = invoice_no
-        return re.split(r'[/\\-]', raw_ref)[-1].strip() if raw_ref else ""
+        return re.split(r"[/\\-]", raw_ref)[-1].strip() if raw_ref else ""
 
     def test_longest_ref_chosen(self):
         assert self._extract("SK/2025-26/OICL/116", "SK/2025-26") == "116"
@@ -1319,11 +1482,13 @@ class TestReportNumberLogic:
 # 22. FOLDER SCANNER
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestFolderScanner:
     """Folder scanning and keyword matching."""
 
     def test_folder_scan_result_defaults(self):
         from app.data.folder_scanner import FolderScanResult
+
         r = FolderScanResult()
         assert r.excel_path is None
         assert r.claim_doc_files == {}
@@ -1333,6 +1498,7 @@ class TestFolderScanner:
 
     def test_keyword_matching_longest_first(self):
         from app.data.folder_scanner import _match_keyword
+
         mapping = {
             "veh_front_full": ["veh_front"],
             "veh_front_photo": ["front"],
@@ -1342,17 +1508,20 @@ class TestFolderScanner:
 
     def test_keyword_matching_no_match(self):
         from app.data.folder_scanner import _match_keyword
+
         mapping = {"assessment": "assessment_report"}
         assert _match_keyword("random_file.pdf", mapping) is None
 
     def test_keyword_matching_case_sensitive(self):
         from app.data.folder_scanner import _match_keyword
+
         mapping = {"assessment_report": ["assessment"]}
         # Function gets lowercase filename, so this should work
         assert _match_keyword("assessment_details.pdf", mapping) == "assessment_report"
 
     def test_summary_lines(self):
         from app.data.folder_scanner import FolderScanResult
+
         r = FolderScanResult()
         r.excel_path = "/path/to/data.xlsx"
         r.claim_doc_files["veh_front"] = "/path/to/front.pdf"
@@ -1362,18 +1531,21 @@ class TestFolderScanner:
 
     def test_scan_nonexistent_folder(self):
         from app.data.folder_scanner import scan_folder
+
         result = scan_folder("/nonexistent/path/xyz")
         assert result.excel_path is None
         assert result.claim_doc_files == {}
 
     def test_scan_empty_folder(self):
         from app.data.folder_scanner import scan_folder
+
         with tempfile.TemporaryDirectory() as tmpdir:
             result = scan_folder(tmpdir)
             assert result.excel_path is None
 
     def test_load_doc_mapping(self):
         from app.data.folder_scanner import get_doc_mapping_tuple
+
         claim_map, assessment_map, other_slots, expected_docs = get_doc_mapping_tuple()
         assert isinstance(claim_map, dict)
         assert isinstance(assessment_map, dict)
@@ -1382,6 +1554,7 @@ class TestFolderScanner:
 
     def test_doc_mapping_other_slots(self):
         from app.data.folder_scanner import get_doc_mapping_tuple
+
         _, _, other_slots, _ = get_doc_mapping_tuple()
         assert len(other_slots) >= 3, "Need at least 3 Other slots"
 
@@ -1390,42 +1563,58 @@ class TestFolderScanner:
 # 23. ASSESSMENT UPLOAD LABELS
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestAssessmentUploadLabels:
     """Verify upload label mapping matches portal DOM."""
 
     def test_all_keys_present(self):
         from app.automation.claim_assessment import ASSESSMENT_UPLOAD_LABELS
-        expected = {"assessment_report", "survey_report", "estimate",
-                    "invoice", "reinspection_report"}
+
+        expected = {
+            "assessment_report",
+            "survey_report",
+            "estimate",
+            "invoice",
+            "reinspection_report",
+        }
         assert set(ASSESSMENT_UPLOAD_LABELS.keys()) == expected
 
     def test_labels_are_strings(self):
         from app.automation.claim_assessment import ASSESSMENT_UPLOAD_LABELS
+
         for key, label in ASSESSMENT_UPLOAD_LABELS.items():
             assert isinstance(label, str)
             assert len(label) > 5, f"Label for '{key}' too short"
 
     def test_labels_start_with_upload(self):
         from app.automation.claim_assessment import ASSESSMENT_UPLOAD_LABELS
+
         for key, label in ASSESSMENT_UPLOAD_LABELS.items():
-            assert label.startswith("Upload"), \
-                f"Label '{label}' should start with 'Upload'"
+            assert label.startswith(
+                "Upload"
+            ), f"Label '{label}' should start with 'Upload'"
 
     def test_reinspection_label_exact(self):
         from app.automation.claim_assessment import ASSESSMENT_UPLOAD_LABELS
-        assert ASSESSMENT_UPLOAD_LABELS["reinspection_report"] == \
-               "Upload Re-Inspection Report"
+
+        assert (
+            ASSESSMENT_UPLOAD_LABELS["reinspection_report"]
+            == "Upload Re-Inspection Report"
+        )
 
     def test_labels_match_selector_slots(self):
         from app.automation.claim_assessment import ASSESSMENT_UPLOAD_LABELS
         from app.automation.selectors import ASSESSMENT_SLOTS
-        assert set(ASSESSMENT_UPLOAD_LABELS.keys()) == set(ASSESSMENT_SLOTS.keys()), \
-            "Upload labels and selector slots must have identical keys"
+
+        assert set(ASSESSMENT_UPLOAD_LABELS.keys()) == set(
+            ASSESSMENT_SLOTS.keys()
+        ), "Upload labels and selector slots must have identical keys"
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 24. CROSS-MODULE CONSISTENCY
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestCrossModuleConsistency:
     """Verify different modules agree on field names and conventions."""
@@ -1439,8 +1628,9 @@ class TestCrossModuleConsistency:
         for field in mapping:
             if field.startswith("_"):
                 continue
-            assert hasattr(c, field), \
-                f"ClaimData missing field '{field}' that's in field_mapping.json"
+            assert hasattr(
+                c, field
+            ), f"ClaimData missing field '{field}' that's in field_mapping.json"
 
     def test_claim_data_preview_has_all_critical(self):
         """Every critical field in validate() must appear in preview."""
@@ -1459,37 +1649,61 @@ class TestCrossModuleConsistency:
     def test_assessment_upload_labels_match_doc_mapping(self):
         """Assessment upload keys should be valid doc_mapping target values."""
         from app.automation.claim_assessment import ASSESSMENT_UPLOAD_LABELS
+
         path = os.path.join(PROJECT_ROOT, "app", "config", "doc_mapping.json")
         with open(path, "r", encoding="utf-8") as f:
             doc_mapping = json.load(f)
         asses_values = set(doc_mapping.get("claim_assessment_tab", {}).keys())
         for key in ASSESSMENT_UPLOAD_LABELS:
-            assert key in asses_values or key == "reinspection_report", \
-                f"Upload key '{key}' not in doc_mapping assessment values"
+            assert (
+                key in asses_values or key == "reinspection_report"
+            ), f"Upload key '{key}' not in doc_mapping assessment values"
 
     def test_selector_ids_use_hash(self):
         """ID-based selectors should start with #."""
         from app.automation.selectors import ASSESSMENT, INTERIM
+
         for name, sel_dict in [("ASSESSMENT", ASSESSMENT), ("INTERIM", INTERIM)]:
             for key, sel in sel_dict.items():
-                if isinstance(sel, str) and sel and not sel.startswith(("input[", "select[",
-                        "textarea[", "button", "a:", "li.", "td:", "span:", "label",
-                        "b:", "strong:", "img[")):
+                if (
+                    isinstance(sel, str)
+                    and sel
+                    and not sel.startswith(
+                        (
+                            "input[",
+                            "select[",
+                            "textarea[",
+                            "button",
+                            "a:",
+                            "li.",
+                            "td:",
+                            "span:",
+                            "label",
+                            "b:",
+                            "strong:",
+                            "img[",
+                        )
+                    )
+                ):
                     # Should be an #id selector
-                    assert sel.startswith("#") or "," in sel, \
-                        f"{name}['{key}'] = '{sel}' — expected #id selector"
+                    assert (
+                        sel.startswith("#") or "," in sel
+                    ), f"{name}['{key}'] = '{sel}' — expected #id selector"
 
     def test_max_file_size_consistent(self):
         """Both folder_scanner and claim_assessment use 2MB limit."""
         from app.data.folder_scanner import MAX_FILE_BYTES
         from app.automation.claim_assessment import MAX_FILE_MB
-        assert MAX_FILE_BYTES == int(MAX_FILE_MB * 1024 * 1024), \
-            "File size limits must be consistent across modules"
+
+        assert MAX_FILE_BYTES == int(
+            MAX_FILE_MB * 1024 * 1024
+        ), "File size limits must be consistent across modules"
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 25. EDGE CASES & REGRESSION GUARDS
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestEdgeCases:
     """Specific edge cases that have caused bugs in production."""
@@ -1542,7 +1756,7 @@ class TestEdgeCases:
     def test_report_number_with_only_dashes(self):
         """Edge: '---' should not crash."""
         raw_ref = "---"
-        parts = re.split(r'[/\\-]', raw_ref)
+        parts = re.split(r"[/\\-]", raw_ref)
         result = parts[-1].strip()
         assert result == ""
 
@@ -1586,33 +1800,39 @@ class TestEdgeCases:
 # 26. MASSIVE PARAMETERIZED DATE FORMAT TESTING
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestMassiveDateFormatting:
     """Hundreds of permutations of date strings to ensure robust handling."""
 
-    @pytest.mark.parametrize("input_date,expected", [
-        ("16/02/2026", "16/02/2026"),
-        ("16-02-2026", "16/02/2026"),
-        ("16.02.2026", "16/02/2026"),
-        ("2026-02-16", "16/02/2026"),
-        ("2026/02/16", "16/02/2026"),
-        ("01/01/2000", "01/01/2000"),
-        ("1/1/2000", "1/1/2000"),
-        ("February 16, 2026", "16/02/2026"),
-        ("Feb 16 2026", "Feb 16 2026"),
-        ("16/02/26", "16/02/26"),
-        ("2026.02.16", "2026.02.16"),
-        ("  16/02/2026  ", "16/02/2026"),
-        ("16 / 02 / 2026", "16 / 02 / 2026"),
-        ("16-02-2026 14:30", "16-02-2026 14:30"),
-        ("31/12/2099", "31/12/2099"),
-        ("00/00/0000", "00/00/0000"),
-        ("Not a date", "Not a date"),
-        ("", ""),
-        (" ", " "),
-        ("16-02", "16-02"),
-    ] * 5)
+    @pytest.mark.parametrize(
+        "input_date,expected",
+        [
+            ("16/02/2026", "16/02/2026"),
+            ("16-02-2026", "16/02/2026"),
+            ("16.02.2026", "16/02/2026"),
+            ("2026-02-16", "16/02/2026"),
+            ("2026/02/16", "16/02/2026"),
+            ("01/01/2000", "01/01/2000"),
+            ("1/1/2000", "1/1/2000"),
+            ("February 16, 2026", "16/02/2026"),
+            ("Feb 16 2026", "Feb 16 2026"),
+            ("16/02/26", "16/02/26"),
+            ("2026.02.16", "2026.02.16"),
+            ("  16/02/2026  ", "16/02/2026"),
+            ("16 / 02 / 2026", "16 / 02 / 2026"),
+            ("16-02-2026 14:30", "16-02-2026 14:30"),
+            ("31/12/2099", "31/12/2099"),
+            ("00/00/0000", "00/00/0000"),
+            ("Not a date", "Not a date"),
+            ("", ""),
+            (" ", " "),
+            ("16-02", "16-02"),
+        ]
+        * 5,
+    )
     def test_format_date_permutations(self, input_date, expected):
         from app.data.excel_reader import _format_date
+
         result = _format_date(input_date)
         assert isinstance(result, str)
 
@@ -1621,38 +1841,44 @@ class TestMassiveDateFormatting:
 # 27. MASSIVE PARAMETERIZED AMOUNT ROUNDING
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestMassiveAmountRounding:
-    @pytest.mark.parametrize("input_amt,expected", [
-        ("0", "0"),
-        ("0.0", "0"),
-        ("0.00", "0"),
-        ("1", "1"),
-        ("1.49", "1"),
-        ("1.50", "2"),
-        ("1.51", "2"),
-        ("-1", "1"),
-        ("1000", "1000"),
-        ("1,000", "1000"),
-        ("1,00,000.50", "100001"),
-        ("₹1,00,000", "100000"),
-        ("$50.99", "51"),
-        ("Rs. 500", "500"),
-        ("500 /-", "500"),
-        ("500/-", "500"),
-        ("abc 123 xyz", "123"),
-        ("abc", "0"),
-        ("", "0"),
-        ("   ", "0"),
-        ("None", "0"),
-        (None, "0"),
-        (100.5, "100"),
-        (9999999.99, "10000000"),
-        ("0.99", "1"),
-        (".99", "1"),
-        ("10.", "10"),
-    ] * 5)
+    @pytest.mark.parametrize(
+        "input_amt,expected",
+        [
+            ("0", "0"),
+            ("0.0", "0"),
+            ("0.00", "0"),
+            ("1", "1"),
+            ("1.49", "1"),
+            ("1.50", "2"),
+            ("1.51", "2"),
+            ("-1", "1"),
+            ("1000", "1000"),
+            ("1,000", "1000"),
+            ("1,00,000.50", "100001"),
+            ("₹1,00,000", "100000"),
+            ("$50.99", "51"),
+            ("Rs. 500", "500"),
+            ("500 /-", "500"),
+            ("500/-", "500"),
+            ("abc 123 xyz", "123"),
+            ("abc", "0"),
+            ("", "0"),
+            ("   ", "0"),
+            ("None", "0"),
+            (None, "0"),
+            (100.5, "100"),
+            (9999999.99, "10000000"),
+            ("0.99", "1"),
+            (".99", "1"),
+            ("10.", "10"),
+        ]
+        * 5,
+    )
     def test_amount_rounding_permutations(self, input_amt, expected):
         from app.automation.form_helpers import _to_int_amount
+
         result = _to_int_amount(input_amt)
         assert result.isdigit() or result == "0"
 
@@ -1661,48 +1887,55 @@ class TestMassiveAmountRounding:
 # 28. MASSIVE PARAMETERIZED JUNK DETECTION
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestMassiveJunkDetection:
-    @pytest.mark.parametrize("input_val,is_junk_expected", [
-        (None, True),
-        ("", True),
-        (" ", True),
-        ("\n", True),
-        ("Rs", True),
-        ("RS", True),
-        ("rs.", True),
-        ("INR", True),
-        ("-", True),
-        ("--", True),
-        ("n/a", True),
-        ("N/A", True),
-        ("nil", True),
-        ("attached", True),
-        ("YES", True),
-        ("NO", True),
-        ("Amount", True),
-        ("Total:", True),
-        (":", True),
-        ("0", False),
-        ("0.0", False),
-        (0, False),
-        (0.0, False),
-        ("123", False),
-        (123, False),
-        ("123.45", False),
-        ("abc", True),
-        ("abc 123", False),
-        ("Claim No: 123", False),
-        ("Date:", True),
-        ("16/02/2026", False),
-    ] * 5)
+    @pytest.mark.parametrize(
+        "input_val,is_junk_expected",
+        [
+            (None, True),
+            ("", True),
+            (" ", True),
+            ("\n", True),
+            ("Rs", True),
+            ("RS", True),
+            ("rs.", True),
+            ("INR", True),
+            ("-", True),
+            ("--", True),
+            ("n/a", True),
+            ("N/A", True),
+            ("nil", True),
+            ("attached", True),
+            ("YES", True),
+            ("NO", True),
+            ("Amount", True),
+            ("Total:", True),
+            (":", True),
+            ("0", False),
+            ("0.0", False),
+            (0, False),
+            (0.0, False),
+            ("123", False),
+            (123, False),
+            ("123.45", False),
+            ("abc", True),
+            ("abc 123", False),
+            ("Claim No: 123", False),
+            ("Date:", True),
+            ("16/02/2026", False),
+        ]
+        * 5,
+    )
     def test_junk_permutations(self, input_val, is_junk_expected):
         from app.data.excel_reader import _is_junk
+
         assert _is_junk(input_val) == is_junk_expected
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 29. DEEP DATA MODEL EXHAUSTIVE VALIDATION
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestDeepDataModelValidation:
 
@@ -1755,11 +1988,13 @@ class TestDeepDataModelValidation:
 # 30. STRESS TESTING SANITIZATION
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestStressSanitization:
 
     def test_strict_cleaning_stress(self):
         from app.automation.form_helpers import _clean_text_strict
         import string
+
         all_chars = string.printable
         result = _clean_text_strict(all_chars)
         for char in result:
@@ -1768,37 +2003,42 @@ class TestStressSanitization:
     def test_js_escape_stress(self):
         from app.automation.form_helpers import _js_escape
         import string
+
         all_chars = string.printable
         result = _js_escape(all_chars)
-        assert "\'" in result or "'" not in all_chars
-        assert '\"' in result or '"' not in all_chars
+        assert "'" in result or "'" not in all_chars
+        assert '"' in result or '"' not in all_chars
         assert "\n" not in result
-
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 31. DEEP EXCEL READER MOCK TESTS
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestDeepExcelReaderLogic:
 
     def test_extract_time_from_adjacent_cell(self):
         from app.data.excel_reader import _search_label
+
         # Creating a mock excel structure to test time extraction fallback
         from types import SimpleNamespace
+
         sheet = SimpleNamespace(
             name="Sheet1",
             rows=lambda: [
                 ["Date and Time of Survey", "16/02/2026", "14:30 PM", ""],
-                ["", "", "", ""]
-            ]
+                ["", "", "", ""],
+            ],
         )
-        val, coord = _search_label(sheet, "Date and Time of Survey", row_offset=0, col_offset=1, is_date=True)
+        val, coord = _search_label(
+            sheet, "Date and Time of Survey", row_offset=0, col_offset=1, is_date=True
+        )
         assert val == "16/02/2026"
         assert coord == "R1C2"
 
     def test_payment_to_insured_keyword(self):
-        from app.data.excel_reader import read_excel
+        from app.data.excel_reader import extract_claim_data
         import json
         import tempfile
         import os
@@ -1812,17 +2052,18 @@ class TestDeepExcelReaderLogic:
                     name="Sheet1",
                     rows=lambda: [
                         ["", "", "PAYMENT MADE IN THE FAVOUR OF INSURED", ""]
-                    ]
+                    ],
                 )
             ]
         )
-        # We can't easily mock read_excel without mocking _open_workbook
+        # We can't easily mock extract_claim_data without mocking _open_workbook
         pass
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 32. MORE DATA MODEL VALIDATION PERMUTATIONS
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestMoreDataModelValidation:
 
@@ -1874,23 +2115,29 @@ class TestMoreDataModelValidation:
 # 33. DATE CONVERSION STRESS TEST (ISO)
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestIsoDateStress:
 
-    @pytest.mark.parametrize("input_date,expected", [
-        ("16/02/2026", "2026-02-16"),
-        ("16-02-2026", "2026-02-16"),
-        ("16.02.2026", "2026-02-16"),
-        ("2026-02-16", "2026-02-16"),
-        ("2026/02/16", "2026-02-16"),
-        ("1/2/2026", "2026-02-01"),
-        ("01/2/2026", "2026-02-01"),
-        ("1/02/2026", "2026-02-01"),
-        ("", ""),
-        (" ", ""),
-        ("invalid", ""),
-    ] * 10)
+    @pytest.mark.parametrize(
+        "input_date,expected",
+        [
+            ("16/02/2026", "2026-02-16"),
+            ("16-02-2026", "2026-02-16"),
+            ("16.02.2026", "2026-02-16"),
+            ("2026-02-16", "2026-02-16"),
+            ("2026/02/16", "2026-02-16"),
+            ("1/2/2026", "2026-02-01"),
+            ("01/2/2026", "2026-02-01"),
+            ("1/02/2026", "2026-02-01"),
+            ("", ""),
+            (" ", ""),
+            ("invalid", ""),
+        ]
+        * 10,
+    )
     def test_iso_date_permutations(self, input_date, expected):
         from app.automation.form_helpers import _to_iso_date
+
         assert _to_iso_date(input_date) == expected
 
 
@@ -1898,25 +2145,31 @@ class TestIsoDateStress:
 # 34. MOBILE NUMBER CLEANING STRESS TEST
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestMobileCleaningStress:
 
-    @pytest.mark.parametrize("input_mobile,expected", [
-        ("098761-35253", "9876135253"),
-        ("9876135253", "9876135253"),
-        ("+919876135253", "9876135253"),
-        ("+91-98761-35253", "9876135253"),
-        ("98761 35253", "9876135253"),
-        ("09876135253", "9876135253"),
-        ("12345", "12345"),
-        ("9876135253.0", "9876135253"),
-        ("987.613.5253", "9876135253"),
-        ("(098) 76135253", "9876135253"),
-        ("abc9876135253def", "9876135253"),
-        ("", ""),
-        (None, ""),
-    ] * 10)
+    @pytest.mark.parametrize(
+        "input_mobile,expected",
+        [
+            ("098761-35253", "9876135253"),
+            ("9876135253", "9876135253"),
+            ("+919876135253", "9876135253"),
+            ("+91-98761-35253", "9876135253"),
+            ("98761 35253", "9876135253"),
+            ("09876135253", "9876135253"),
+            ("12345", "12345"),
+            ("9876135253.0", "9876135253"),
+            ("987.613.5253", "9876135253"),
+            ("(098) 76135253", "9876135253"),
+            ("abc9876135253def", "9876135253"),
+            ("", ""),
+            (None, ""),
+        ]
+        * 10,
+    )
     def test_mobile_permutations(self, input_mobile, expected):
         from app.automation.interim_report import _clean_mobile
+
         assert _clean_mobile(input_mobile) == expected
 
 
@@ -1924,24 +2177,30 @@ class TestMobileCleaningStress:
 # 35. CLEAN VALUE STRESS TEST
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestCleanValueStress:
 
-    @pytest.mark.parametrize("input_val,expected", [
-        (1989.0, "1989"),
-        (4903.09, "4903.09"),
-        ("  hello  ", "hello"),
-        (None, ""),
-        (0.0, "0"),
-        (100000.0, "100000"),
-        (0.01, "0.01"),
-        (-500.0, "-500"),
-        (False, "False"),
-        ("1,000", "1,000"),
-        (9999999.0, "9999999"),
-        ("9999999.0", "9999999.0"),
-    ] * 10)
+    @pytest.mark.parametrize(
+        "input_val,expected",
+        [
+            (1989.0, "1989"),
+            (4903.09, "4903.09"),
+            ("  hello  ", "hello"),
+            (None, ""),
+            (0.0, "0"),
+            (100000.0, "100000"),
+            (0.01, "0.01"),
+            (-500.0, "-500"),
+            (False, "False"),
+            ("1,000", "1,000"),
+            (9999999.0, "9999999"),
+            ("9999999.0", "9999999.0"),
+        ]
+        * 10,
+    )
     def test_clean_value_permutations(self, input_val, expected):
         from app.data.excel_reader import _clean_value
+
         result = _clean_value(input_val)
         if input_val is False:
             assert isinstance(result, str)
@@ -1952,6 +2211,7 @@ class TestCleanValueStress:
 # ═════════════════════════════════════════════════════════════════════════════
 # 36. JUNK PATTERNS REGEX TEST
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestJunkPatternsRegex:
     def test_regex_patterns(self):
@@ -1981,39 +2241,45 @@ class TestJunkPatternsRegex:
         assert not pat3.match("a:b")
 
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # 26. MASSIVE PARAMETERIZED DATE FORMAT TESTING
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestMassiveDateFormatting:
     """Hundreds of permutations of date strings to ensure robust handling."""
 
     import pytest
-    @pytest.mark.parametrize("input_date,expected", [
-        ("16/02/2026", "16/02/2026"),
-        ("16-02-2026", "16/02/2026"),
-        ("16.02.2026", "16/02/2026"),
-        ("2026-02-16", "16/02/2026"),
-        ("2026/02/16", "16/02/2026"),
-        ("01/01/2000", "01/01/2000"),
-        ("1/1/2000", "1/1/2000"),
-        ("February 16, 2026", "16/02/2026"),
-        ("Feb 16 2026", "Feb 16 2026"),
-        ("16/02/26", "16/02/26"),
-        ("2026.02.16", "2026.02.16"),
-        ("  16/02/2026  ", "16/02/2026"),
-        ("16 / 02 / 2026", "16 / 02 / 2026"),
-        ("16-02-2026 14:30", "16-02-2026 14:30"),
-        ("31/12/2099", "31/12/2099"),
-        ("00/00/0000", "00/00/0000"),
-        ("Not a date", "Not a date"),
-        ("", ""),
-        (" ", " "),
-        ("16-02", "16-02"),
-    ] * 5)
+
+    @pytest.mark.parametrize(
+        "input_date,expected",
+        [
+            ("16/02/2026", "16/02/2026"),
+            ("16-02-2026", "16/02/2026"),
+            ("16.02.2026", "16/02/2026"),
+            ("2026-02-16", "16/02/2026"),
+            ("2026/02/16", "16/02/2026"),
+            ("01/01/2000", "01/01/2000"),
+            ("1/1/2000", "1/1/2000"),
+            ("February 16, 2026", "16/02/2026"),
+            ("Feb 16 2026", "Feb 16 2026"),
+            ("16/02/26", "16/02/26"),
+            ("2026.02.16", "2026.02.16"),
+            ("  16/02/2026  ", "16/02/2026"),
+            ("16 / 02 / 2026", "16 / 02 / 2026"),
+            ("16-02-2026 14:30", "16-02-2026 14:30"),
+            ("31/12/2099", "31/12/2099"),
+            ("00/00/0000", "00/00/0000"),
+            ("Not a date", "Not a date"),
+            ("", ""),
+            (" ", " "),
+            ("16-02", "16-02"),
+        ]
+        * 5,
+    )
     def test_format_date_permutations(self, input_date, expected):
         from app.data.excel_reader import _format_date
+
         result = _format_date(input_date)
         assert isinstance(result, str)
 
@@ -2022,39 +2288,46 @@ class TestMassiveDateFormatting:
 # 27. MASSIVE PARAMETERIZED AMOUNT ROUNDING
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestMassiveAmountRounding:
     import pytest
-    @pytest.mark.parametrize("input_amt,expected", [
-        ("0", "0"),
-        ("0.0", "0"),
-        ("0.00", "0"),
-        ("1", "1"),
-        ("1.49", "1"),
-        ("1.50", "2"),
-        ("1.51", "2"),
-        ("-1", "1"),
-        ("1000", "1000"),
-        ("1,000", "1000"),
-        ("1,00,000.50", "100001"),
-        ("₹1,00,000", "100000"),
-        ("$50.99", "51"),
-        ("Rs. 500", "500"),
-        ("500 /-", "500"),
-        ("500/-", "500"),
-        ("abc 123 xyz", "123"),
-        ("abc", "0"),
-        ("", "0"),
-        ("   ", "0"),
-        ("None", "0"),
-        (None, "0"),
-        (100.5, "100"),
-        (9999999.99, "10000000"),
-        ("0.99", "1"),
-        (".99", "1"),
-        ("10.", "10"),
-    ] * 5)
+
+    @pytest.mark.parametrize(
+        "input_amt,expected",
+        [
+            ("0", "0"),
+            ("0.0", "0"),
+            ("0.00", "0"),
+            ("1", "1"),
+            ("1.49", "1"),
+            ("1.50", "2"),
+            ("1.51", "2"),
+            ("-1", "1"),
+            ("1000", "1000"),
+            ("1,000", "1000"),
+            ("1,00,000.50", "100001"),
+            ("₹1,00,000", "100000"),
+            ("$50.99", "51"),
+            ("Rs. 500", "500"),
+            ("500 /-", "500"),
+            ("500/-", "500"),
+            ("abc 123 xyz", "123"),
+            ("abc", "0"),
+            ("", "0"),
+            ("   ", "0"),
+            ("None", "0"),
+            (None, "0"),
+            (100.5, "100"),
+            (9999999.99, "10000000"),
+            ("0.99", "1"),
+            (".99", "1"),
+            ("10.", "10"),
+        ]
+        * 5,
+    )
     def test_amount_rounding_permutations(self, input_amt, expected):
         from app.automation.form_helpers import _to_int_amount
+
         result = _to_int_amount(input_amt)
         assert result.isdigit() or result == "0"
 
@@ -2063,43 +2336,50 @@ class TestMassiveAmountRounding:
 # 28. MASSIVE PARAMETERIZED JUNK DETECTION
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestMassiveJunkDetection:
     import pytest
-    @pytest.mark.parametrize("input_val,is_junk_expected", [
-        (None, True),
-        ("", True),
-        (" ", True),
-        ("\n", True),
-        ("Rs", True),
-        ("RS", True),
-        ("rs.", True),
-        ("INR", True),
-        ("-", True),
-        ("--", True),
-        ("n/a", True),
-        ("N/A", True),
-        ("nil", True),
-        ("attached", True),
-        ("YES", True),
-        ("NO", True),
-        ("Amount", True),
-        ("Total:", True),
-        (":", True),
-        ("0", False),
-        ("0.0", False),
-        (0, False),
-        (0.0, False),
-        ("123", False),
-        (123, False),
-        ("123.45", False),
-        ("abc", True),
-        ("abc 123", False),
-        ("Claim No: 123", False),
-        ("Date:", True),
-        ("16/02/2026", False),
-    ] * 5)
+
+    @pytest.mark.parametrize(
+        "input_val,is_junk_expected",
+        [
+            (None, True),
+            ("", True),
+            (" ", True),
+            ("\n", True),
+            ("Rs", True),
+            ("RS", True),
+            ("rs.", True),
+            ("INR", True),
+            ("-", True),
+            ("--", True),
+            ("n/a", True),
+            ("N/A", True),
+            ("nil", True),
+            ("attached", True),
+            ("YES", True),
+            ("NO", True),
+            ("Amount", True),
+            ("Total:", True),
+            (":", True),
+            ("0", False),
+            ("0.0", False),
+            (0, False),
+            (0.0, False),
+            ("123", False),
+            (123, False),
+            ("123.45", False),
+            ("abc", True),
+            ("abc 123", False),
+            ("Claim No: 123", False),
+            ("Date:", True),
+            ("16/02/2026", False),
+        ]
+        * 5,
+    )
     def test_junk_permutations(self, input_val, is_junk_expected):
         from app.data.excel_reader import _is_junk
+
         assert _is_junk(input_val) == is_junk_expected
 
 
@@ -2107,10 +2387,12 @@ class TestMassiveJunkDetection:
 # 29. DEEP DATA MODEL EXHAUSTIVE VALIDATION
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestDeepDataModelValidation:
 
     def test_massive_claim_data_instances(self):
         from app.data.data_model import ClaimData
+
         claims = [ClaimData() for _ in range(100)]
         claims[0].claim_no = "1"
         claims[99].claim_no = "99"
@@ -2124,6 +2406,7 @@ class TestDeepDataModelValidation:
 
     def test_claim_data_extreme_values(self):
         from app.data.data_model import ClaimData
+
         c = ClaimData()
         c.claim_no = "A" * 10000
         c.initial_loss_amount = "9" * 50
@@ -2132,6 +2415,7 @@ class TestDeepDataModelValidation:
 
     def test_claim_data_unicode_values(self):
         from app.data.data_model import ClaimData
+
         c = ClaimData()
         c.claim_no = "बीमा"
         c.place_of_survey = "चंडीगढ़"
@@ -2146,6 +2430,7 @@ class TestDeepDataModelValidation:
 
     def test_validate_only_warnings(self):
         from app.data.data_model import ClaimData
+
         c = ClaimData()
         c.date_of_survey = "1"
         c.place_of_survey = "1"
@@ -2162,11 +2447,13 @@ class TestDeepDataModelValidation:
 # 30. STRESS TESTING SANITIZATION
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestStressSanitization:
 
     def test_strict_cleaning_stress(self):
         from app.automation.form_helpers import _clean_text_strict
         import string
+
         all_chars = string.printable
         result = _clean_text_strict(all_chars)
         for char in result:
@@ -2175,26 +2462,31 @@ class TestStressSanitization:
     def test_js_escape_stress(self):
         from app.automation.form_helpers import _js_escape
         import string
+
         all_chars = string.printable
         result = _js_escape(all_chars)
-        assert "\'" in result or "'" not in all_chars
-        assert '\"' in result or '"' not in all_chars
+        assert "'" in result or "'" not in all_chars
+        assert '"' in result or '"' not in all_chars
         assert "\n" not in result
-
 
 
 # ───────────────────────────────────────────────────────────────
 # 31. NEW FUNCTIONALITY (Date Skip, Folder Duplication, Selectors)
 # ───────────────────────────────────────────────────────────────
 
+
 class TestRecentUpdates:
 
     def test_safe_fill_date_skips_bad_date(self):
         from app.automation.form_helpers import safe_fill_date
         import inspect
+
         source = inspect.getsource(safe_fill_date)
         # Verify our '00:00:00' guard exists
-        assert 'value or str(value).strip() == "" or str(value).strip() == "00:00:00"' in source
+        assert (
+            'value or str(value).strip() == "" or str(value).strip() == "00:00:00"'
+            in source
+        )
 
     def test_folder_scanner_vehicle_duplication(self):
         import tempfile
@@ -2220,8 +2512,12 @@ class TestRecentUpdates:
             assert "vehicle_photo_4.jpg" in files
 
             # Verify the mappings were correctly added to claim_doc_files
-            assert res.claim_doc_files.get("Vehicle Photograph (Front)") == os.path.join(td, "vehicle_photo_1.jpg")
-            assert res.claim_doc_files.get("Vehicle Photograph (Right)") == os.path.join(td, "vehicle_photo_4.jpg")
+            assert res.claim_doc_files.get(
+                "Vehicle Photograph (Front)"
+            ) == os.path.join(td, "vehicle_photo_1.jpg")
+            assert res.claim_doc_files.get(
+                "Vehicle Photograph (Right)"
+            ) == os.path.join(td, "vehicle_photo_4.jpg")
 
     def test_selectors_broadened(self):
         from app.automation.selectors import ASSESSMENT
@@ -2239,21 +2535,25 @@ class TestRecentUpdates:
     def test_raw_fill_force_click(self):
         from app.automation.form_helpers import _raw_fill
         import inspect
+
         source = inspect.getsource(_raw_fill)
         # Verify we bypass interception checks with force=True
         assert "force=True" in source
 
+
 # ═════════════════════════════════════════════════════════════════════════════
 # 25. EXCEL READER ENHANCEMENTS (Fallbacks & Safety)
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestExcelReaderEnhancements:
     """Testing the search_labels fallback array and the Strategy 3 row-jumping safety fix."""
 
     def test_fallback_labels(self):
         import tempfile
+
         openpyxl = pytest.importorskip("openpyxl")
-        from app.data.excel_reader import read_excel
+        from app.data.excel_reader import extract_claim_data
 
         wb = openpyxl.Workbook()
         ws = wb.active
@@ -2262,7 +2562,9 @@ class TestExcelReaderEnhancements:
         # mobile_no expects "Sheet1". Fallbacks in JSON: ["surveyor_mobile", "mobile", "Mobile:"]
         # We will use the second fallback "mobile"
         ws.cell(row=5, column=2, value="mobile")
-        ws.cell(row=5, column=3, value="9876543210") # col_offset is 1 from B(2) -> C(3)
+        ws.cell(
+            row=5, column=3, value="9876543210"
+        )  # col_offset is 1 from B(2) -> C(3)
 
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
             excel_path = tmp.name
@@ -2270,7 +2572,7 @@ class TestExcelReaderEnhancements:
 
         try:
             config_dir = os.path.join(PROJECT_ROOT, "app", "config")
-            claim = read_excel(excel_path, config_dir)
+            claim = extract_claim_data(excel_path)
 
             # mobile_no should be found via "mobile"
             assert claim.mobile_no == "9876543210", "Fallback label for mobile failed!"
@@ -2279,7 +2581,7 @@ class TestExcelReaderEnhancements:
 
     def test_initial_loss_from_excel_is_reduced_to_75_percent(self):
         openpyxl = pytest.importorskip("openpyxl")
-        from app.data.excel_reader import read_excel
+        from app.data.excel_reader import extract_claim_data
 
         wb = openpyxl.Workbook()
         ws = wb.active
@@ -2295,11 +2597,12 @@ class TestExcelReaderEnhancements:
 
         try:
             config_dir = os.path.join(PROJECT_ROOT, "app", "config")
-            claim = read_excel(excel_path, config_dir)
+            claim = extract_claim_data(excel_path)
 
             assert claim.initial_loss_amount == "75"
             initial_loss_row = [
-                row for row in claim.all_fields_for_preview()
+                row
+                for row in claim.all_fields_for_preview()
                 if row[0].startswith("Initial Loss")
             ][0]
             assert initial_loss_row[1] == "75"
@@ -2308,7 +2611,7 @@ class TestExcelReaderEnhancements:
 
     def test_surveyor_observation_uses_fixed_ok_not_excel_value(self):
         openpyxl = pytest.importorskip("openpyxl")
-        from app.data.excel_reader import read_excel
+        from app.data.excel_reader import extract_claim_data
 
         wb = openpyxl.Workbook()
         ws = wb.active
@@ -2322,12 +2625,11 @@ class TestExcelReaderEnhancements:
 
         try:
             config_dir = os.path.join(PROJECT_ROOT, "app", "config")
-            claim = read_excel(excel_path, config_dir)
+            claim = extract_claim_data(excel_path)
 
             assert claim.surveyor_observation == "ok"
             observation_row = [
-                row for row in claim.all_fields_for_preview()
-                if row[0] == "Observation"
+                row for row in claim.all_fields_for_preview() if row[0] == "Observation"
             ][0]
             assert observation_row[1] == "ok"
             assert observation_row[3] == "Fixed Value"
@@ -2335,19 +2637,19 @@ class TestExcelReaderEnhancements:
             os.remove(excel_path)
 
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # 26. DEEP DATA MODEL VALIDATION (EDGE CASES & INJECTION)
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestDataModelDeepEdgeCases:
     """Extreme validation of the ClaimData model against weird inputs."""
 
     def test_unicode_injection(self):
         c = ClaimData()
-        c.claim_no = "C123\u202E456" # Right-to-Left Override
+        c.claim_no = "C123\u202e456"  # Right-to-Left Override
         c.place_of_survey = "चंडीगढ़ 🚗"
-        assert c.claim_no == "C123\u202E456"
+        assert c.claim_no == "C123\u202e456"
         assert "चंडीगढ़" in c.place_of_survey
 
     def test_xss_payloads(self):
@@ -2355,7 +2657,7 @@ class TestDataModelDeepEdgeCases:
         c.surveyor_observation = "<script>alert('XSS')</script>"
         c.claim_no = "'; DROP TABLE claims; --"
         errors, warnings = c.validate()
-        assert len(errors) > 0 # Should fail validation due to missing required fields
+        assert len(errors) > 0  # Should fail validation due to missing required fields
         # But should store perfectly fine
         assert "script" in c.surveyor_observation
 
@@ -2401,6 +2703,7 @@ class TestDataModelDeepEdgeCases:
 # 27. DEEP FOLDER SCANNER TESTS (MOCKS)
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestFolderScannerDeep:
     """Rigorous testing of the file matching algorithms in folder_scanner."""
 
@@ -2432,7 +2735,8 @@ class TestFolderScannerDeep:
     def test_scanner_ignores_hidden_files(self, mock_claim_folder):
         # Add hidden file
         hidden = os.path.join(mock_claim_folder, ".hidden_file.jpg")
-        with open(hidden, "w") as f: f.write("mock")
+        with open(hidden, "w") as f:
+            f.write("mock")
 
         pass
         files = []
@@ -2444,15 +2748,17 @@ class TestFolderScannerDeep:
 # 28. ADVANCED EXCEL READER EDGE CASES
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestExcelReaderAdvanced:
     """Testing corrupted or unusual Excel structures."""
 
     def test_empty_sheet_handling(self):
         openpyxl = pytest.importorskip("openpyxl")
-        from app.data.excel_reader import read_excel
+        from app.data.excel_reader import extract_claim_data
+
         wb = openpyxl.Workbook()
         ws = wb.active
-        ws.title = "Sheet1" # Completely empty
+        ws.title = "Sheet1"  # Completely empty
 
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
             excel_path = tmp.name
@@ -2460,7 +2766,7 @@ class TestExcelReaderAdvanced:
 
         try:
             config_dir = os.path.join(PROJECT_ROOT, "app", "config")
-            claim = read_excel(excel_path, config_dir)
+            claim = extract_claim_data(excel_path)
             # Should not crash, just return empty claim
             assert claim.claim_no == ""
         finally:
@@ -2471,11 +2777,13 @@ class TestExcelReaderAdvanced:
         # Our reader uses data_only=True so it should get None if not calculated by Excel,
         # but let's test how it handles a literal formula string if it accidentally gets one
         from app.data.excel_reader import _is_junk
-        assert _is_junk("=SUM(A1:B2)") is False # Wait, it might treat it as string
+
+        assert _is_junk("=SUM(A1:B2)") is False  # Wait, it might treat it as string
 
     def test_row_offset_bounds_check(self):
         openpyxl = pytest.importorskip("openpyxl")
-        from app.data.excel_reader import read_excel
+        from app.data.excel_reader import extract_claim_data
+
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Sheet1"
@@ -2489,7 +2797,7 @@ class TestExcelReaderAdvanced:
 
         try:
             config_dir = os.path.join(PROJECT_ROOT, "app", "config")
-            claim = read_excel(excel_path, config_dir)
+            claim = extract_claim_data(excel_path)
             # Should not crash with IndexError
             assert claim.parts_age_dep_excl_gst == "0"
         finally:
@@ -2500,26 +2808,33 @@ class TestExcelReaderAdvanced:
 # 29. MOBILE NUMBER DEEP CLEANING
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestMobileNumberDeep:
     """Extreme edge cases for _clean_mobile"""
 
     def test_mobile_all_zeros(self):
         from app.automation.interim_report import _clean_mobile
+
         assert _clean_mobile("0000000000") == "0000000000"
 
     def test_mobile_with_multiple_country_codes(self):
         from app.automation.interim_report import _clean_mobile
+
         # +91-91-9876543210
-        assert _clean_mobile("+91-91-9876543210") == "9876543210" # Might keep the extra 91 if it's strictly removing +91 from start
+        assert (
+            _clean_mobile("+91-91-9876543210") == "9876543210"
+        )  # Might keep the extra 91 if it's strictly removing +91 from start
         assert _clean_mobile("+91 98765 43210") == "9876543210"
 
     def test_mobile_alphanumeric_junk(self):
         from app.automation.interim_report import _clean_mobile
+
         assert _clean_mobile("Phone: 98765-43210") == "9876543210"
         assert _clean_mobile("9876543210 (John)") == "9876543210"
 
     def test_mobile_multiple_numbers_takes_first(self):
         from app.automation.interim_report import _clean_mobile
+
         # If surveyor writes "9876543210 / 1234567890"
         result = _clean_mobile("9876543210 / 1234567890")
         assert result == "1234567890"
@@ -2531,25 +2846,34 @@ class TestMobileNumberDeep:
 # 30. AMOUNT SANITIZATION DEEP TESTS
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestAmountSanitizationDeep:
     """Extreme edge cases for _to_int_amount"""
 
     def test_amount_with_rupee_word(self):
         from app.automation.form_helpers import _to_int_amount
+
         assert _to_int_amount("Rupees 1500 only") == "1500"
         assert _to_int_amount("INR 2,500.50") == "2500"
 
     def test_amount_with_slashes(self):
         from app.automation.form_helpers import _to_int_amount
+
         assert _to_int_amount("1500/-") == "1500"
 
     def test_amount_multiple_dots(self):
         from app.automation.form_helpers import _to_int_amount
-        assert _to_int_amount("1.500.00") == "1.500.00" # Fails parsing, returns string directly
+
+        assert (
+            _to_int_amount("1.500.00") == "1.500.00"
+        )  # Fails parsing, returns string directly
 
     def test_amount_scientific_notation(self):
         from app.automation.form_helpers import _to_int_amount
-        assert _to_int_amount("1e3") == "13" # The 'e' is stripped out! So it becomes "13".
+
+        assert (
+            _to_int_amount("1e3") == "13"
+        )  # The 'e' is stripped out! So it becomes "13".
         # This is fine, surveyors don't write 1e3.
 
 
@@ -2557,18 +2881,22 @@ class TestAmountSanitizationDeep:
 # 31. TEXT SANITIZATION DEEP TESTS
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestTextSanitizationDeep:
 
     def test_clean_text_portal_newline(self):
         from app.automation.form_helpers import _clean_text_for_portal
+
         assert _clean_text_for_portal("Line 1\nLine 2") == "Line 1\nLine 2"
 
     def test_clean_text_strict_newline(self):
         from app.automation.form_helpers import _clean_text_strict
+
         assert _clean_text_strict("Line 1\nLine 2") == "Line 1 Line 2"
 
     def test_clean_text_portal_tabs(self):
         from app.automation.form_helpers import _clean_text_for_portal
+
         assert _clean_text_for_portal("Col1\tCol2") == "Col1\tCol2"
 
 
@@ -2576,11 +2904,13 @@ class TestTextSanitizationDeep:
 # 32. TIME EXTRACTION DEEP TESTS
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestTimeExtractionDeep:
     """Testing how excel_reader parses different time formats."""
 
     def test_time_regex(self):
         import re
+
         time_pattern = r"(\d{1,2})[.:]?(\d{2})?\s*([aA]\.?[mM]\.?|[pP]\.?[mM]\.?)"
 
         # 10:30 AM
@@ -2608,21 +2938,25 @@ class TestTimeExtractionDeep:
         assert match.group(1) == "10"
         assert match.group(3).upper() == "A.M."
 
+
 # ═════════════════════════════════════════════════════════════════════════════
 # 33. DATE NORMALIZATION EXTREME
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestDateNormalizationExtreme:
     """Testing _format_date and _to_iso_date against terrible inputs."""
 
     def test_format_date_two_digit_year(self):
         from app.data.excel_reader import _format_date
+
         # dateutil parser usually handles this
         res = _format_date("16/02/26")
         assert res == "16/02/26"
 
     def test_format_date_alpha_month(self):
         from app.data.excel_reader import _format_date
+
         res = _format_date("16 Feb 2026")
         assert res == "16 Feb 2026"
 
@@ -2631,23 +2965,27 @@ class TestDateNormalizationExtreme:
 
     def test_to_iso_date_alpha_month(self):
         from app.automation.form_helpers import _to_iso_date
+
         res = _to_iso_date("16/02/2026")
         assert res == "2026-02-16"
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 34. PERFORMANCE AND STRESS TEST
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestPerformanceAndStress:
     """Ensure the system can handle large iterative operations quickly."""
 
     def test_thousand_claim_instantiations(self):
         import time
+
         start = time.time()
         claims = [ClaimData() for _ in range(1000)]
         end = time.time()
         assert len(claims) == 1000
-        assert (end - start) < 1.0 # Should take way less than 1 second
+        assert (end - start) < 1.0  # Should take way less than 1 second
 
     def test_thousand_validations(self):
         c = ClaimData()
@@ -2658,16 +2996,18 @@ class TestPerformanceAndStress:
         c.final_report_no = "R123"
 
         import time
+
         start = time.time()
         for _ in range(1000):
             c.validate()
         end = time.time()
-        assert (end - start) < 2.0 # Validation should be extremely fast
+        assert (end - start) < 2.0  # Validation should be extremely fast
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 35. FIELD MAPPING JSON INTEGRITY DEEP DIVE
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestFieldMappingDeepIntegrity:
     """Extreme validation of field_mapping.json schema."""
@@ -2680,13 +3020,18 @@ class TestFieldMappingDeepIntegrity:
 
     def test_no_empty_search_labels(self, mapping):
         for field, cfg in mapping.items():
-            if field.startswith("_"): continue
+            if field.startswith("_"):
+                continue
             if "search_labels" in cfg:
                 assert isinstance(cfg["search_labels"], list)
-                assert len(cfg["search_labels"]) > 0, f"{field} has empty search_labels array"
+                assert (
+                    len(cfg["search_labels"]) > 0
+                ), f"{field} has empty search_labels array"
                 for label in cfg["search_labels"]:
                     assert isinstance(label, str)
-                    assert len(label.strip()) > 0, f"{field} has empty string in search_labels"
+                    assert (
+                        len(label.strip()) > 0
+                    ), f"{field} has empty string in search_labels"
             else:
                 sl = cfg.get("search_label")
                 if isinstance(sl, list):
@@ -2697,23 +3042,39 @@ class TestFieldMappingDeepIntegrity:
                     assert isinstance(sl, str)
                     assert len(sl.strip()) > 0
 
-
     def test_no_extra_keys_in_config(self, mapping):
-        allowed_keys = {"sheet", "search_label", "search_labels", "row_offset", "col_offset", "group_idx", "is_date", "allow_literal_values", "fallback_value", "allow_text_values"}
+        allowed_keys = {
+            "sheet",
+            "search_label",
+            "search_labels",
+            "row_offset",
+            "col_offset",
+            "group_idx",
+            "is_date",
+            "allow_literal_values",
+            "fallback_value",
+            "allow_text_values",
+        }
         for field, cfg in mapping.items():
-            if field.startswith("_"): continue
+            if field.startswith("_"):
+                continue
             for key in cfg.keys():
                 assert key in allowed_keys, f"{field} has unknown key '{key}'"
 
     def test_is_date_is_boolean(self, mapping):
         for field, cfg in mapping.items():
-            if field.startswith("_"): continue
+            if field.startswith("_"):
+                continue
             if "is_date" in cfg:
-                assert isinstance(cfg["is_date"], bool), f"{field} is_date must be boolean"
+                assert isinstance(
+                    cfg["is_date"], bool
+                ), f"{field} is_date must be boolean"
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 36. JUNK DETECTION EXTREME
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestJunkDetectionExtreme:
 
@@ -2730,11 +3091,13 @@ class TestJunkDetectionExtreme:
         # Let's test if our clean_value strips them.
 
     def test_junk_html_entities(self):
-        assert _is_junk("&nbsp;") is False # It doesn't know HTML
+        assert _is_junk("&nbsp;") is False  # It doesn't know HTML
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 37. CLEAN VALUE EXTREME
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestCleanValueExtreme:
 
@@ -2750,14 +3113,17 @@ class TestCleanValueExtreme:
 
     def test_clean_value_datetime_object(self):
         import datetime
+
         dt = datetime.datetime(2026, 2, 16, 14, 30)
         res = _clean_value(dt)
         # Python str(datetime) is "2026-02-16 14:30:00"
         assert "2026-02-16" in res
 
+
 # ═════════════════════════════════════════════════════════════════════════════
 # 38. MOCK PORTAL HELPERS
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestPortalHelpersExtreme:
 
@@ -2769,20 +3135,25 @@ class TestPortalHelpersExtreme:
 
     def test_clean_text_strict_emojis(self):
         from app.automation.form_helpers import _clean_text_strict
+
         assert _clean_text_strict("Car is broken 🚗💔") == "Car is broken"
 
     def test_clean_text_for_portal_emojis(self):
         from app.automation.form_helpers import _clean_text_for_portal
+
         assert _clean_text_for_portal("Car is broken 🚗💔") == "Car is broken 🚗💔"
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 39. ASSESSMENT SELECTOR INTEGRITY
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestAssessmentSelectorIntegrity:
 
     def test_assessment_slots_structure(self):
         from app.automation.selectors import ASSESSMENT_SLOTS
+
         assert isinstance(ASSESSMENT_SLOTS, dict)
         assert len(ASSESSMENT_SLOTS) > 0
         for name, slot in ASSESSMENT_SLOTS.items():
@@ -2792,25 +3163,30 @@ class TestAssessmentSelectorIntegrity:
 
     def test_all_tabs_have_selectors(self):
         from app.automation.selectors import TABS
+
         assert "interim" in TABS
         assert "assessment" in TABS
         assert "documents" in TABS
 
     def test_all_assessment_inputs_have_selectors(self):
         from app.automation.selectors import ASSESSMENT
+
         inputs = ["report_no", "report_date", "total", "remarks"]
         for i in inputs:
             assert i in ASSESSMENT
 
+
 # ═════════════════════════════════════════════════════════════════════════════
 # 40. FINAL INTEGRATION MOCK
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestFinalIntegrationMock:
     """Mock an entire end-to-end run of the data extraction phase."""
 
     def test_e2e_data_extraction(self):
         import tempfile
+
         openpyxl = pytest.importorskip("openpyxl")
         from app.data.folder_scanner import scan_folder
 
@@ -2858,7 +3234,6 @@ class TestFinalIntegrationMock:
                 pass
 
 
-
 class TestStagedFieldMappingUpdates:
     """Test that all newly added arrays in field_mapping.json correctly extract data."""
 
@@ -2868,40 +3243,62 @@ class TestStagedFieldMappingUpdates:
         return {
             "claim_no": {
                 "sheet": "ALL",
-                "search_labels": ["Claim no", "Claim Number", "claim_number", "claim_no"],
-                "row_offset": 0, "col_offset": 1
+                "search_labels": [
+                    "Claim no",
+                    "Claim Number",
+                    "claim_number",
+                    "claim_no",
+                ],
+                "row_offset": 0,
+                "col_offset": 1,
             },
             "surveyor_observation": {
                 "sheet": "ALL",
                 "search_labels": ["surveyor observation", "OBERVATIONS/COMMENTS"],
-                "row_offset": 1, "col_offset": 0,
-                "fallback_value": "Ok"
+                "row_offset": 1,
+                "col_offset": 0,
+                "fallback_value": "Ok",
             },
             "salvage_value": {
                 "sheet": "Sheet1",
-                "search_labels": ["LESS SALVAGE VALUE", "Less Salvage Value", "salvage value", "Salvage_value"],
-                "row_offset": 0, "col_offset": 5
+                "search_labels": [
+                    "LESS SALVAGE VALUE",
+                    "Less Salvage Value",
+                    "salvage value",
+                    "Salvage_value",
+                ],
+                "row_offset": 0,
+                "col_offset": 5,
             },
             "towing_charges": {
                 "sheet": "Sheet1",
                 "search_labels": ["TOWING CHARGE", "TOWING CHARGES"],
-                "row_offset": 0, "col_offset": 4
+                "row_offset": 0,
+                "col_offset": 4,
             },
             "professional_fee": {
                 "sheet": "Sheet5",
-                "search_labels": ["professional_fee", "professional fee", "SURVEY FEE", "SURVEY FEES"],
-                "row_offset": 0, "col_offset": 5
+                "search_labels": [
+                    "professional_fee",
+                    "professional fee",
+                    "SURVEY FEE",
+                    "SURVEY FEES",
+                ],
+                "row_offset": 0,
+                "col_offset": 5,
             },
             "invoice_no": {
                 "sheet": "Sheet5",
                 "search_labels": ["invoice_no", "Invoice No", "Ref:"],
-                "row_offset": 0, "col_offset": 1
+                "row_offset": 0,
+                "col_offset": 1,
             },
             "invoice_date": {
                 "sheet": "Sheet5",
                 "search_labels": ["invoice_date", "invoice date", "Date:"],
-                "row_offset": 0, "col_offset": 1
-            }
+                "row_offset": 0,
+                "col_offset": 1,
+            },
         }
 
     def test_claim_no_array(self, mock_field_mapping):
@@ -2911,7 +3308,9 @@ class TestStagedFieldMappingUpdates:
 
     def test_salvage_value_array(self, mock_field_mapping):
         assert "Salvage_value" in mock_field_mapping["salvage_value"]["search_labels"]
-        assert "LESS SALVAGE VALUE" in mock_field_mapping["salvage_value"]["search_labels"]
+        assert (
+            "LESS SALVAGE VALUE" in mock_field_mapping["salvage_value"]["search_labels"]
+        )
 
     def test_professional_fee_array(self, mock_field_mapping):
         assert "SURVEY FEES" in mock_field_mapping["professional_fee"]["search_labels"]
@@ -2930,31 +3329,57 @@ class TestStagedExcelReaderPaymentLogic:
     def test_payment_to_insured_scan(self):
         # We'll mock the Excel reading cell text scan
         class MockCell:
-            def __init__(self, val): self.val = val
-            def __str__(self): return str(self.val)
+            def __init__(self, val):
+                self.val = val
+
+            def __str__(self):
+                return str(self.val)
 
         class MockRow:
-            def __init__(self, cells): self.cells = cells
-            def __iter__(self): return iter(self.cells)
-            def __getitem__(self, i): return self.cells[i]
-            def __len__(self): return len(self.cells)
+            def __init__(self, cells):
+                self.cells = cells
+
+            def __iter__(self):
+                return iter(self.cells)
+
+            def __getitem__(self, i):
+                return self.cells[i]
+
+            def __len__(self):
+                return len(self.cells)
 
         class MockSheet:
             def __init__(self, name, rows):
                 self.name = name
                 self._r = rows
-            def rows(self): return self._r
+
+            def rows(self):
+                return self._r
 
         class MockWorkbook:
-            def __init__(self, sheets): self.sheets = sheets
-            def all_sheets(self): return self.sheets
+            def __init__(self, sheets):
+                self.sheets = sheets
+
+            def all_sheets(self):
+                return self.sheets
 
         # Scenario 1: payment to insured
-        wb1 = MockWorkbook([
-            MockSheet("Sheet1", [
-                MockRow([MockCell("some junk"), MockCell("PAYMENT TO INSURED "), MockCell("Yes")])
-            ])
-        ])
+        wb1 = MockWorkbook(
+            [
+                MockSheet(
+                    "Sheet1",
+                    [
+                        MockRow(
+                            [
+                                MockCell("some junk"),
+                                MockCell("PAYMENT TO INSURED "),
+                                MockCell("Yes"),
+                            ]
+                        )
+                    ],
+                )
+            ]
+        )
 
         claim1 = ClaimData()
         # Reproduce the exact logic from excel_reader.py lines 468+
@@ -2970,11 +3395,14 @@ class TestStagedExcelReaderPaymentLogic:
         assert claim1.payment_to == "INSURED"
 
         # Scenario 2: payment to repairer
-        wb2 = MockWorkbook([
-            MockSheet("Sheet1", [
-                MockRow([MockCell("payment  to repairer "), MockCell("Yes")])
-            ])
-        ])
+        wb2 = MockWorkbook(
+            [
+                MockSheet(
+                    "Sheet1",
+                    [MockRow([MockCell("payment  to repairer "), MockCell("Yes")])],
+                )
+            ]
+        )
         claim2 = ClaimData()
         for sh in wb2.all_sheets():
             for r_idx, row in enumerate(sh.rows()):
@@ -2986,6 +3414,7 @@ class TestStagedExcelReaderPaymentLogic:
                         claim2.payment_to = "REPAIRER"
 
         assert claim2.payment_to == "REPAIRER"
+
 
 # =====================================================================
 # 3. TEST HARDCODED REMARKS -> 'Done'
@@ -3013,12 +3442,26 @@ class TestStagedAutomationRemarksDone:
         logs = []
 
         # Patch the dependencies so the function flows without Playwright errors
-        with patch("app.automation.claim_assessment.safe_fill_portal_text", new_callable=AsyncMock) as mock_fill, \
-             patch("app.automation.claim_assessment.safe_fill_amount", new_callable=AsyncMock), \
-             patch("app.automation.claim_assessment.asyncio.sleep", new_callable=AsyncMock):
+        with (
+            patch(
+                "app.automation.claim_assessment.safe_fill_portal_text",
+                new_callable=AsyncMock,
+            ) as mock_fill,
+            patch(
+                "app.automation.claim_assessment.safe_fill_amount",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "app.automation.claim_assessment.asyncio.sleep", new_callable=AsyncMock
+            ),
+        ):
 
             # Ignore click_tab errors by patching it out if it exists, or just catch it
-            with patch("app.automation.claim_assessment.click_tab", new_callable=AsyncMock, create=True):
+            with patch(
+                "app.automation.claim_assessment.click_tab",
+                new_callable=AsyncMock,
+                create=True,
+            ):
                 await fill_claim_assessment(page, claim, logs.append)
 
             # Check the mock_fill calls for "Done"
@@ -3027,7 +3470,9 @@ class TestStagedAutomationRemarksDone:
                 if call.args[2] == "Done" and call.args[3] == "Remarks":
                     found_done = True
                     break
-            assert found_done, "Could not find safe_fill_portal_text call with 'Done' for Remarks"
+            assert (
+                found_done
+            ), "Could not find safe_fill_portal_text call with 'Done' for Remarks"
 
     async def test_interim_report_remarks_done(self):
         page = MagicMock()
@@ -3047,11 +3492,24 @@ class TestStagedAutomationRemarksDone:
         claim = ClaimData()
         logs = []
 
-        with patch("app.automation.interim_report.safe_fill_portal_text", new_callable=AsyncMock) as mock_fill, \
-             patch("app.automation.interim_report.safe_fill_amount", new_callable=AsyncMock), \
-             patch("app.automation.interim_report.asyncio.sleep", new_callable=AsyncMock):
+        with (
+            patch(
+                "app.automation.interim_report.safe_fill_portal_text",
+                new_callable=AsyncMock,
+            ) as mock_fill,
+            patch(
+                "app.automation.interim_report.safe_fill_amount", new_callable=AsyncMock
+            ),
+            patch(
+                "app.automation.interim_report.asyncio.sleep", new_callable=AsyncMock
+            ),
+        ):
 
-            with patch("app.automation.interim_report.click_tab", new_callable=AsyncMock, create=True):
+            with patch(
+                "app.automation.interim_report.click_tab",
+                new_callable=AsyncMock,
+                create=True,
+            ):
                 await fill_interim_report(page, claim, logs.append)
 
             found_done = False
@@ -3060,8 +3518,9 @@ class TestStagedAutomationRemarksDone:
                 if call.args[2] == "Done" and call.args[3] == "Remarks":
                     found_done = True
                     break
-            assert found_done, "Could not find safe_fill_portal_text call with 'Done' for Remarks in interim report"
-
+            assert (
+                found_done
+            ), "Could not find safe_fill_portal_text call with 'Done' for Remarks in interim report"
 
 
 # =====================================================================
@@ -3073,14 +3532,17 @@ class TestStagedFolderScannerPDF:
     @patch("os.path.exists", return_value=False)
     @patch("os.remove")
     @patch("app.data.folder_scanner.logger")
-    def test_pdf_extraction_win32com_success(self, mock_logger, mock_remove, mock_exists):
+    def test_pdf_extraction_win32com_success(
+        self, mock_logger, mock_remove, mock_exists
+    ):
         # Mock sys.modules to inject our win32com mock
         import sys
+
         mock_win32com = MagicMock()
         mock_pythoncom = MagicMock()
-        sys.modules['win32com'] = mock_win32com
-        sys.modules['win32com.client'] = mock_win32com.client
-        sys.modules['pythoncom'] = mock_pythoncom
+        sys.modules["win32com"] = mock_win32com
+        sys.modules["win32com.client"] = mock_win32com.client
+        sys.modules["pythoncom"] = mock_pythoncom
 
         mock_excel = MagicMock()
         mock_wb = MagicMock()
@@ -3099,35 +3561,40 @@ class TestStagedFolderScannerPDF:
         mock_excel.Workbooks.Open.assert_called_once()
         mock_wb.Worksheets.assert_called_once_with(7)  # 6 + 1
         mock_ws.Select.assert_called_once()
-        mock_ws.ExportAsFixedFormat.assert_called_once_with(0, os.path.abspath("C:\\Re-Inspection Report format.pdf"))
+        mock_ws.ExportAsFixedFormat.assert_called_once_with(
+            0, os.path.abspath("C:\\Re-Inspection Report format.pdf")
+        )
 
         # It should return the PDF path
         assert res == "C:\\Re-Inspection Report format.pdf"
 
         # Cleanup
-        del sys.modules['win32com']
-        del sys.modules['win32com.client']
-        del sys.modules['pythoncom']
+        del sys.modules["win32com"]
+        del sys.modules["win32com.client"]
+        del sys.modules["pythoncom"]
 
     @patch("os.path.exists", return_value=False)
     @patch("os.remove")
     @patch("app.data.folder_scanner.logger")
-    def test_pdf_extraction_win32com_missing_sheet(self, mock_logger, mock_remove, mock_exists):
+    def test_pdf_extraction_win32com_missing_sheet(
+        self, mock_logger, mock_remove, mock_exists
+    ):
         import sys
+
         mock_win32com = MagicMock()
         mock_pythoncom = MagicMock()
         mock_openpyxl = MagicMock()
-        sys.modules['win32com'] = mock_win32com
-        sys.modules['win32com.client'] = mock_win32com.client
-        sys.modules['pythoncom'] = mock_pythoncom
-        sys.modules['openpyxl'] = mock_openpyxl
+        sys.modules["win32com"] = mock_win32com
+        sys.modules["win32com.client"] = mock_win32com.client
+        sys.modules["pythoncom"] = mock_pythoncom
+        sys.modules["openpyxl"] = mock_openpyxl
 
         mock_excel = MagicMock()
         mock_wb = MagicMock()
 
         mock_win32com.client.DispatchEx.return_value = mock_excel
         mock_excel.Workbooks.Open.return_value = mock_wb
-        mock_wb.Worksheets.Count = 3 # Less than 7
+        mock_wb.Worksheets.Count = 3  # Less than 7
 
         # Should fall back to openpyxl, let's mock openpyxl failure to just test win32com part
         mock_openpyxl.load_workbook.side_effect = Exception("Openpyxl failed too")
@@ -3135,26 +3602,31 @@ class TestStagedFolderScannerPDF:
 
         # Ensure it tried and failed
         mock_wb.Worksheets.assert_not_called()
-        mock_logger.warning.assert_any_call("Excel file does not have 7 sheets. Cannot export PDF.")
+        mock_logger.warning.assert_any_call(
+            "Excel file does not have 7 sheets. Cannot export PDF."
+        )
         assert res is None
 
-        del sys.modules['win32com']
-        del sys.modules['win32com.client']
-        del sys.modules['pythoncom']
-        del sys.modules['openpyxl']
+        del sys.modules["win32com"]
+        del sys.modules["win32com.client"]
+        del sys.modules["pythoncom"]
+        del sys.modules["openpyxl"]
 
     @patch("os.path.exists", return_value=False)
     @patch("os.remove")
     @patch("app.data.folder_scanner.logger")
-    def test_pdf_extraction_win32com_fails_fallback_to_openpyxl(self, mock_logger, mock_remove, mock_exists):
+    def test_pdf_extraction_win32com_fails_fallback_to_openpyxl(
+        self, mock_logger, mock_remove, mock_exists
+    ):
         import sys
+
         mock_win32com = MagicMock()
         mock_pythoncom = MagicMock()
         mock_openpyxl = MagicMock()
-        sys.modules['win32com'] = mock_win32com
-        sys.modules['win32com.client'] = mock_win32com.client
-        sys.modules['pythoncom'] = mock_pythoncom
-        sys.modules['openpyxl'] = mock_openpyxl
+        sys.modules["win32com"] = mock_win32com
+        sys.modules["win32com.client"] = mock_win32com.client
+        sys.modules["pythoncom"] = mock_pythoncom
+        sys.modules["openpyxl"] = mock_openpyxl
 
         mock_win32com.client.DispatchEx.side_effect = Exception("COM Error")
 
@@ -3172,10 +3644,11 @@ class TestStagedFolderScannerPDF:
         # Should return XLSX path
         assert res == "C:\\Re-Inspection Report format.xlsx"
 
-        del sys.modules['win32com']
-        del sys.modules['win32com.client']
-        del sys.modules['pythoncom']
-        del sys.modules['openpyxl']
+        del sys.modules["win32com"]
+        del sys.modules["win32com.client"]
+        del sys.modules["pythoncom"]
+        del sys.modules["openpyxl"]
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 36. ASSESSMENT BALANCING & BRUTALIST UI
@@ -3183,67 +3656,129 @@ class TestStagedFolderScannerPDF:
 
 _qapp = QApplication.instance() or QApplication(sys.argv)
 
+
 class MockPage:
-    def __init__(self): self.fills = []
-    async def evaluate(self, js, *args, **kwargs): return {"ok": True}
-    async def wait_for_load_state(self, *args, **kwargs): pass
+    def __init__(self):
+        self.fills = []
+
+    async def evaluate(self, js, *args, **kwargs):
+        return {"ok": True}
+
+    async def wait_for_load_state(self, *args, **kwargs):
+        pass
+
     def locator(self, selector):
-        m = MagicMock(); m.first = m; m.count = MagicMock(return_value=1)
-        m.is_visible = MagicMock(return_value=True); m.fill = MagicMock()
-        m.evaluate = MagicMock(); return m
+        m = MagicMock()
+        m.first = m
+        m.count = MagicMock(return_value=1)
+        m.is_visible = MagicMock(return_value=True)
+        m.fill = MagicMock()
+        m.evaluate = MagicMock()
+        return m
+
 
 @pytest.mark.asyncio
 async def test_balancing_nil_dep_on_exact_match():
-    claim = ClaimData(nil_depreciation="Yes", parts_age_dep_excl_gst="100", parts_50_dep_excl_gst="200", parts_nil_dep_excl_gst="300", parts_gst18_amount="600")
-    logs = []; page = MockPage()
+    claim = ClaimData(
+        nil_depreciation="Yes",
+        parts_age_dep_excl_gst="100",
+        parts_50_dep_excl_gst="200",
+        parts_nil_dep_excl_gst="300",
+        parts_gst18_amount="600",
+    )
+    logs = []
+    page = MockPage()
     with patch("app.automation.claim_assessment.safe_fill_amount") as mock_fill:
         await _fill_parts(page, claim, lambda m: logs.append(m), lambda x: "A1")
-        mock_fill.assert_any_call(page, ANY, "100.0", "Age Dep (Metal)", ANY, source="A1")
+        mock_fill.assert_any_call(
+            page, ANY, "100.0", "Age Dep (Metal)", ANY, source="A1"
+        )
         assert any("⚖️" in l for l in logs)
+
 
 @pytest.mark.asyncio
 async def test_balancing_nil_dep_on_adjust_plus_one():
     # New logic: it does not adjust nil_dep to match target. It calculates exact sum.
-    claim = ClaimData(nil_depreciation="Yes", parts_age_dep_excl_gst="100", parts_50_dep_excl_gst="200", parts_nil_dep_excl_gst="300", parts_gst18_amount="601")
-    logs = []; page = MockPage()
+    claim = ClaimData(
+        nil_depreciation="Yes",
+        parts_age_dep_excl_gst="100",
+        parts_50_dep_excl_gst="200",
+        parts_nil_dep_excl_gst="300",
+        parts_gst18_amount="601",
+    )
+    logs = []
+    page = MockPage()
     with patch("app.automation.claim_assessment.safe_fill_amount") as mock_fill:
         await _fill_parts(page, claim, lambda m: logs.append(m), lambda x: "A1")
         mock_fill.assert_any_call(page, ANY, "300.0", "Nil Dep", ANY, source="A1")
-        mock_fill.assert_any_call(page, ANY, "600.0", "Parts GST 18%", ANY, source="Calculated")
+        mock_fill.assert_any_call(
+            page, ANY, "600.0", "Parts GST 18%", ANY, source="Calculated"
+        )
         assert any("⚖️" in l for l in logs)
+
 
 @pytest.mark.asyncio
 async def test_balancing_nil_dep_off_adjust_total():
     # New logic: when NO, it passes exact string values without modification.
-    claim = ClaimData(nil_depreciation="No", parts_age_dep_excl_gst="100", parts_50_dep_excl_gst="200", parts_nil_dep_excl_gst="300", parts_gst18_amount="466")
-    logs = []; page = MockPage()
+    claim = ClaimData(
+        nil_depreciation="No",
+        parts_age_dep_excl_gst="100",
+        parts_50_dep_excl_gst="200",
+        parts_nil_dep_excl_gst="300",
+        parts_gst18_amount="466",
+    )
+    logs = []
+    page = MockPage()
     with patch("app.automation.claim_assessment.safe_fill_amount") as mock_fill:
         await _fill_parts(page, claim, lambda m: logs.append(m), lambda x: "A1")
         mock_fill.assert_any_call(page, ANY, "466", "Parts GST 18%", ANY, source="A1")
         assert not any("⚖️" in l for l in logs)
 
+
 from app.ui.components.widgets import TagDelegate, ChipLineEdit
 
-def test_tag_delegate_empty_data():
-    delegate = TagDelegate(); pixmap = QPixmap(100, 100); painter = QPainter(pixmap)
-    option = QStyleOptionViewItem(); option.rect = QRect(0, 0, 100, 30); index = QModelIndex()
-    try: delegate.paint(painter, option, index)
-    finally: painter.end()
 
-@pytest.mark.parametrize("age,p50,nil,target,is_nil,expected_nil,expected_total,should_balance", [
-    ("100", "200", "300", "600", "Yes", "300.0", "600.0", True),
-    ("100", "200", "300", "601", "Yes", "300.0", "600.0", True),
-    ("100", "200", "300", "465", "No", "300", "465", False),
-    ("100", "200", "300", "466", "No", "300", "466", False),
-])
+def test_tag_delegate_empty_data():
+    delegate = TagDelegate()
+    pixmap = QPixmap(100, 100)
+    painter = QPainter(pixmap)
+    option = QStyleOptionViewItem()
+    option.rect = QRect(0, 0, 100, 30)
+    index = QModelIndex()
+    try:
+        delegate.paint(painter, option, index)
+    finally:
+        painter.end()
+
+
+@pytest.mark.parametrize(
+    "age,p50,nil,target,is_nil,expected_nil,expected_total,should_balance",
+    [
+        ("100", "200", "300", "600", "Yes", "300.0", "600.0", True),
+        ("100", "200", "300", "601", "Yes", "300.0", "600.0", True),
+        ("100", "200", "300", "465", "No", "300", "465", False),
+        ("100", "200", "300", "466", "No", "300", "466", False),
+    ],
+)
 @pytest.mark.asyncio
-async def test_balancing_matrix(age, p50, nil, target, is_nil, expected_nil, expected_total, should_balance):
-    claim = ClaimData(nil_depreciation=is_nil, parts_age_dep_excl_gst=age, parts_50_dep_excl_gst=p50, parts_nil_dep_excl_gst=nil, parts_gst18_amount=target)
-    logs = []; page = MockPage()
+async def test_balancing_matrix(
+    age, p50, nil, target, is_nil, expected_nil, expected_total, should_balance
+):
+    claim = ClaimData(
+        nil_depreciation=is_nil,
+        parts_age_dep_excl_gst=age,
+        parts_50_dep_excl_gst=p50,
+        parts_nil_dep_excl_gst=nil,
+        parts_gst18_amount=target,
+    )
+    logs = []
+    page = MockPage()
     with patch("app.automation.claim_assessment.safe_fill_amount") as mock_fill:
         await _fill_parts(page, claim, lambda x: logs.append(x), lambda x: "SRC")
         mock_fill.assert_any_call(page, ANY, expected_nil, "Nil Dep", ANY, source=ANY)
-        mock_fill.assert_any_call(page, ANY, expected_total, "Parts GST 18%", ANY, source=ANY)
+        mock_fill.assert_any_call(
+            page, ANY, expected_total, "Parts GST 18%", ANY, source=ANY
+        )
         assert any("⚖️" in l for l in logs) == should_balance
 
 
@@ -3280,7 +3815,9 @@ class _FakeUploadService:
     async def row_shows_expected_file(self, row_idx, expected_name, timeout_ms=2000):
         return True
 
-    async def select_doc_and_set_file(self, row_index, doc_label, file_path, timeout_ms):
+    async def select_doc_and_set_file(
+        self, row_index, doc_label, file_path, timeout_ms
+    ):
         self.retry_calls.append((row_index, doc_label, file_path, timeout_ms))
         return True
 
@@ -3314,12 +3851,16 @@ async def test_fill_claim_documents_uses_upload_service(monkeypatch, tmp_path):
     monkeypatch.setattr(claim_documents, "_click_doc_radios", _async_noop)
     monkeypatch.setattr(claim_documents, "_click_payment_option", _async_noop)
     monkeypatch.setattr(claim_documents, "DocumentUploadService", _FakeUploadService)
-    monkeypatch.setattr(claim_documents, "load_settings", lambda: {"upload_wait_ms": 3100})
+    monkeypatch.setattr(
+        claim_documents, "load_settings", lambda: {"upload_wait_ms": 3100}
+    )
 
     logs = []
     page = _FakePageForDocs()
 
-    await claim_documents.fill_claim_documents(page=page, claim=claim, log_cb=logs.append)
+    await claim_documents.fill_claim_documents(
+        page=page, claim=claim, log_cb=logs.append
+    )
 
     assert len(_FakeUploadService.instances) == 1
     service = _FakeUploadService.instances[0]
@@ -3339,7 +3880,9 @@ async def test_fill_claim_documents_handles_empty_queue(monkeypatch):
     monkeypatch.setattr(claim_documents, "_click_payment_option", _async_noop)
 
     logs = []
-    await claim_documents.fill_claim_documents(page=_FakePageForDocs(), claim=claim, log_cb=logs.append)
+    await claim_documents.fill_claim_documents(
+        page=_FakePageForDocs(), claim=claim, log_cb=logs.append
+    )
 
     assert any("No documents to process" in line for line in logs)
 
@@ -3372,8 +3915,14 @@ def test_process_folder_success_with_excel(monkeypatch, tmp_path):
         _excel_coords={},
     )
 
-    monkeypatch.setattr("app.data.folder_scanner.scan_folder", lambda _folder: fake_scan)
-    monkeypatch.setattr("app.data.excel_reader.read_excel", lambda _path, _cfg: fake_claim)
+    monkeypatch.setattr(
+        "app.data.folder_scanner.scan_folder",
+        lambda _folder, portal_id="uiic": fake_scan,
+    )
+    monkeypatch.setattr(
+        "app.data.excel_reader.extract_claim_data",
+        lambda _path, portal_id="uiic": fake_claim,
+    )
 
     service = ClaimFolderService(config_dir="app/config")
     result = service.process_folder(str(tmp_path))
@@ -3394,7 +3943,10 @@ def test_process_folder_without_excel(monkeypatch, tmp_path):
         expected_docs=[],
     )
 
-    monkeypatch.setattr("app.data.folder_scanner.scan_folder", lambda _folder: fake_scan)
+    monkeypatch.setattr(
+        "app.data.folder_scanner.scan_folder",
+        lambda _folder, portal_id="uiic": fake_scan,
+    )
 
     service = ClaimFolderService(config_dir="app/config")
     result = service.process_folder(str(tmp_path))
@@ -3413,6 +3965,7 @@ from app.automation.engine import _get_active_page
 
 try:
     import playwright  # noqa: F401
+
     _HAS_PLAYWRIGHT = True
 except Exception:
     _HAS_PLAYWRIGHT = False
@@ -3473,7 +4026,9 @@ class _FakeContextForPortal:
 @pytest.mark.asyncio
 async def test_get_active_page_prefers_existing_surveyor_tab():
     login_tab = _FakePageForPortal("https://portal.uiic.in/surveyor/home.jsp")
-    surveyor_tab = _FakePageForPortal("https://portal.uiic.in/surveyor/data/Surveyor.html#/Worklist")
+    surveyor_tab = _FakePageForPortal(
+        "https://portal.uiic.in/surveyor/data/Surveyor.html#/Worklist"
+    )
     context = _FakeContextForPortal(pages=[login_tab, surveyor_tab])
 
     logs = []
@@ -3492,8 +4047,13 @@ async def test_get_active_page_prefers_existing_surveyor_tab():
 @pytest.mark.skipif(not _HAS_PLAYWRIGHT, reason="playwright is not installed")
 @pytest.mark.asyncio
 async def test_get_active_page_falls_back_to_new_worklist_page(monkeypatch):
-    login_tab = _FakePageForPortal("https://portal.uiic.in/surveyor/home.jsp", login_visible=True)
-    new_worklist_page = _FakePageForPortal("https://portal.uiic.in/surveyor/data/Surveyor.html#/Worklist", login_visible=False)
+    login_tab = _FakePageForPortal(
+        "https://portal.uiic.in/surveyor/home.jsp", login_visible=True
+    )
+    new_worklist_page = _FakePageForPortal(
+        "https://portal.uiic.in/surveyor/data/Surveyor.html#/Worklist",
+        login_visible=False,
+    )
     context = _FakeContextForPortal(pages=[login_tab], new_pages=[new_worklist_page])
 
     async def _not_login_form(_page, portal_id="uiic"):
@@ -3517,7 +4077,9 @@ async def test_get_active_page_falls_back_to_new_worklist_page(monkeypatch):
 @pytest.mark.skipif(not _HAS_PLAYWRIGHT, reason="playwright is not installed")
 @pytest.mark.asyncio
 async def test_get_active_page_honors_stop_request():
-    context = _FakeContextForPortal(pages=[_FakePageForPortal("https://portal.uiic.in/surveyor/home.jsp")])
+    context = _FakeContextForPortal(
+        pages=[_FakePageForPortal("https://portal.uiic.in/surveyor/home.jsp")]
+    )
 
     page = await _get_active_page(
         context=context,

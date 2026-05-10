@@ -139,13 +139,14 @@ async def _select_first_visible(page, selectors, label: str, timeout: int = 4000
 async def navigate_to_claim(
     page: Page,
     claim_no: str,
-    claim_type: str = "Non Maruti",
+    settings: dict,
     log_cb: Callable[[str], None] = print,
 ) -> Optional[Page]:
     """
     Navigate to Worklist → select claim type → filter by claim no → click Action.
     Returns the claim details Page (may be a new tab) if found, or None.
     """
+    claim_type = settings.get("claim_type", "Non Maruti")
     log_cb(f"📌 Current URL: {page.url}")
 
     # ── Step 1: Navigate to Worklist ──────────────────────────────────────────

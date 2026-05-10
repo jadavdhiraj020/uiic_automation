@@ -15,7 +15,6 @@ from app.automation.services.document_upload_service import (
 )
 from app.automation.tab_utils import click_tab
 from app.data.data_model import ClaimData
-from app.utils import load_settings
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +174,9 @@ def _build_queue(claim: ClaimData, log_cb: Callable) -> List[Tuple[str, Optional
     return queue
 
 
-async def fill_claim_documents(page, claim: ClaimData, log_cb: Callable[[str], None] = print) -> None:
+async def fill_claim_documents(page, claim: ClaimData,
+                               log_cb: Callable[[str], None] = print,
+                               settings: dict = None) -> None:
     """Fill Claim Documents tab with radios, payment option, and upload queue."""
     await click_tab(page, "documents", log_cb)
 
@@ -203,8 +204,9 @@ async def fill_claim_documents(page, claim: ClaimData, log_cb: Callable[[str], N
 
     page.on("dialog", _handle_dialog)
 
-    settings = load_settings()
-    wait_timeout_ms = int(settings.get("upload_timeout_ms", settings.get("upload_wait_ms", 10000)))
+    # Use explicitly passed settings or empty dict
+    cfg = settings or {}
+    wait_timeout_ms = int(cfg.get("upload_timeout_ms", cfg.get("upload_wait_ms", 10000)))
     panel_ready_timeout = max(15000, wait_timeout_ms)
 
     service = DocumentUploadService(page=page, log_cb=log_cb)

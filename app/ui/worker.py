@@ -6,7 +6,7 @@ class AutomationWorker(QObject):
     step_signal = pyqtSignal(int, str)
     done_signal = pyqtSignal(bool, str)
 
-    def __init__(self, claim, settings_override, portal_id: str = "uiic"):
+    def __init__(self, claim, settings_override=None, portal_id: str = "uiic"):
         super().__init__()
         self.claim             = claim
         self.settings_override = settings_override

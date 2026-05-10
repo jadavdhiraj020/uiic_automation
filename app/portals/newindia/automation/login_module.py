@@ -53,10 +53,7 @@ async def _wait_for_manual_login(page, log_cb: Callable[[str], None], stop_cb: C
 
 async def do_login(
     page,
-    portal_url: str,
-    username: str,
-    password: str,
-    max_retries: int = 5,  # Ignored for manual CAPTCHA, kept for signature compatibility
+    settings: dict,
     log_cb: Callable[[str], None] = print,
     stop_cb: Callable[[], bool] = lambda: False,
 ) -> bool:
@@ -64,6 +61,9 @@ async def do_login(
     Navigate to the New India portal, auto-fill credentials, and wait for manual login.
     Returns True on successful login detection, False otherwise.
     """
+    portal_url = settings["portal_url"]
+    username = settings["username"]
+    password = settings["password"]
     # 1. Open Login Page
     log_cb("  🌐 Opening New India login page...")
     try:

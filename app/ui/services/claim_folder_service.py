@@ -19,16 +19,17 @@ class ClaimFolderProcessResult:
 class ClaimFolderService:
     """Extracts and prepares claim + document data from a selected folder."""
 
-    def __init__(self, config_dir: str):
+    def __init__(self, config_dir: str, portal_id: str = "uiic"):
         self.config_dir = config_dir
+        self.portal_id = portal_id or "uiic"
 
     def process_folder(self, folder: str) -> ClaimFolderProcessResult:
-        from app.data.excel_reader import read_excel
+        from app.data.excel_reader import extract_claim_data
         from app.data.folder_scanner import scan_folder
 
         logs: List[str] = [f"📁 Scanning folder: {folder}"]
         try:
-            scan_result = scan_folder(folder)
+            scan_result = scan_folder(folder, portal_id=self.portal_id)
             claim_docs = scan_result.claim_doc_files
             assess_docs = scan_result.assessment_files
 
@@ -68,7 +69,7 @@ class ClaimFolderService:
                 return ClaimFolderProcessResult(False, scan_result, None, logs, error="No Excel file found")
 
             logs.append(f"📊 Excel: {Path(scan_result.excel_path).name}")
-            claim = read_excel(scan_result.excel_path, self.config_dir)
+            claim = extract_claim_data(scan_result.excel_path, portal_id=self.portal_id)
             claim.claim_doc_files = scan_result.claim_doc_files
             claim.assessment_files = scan_result.assessment_files
 
@@ -141,7 +142,7 @@ class ClaimFolderService:
             logs.append("  ⚠️ pdfplumber not installed — cannot extract invoice data")
             return
 
-        settings = load_settings()
+        settings = load_settings(portal_id=getattr(claim, "portal_id", self.portal_id))
         inv_labels = settings.get("pdf_invoice_no_labels",
                                   ["Tax Invoice No.", "Invoice No", "Bill No", "Work shop invoice"])
         date_labels = settings.get("pdf_invoice_date_labels",

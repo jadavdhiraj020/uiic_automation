@@ -100,7 +100,7 @@ async def _raw_fill(page, sel: str, value_str: str, label: str,
             el = page.locator(sel).first
             await el.wait_for(state="visible", timeout=timeout_ms)
             await el.click(click_count=3, force=True)
-            await el.fill(value_str)
+            await el.fill(value_str) 
             await el.press("Tab")
             await asyncio.sleep(0.1)
             log_cb(f"  ✅ [Filled] {label} : '{value_str[:60]}' ({src_tag})")
@@ -112,6 +112,18 @@ async def _raw_fill(page, sel: str, value_str: str, label: str,
             else:
                 log_cb(f"  ⚠️  {label}: {str(e)[:100]}")
     return False
+
+
+def format_date_for_uiic(value: str) -> str:
+    """
+    Parse any date string and return DD/MM/YYYY for UIIC portal text inputs.
+    Returns empty string if parsing fails.
+    """
+    iso = _to_iso_date(value)
+    if not iso:
+        return ""
+    parts = iso.split("-")
+    return f"{parts[2]}/{parts[1]}/{parts[0]}"
 
 
 # ── Public fill helpers ───────────────────────────────────────────────────────

@@ -74,7 +74,7 @@ def ensure_dir(path: str) -> str:
     return path
 
 
-def settings_paths() -> dict[str, str]:
+def settings_paths(portal_id: Optional[str] = None) -> dict[str, str]:
     """
     Canonical settings locations.
 
@@ -87,7 +87,7 @@ def settings_paths() -> dict[str, str]:
     reg = _get_portal_registry()
     if reg is not None:
         try:
-            return reg.portal_settings_paths()
+            return reg.portal_settings_paths(portal_id=portal_id)
         except Exception:
             pass
     return {
@@ -114,22 +114,22 @@ def write_json_file(path: str, data: dict[str, Any]) -> None:
         json.dump(data, f, indent=2)
 
 
-def load_settings() -> dict[str, Any]:
+def load_settings(portal_id: Optional[str] = None) -> dict[str, Any]:
     """
     Load settings with a stable precedence:
       user settings override bundled defaults.
     """
-    paths = settings_paths()
+    paths = settings_paths(portal_id=portal_id)
     base = read_json_file(paths["default"]) or {}
     override = read_json_file(paths["user"]) or {}
     base.update(override)
     return base
 
 
-def save_settings(overrides: dict[str, Any]) -> str:
+def save_settings(overrides: dict[str, Any], portal_id: Optional[str] = None) -> str:
     """Merge and save settings into the writable user settings file."""
-    paths = settings_paths()
-    current = load_settings()
+    paths = settings_paths(portal_id=portal_id)
+    current = load_settings(portal_id=portal_id)
     current.update(overrides or {})
     write_json_file(paths["user"], current)
     return paths["user"]
@@ -137,7 +137,7 @@ def save_settings(overrides: dict[str, Any]) -> str:
 
 # ── Field Mapping persistence ─────────────────────────────────────────────
 
-def field_mapping_paths() -> dict[str, str]:
+def field_mapping_paths(portal_id: Optional[str] = None) -> dict[str, str]:
     """
     Canonical field-mapping file locations.
 
@@ -149,7 +149,7 @@ def field_mapping_paths() -> dict[str, str]:
     reg = _get_portal_registry()
     if reg is not None:
         try:
-            return reg.portal_field_mapping_paths()
+            return reg.portal_field_mapping_paths(portal_id=portal_id)
         except Exception:
             pass
     return {
@@ -158,7 +158,7 @@ def field_mapping_paths() -> dict[str, str]:
     }
 
 
-def load_field_mapping() -> dict[str, Any]:
+def load_field_mapping(portal_id: Optional[str] = None) -> dict[str, Any]:
     """
     Load the field mapping with user overrides.
 
@@ -167,7 +167,7 @@ def load_field_mapping() -> dict[str, Any]:
       - New bundled keys (e.g. allow_text_values) carry through even if
         the user's saved copy predates them
     """
-    paths = field_mapping_paths()
+    paths = field_mapping_paths(portal_id=portal_id)
     base = read_json_file(paths["default"]) or {}
     user = read_json_file(paths["user"]) or {}
     merged = {}
@@ -194,16 +194,16 @@ def load_field_mapping() -> dict[str, Any]:
     return merged
 
 
-def save_field_mapping(mapping: dict[str, Any]) -> str:
+def save_field_mapping(mapping: dict[str, Any], portal_id: Optional[str] = None) -> str:
     """Save a complete field mapping document to the writable user location."""
-    paths = field_mapping_paths()
+    paths = field_mapping_paths(portal_id=portal_id)
     write_json_file(paths["user"], mapping)
     return paths["user"]
 
 
-def reset_field_mapping() -> None:
+def reset_field_mapping(portal_id: Optional[str] = None) -> None:
     """Delete user field mapping so the bundled default is used again."""
-    paths = field_mapping_paths()
+    paths = field_mapping_paths(portal_id=portal_id)
     try:
         if os.path.exists(paths["user"]):
             os.remove(paths["user"])
@@ -213,7 +213,7 @@ def reset_field_mapping() -> None:
 
 # ── Document Mapping persistence ──────────────────────────────────────────
 
-def doc_mapping_paths() -> dict[str, str]:
+def doc_mapping_paths(portal_id: Optional[str] = None) -> dict[str, str]:
     """
     Canonical doc-mapping file locations.
 
@@ -225,7 +225,7 @@ def doc_mapping_paths() -> dict[str, str]:
     reg = _get_portal_registry()
     if reg is not None:
         try:
-            return reg.portal_doc_mapping_paths()
+            return reg.portal_doc_mapping_paths(portal_id=portal_id)
         except Exception:
             pass
     return {
@@ -234,25 +234,25 @@ def doc_mapping_paths() -> dict[str, str]:
     }
 
 
-def load_doc_mapping() -> dict[str, Any]:
+def load_doc_mapping(portal_id: Optional[str] = None) -> dict[str, Any]:
     """Load doc mapping, preferring user overrides over bundled defaults."""
-    paths = doc_mapping_paths()
+    paths = doc_mapping_paths(portal_id=portal_id)
     user = read_json_file(paths["user"])
     if user is not None:
         return user
     return read_json_file(paths["default"]) or {}
 
 
-def save_doc_mapping(mapping: dict[str, Any]) -> str:
+def save_doc_mapping(mapping: dict[str, Any], portal_id: Optional[str] = None) -> str:
     """Save a complete doc mapping document to the writable user location."""
-    paths = doc_mapping_paths()
+    paths = doc_mapping_paths(portal_id=portal_id)
     write_json_file(paths["user"], mapping)
     return paths["user"]
 
 
-def reset_doc_mapping() -> None:
+def reset_doc_mapping(portal_id: Optional[str] = None) -> None:
     """Delete user doc mapping so the bundled default is used again."""
-    paths = doc_mapping_paths()
+    paths = doc_mapping_paths(portal_id=portal_id)
     try:
         if os.path.exists(paths["user"]):
             os.remove(paths["user"])

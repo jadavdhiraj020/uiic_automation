@@ -20,7 +20,6 @@ from app.automation.form_helpers import (
 )
 from app.automation.selectors import ASSESSMENT, ASSESSMENT_SLOTS, TABS, TAB_SEL
 from app.automation.tab_utils import click_tab
-from app.utils import load_settings
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +96,7 @@ async def _click_declaration_radio(page, log_cb: Callable) -> None:
 
 
 async def _upload_by_label(page, upload_label: str, file_path: str,
-                            log_cb: Callable, slot_key: str = "") -> bool:
+                            log_cb: Callable, settings: dict, slot_key: str = "") -> bool:
     """
     Find the file input associated with the given upload label.
 
@@ -111,9 +110,9 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
 
     Also handles Angular's data-ng-disabled by removing disabled attr via JS.
     """
-    settings = load_settings()
-    upload_wait_s = settings.get("upload_wait_ms", 3000) / 1000.0
-    timeout_ms = settings.get("timeout_ms", 4000)
+    cfg = settings or {}
+    upload_wait_s = cfg.get("upload_wait_ms", 3000) / 1000.0
+    timeout_ms = cfg.get("timeout_ms", 4000)
 
     fname = os.path.basename(file_path)
     if not os.path.isfile(file_path):
@@ -517,7 +516,7 @@ async def _fill_surveyor_charges(page, claim: ClaimData, log_cb: Callable, _src)
         log_cb(f"  ❌ Surveyor charges error: {e}")
 
 
-async def _upload_all(page, claim: ClaimData, log_cb: Callable) -> None:
+async def _upload_all(page, claim: ClaimData, log_cb: Callable, settings: dict) -> None:
     log_cb("\n📤 Uploading Assessment Documents...")
     count = 0
     for slot_key, file_path in claim.assessment_files.items():
@@ -526,7 +525,7 @@ async def _upload_all(page, claim: ClaimData, log_cb: Callable) -> None:
         upload_label = ASSESSMENT_UPLOAD_LABELS.get(slot_key, slot_key)
         try:
             ok = await _upload_by_label(page, upload_label, file_path, log_cb,
-                                         slot_key=slot_key)
+                                         settings=settings, slot_key=slot_key)
             if ok:
                 count += 1
         except Exception as e:
@@ -535,7 +534,8 @@ async def _upload_all(page, claim: ClaimData, log_cb: Callable) -> None:
 
 
 async def fill_claim_assessment(page, claim: ClaimData,
-                                 log_cb: Callable[[str], None] = print) -> None:
+                                 log_cb: Callable[[str], None] = print,
+                                 settings: dict = None) -> None:
     """
     Fill the entire Claim Assessment tab.
     Each section is isolated — a failure in one section does NOT stop others.
@@ -568,7 +568,7 @@ async def fill_claim_assessment(page, claim: ClaimData,
     except Exception as e:
         log_cb(f"  ⚠️  Remarks: {e}")
 
-    await _upload_all(page, claim, log_cb)
+    await _upload_all(page, claim, log_cb, settings=settings)
 
     log_cb("\n✅ Claim Assessment complete.")
     log_cb("👀 Review all tabs then click 'Final Submit' manually.")

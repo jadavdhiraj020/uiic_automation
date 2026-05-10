@@ -212,10 +212,7 @@ async def _try_login_with_captcha(page, username, password, captcha_text, log_cb
 
 async def do_login(
     page,
-    portal_url: str,
-    username: str,
-    password: str,
-    max_retries: int = 5,
+    settings: dict,
     log_cb: Callable[[str], None] = print,
     stop_cb: Callable[[], bool] = lambda: False,
 ) -> bool:
@@ -223,6 +220,11 @@ async def do_login(
     Navigate to the portal and perform login.
     Returns True on success, False otherwise.
     """
+    portal_url = settings["portal_url"]
+    username = settings["username"]
+    password = settings["password"]
+    max_retries = settings.get("captcha_max_retries", 5)
+
     from app.automation.captcha_solver import solve_captcha_from_bytes
 
     page.on("dialog", lambda dialog: asyncio.create_task(_accept_dialog(dialog, log_cb)))
