@@ -370,14 +370,27 @@ class AutomationEngine:
                         message = "Automation stopped by user." if self._check_stop() else "Phase 3 failed."
                         return AutomationRunResult(False, message)
 
+                    self.log_cb("")
+                    self.step_cb(3, steps[3])
+                    self.log_cb("━" * 48)
+                    self.log_cb("  📸 STEP 4/5 ─ Vehicle Photo Graph")
+                    self.log_cb("━" * 48)
+
+                    from app.portals.newindia.automation.vehicle_photo_module import fill_vehicle_photo_graph
+                    success = await fill_vehicle_photo_graph(page, claim, log_cb=self.log_cb, stop_cb=self._check_stop)
+                    if not success:
+                        message = "Automation stopped by user." if self._check_stop() else "Phase 4 failed."
+                        return AutomationRunResult(False, message)
+
                     self.log_cb("╔" + "═" * 48 + "╗")
-                    self.log_cb("║  🚧 AUTOMATION PAUSED (PHASE 3)                ║")
+                    self.log_cb("║  🚧 AUTOMATION PAUSED (PHASE 3 & 4)            ║")
                     self.log_cb("╠" + "═" * 48 + "╣")
-                    self.log_cb("║  New India Phase 3 is complete.                ║")
-                    self.log_cb("║  Review the Quick Update section now.          ║")
+                    self.log_cb("║  New India Phase 3 & 4 are complete.           ║")
+                    self.log_cb("║  Review the Quick Update & Vehicle Photo       ║")
+                    self.log_cb("║  sections now. Upload documents manually.      ║")
                     self.log_cb("╚" + "═" * 48 + "╝")
                     await self._wait_for_manual_review(browser)
-                    return AutomationRunResult(True, "New India Phase 3 complete. Session open.")
+                    return AutomationRunResult(True, "New India Phase 3 & 4 complete. Session open.")
 
                 self.log_cb("")
                 self.step_cb(2, steps[2])

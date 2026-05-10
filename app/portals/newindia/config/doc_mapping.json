@@ -1,6 +1,18 @@
 {
   "_comment": "doc_mapping.json — New India Assurance portal. Maps lowercase filename keywords to document categories. Structure mirrors UIIC's mapping but adapted for New India's document upload requirements.",
   "claim_documents_tab": {
+    "Chassis Number Photograph": [
+      "chassis_number",
+      "chassis",
+      "chassisno",
+      "chasis"
+    ],
+    "Odometer Reading Photograph": [
+      "odometer_reading",
+      "odometer",
+      "odo",
+      "odometer_photo"
+    ],
     "Driving License": [
       "driving_license",
       "driving",
