@@ -420,15 +420,27 @@ class AutomationEngine:
                         message = "Automation stopped by user." if self._check_stop() else "Phase 7 failed."
                         return AutomationRunResult(False, message)
 
+                    self.log_cb("")
+                    self.step_cb(7, "NEFT Details")
+                    self.log_cb("━" * 48)
+                    self.log_cb("  📝 STEP 8/9 ─ NEFT Details")
+                    self.log_cb("━" * 48)
+
+                    from app.portals.newindia.automation.neft_module import fill_neft_details
+                    success = await fill_neft_details(page, claim, log=self.log_cb, stop_cb=self._check_stop, field_delay_ms=field_delay)
+                    if not success:
+                        message = "Automation stopped by user." if self._check_stop() else "Phase 8 failed."
+                        return AutomationRunResult(False, message)
+
                     self.log_cb("╔" + "═" * 48 + "╗")
-                    self.log_cb("║  🚧 AUTOMATION PAUSED (PHASE 3 to 7)           ║")
+                    self.log_cb("║  🚧 AUTOMATION PAUSED (PHASE 3 to 8)           ║")
                     self.log_cb("╠" + "═" * 48 + "╣")
-                    self.log_cb("║  New India Phase 3 to 7 are complete.          ║")
+                    self.log_cb("║  New India Phase 3 to 8 are complete.          ║")
                     self.log_cb("║  Review the Quick Update, Vehicle Photo, Reg   ║")
-                    self.log_cb("║  Cert, Driver, and FIR sections now.           ║")
+                    self.log_cb("║  Cert, Driver, FIR, and NEFT sections now.     ║")
                     self.log_cb("╚" + "═" * 48 + "╝")
                     await self._wait_for_manual_review(browser)
-                    return AutomationRunResult(True, "New India Phase 3 to 7 complete. Session open.")
+                    return AutomationRunResult(True, "New India Phase 3 to 8 complete. Session open.")
 
                 self.log_cb("")
                 self.step_cb(2, steps[2])

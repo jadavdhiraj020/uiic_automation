@@ -464,7 +464,7 @@ class ClaimData:
             ("Any TP Claim?",         self.is_there_any_tp_claim,    True,  _src("is_there_any_tp_claim")),
 
             # ── Bank Details ────────────────────────────────
-            ("Payment To",            self.bank_payment_to,          True,  _src("bank_payment_to")),
+            ("Payment To",            "Insured (Cheque Detected)" if any("cheque" in k.lower() or "check" in k.lower() for k in self.claim_doc_files.keys()) else "Dealer (No Cheque Detected)",          True,  "Calculated from Docs"),
             ("IFSC Code",             self.ifsc_code,                True,  _src("ifsc_code")),
             ("Bank Name",             self.bank_name,                True,  _src("bank_name")),
             ("Branch Name",           self.bank_branch_name,         True,  _src("bank_branch_name")),
