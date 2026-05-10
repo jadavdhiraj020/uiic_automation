@@ -345,6 +345,33 @@
     "allow_text_values": true,
     "_mandatory": false
   },
+  "whether_driver_without_license": {
+    "sheet": "ALL",
+    "search_labels": ["Whether driver without license", "Driver without license"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_literal_values": true,
+    "fallback_value": "No",
+    "_mandatory": true
+  },
+  "any_previous_police_records": {
+    "sheet": "ALL",
+    "search_labels": ["Any Previous Police Records", "Previous Police Record"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_literal_values": true,
+    "fallback_value": "No",
+    "_mandatory": false
+  },
+  "is_there_any_tp_claim": {
+    "sheet": "ALL",
+    "search_labels": ["Is there any TP claim", "Any TP Claim", "TP Claim"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_literal_values": true,
+    "fallback_value": "No",
+    "_mandatory": true
+  },
   "bank_payment_to": {
     "sheet": "ALL",
     "search_labels": ["Provide bank details for payment to", "Payment to", "Bank details for"],

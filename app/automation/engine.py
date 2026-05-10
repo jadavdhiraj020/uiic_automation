@@ -240,7 +240,8 @@ class AutomationEngine:
         password = settings["password"]
         claim_type = settings.get("claim_type", "Non Maruti")
         headless = settings.get("browser_headless", False)
-        slow_mo = settings.get("browser_slow_mo_ms", 500)  # 500ms = slower, human-like typing/clicking to avoid bot blocks
+        slow_mo = settings.get("browser_slow_mo_ms", 500)
+        field_delay = settings.get("field_wait_ms", 600)
         max_retries = settings.get("captcha_max_retries", 5)
 
         steps = ["Login", "Navigate to Claim", "Interim Report", "Claim Documents", "Claim Assessment"]
@@ -377,20 +378,57 @@ class AutomationEngine:
                     self.log_cb("━" * 48)
 
                     from app.portals.newindia.automation.vehicle_photo_module import fill_vehicle_photo_graph
-                    success = await fill_vehicle_photo_graph(page, claim, log_cb=self.log_cb, stop_cb=self._check_stop)
+                    from app.portals.newindia.automation.vehicle_photo_module import fill_vehicle_photo_graph
+                    success = await fill_vehicle_photo_graph(page, claim, log_cb=self.log_cb, stop_cb=self._check_stop, field_delay_ms=field_delay)
                     if not success:
                         message = "Automation stopped by user." if self._check_stop() else "Phase 4 failed."
                         return AutomationRunResult(False, message)
 
+                    self.log_cb("")
+                    self.step_cb(4, "Registration Cert Details")
+                    self.log_cb("━" * 48)
+                    self.log_cb("  📝 STEP 5/6 ─ Registration Certificate Details")
+                    self.log_cb("━" * 48)
+
+                    from app.portals.newindia.automation.registration_cert_module import fill_registration_cert_details
+                    success = await fill_registration_cert_details(page, claim, log=self.log_cb, stop_cb=self._check_stop, field_delay_ms=field_delay)
+                    if not success:
+                        message = "Automation stopped by user." if self._check_stop() else "Phase 5 failed."
+                        return AutomationRunResult(False, message)
+
+                    self.log_cb("")
+                    self.step_cb(5, "Driver Details")
+                    self.log_cb("━" * 48)
+                    self.log_cb("  📝 STEP 6/7 ─ Driver Details")
+                    self.log_cb("━" * 48)
+
+                    from app.portals.newindia.automation.driver_details_module import fill_driver_details
+                    success = await fill_driver_details(page, claim, log=self.log_cb, stop_cb=self._check_stop, field_delay_ms=field_delay)
+                    if not success:
+                        message = "Automation stopped by user." if self._check_stop() else "Phase 6 failed."
+                        return AutomationRunResult(False, message)
+
+                    self.log_cb("")
+                    self.step_cb(6, "FIR Details")
+                    self.log_cb("━" * 48)
+                    self.log_cb("  📝 STEP 7/8 ─ FIR Details")
+                    self.log_cb("━" * 48)
+
+                    from app.portals.newindia.automation.fir_details_module import fill_fir_details
+                    success = await fill_fir_details(page, claim, log=self.log_cb, stop_cb=self._check_stop, field_delay_ms=field_delay)
+                    if not success:
+                        message = "Automation stopped by user." if self._check_stop() else "Phase 7 failed."
+                        return AutomationRunResult(False, message)
+
                     self.log_cb("╔" + "═" * 48 + "╗")
-                    self.log_cb("║  🚧 AUTOMATION PAUSED (PHASE 3 & 4)            ║")
+                    self.log_cb("║  🚧 AUTOMATION PAUSED (PHASE 3 to 7)           ║")
                     self.log_cb("╠" + "═" * 48 + "╣")
-                    self.log_cb("║  New India Phase 3 & 4 are complete.           ║")
-                    self.log_cb("║  Review the Quick Update & Vehicle Photo       ║")
-                    self.log_cb("║  sections now. Upload documents manually.      ║")
+                    self.log_cb("║  New India Phase 3 to 7 are complete.          ║")
+                    self.log_cb("║  Review the Quick Update, Vehicle Photo, Reg   ║")
+                    self.log_cb("║  Cert, Driver, and FIR sections now.           ║")
                     self.log_cb("╚" + "═" * 48 + "╝")
                     await self._wait_for_manual_review(browser)
-                    return AutomationRunResult(True, "New India Phase 3 & 4 complete. Session open.")
+                    return AutomationRunResult(True, "New India Phase 3 to 7 complete. Session open.")
 
                 self.log_cb("")
                 self.step_cb(2, steps[2])

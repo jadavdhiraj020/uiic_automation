@@ -307,16 +307,29 @@ def _format_date(raw: str) -> str:
     """Normalise any date string to DD/MM/YYYY for the portal."""
     if not raw:
         return ""
-    if re.match(r"\d{2}/\d{2}/\d{4}", raw):
-        return raw
-    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%m/%d/%Y", "%d.%m.%Y",
-                "%Y/%m/%d", "%B %d, %Y"):
+    val = str(raw).strip()
+    
+    # Try parsing common formats, particularly timestamps from Excel
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d-%m-%Y %H:%M:%S", "%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y", "%d.%m.%Y", "%Y/%m/%d", "%B %d, %Y"):
         try:
-            dt = datetime.strptime(raw.strip(), fmt)
+            dt = datetime.strptime(val, fmt)
             return dt.strftime("%d/%m/%Y")
         except ValueError:
-            continue
-    return raw
+            pass
+            
+    # Regex fallback if formats above fail
+    m = re.search(r'(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})', val)
+    if m:
+        d, mon, y = m.groups()
+        return f"{int(d):02d}/{int(mon):02d}/{y}"
+        
+    m2 = re.search(r'(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})', val)
+    if m2:
+        y, mon, d = m2.groups()
+        return f"{int(d):02d}/{int(mon):02d}/{y}"
+        
+    # Final fallback, just return the date portion
+    return val.split(" ")[0]
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -368,7 +381,7 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
 
         row_off    = cfg.get("row_offset", 0)
         col_off    = cfg.get("col_offset", 1)
-        is_date    = "date" in field_name
+        is_date    = "date" in field_name or "dob" in field_name
         allow_literal_values = bool(cfg.get("allow_literal_values"))
         allow_text_values    = bool(cfg.get("allow_text_values"))
 

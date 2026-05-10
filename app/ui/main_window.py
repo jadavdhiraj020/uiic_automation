@@ -451,9 +451,9 @@ class MainWindow(QMainWindow):
 
     def _append_log(self, text):
         self.progress_page.append_log(text)
-        if self._log_file:
+        if self._log_file and not self._log_file.closed:
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            self._log_file.write(f"[{ts}] {text}\\n")
+            self._log_file.write(f"[{ts}] {text}\n")
             self._log_file.flush()
 
     def log(self, text):

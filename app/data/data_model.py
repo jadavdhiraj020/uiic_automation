@@ -152,6 +152,9 @@ class ClaimData:
     name_of_informant: str = ""          # Optional
     sections_of_law: str = ""            # Optional
     remarks: str = ""                    # Optional
+    whether_driver_without_license: str = ""
+    any_previous_police_records: str = "" # Optional
+    is_there_any_tp_claim: str = ""
 
     # ── Bank Details ──────────────────────────────────────────────────────────
     bank_payment_to: str = ""
@@ -456,6 +459,9 @@ class ClaimData:
             ("Informant Name",        self.name_of_informant,        False, _src("name_of_informant")),
             ("Sections of Law",       self.sections_of_law,          False, _src("sections_of_law")),
             ("Remarks",               self.remarks,                  False, _src("remarks")),
+            ("Driver Without License?",self.whether_driver_without_license, True, _src("whether_driver_without_license")),
+            ("Previous Police Records?",self.any_previous_police_records, False, _src("any_previous_police_records")),
+            ("Any TP Claim?",         self.is_there_any_tp_claim,    True,  _src("is_there_any_tp_claim")),
 
             # ── Bank Details ────────────────────────────────
             ("Payment To",            self.bank_payment_to,          True,  _src("bank_payment_to")),
