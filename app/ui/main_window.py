@@ -406,8 +406,9 @@ class MainWindow(QMainWindow):
         self._worker.moveToThread(self._thread)
 
         self._thread.started.connect(self._worker.run)
-        self._worker.done_signal.connect(self._thread.quit)
-        self._worker.done_signal.connect(self._on_automation_finished)
+        self._worker.done_signal.connect(self._thread.quit)        # stop event loop
+        self._worker.done_signal.connect(self._on_automation_ui_reset)  # update UI
+        self._thread.finished.connect(self._on_thread_fully_stopped)    # clear refs
         self._worker.log_signal.connect(self._append_log)
         self._worker.step_signal.connect(self.progress_page.set_step)
 
@@ -426,9 +427,10 @@ class MainWindow(QMainWindow):
             self.btn_stop.setEnabled(False)
             self.log("Stopping...")
 
-    def _on_automation_finished(self, success, message):
-        self._worker = None
-        self._thread = None
+    def _on_automation_ui_reset(self, success, message):
+        """Called when automation finishes — updates UI. Thread may still be winding down."""
+        self._last_success = success
+        self._last_message = message
         self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(False)
         self.status_pill.setProperty("status", "ready")
@@ -436,6 +438,12 @@ class MainWindow(QMainWindow):
         self.status_pill.style().unpolish(self.status_pill)
         self.status_pill.style().polish(self.status_pill)
 
+    def _on_thread_fully_stopped(self):
+        """Called by thread.finished — thread OS object has fully stopped. Safe to clear."""
+        self._worker = None
+        self._thread = None
+        success = getattr(self, '_last_success', False)
+        message = getattr(self, '_last_message', 'Automation finished.')
         if success:
             self.log(f"SUCCESS: {message}")
         else:
@@ -477,9 +485,17 @@ class MainWindow(QMainWindow):
         )
 
     def closeEvent(self, event):
+        # ── Gracefully stop automation thread before closing ────────────────────
+        if self._thread and self._thread.isRunning():
+            if self._worker:
+                self._worker.stop()          # signal engine to stop
+            self._thread.quit()              # ask event loop to exit
+            if not self._thread.wait(5000):  # up to 5s graceful wait
+                self._thread.terminate()     # force-kill if still running
+                self._thread.wait(2000)
         if self._log_file:
             try:
                 self._log_file.close()
-            except:
+            except Exception:
                 pass
         super().closeEvent(event)

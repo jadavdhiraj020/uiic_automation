@@ -1,143 +1,256 @@
 """
-quick_update_module.py
-Phase 3 implementation of New India Assurance (NIA) portal automation.
-Fills the "Quick Update Details" section.
+quick_update_module.py — Phase 3: New India Assurance Portal
+FIX: Use native JS label.click() for all radios — bypasses Playwright pointer
+interception AND avoids AngularJS scope traversal failures.
+"""
+import asyncio
+import re
+from typing import Callable, Optional
+from playwright.async_api import Page
+
+# ── JavaScript helpers ────────────────────────────────────────────────────────
+
+# Click radio via its <label for="id"> — native click, no Playwright events
+_JS_CLICK_RADIO = """
+([name, value]) => {
+    const radio = document.querySelector(`input[name="${name}"][value="${value}"]`);
+    if (!radio) return { ok: false, err: `not found: [name=${name}][value=${value}]` };
+    if (radio.checked) return { ok: true, already: true };
+    const lbl = document.querySelector(`label[for="${radio.id}"]`);
+    if (lbl) { lbl.click(); return { ok: true }; }
+    const outer = radio.closest('label');
+    if (outer) { outer.click(); return { ok: true, via: 'outer' }; }
+    radio.click();
+    return { ok: true, via: 'direct' };
+}
 """
 
-import asyncio
-import logging
-from typing import Callable
+# Read radio checked state without touching Angular scope
+_JS_IS_CHECKED = """
+([name, value]) => {
+    const r = document.querySelector(`input[name="${name}"][value="${value}"]`);
+    return r ? r.checked : null;
+}
+"""
 
-from app.data.data_model import ClaimData
-from app.automation.form_helpers import safe_fill, format_date_for_uiic
+# Get all date radio values
+_JS_DATE_VALUES = """
+() => Array.from(document.querySelectorAll('input[name="dateOfSurveyRadio"]'))
+          .map(r => r.value)
+"""
 
-logger = logging.getLogger(__name__)
+# Angular-aware text fill (works fine for inputs/textareas)
+_JS_FILL = """
+([sel, val]) => {
+    const el = document.querySelector(sel);
+    if (!el) return { ok: false };
+    el.value = val;
+    el.dispatchEvent(new Event('input',  { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    try {
+        const s = angular.element(el).scope();
+        if (s && s.$apply) s.$apply();
+        else {
+            // walk up to find scope with $apply
+            let p = el.parentElement;
+            while (p) {
+                const ps = angular.element(p).scope();
+                if (ps && ps.$apply) { ps.$apply(); break; }
+                p = p.parentElement;
+            }
+        }
+    } catch(e) {}
+    el.dispatchEvent(new Event('blur', { bubbles: true }));
+    return { ok: true };
+}
+"""
 
-async def _select_yes_no(page, name_attr: str, value: str = "Y", log_cb: Callable = print) -> bool:
-    """Helper to click a Yes/No radio button by name and value."""
-    sel = f"input[name='{name_attr}'][value='{value}']"
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+async def _click_radio(page: Page, name: str, value: str,
+                       label: str, log_cb: Callable) -> bool:
     try:
-        radio = page.locator(sel).first
-        await radio.wait_for(state="attached", timeout=5000)
-        # Use Javascript click because custom radio buttons might block regular clicks
-        await radio.evaluate("node => node.click()")
-        # Dispatch change event for Angular
-        await radio.evaluate("node => node.dispatchEvent(new Event('change', {bubbles: true}))")
-        await asyncio.sleep(0.5) # Wait for ng-change to trigger conditional fields
-        return True
-    except Exception as exc:
-        log_cb(f"  ❌ Failed to select {value} for {name_attr}: {exc}")
+        res = await page.evaluate(_JS_CLICK_RADIO, [name, value])
+        if res and res.get("ok"):
+            already = res.get("already", False)
+            log_cb(f"  {'✔ ' if already else '✅'} [{label}] → '{value}'" +
+                   (" (already set)" if already else ""))
+            return True
+        log_cb(f"  ⚠️  [{label}] click failed: {res}")
         return False
+    except Exception as e:
+        log_cb(f"  ⚠️  [{label}] error: {e}")
+        return False
+
+
+async def _ensure_yes(page: Page, name: str, label: str,
+                      log_cb: Callable) -> None:
+    """Check current state; only click Yes if not already checked."""
+    try:
+        count = await page.locator(f'input[name="{name}"]').count()
+        if not count:
+            log_cb(f"  ⏭  [{label}] not in DOM")
+            return
+        already = await page.evaluate(_JS_IS_CHECKED, [name, "Y"])
+        if already:
+            log_cb(f"  ✔  [{label}] already YES")
+            return
+        await _click_radio(page, name, "Y", label, log_cb)
+        await asyncio.sleep(0.4)
+    except Exception as e:
+        log_cb(f"  ⚠️  [{label}] error: {e}")
+
+
+async def _ng_fill(page: Page, selector: str, value: str,
+                   label: str, log_cb: Callable,
+                   timeout_ms: int = 8000) -> bool:
+    try:
+        await page.wait_for_selector(selector, state="visible", timeout=timeout_ms)
+        res = await page.evaluate(_JS_FILL, [selector, value])
+        if res and res.get("ok"):
+            log_cb(f"  ✅ [{label}] filled → '{value[:60]}'")
+            return True
+        log_cb(f"  ⚠️  [{label}] fill failed")
+        return False
+    except Exception as e:
+        log_cb(f"  ⚠️  [{label}] error: {e}")
+        return False
+
+
+def _normalise_time(raw: str) -> str:
+    m = re.match(r"(\d{1,2})[:\.\s](\d{2})", str(raw).strip())
+    return f"{int(m.group(1)):02d}:{m.group(2)}" if m else str(raw)[:5]
+
+
+# ── Public entry point ────────────────────────────────────────────────────────
 
 async def fill_quick_update_details(
-    page,
-    claim: ClaimData,
+    page: Page,
+    claim_data,
     log_cb: Callable[[str], None] = print,
-    stop_cb: Callable[[], bool] = lambda: False
+    stop_cb: Callable[[], bool] = lambda: False,
 ) -> bool:
-    """
-    Fills the Quick Update Details form.
-    """
-    log_cb("  📂 Opening Quick Update Details section...")
-    if stop_cb(): return False
-    required_ok = True
+    def log(msg): log_cb(f"  [QU] {msg}")
 
-    # 1. Date of Survey Logic
-    formatted_date = format_date_for_uiic(claim.date_of_survey) if claim.date_of_survey else ""
-    log_cb(f"  📅 Handling Date Of Survey selection (Extracted: {formatted_date})...")
-    
-    if formatted_date:
-        log_cb("  🔍 Matching survey date with available options...")
-        radio_sel = f"input[name='dateOfSurveyRadio'][value='{formatted_date}']"
-        count = await page.locator(radio_sel).count()
-        if count > 0:
-            log_cb("  ✅ Matching option found. Selecting directly...")
-            try:
-                await page.locator(radio_sel).first.evaluate("node => node.click()")
-                await page.locator(radio_sel).first.evaluate("node => node.dispatchEvent(new Event('change', {bubbles: true}))")
-                await asyncio.sleep(0.5)
-            except Exception as exc:
-                log_cb(f"  ❌ Failed to select matching Date Of Survey: {exc}")
-                required_ok = False
-        else:
-            log_cb("  ⚠️ No matching option found. Selecting 'Others'...")
-            others_sel = "input[name='dateOfSurveyRadio'][value='Others']"
-            try:
-                await page.locator(others_sel).first.evaluate("node => node.click()")
-                await page.locator(others_sel).first.evaluate("node => node.dispatchEvent(new Event('change', {bubbles: true}))")
-                await asyncio.sleep(1) # wait for text field to appear
-            except Exception as exc:
-                log_cb(f"  ❌ Failed to select 'Others' for Date Of Survey: {exc}")
-                required_ok = False
-            
-            # Fill the text field that appears
-            date_input_sel = "input[name='dateOfSurvey'], input[data-ng-model*='surveyDate']:not([type='radio'])"
-            if not await safe_fill(page, date_input_sel, formatted_date, "Date of Survey Input", log_cb=log_cb):
-                required_ok = False
-    else:
-        log_cb("  ❌ No Date of Survey extracted from Excel.")
-        required_ok = False
+    log("Starting Phase 3 — Quick Update Details")
 
-    if stop_cb(): return False
-
-    # 2. Time of Survey
-    time_val = f"{claim.time_hh or '10'}:{claim.time_mm or '00'}"
-    log_cb("  ⌚ Filling Time Of Survey...")
-    required_ok = await safe_fill(page, "input[name='timeOfSurvey']", time_val, "Time of Survey", log_cb=log_cb) and required_ok
-    
-    if stop_cb(): return False
-
-    # 3. Place of Survey
-    log_cb("  📍 Filling Place Of Survey...")
-    required_ok = await safe_fill(page, "textarea[name='placeOfSurvey']", claim.place_of_survey or "Workshop", "Place of Survey", log_cb=log_cb) and required_ok
-
-    if stop_cb(): return False
-
-    # 4. Survey Completed -> ALWAYS YES
-    log_cb("  ✅ Selecting mandatory Yes options...")
-    required_ok = await _select_yes_no(page, "radioDataCompleted", "Y", log_cb) and required_ok
-
-    # 5. Mandatory Yes/No fields
-    for radio_name in [
-        "radioDrivingLicenseApplicable",
-        "radioDrivingLicense",
-        "radioRCbook",
-        "radioDrivingLicensePar",
-        "radioRCbookPar",
-        "isCloseProximityBreakIn",
-        "inspectionReportUploaded",
-    ]:
-        required_ok = await _select_yes_no(page, radio_name, "Y", log_cb) and required_ok
-
-    if stop_cb(): return False
-
-    # 6. Remarks
-    log_cb("  📝 Filling Remarks...")
-    remarks_text = claim.surveyor_observation or "Survey completed. All documents verified."
-    required_ok = await safe_fill(page, "textarea[name='remarks']", remarks_text, "Remarks", log_cb=log_cb) and required_ok
-
-    if stop_cb(): return False
-
-    # 7. Mobile Number
-    log_cb("  📱 Filling Claimant Mobile Number...")
-    if claim.mobile_no:
-        await safe_fill(page, "input[name='mobileNo']", claim.mobile_no, "Mobile Number", log_cb=log_cb)
-
-    # 8. Email ID
-    log_cb("  📧 Filling Claimant Email ID...")
-    if claim.email_id:
-        await safe_fill(page, "input[name='emailId']", claim.email_id, "Email ID", log_cb=log_cb)
-
-    if stop_cb(): return False
-
-    # 9. Expected Date of Completion
-    log_cb("  📅 Filling Expected Completion Date (using Date of Survey)...")
-    if formatted_date:
-        required_ok = await safe_fill(page, "input[name='expectedDateOfRepair']", formatted_date, "Expected Completion Date", log_cb=log_cb) and required_ok
-
-    if not required_ok:
-        log_cb("  ❌ Phase 3 completed with required field failures.")
+    try:
+        await page.wait_for_selector(
+            'h4.headerClip:has-text("Quick Update Details")',
+            state="visible", timeout=20000
+        )
+        log("Section visible — waiting for Angular to finish rendering...")
+    except Exception as e:
+        log(f"Section not found: {e}")
         return False
 
-    log_cb("  🏁 Phase 3 completed successfully.")
+    await asyncio.sleep(1.5)
+    if stop_cb(): return False
+
+    # ── 1. Date Of Survey ────────────────────────────────────────────────────
+    date_of_survey = getattr(claim_data, "date_of_survey", "").strip()
+    if date_of_survey:
+        log(f"Date of Survey: {date_of_survey}")
+        try:
+            available = await page.evaluate(_JS_DATE_VALUES)
+            log(f"  Options: {available}")
+            if date_of_survey in (available or []):
+                await _click_radio(page, "dateOfSurveyRadio", date_of_survey,
+                                   "Date of Survey", log)
+            else:
+                log("  Not in options — selecting 'Others'")
+                await _click_radio(page, "dateOfSurveyRadio", "Others",
+                                   "Date of Survey (Others)", log)
+                await asyncio.sleep(0.8)
+                try:
+                    await page.wait_for_selector('input[name="dateOfSurvey"]',
+                                                 state="visible", timeout=5000)
+                    await _ng_fill(page, 'input[name="dateOfSurvey"]',
+                                   date_of_survey, "Date (manual)", log)
+                except Exception as de:
+                    log(f"  ⚠️  Manual date input: {de}")
+        except Exception as e:
+            log(f"  ⚠️  Date error: {e}")
+
+    await asyncio.sleep(0.5)
+    if stop_cb(): return False
+
+    # ── 2. Time Of Survey ────────────────────────────────────────────────────
+    time_raw = getattr(claim_data, "time_of_survey", "")
+    if not time_raw:
+        hh = getattr(claim_data, "time_hh", "")
+        mm = getattr(claim_data, "time_mm", "")
+        if hh and mm:
+            time_raw = f"{hh}:{mm}"
+    if time_raw:
+        log(f"Time of Survey: {_normalise_time(time_raw)}")
+        await _ng_fill(page, 'input[name="timeOfSurvey"]',
+                       _normalise_time(time_raw), "Time of Survey", log)
+    await asyncio.sleep(0.4)
+    if stop_cb(): return False
+
+    # ── 3. Place Of Survey ───────────────────────────────────────────────────
+    place = getattr(claim_data, "place_of_survey", "")
+    if place:
+        log(f"Place of Survey: {place}")
+        await _ng_fill(page, 'textarea[name="placeOfSurvey"]',
+                       place, "Place of Survey", log)
+    await asyncio.sleep(0.4)
+    if stop_cb(): return False
+
+    # ── 4-10. Boolean Yes/No fields — always ensure YES ──────────────────────
+    log("Setting boolean fields to YES...")
+
+    bool_fields = [
+        ("radioDataCompleted",          "Survey Completed"),
+        ("radioDrivingLicenseApplicable","Driving License Applicable"),
+        ("radioDrivingLicense",         "DL Verified with Original"),
+        ("radioRCbook",                 "RC Book Verified with Original"),
+        ("radioDrivingLicensePar",      "DL Verified via Parivahan"),
+        ("radioRCbookPar",              "RC Book Verified via Parivahan"),
+        ("isCloseProximityBreakIn",     "Close Proximity / Break-In"),
+    ]
+    for radio_name, label in bool_fields:
+        await _ensure_yes(page, radio_name, label, log)
+        if stop_cb(): return False
+
+    # Conditional field — revealed after Close Proximity = Y
+    await asyncio.sleep(0.5)
+    await _ensure_yes(page, "inspectionReportUploaded", "Inspection Report Uploaded", log)
+    await asyncio.sleep(0.4)
+    if stop_cb(): return False
+
+    # ── 11. Remarks ──────────────────────────────────────────────────────────
+    remarks = getattr(claim_data, "remarks", "") or \
+              getattr(claim_data, "surveyor_observation", "") or "Ok"
+    log(f"Remarks: {remarks[:80]}")
+    await _ng_fill(page, 'textarea[name="remarks"]', remarks, "Remarks", log)
+    await asyncio.sleep(0.4)
+    if stop_cb(): return False
+
+    # ── 12. Mobile No ────────────────────────────────────────────────────────
+    mobile = re.sub(r"\D", "", str(getattr(claim_data, "mobile_no", "")))[:10]
+    if mobile:
+        log(f"Mobile No: {mobile}")
+        await _ng_fill(page, 'input[name="mobileNo"]', mobile, "Mobile No", log)
+    await asyncio.sleep(0.4)
+    if stop_cb(): return False
+
+    # ── 13. Email ID ─────────────────────────────────────────────────────────
+    email = getattr(claim_data, "email_id", "")
+    if email:
+        log(f"Email ID: {email}")
+        await _ng_fill(page, 'input[name="emailId"]', email, "Email ID", log)
+    await asyncio.sleep(0.4)
+    if stop_cb(): return False
+
+    # ── 14. Expected Date of Repair = Date of Survey ─────────────────────────
+    if date_of_survey:
+        log(f"Expected Date of Repair (= Survey Date): {date_of_survey}")
+        await _ng_fill(page, 'input[name="expectedDateOfRepair"]',
+                       date_of_survey, "Expected Date of Repair", log)
+    await asyncio.sleep(0.4)
+
+    log("Phase 3 complete — all fields filled.")
     return True

@@ -142,6 +142,9 @@ class ClaimData:
     charged_us_motor_vehicle_act: str = ""  # Optional
     charged_us_ipc: str = ""             # Optional
 
+    # ── Survey Details ────────────────────────────────────────────────────────
+    time_of_survey: str = ""
+
     # ── FIR Details ───────────────────────────────────────────────────────────
     fir_number: str = ""
     fir_date: str = ""
@@ -396,6 +399,13 @@ class ClaimData:
             # ── Claim Details ───────────────────────────────
             ("Claim No",              self.claim_no,                 True,  _src("claim_no")),
             
+            # ── Survey Details ──────────────────────────────
+            ("Date of Survey",        self.date_of_survey,           True,  _src("date_of_survey")),
+            ("Time of Survey",        self.time_of_survey,           True,  _src("time_of_survey")),
+            ("Place of Survey",       self.place_of_survey,          True,  _src("place_of_survey")),
+            ("Mobile No",             self.mobile_no,                True,  _src("mobile_no")),
+            ("Email ID",              self.email_id,                 True,  _src("email_id")),
+
             # ── Vehicle Details ─────────────────────────────
             ("Owner Name",            self.registered_owner_name,    True,  _src("registered_owner_name")),
             ("Vehicle Reg No",        self.vehicle_registration_number, True, _src("vehicle_registration_number")),

@@ -592,5 +592,51 @@
     "allow_literal_values": true,
     "fallback_value": "Yes",
     "_mandatory": true
+  },
+  "date_of_survey": {
+    "sheet": "ALL",
+    "search_labels": ["date of survey", "date of servey", "Date and Time of Survey", "Survey Date"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "time_of_survey": {
+    "sheet": "ALL",
+    "search_labels": ["time of survey", "time of servey"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": true
+  },
+  "place_of_survey": {
+    "sheet": "ALL",
+    "search_labels": ["place of survey", "place of servey", "address"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": true
+  },
+  "remarks": {
+    "sheet": "ALL",
+    "search_labels": ["remarks", "surveyor observation", "OBERVATIONS/COMMENTS"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "fallback_value": "Ok",
+    "_mandatory": true
+  },
+  "mobile_no": {
+    "sheet": "ALL",
+    "search_labels": ["mobile no", "mobile", "Mobile:", "surveyor_mobile"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "email_id": {
+    "sheet": "ALL",
+    "search_labels": ["email id", "email", "e-mail:-", "surveyor_email"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
   }
 }
