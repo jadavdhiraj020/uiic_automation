@@ -30,6 +30,27 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
 
     if stop_cb(): return False
 
+    # 0. Reference No. (Optional)
+    try:
+        val = getattr(data, 'reference_no', '')
+        if val:
+            # The exact name attribute from the DOM is "Reference No" without a period
+            # Or fallback to the angular model data-ng-model="surveyorData.worklist.additionalDetails.refernceNo"
+            ref_sel = 'input[name="Reference No"]'
+            try:
+                await page.wait_for_selector(ref_sel, state="attached", timeout=2000)
+                sel_to_use = ref_sel
+            except Exception:
+                sel_to_use = 'input[data-ng-model="surveyorData.worklist.additionalDetails.refernceNo"]'
+            
+            await fill_input_with_delay(page, sel_to_use, val, "Reference No", log, field_delay_ms)
+        else:
+            log("  ℹ️ Reference No missing from Excel, skipping (Optional).")
+    except Exception as e:
+        log(f"  ⚠️ Error filling Reference No: {e}")
+
+    if stop_cb(): return False
+
     # 1. Registered Owner Name (Mandatory)
     try:
         val = data.registered_owner_name

@@ -143,6 +143,14 @@
     "allow_text_values": true,
     "_mandatory": true
   },
+  "reference_no": {
+    "sheet": "ALL",
+    "search_labels": ["Reference No.", "Reference No", "Reference Number"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
   "vehicle_details_matching_policy": {
     "sheet": "ALL",
     "search_labels": ["Whether Vehicle Details are matching", "Vehicle Details matching", "Details matching with policy"],
@@ -201,7 +209,7 @@
   },
   "driver_relationship_with_insured": {
     "sheet": "ALL",
-    "search_labels": ["Relationship of the driver", "Driver Relationship", "Relation with Insured"],
+    "search_labels": ["Relationship of the driver with the Insured", "Relationship of driver with insured", "Driver Relationship", "Relation with Insured", "Relationship with Insured"],
     "row_offset": 0,
     "col_offset": 1,
     "allow_text_values": true,

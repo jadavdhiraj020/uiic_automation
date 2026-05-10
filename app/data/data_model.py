@@ -119,6 +119,7 @@ class ClaimData:
     type_of_fuel: str = ""
     vehicle_details_matching_policy: str = ""
     vehicle_details_mismatch_remarks: str = ""  # Optional
+    reference_no: str = ""  # Optional, under Registration Cert Details
 
     # ── Accident Details ──────────────────────────────────────────────────────
     cause_nature_of_accident: str = ""
@@ -428,6 +429,7 @@ class ClaimData:
             ("Type of Vehicle",       self.type_of_vehicle,          True,  _src("type_of_vehicle")),
             ("Type of Fuel",          self.type_of_fuel,             True,  _src("type_of_fuel")),
             ("Details Match Policy",  self.vehicle_details_matching_policy, True, _src("vehicle_details_matching_policy")),
+            ("Reference No",          self.reference_no,             False, _src("reference_no")),
             ("Mismatch Remarks",      self.vehicle_details_mismatch_remarks, False, _src("vehicle_details_mismatch_remarks")),
 
             # ── Accident Details ────────────────────────────
@@ -464,7 +466,7 @@ class ClaimData:
             ("Any TP Claim?",         self.is_there_any_tp_claim,    True,  _src("is_there_any_tp_claim")),
 
             # ── Bank Details ────────────────────────────────
-            ("Payment To",            "Insured (Cheque Detected)" if any("cheque" in k.lower() or "check" in k.lower() for k in self.claim_doc_files.keys()) else "Dealer (No Cheque Detected)",          True,  "Calculated from Docs"),
+            ("Payment To",            self.bank_payment_to or "Unknown",          True,  _src("bank_payment_to")),
             ("IFSC Code",             self.ifsc_code,                True,  _src("ifsc_code")),
             ("Bank Name",             self.bank_name,                True,  _src("bank_name")),
             ("Branch Name",           self.bank_branch_name,         True,  _src("bank_branch_name")),

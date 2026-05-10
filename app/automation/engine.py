@@ -432,15 +432,40 @@ class AutomationEngine:
                         message = "Automation stopped by user." if self._check_stop() else "Phase 8 failed."
                         return AutomationRunResult(False, message)
 
+                    self.log_cb("")
+                    self.step_cb(8, "Work Approval")
+                    self.log_cb("━" * 48)
+                    self.log_cb("  📝 STEP 9/10 ─ Work Approval")
+                    self.log_cb("━" * 48)
+
+                    from app.portals.newindia.automation.work_approval_module import fill_work_approval_details
+                    success = await fill_work_approval_details(page, claim, log_cb=self.log_cb, stop_cb=self._check_stop, field_delay_ms=field_delay)
+                    if not success:
+                        message = "Automation stopped by user." if self._check_stop() else "Phase 9 failed."
+                        return AutomationRunResult(False, message)
+
+                    self.log_cb("")
+                    self.step_cb(9, "Claim Assessment")
+                    self.log_cb("━" * 48)
+                    self.log_cb("  📝 STEP 10/10 ─ Claim Assessment")
+                    self.log_cb("━" * 48)
+
+                    from app.portals.newindia.automation.claim_assessment_module import fill_claim_assessment_details
+                    success = await fill_claim_assessment_details(page, claim, log_cb=self.log_cb, stop_cb=self._check_stop, field_delay_ms=field_delay)
+                    if not success:
+                        message = "Automation stopped by user." if self._check_stop() else "Phase 10 failed."
+                        return AutomationRunResult(False, message)
+
                     self.log_cb("╔" + "═" * 48 + "╗")
-                    self.log_cb("║  🚧 AUTOMATION PAUSED (PHASE 3 to 8)           ║")
+                    self.log_cb("║  🚧 AUTOMATION PAUSED (PHASE 3 to 10)          ║")
                     self.log_cb("╠" + "═" * 48 + "╣")
-                    self.log_cb("║  New India Phase 3 to 8 are complete.          ║")
+                    self.log_cb("║  New India Phase 3 to 10 are complete.         ║")
                     self.log_cb("║  Review the Quick Update, Vehicle Photo, Reg   ║")
-                    self.log_cb("║  Cert, Driver, FIR, and NEFT sections now.     ║")
+                    self.log_cb("║  Cert, Driver, FIR, NEFT, Work Appr, and       ║")
+                    self.log_cb("║  Claim Assessment tabs before submitting.      ║")
                     self.log_cb("╚" + "═" * 48 + "╝")
                     await self._wait_for_manual_review(browser)
-                    return AutomationRunResult(True, "New India Phase 3 to 8 complete. Session open.")
+                    return AutomationRunResult(True, "New India Phase 3 to 10 complete. Session open.")
 
                 self.log_cb("")
                 self.step_cb(2, steps[2])

@@ -62,7 +62,7 @@ class ClaimFolderService:
                 logs.append("❓ Unrecognized Files (No Mapping):")
                 for path in scan_result.unknown_files:
                     logs.append(f"  • {Path(path).name}")
-                logs.append("  ℹ️  Tip: rename files to include keywords like pan, aadhaar, vehicle_photo_1, claim_form, ckyc, csr, etc.")
+                logs.append("  ℹ️  Tip: rename files to include keywords like chassis, odometer, cheque, caseless, non_caseless, etc.")
 
             if not scan_result.excel_path:
                 logs.append("⚠️  No Excel file found in folder!")
@@ -72,6 +72,12 @@ class ClaimFolderService:
             claim = extract_claim_data(scan_result.excel_path, portal_id=self.portal_id)
             claim.claim_doc_files = scan_result.claim_doc_files
             claim.assessment_files = scan_result.assessment_files
+
+            # SINGLE SOURCE OF TRUTH: Decide Payment To based on cheque presence
+            has_cheque = any("cheque" in k.lower() or "check" in k.lower() for k in claim.claim_doc_files.keys())
+            claim.bank_payment_to = "Insured" if has_cheque else "Dealer"
+            if hasattr(claim, "_excel_logs"):
+                claim._excel_logs.append(f"📊 bank_payment_to: '{claim.bank_payment_to}' (Source: Extracted from Folder Docs)")
 
             self._extract_pdf_invoice_data(scan_result, claim, logs)
 
@@ -176,7 +182,9 @@ class ClaimFolderService:
             # ── Apply results ────────────────────────────────────────────
             if ext_inv:
                 claim.workshop_invoice_no = ext_inv
+                claim.vendor_invoice_number = ext_inv  # New India mapping
                 claim._excel_coords["workshop_invoice_no"] = "PDF Source"
+                claim._excel_coords["vendor_invoice_number"] = "PDF Source"
                 claim._excel_logs.append(f"  📊 workshop_invoice_no: '{ext_inv}' (Source: PDF Source)")
                 logs.append(f"  ✅ WS Invoice No (from PDF): {ext_inv}")
             else:
@@ -184,7 +192,9 @@ class ClaimFolderService:
 
             if ext_date:
                 claim.workshop_invoice_date = ext_date
+                claim.vendor_invoice_date = ext_date  # New India mapping
                 claim._excel_coords["workshop_invoice_date"] = "PDF Source"
+                claim._excel_coords["vendor_invoice_date"] = "PDF Source"
                 claim._excel_logs.append(f"  📊 workshop_invoice_date: '{ext_date}' (Source: PDF Source)")
                 logs.append(f"  ✅ WS Invoice Date (from PDF): {ext_date}")
             else:

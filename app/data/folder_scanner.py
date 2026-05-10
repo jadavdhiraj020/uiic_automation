@@ -495,7 +495,7 @@ def _log_scan_summary(result: FolderScanResult, claim_map: Dict[str, str]) -> No
         for fpath in result.unknown_files:
             lines.append(f"    ❓ {Path(fpath).name}")
         lines.append("    ℹ️  Tip: rename files to include keywords like")
-        lines.append("       pan, aadhaar, vehicle_photo_1, claim_form, ckyc, csr, etc.")
+        lines.append("       chassis, odometer, cheque, caseless, non_caseless, etc.")
 
     lines.append("═" * 60)
     summary = "\n".join(lines)

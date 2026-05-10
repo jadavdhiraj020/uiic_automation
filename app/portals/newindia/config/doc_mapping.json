@@ -1,5 +1,5 @@
 {
-  "_comment": "doc_mapping.json — New India Assurance portal. Maps lowercase filename keywords to document categories. Structure mirrors UIIC's mapping but adapted for New India's document upload requirements.",
+  "_comment": "doc_mapping.json — New India Assurance portal. Contains strictly the required documents for NIA automation.",
   "claim_documents_tab": {
     "Chassis Number Photograph": [
       "chassis_number",
@@ -13,133 +13,38 @@
       "odo",
       "odometer_photo"
     ],
-    "Driving License": [
-      "driving_license",
-      "driving",
-      "dl"
-    ],
-    "RC Book": [
-      "rc_book",
-      "rc book",
-      "rcbook",
-      "registration_certificate",
-      "registration"
-    ],
-    "Vehicle Photograph (Front)": [
-      "vehicle_photo_1",
-      "veh_front",
-      "photo_front"
-    ],
-    "Vehicle Photograph (Rear)": [
-      "vehicle_photo_2",
-      "veh_rear",
-      "photo_rear"
-    ],
-    "Vehicle Photograph (Left)": [
-      "vehicle_photo_3",
-      "veh_left",
-      "photo_left"
-    ],
-    "Vehicle Photograph (Right)": [
-      "vehicle_photo_4",
-      "veh_right",
-      "photo_right"
-    ],
-    "FIR Copy": [
-      "fir",
-      "police_report"
-    ],
-    "PAN Card": [
-      "pan_card",
-      "pan"
-    ],
-    "Aadhaar Card": [
-      "aadhaar",
-      "aadhar",
-      "uid"
-    ],
     "Cancelled Cheque / Bank Details": [
       "cancel_check",
       "cancel_cheque",
       "cancelled_cheque",
       "cancelled",
       "cheque",
+      "check",
       "bank_detail",
       "bank"
     ],
-    "Claim Form": [
-      "claim_form",
-      "claimform"
-    ],
-    "Satisfaction Voucher": [
-      "discharge_voucher",
-      "discharge",
-      "satisfaction_voucher",
-      "voucher"
-    ],
-    "KYC Document": [
-      "ckyc",
-      "kyc_form",
-      "kyc"
-    ],
-    "CSR Certificate": [
-      "csr"
-    ],
-    "Road Permit": [
-      "road_permit",
-      "route_permit",
-      "permit"
-    ],
-    "Fitness Certificate": [
-      "fitness_certificate",
-      "fitness"
-    ],
-    "Insurance Policy Copy": [
-      "policy_copy",
-      "policy",
-      "insurance_policy"
+    "Work Approval Document": [
+      "cashless",
+      "caseless",
+      "non_cashless",
+      "non-cashless",
+      "noncashless",
+      "non cashless",
+      "non_caseless",
+      "non-caseless"
     ]
   },
   "expected_claim_docs": [
-    "PAN Card",
-    "Aadhaar Card",
+    "Chassis Number Photograph",
+    "Odometer Reading Photograph",
     "Cancelled Cheque / Bank Details",
-    "Driving License",
-    "RC Book",
-    "Vehicle Photograph (Front)",
-    "Vehicle Photograph (Rear)",
-    "Vehicle Photograph (Left)",
-    "Vehicle Photograph (Right)",
-    "Claim Form",
-    "KYC Document",
-    "CSR Certificate",
-    "Satisfaction Voucher"
+    "Work Approval Document"
   ],
-  "other_slots": [
-    "Other 1",
-    "Other 2",
-    "Other 3"
-  ],
+  "other_slots": [],
   "claim_assessment_tab": {
-    "assessment_report": [
-      "assessment_report",
-      "assessment"
-    ],
-    "survey_report": [
-      "survey_report",
-      "survey"
-    ],
-    "estimate": [
-      "repair_estimate",
-      "estimate"
-    ],
     "invoice": [
       "final_invoice",
       "invoice"
-    ],
-    "reinspection_report": [
-      "re_inspection",
-      "reinspection"
     ]
   }
 }

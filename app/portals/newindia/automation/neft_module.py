@@ -40,7 +40,6 @@ async def fill_neft_details(page: Page, data: ClaimData, log, stop_cb, field_del
     
     if cheque_path:
         log("  ✅ Cheque document detected.")
-        payment_to_value = "Insured"
         
         # OCR Extraction
         log("  ℹ️ Extracting details from cheque...")
@@ -58,11 +57,13 @@ async def fill_neft_details(page: Page, data: ClaimData, log, stop_cb, field_del
             
     else:
         log("  ⚠️ Cheque document NOT detected.")
-        payment_to_value = "Dealer"
-        
         ifsc = data.ifsc_code
         acc_no = data.account_number
         acc_type = data.account_type
+
+    # Single Source of Truth: Read payment type established during extraction
+    payment_to_value = data.bank_payment_to or "Dealer"
+    log(f"  ℹ️ Using pre-calculated Payment Type: '{payment_to_value}'")
 
     # 1. Provide bank details for payment to
     try:
