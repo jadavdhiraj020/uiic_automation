@@ -380,14 +380,6 @@
     "fallback_value": "No",
     "_mandatory": true
   },
-  "bank_payment_to": {
-    "sheet": "ALL",
-    "search_labels": ["Provide bank details for payment to", "Payment to", "Bank details for"],
-    "row_offset": 0,
-    "col_offset": 1,
-    "allow_text_values": true,
-    "_mandatory": true
-  },
   "ifsc_code": {
     "sheet": "ALL",
     "search_labels": ["IFSC Code", "IFSC", "IFS Code"],

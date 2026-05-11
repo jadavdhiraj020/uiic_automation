@@ -73,11 +73,7 @@ class ClaimFolderService:
             claim.claim_doc_files = scan_result.claim_doc_files
             claim.assessment_files = scan_result.assessment_files
 
-            # SINGLE SOURCE OF TRUTH: Decide Payment To based on cheque presence
-            has_cheque = any("cheque" in k.lower() or "check" in k.lower() for k in claim.claim_doc_files.keys())
-            claim.bank_payment_to = "Insured" if has_cheque else "Dealer"
-            if hasattr(claim, "_excel_logs"):
-                claim._excel_logs.append(f"📊 bank_payment_to: '{claim.bank_payment_to}' (Source: Extracted from Folder Docs)")
+            # SSOT is now fully isolated and calculated directly within excel_reader.py
 
             self._extract_pdf_invoice_data(scan_result, claim, logs)
 

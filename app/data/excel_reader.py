@@ -553,55 +553,71 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
                 f"{len(missing_fields)} missing: {missing_fields}")
 
     # ── Payment Type Detection (keyword scan) ────────────────────────────────
-    if not claim.payment_to:
+    if not claim.payment_to or not claim.bank_payment_to:
         for sh in wb.all_sheets():
             sh_name = sh.name if hasattr(sh, 'name') else 'Sheet'
             for r_idx, row in enumerate(sh.rows()):
                 for c_idx, cell in enumerate(row):
                     cell_text = " ".join(str(cell).strip().lower().split())
                     
-                    if "payment to insured" in cell_text:
+                    if "payment to insured" in cell_text or "payment to reimbursement" in cell_text:
                         claim.payment_to = "INSURED"
+                        claim.bank_payment_to = "Insured"
                         src = f"R{r_idx+1}C{c_idx+1} ({sh_name})"
                         claim._excel_coords["payment_to"] = src
-                        claim._excel_logs.append(f"  📊 payment_to: '{claim.payment_to}' (Source: {src})")
-                        logger.info(f"  [FOUND] payment_to = {claim.payment_to} (keyword scan - payment to insured)")
+                        claim._excel_coords["bank_payment_to"] = src
+                        claim._excel_logs.append(f"  📊 payment_to / bank_payment_to: '{claim.payment_to}' / '{claim.bank_payment_to}' (Source: {src})")
+                        logger.info(f"  [FOUND] payment_to = {claim.payment_to}, bank_payment_to = {claim.bank_payment_to} (keyword scan - payment to insured)")
                         break
-                    elif "payment to repairer" in cell_text:
+                    elif "payment to repairer" in cell_text or "payment to dealer" in cell_text:
                         claim.payment_to = "REPAIRER"
+                        claim.bank_payment_to = "Dealer"
                         src = f"R{r_idx+1}C{c_idx+1} ({sh_name})"
                         claim._excel_coords["payment_to"] = src
-                        claim._excel_logs.append(f"  📊 payment_to: '{claim.payment_to}' (Source: {src})")
-                        logger.info(f"  [FOUND] payment_to = {claim.payment_to} (keyword scan - payment to repairer)")
+                        claim._excel_coords["bank_payment_to"] = src
+                        claim._excel_logs.append(f"  📊 payment_to / bank_payment_to: '{claim.payment_to}' / '{claim.bank_payment_to}' (Source: {src})")
+                        logger.info(f"  [FOUND] payment_to = {claim.payment_to}, bank_payment_to = {claim.bank_payment_to} (keyword scan - payment to repairer/dealer)")
                         break
 
-                    if "favour" in cell_text and ("repairer" in cell_text or "insured" in cell_text):
+                    if "favour" in cell_text and ("repairer" in cell_text or "insured" in cell_text or "dealer" in cell_text):
                         if "insured" in cell_text:
                             claim.payment_to = "INSURED"
+                            claim.bank_payment_to = "Insured"
                         else:
                             claim.payment_to = "REPAIRER"
+                            claim.bank_payment_to = "Dealer"
                         src = f"R{r_idx+1}C{c_idx+1} ({sh_name})"
                         claim._excel_coords["payment_to"] = src
-                        claim._excel_logs.append(f"  📊 payment_to: '{claim.payment_to}' (Source: {src})")
-                        logger.info(f"  [FOUND] payment_to = {claim.payment_to} (keyword scan)")
+                        claim._excel_coords["bank_payment_to"] = src
+                        claim._excel_logs.append(f"  📊 payment_to / bank_payment_to: '{claim.payment_to}' / '{claim.bank_payment_to}' (Source: {src})")
+                        logger.info(f"  [FOUND] payment_to = {claim.payment_to}, bank_payment_to = {claim.bank_payment_to} (keyword scan)")
                         break
                     if "favour" in cell_text:
                         for nc in range(c_idx + 1, min(c_idx + 5, len(row))):
                             next_text = " ".join(str(row[nc]).strip().lower().split())
-                            if "repairer" in next_text:
+                            if "repairer" in next_text or "dealer" in next_text:
                                 claim.payment_to = "REPAIRER"
+                                claim.bank_payment_to = "Dealer"
                                 src = f"R{r_idx+1}C{nc+1} ({sh_name})"
                                 claim._excel_coords["payment_to"] = src
-                                claim._excel_logs.append(f"  📊 payment_to: '{claim.payment_to}' (Source: {src})")
+                                claim._excel_coords["bank_payment_to"] = src
+                                claim._excel_logs.append(f"  📊 payment_to / bank_payment_to: '{claim.payment_to}' / '{claim.bank_payment_to}' (Source: {src})")
                                 break
                             elif "insured" in next_text:
                                 claim.payment_to = "INSURED"
+                                claim.bank_payment_to = "Insured"
                                 src = f"R{r_idx+1}C{nc+1} ({sh_name})"
                                 claim._excel_coords["payment_to"] = src
-                                claim._excel_logs.append(f"  📊 payment_to: '{claim.payment_to}' (Source: {src})")
+                                claim._excel_coords["bank_payment_to"] = src
+                                claim._excel_logs.append(f"  📊 payment_to / bank_payment_to: '{claim.payment_to}' / '{claim.bank_payment_to}' (Source: {src})")
                                 break
-                        if claim.payment_to: break
-                if claim.payment_to: break
-            if claim.payment_to: break
+                        if claim.payment_to and claim.bank_payment_to: break
+                if claim.payment_to and claim.bank_payment_to: break
+            if claim.payment_to and claim.bank_payment_to: break
+
+    # Fallback Defaults
+    if not claim.bank_payment_to:
+        claim.bank_payment_to = "Insured"
+        claim._excel_logs.append(f"  📊 bank_payment_to: '{claim.bank_payment_to}' (Source: Default Fallback)")
 
     return claim
