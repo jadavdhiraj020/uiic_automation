@@ -192,6 +192,8 @@ class ClaimData:
     less_voluntary_excess: str = "0"     # Optional
     less_imposed_excess: str = "0"       # Optional
     towing_additional_charges: str = "0" # Optional
+    additional_towing_charges: str = "0" # Optional — separate from towing charges
+    less_other_deductions: str = "0"     # Optional
     verification_checkbox: str = ""
 
     def validate(self) -> Tuple[List[str], List[str]]:
@@ -500,5 +502,7 @@ class ClaimData:
             ("Voluntary Excess (₹)",  self.less_voluntary_excess,    False, _src("less_voluntary_excess")),
             ("Imposed Excess (₹)",    self.less_imposed_excess,      False, _src("less_imposed_excess")),
             ("Towing Charges (₹)",    self.towing_additional_charges, False, _src("towing_additional_charges")),
+            ("Addl. Towing (₹)",      self.additional_towing_charges, False, _src("additional_towing_charges")),
+            ("Other Deductions (₹)",   self.less_other_deductions,     False, _src("less_other_deductions")),
             ("Verification",          self.verification_checkbox,    True,  _src("verification_checkbox")),
         ]

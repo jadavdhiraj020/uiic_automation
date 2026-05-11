@@ -611,6 +611,22 @@
     "fallback_value": "0",
     "_mandatory": false
   },
+  "additional_towing_charges": {
+    "sheet": "ALL",
+    "search_labels": ["Additional Towing Charges", "Addl Towing Charges", "Addl. Towing"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "fallback_value": "0",
+    "_mandatory": false
+  },
+  "less_other_deductions": {
+    "sheet": "ALL",
+    "search_labels": ["Less Any Other Deductions", "Other Deductions", "Less Other Deductions", "Any Other Deductions"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "fallback_value": "0",
+    "_mandatory": false
+  },
   "verification_checkbox": {
     "sheet": "ALL",
     "search_labels": ["Verification Checkbox", "Verification"],

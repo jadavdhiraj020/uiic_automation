@@ -320,6 +320,19 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
 
         # ── Excel file ────────────────────────────────────────────────────────
         if ext in _EXCEL_EXTENSIONS:
+            # ── Check if this Excel matches an assessment keyword FIRST ────
+            fname_norm = fname.lower().replace("-", "_").replace(" ", "_")
+            assessment_key = _match_keyword(fname_norm, assessment_map)
+            if assessment_key:
+                if assessment_key not in result.assessment_files:
+                    result.assessment_files[assessment_key] = full_path
+                    logger.info("Assessment file [%s]: %s", assessment_key, fname)
+                else:
+                    logger.warning("Duplicate assessment mapping for [%s], keeping first file.", assessment_key)
+                    result.skipped_files.append((full_path, f"Duplicate assessment mapping [{assessment_key}]"))
+                continue
+
+            # ── Otherwise treat as the main data Excel ─────────────────────
             if result.excel_path is None:
                 result.excel_path = full_path
                 logger.info("Excel found: %s", fname)

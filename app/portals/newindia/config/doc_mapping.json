@@ -45,6 +45,21 @@
     "invoice": [
       "final_invoice",
       "invoice"
+    ],
+    "assessment_excel": [
+      "primary_assessment",
+      "primary assessment",
+      "assessment"
+    ],
+    "estimate_excel": [
+      "supplementary_estimate",
+      "supplementary estimate",
+      "estimate"
+    ],
+    "estimate_invoice": [
+      "estimate_invoice",
+      "estimate invoice",
+      "estimate_bill"
     ]
   }
 }

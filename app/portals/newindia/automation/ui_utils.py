@@ -196,3 +196,32 @@ def format_date_ddmmyyyy(raw_date) -> str:
         
     # Final fallback, just return the date portion
     return val.split(" ")[0]
+
+
+async def upload_file_via_input(
+    page: Page, file_input_selector: str, file_path: str,
+    label: str, log: Callable, delay_ms: int = 1500
+) -> bool:
+    """
+    Attach a file to an <input type='file'> element.
+    ONLY selects/attaches the file — does NOT click Upload or Submit.
+    The user will manually verify and submit on the live website.
+    Returns True if file was attached successfully, False otherwise.
+    """
+    import os
+    if not file_path or not os.path.exists(file_path):
+        log(f"  ⚠️ [{label}] file not found: {file_path}")
+        return False
+
+    try:
+        file_input = page.locator(file_input_selector).first
+        await file_input.wait_for(state="attached", timeout=5000)
+        await file_input.set_input_files(file_path)
+        log(f"  ✅ [{label}] file attached → '{os.path.basename(file_path)}'")
+        await asyncio.sleep(delay_ms / 1000.0)
+        return True
+    except Exception as e:
+        log(f"  ⚠️ [{label}] attach error: {e}")
+        return False
+
+
