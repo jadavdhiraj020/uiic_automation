@@ -4,6 +4,7 @@ from app.data.data_model import ClaimData
 from app.portals.newindia.automation.ui_utils import (
     fill_input_with_delay, select_dropdown_with_delay
 )
+from app.automation.automation_logger import _ts
 from app.portals.newindia.automation.ocr_helper import ChequeExtractor
 
 def _find_cheque_document(data: ClaimData) -> str:
@@ -16,7 +17,7 @@ def _find_cheque_document(data: ClaimData) -> str:
 async def fill_neft_details(page: Page, data: ClaimData, log, stop_cb, field_delay_ms: int = 600) -> bool:
     if stop_cb(): return False
 
-    log("Opening NEFT Details section...")
+    log(f"[{_ts()}] Opening NEFT Details section...")
     
     try:
         acc_heading = page.locator('a.accordion-toggle:has-text("NEFT Details")').first
@@ -27,22 +28,22 @@ async def fill_neft_details(page: Page, data: ClaimData, log, stop_cb, field_del
         if is_collapsed:
             await acc_heading.click()
             await asyncio.sleep(1.5)
-            log("  ✅ Expanded NEFT Details.")
+            log(f"[{_ts()}]   ✅ Expanded NEFT Details.")
         else:
-            log("  ℹ️ NEFT Details already expanded.")
+            log(f"[{_ts()}]   ℹ️ NEFT Details already expanded.")
     except Exception as e:
-        log(f"  ⚠️ Could not expand NEFT Details: {e}")
+        log(f"[{_ts()}]   ⚠️ Could not expand NEFT Details: {e}")
 
     if stop_cb(): return False
 
-    log("Scanning uploaded documents for cheque...")
+    log(f"[{_ts()}] Scanning uploaded documents for cheque...")
     cheque_path = _find_cheque_document(data)
     
     if cheque_path:
-        log("  ✅ Cheque document detected.")
+        log(f"[{_ts()}]   ✅ Cheque document detected.")
         
         # OCR Extraction
-        log("  ℹ️ Extracting details from cheque...")
+        log(f"[{_ts()}]   ℹ️ Extracting details from cheque...")
         extractor = ChequeExtractor(cheque_path)
         cheque_details = extractor.extract_details()
         
@@ -51,19 +52,19 @@ async def fill_neft_details(page: Page, data: ClaimData, log, stop_cb, field_del
         acc_type = cheque_details.get("account_type") or data.account_type
         
         if not cheque_details.get("ifsc"):
-            log("  ⚠️ IFSC not found in cheque. Falling back to Excel.")
+            log(f"[{_ts()}]   ⚠️ IFSC not found in cheque. Falling back to Excel.")
         if not cheque_details.get("account_number"):
-            log("  ⚠️ Account Number not found in cheque. Falling back to Excel.")
+            log(f"[{_ts()}]   ⚠️ Account Number not found in cheque. Falling back to Excel.")
             
     else:
-        log("  ⚠️ Cheque document NOT detected.")
+        log(f"[{_ts()}]   ⚠️ Cheque document NOT detected.")
         ifsc = data.ifsc_code
         acc_no = data.account_number
         acc_type = data.account_type
 
     # Single Source of Truth: Read payment type established during extraction
     payment_to_value = data.bank_payment_to or "Dealer"
-    log(f"  ℹ️ Using pre-calculated Payment Type: '{payment_to_value}'")
+    log(f"[{_ts()}]   ℹ️ Using pre-calculated Payment Type: '{payment_to_value}'")
 
     # 1. Provide bank details for payment to
     try:
@@ -76,7 +77,7 @@ async def fill_neft_details(page: Page, data: ClaimData, log, stop_cb, field_del
             field_delay_ms
         )
     except Exception as e:
-        log(f"  ⚠️ Error selecting Payment To: {e}")
+        log(f"[{_ts()}]   ⚠️ Error selecting Payment To: {e}")
 
     if stop_cb(): return False
 
@@ -87,7 +88,7 @@ async def fill_neft_details(page: Page, data: ClaimData, log, stop_cb, field_del
             if val:
                 await fill_input_with_delay(page, 'input[name="Dealer Name"]', val, "Dealer Name", log, field_delay_ms)
         except Exception as e:
-            log(f"  ⚠️ Error filling Dealer Name: {e}")
+            log(f"[{_ts()}]   ⚠️ Error filling Dealer Name: {e}")
 
     if stop_cb(): return False
 
@@ -100,24 +101,24 @@ async def fill_neft_details(page: Page, data: ClaimData, log, stop_cb, field_del
             if await find_btn.count() > 0:
                 await find_btn.click()
                 await asyncio.sleep(1.5)  # Wait for AJAX to populate readonly fields
-                log("  ✅ Clicked 'Find' to fetch bank details.")
+                log(f"[{_ts()}]   ✅ Clicked 'Find' to fetch bank details.")
         else:
-            log("  ⚠️ IFSC Code missing from both Cheque and Excel.")
+            log(f"[{_ts()}]   ⚠️ IFSC Code missing from both Cheque and Excel.")
     except Exception as e:
-        log(f"  ⚠️ Error filling IFSC Code: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling IFSC Code: {e}")
 
     if stop_cb(): return False
 
     # 4. Readonly fields: Bank Name, Bank Branch Name, Bank Addess
     # We skip filling these as they are populated by the Find button.
-    log("  ℹ️ Skipping readonly fields (Bank Name, Branch Name, Bank Address).")
+    log(f"[{_ts()}]   ℹ️ Skipping readonly fields (Bank Name, Branch Name, Bank Address).")
 
     # 5. Account Number
     try:
         if acc_no:
             await fill_input_with_delay(page, 'input[name="Account Number"]', acc_no, "Account Number", log, field_delay_ms)
     except Exception as e:
-        log(f"  ⚠️ Error filling Account Number: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling Account Number: {e}")
 
     if stop_cb(): return False
 
@@ -126,7 +127,7 @@ async def fill_neft_details(page: Page, data: ClaimData, log, stop_cb, field_del
         if acc_no:
             await fill_input_with_delay(page, 'input[name="Re-Enter Account Number"]', acc_no, "Re-Enter Account Number", log, field_delay_ms)
     except Exception as e:
-        log(f"  ⚠️ Error filling Re-Enter Account Number: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling Re-Enter Account Number: {e}")
 
     if stop_cb(): return False
 
@@ -135,9 +136,9 @@ async def fill_neft_details(page: Page, data: ClaimData, log, stop_cb, field_del
         if acc_type:
             await select_dropdown_with_delay(page, 'select[name="Account Type"]', acc_type.upper(), "Account Type", log, field_delay_ms)
         else:
-            log("  ⚠️ Account Type missing from both Cheque and Excel.")
+            log(f"[{_ts()}]   ⚠️ Account Type missing from both Cheque and Excel.")
     except Exception as e:
-        log(f"  ⚠️ Error selecting Account Type: {e}")
+        log(f"[{_ts()}]   ⚠️ Error selecting Account Type: {e}")
 
     if stop_cb(): return False
 
@@ -146,7 +147,7 @@ async def fill_neft_details(page: Page, data: ClaimData, log, stop_cb, field_del
         # Default is NEFT, just ensuring it is set.
         await select_dropdown_with_delay(page, 'select[name="Party Payment Method"]', "NEFT", "Payment Method", log, field_delay_ms)
     except Exception as e:
-        log(f"  ⚠️ Error selecting Payment Method: {e}")
+        log(f"[{_ts()}]   ⚠️ Error selecting Payment Method: {e}")
 
-    log("Phase 7 (NEFT Details) completed successfully.")
+    log(f"[{_ts()}] Phase 7 (NEFT Details) completed successfully.")
     return True

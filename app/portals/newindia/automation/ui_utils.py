@@ -4,6 +4,12 @@ from playwright.async_api import Page
 import re
 from datetime import datetime
 
+
+def _ts() -> str:
+    """Current timestamp as HH:MM:SS.mmm"""
+    now = datetime.now()
+    return now.strftime("%H:%M:%S.") + f"{now.microsecond // 1000:03d}"
+
 # ── JavaScript Snippets ───────────────────────────────────────────────────────
 
 _JS_FILL = r"""
@@ -124,11 +130,11 @@ async def fill_input_with_delay(
         await page.wait_for_selector(selector, state="visible", timeout=5000)
         res = await page.evaluate(_JS_FILL, [selector, str(value)])
         if res and res.get("ok"):
-            log(f"  ✅ [{label}] filled → '{str(value)[:60]}'")
+            log(f"[{_ts()}]   ✅ [{label}] filled → '{str(value)[:60]}'")
         else:
-            log(f"  ⚠️ [{label}] fill failed (element not found in DOM)")
+            log(f"[{_ts()}]   ⚠️ [{label}] fill failed (element not found in DOM)")
     except Exception as e:
-        log(f"  ⚠️ [{label}] error: {e}")
+        log(f"[{_ts()}]   ⚠️ [{label}] error: {e}")
 
     await asyncio.sleep(delay_ms / 1000.0)
 
@@ -142,11 +148,11 @@ async def select_dropdown_with_delay(
         await page.wait_for_selector(selector, state="visible", timeout=5000)
         res = await page.evaluate(_JS_SELECT, [selector, str(value)])
         if res and res.get("ok"):
-            log(f"  ✅ [{label}] selected → '{res.get('text')}'")
+            log(f"[{_ts()}]   ✅ [{label}] selected → '{res.get('text')}'")
         else:
-            log(f"  ⚠️ [{label}] select failed (no match for '{value}'): {res.get('err') if res else 'unknown'}")
+            log(f"[{_ts()}]   ⚠️ [{label}] select failed (no match for '{value}'): {res.get('err') if res else 'unknown'}")
     except Exception as e:
-        log(f"  ⚠️ [{label}] error: {e}")
+        log(f"[{_ts()}]   ⚠️ [{label}] error: {e}")
 
     await asyncio.sleep(delay_ms / 1000.0)
 
@@ -160,11 +166,11 @@ async def click_radio_with_delay(
         res = await page.evaluate(_JS_CLICK_RADIO, [name, value])
         if res and res.get("ok"):
             already = res.get("already", False)
-            log(f"  {'✔' if already else '✅'} [{label}] → '{value}'" + (" (already set)" if already else ""))
+            log(f"[{_ts()}]   {'✔' if already else '✅'} [{label}] → '{value}'" + (" (already set)" if already else ""))
         else:
-            log(f"  ⚠️ [{label}] click failed: {res.get('err') if res else 'unknown'}")
+            log(f"[{_ts()}]   ⚠️ [{label}] click failed: {res.get('err') if res else 'unknown'}")
     except Exception as e:
-        log(f"  ⚠️ [{label}] error: {e}")
+        log(f"[{_ts()}]   ⚠️ [{label}] error: {e}")
 
     await asyncio.sleep(delay_ms / 1000.0)
 
@@ -210,18 +216,18 @@ async def upload_file_via_input(
     """
     import os
     if not file_path or not os.path.exists(file_path):
-        log(f"  ⚠️ [{label}] file not found: {file_path}")
+        log(f"[{_ts()}]   ⚠️ [{label}] file not found: {file_path}")
         return False
 
     try:
         file_input = page.locator(file_input_selector).first
         await file_input.wait_for(state="attached", timeout=5000)
         await file_input.set_input_files(file_path)
-        log(f"  ✅ [{label}] file attached → '{os.path.basename(file_path)}'")
+        log(f"[{_ts()}]   ✅ [{label}] file attached → '{os.path.basename(file_path)}'")
         await asyncio.sleep(delay_ms / 1000.0)
         return True
     except Exception as e:
-        log(f"  ⚠️ [{label}] attach error: {e}")
+        log(f"[{_ts()}]   ⚠️ [{label}] attach error: {e}")
         return False
 
 

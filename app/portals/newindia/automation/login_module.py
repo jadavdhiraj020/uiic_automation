@@ -13,6 +13,7 @@ It does NOT attempt to solve the CAPTCHA or click the login button automatically
 import asyncio
 import logging
 from typing import Callable
+from app.automation.automation_logger import _ts
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ async def _wait_for_manual_login(page, log_cb: Callable[[str], None], stop_cb: C
     Waits for the user to manually solve the CAPTCHA and log in.
     Success is detected when the login URL changes.
     """
-    log_cb(f"  ⏳ Waiting for user to solve CAPTCHA and login manually (up to {timeout_seconds}s)...")
+    log_cb(f"[{_ts()}]  ⏳ Waiting for manual CAPTCHA + login (up to {timeout_seconds}s)...")
     
     poll_interval = 3.0
     iterations = int(timeout_seconds / poll_interval)
@@ -39,7 +40,7 @@ async def _wait_for_manual_login(page, log_cb: Callable[[str], None], stop_cb: C
             # If the URL changes away from IntermediaryLogin.html, login likely succeeded
             current_url = page.url
             if "IntermediaryLogin.html" not in current_url:
-                log_cb("  ✅ Login detected successfully (URL changed).")
+                log_cb(f"[{_ts()}]  ✅ Login detected (URL changed).")
                 return True
         except Exception:
             # If we can't check the page, it might be navigating or closed
@@ -47,7 +48,7 @@ async def _wait_for_manual_login(page, log_cb: Callable[[str], None], stop_cb: C
 
         await asyncio.sleep(poll_interval)
 
-    log_cb(f"  ❌ Login wait timed out after {timeout_seconds} seconds. URL never changed.")
+    log_cb(f"[{_ts()}]  ❌ Login wait timed out after {timeout_seconds}s. URL never changed.")
     return False
 
 
@@ -65,20 +66,20 @@ async def do_login(
     username = settings["username"]
     password = settings["password"]
     # 1. Open Login Page
-    log_cb("  🌐 Opening New India login page...")
+    log_cb(f"[{_ts()}]  🌐 Opening New India login page...")
     try:
         await page.goto(portal_url, wait_until="domcontentloaded", timeout=30000)
         await page.locator(SEL_USERNAME).wait_for(state="visible", timeout=12000)
-        log_cb("  ✅ Login page loaded successfully")
+        log_cb(f"[{_ts()}]  ✅ Login page loaded successfully")
     except Exception as exc:
-        log_cb(f"  ❌ Login page did not load: {exc}")
+        log_cb(f"[{_ts()}]  ❌ Login page did not load: {exc}")
         return False
 
     if stop_cb():
         return False
 
     # 2. Auto-fill Username & Password
-    log_cb("  ✍️  Filling username/password...")
+    log_cb(f"[{_ts()}]  ✍️  Filling username/password...")
     try:
         # Fill username
         await page.locator(SEL_USERNAME).fill("")
@@ -92,7 +93,7 @@ async def do_login(
         await page.locator(SEL_PASSWORD).fill(password)
         await asyncio.sleep(0.4)
     except Exception as exc:
-        log_cb(f"  ❌ Error filling credentials: {exc}")
+        log_cb(f"[{_ts()}]  ❌ Error filling credentials: {exc}")
         return False
 
     if stop_cb():
@@ -103,7 +104,7 @@ async def do_login(
     
     # Wait an extra 3 seconds after successful login to let the session stabilize
     if success:
-        log_cb("  ⏳ Waiting 3 seconds for post-login scripts to finish...")
+        log_cb(f"[{_ts()}]  ⏳ Waiting 3s for post-login scripts to finish...")
         await asyncio.sleep(3)
         
     return success

@@ -5,6 +5,7 @@ from playwright.async_api import Page
 from app.portals.newindia.automation.ui_utils import (
     fill_input_with_delay, click_radio_with_delay
 )
+from app.automation.automation_logger import _ts
 
 # ── JavaScript helpers ────────────────────────────────────────────────────────
 
@@ -30,15 +31,15 @@ async def _ensure_yes(page: Page, name: str, label: str,
     try:
         count = await page.locator(f'input[name="{name}"]').count()
         if not count:
-            log_cb(f"  ⏭  [{label}] not in DOM")
+            log_cb(f"[{_ts()}]   ⏭  [{label}] not in DOM")
             return
         already = await page.evaluate(_JS_IS_CHECKED, [name, "Y"])
         if already:
-            log_cb(f"  ✔  [{label}] already YES")
+            log_cb(f"[{_ts()}]   ✔  [{label}] already YES")
             return
         await click_radio_with_delay(page, name, "Y", label, log_cb, delay_ms)
     except Exception as e:
-        log_cb(f"  ⚠️  [{label}] error: {e}")
+        log_cb(f"[{_ts()}]   ⚠️  [{label}] error: {e}")
 
 
 def _normalise_time(raw: str) -> str:
@@ -55,7 +56,7 @@ async def fill_quick_update_details(
     stop_cb: Callable[[], bool] = lambda: False,
     field_delay_ms: int = 600
 ) -> bool:
-    def log(msg): log_cb(f"  [QU] {msg}")
+    def log(msg): log_cb(f"[{_ts()}]   [QU] {msg}")
 
     log("Starting Phase 3 — Quick Update Details")
 

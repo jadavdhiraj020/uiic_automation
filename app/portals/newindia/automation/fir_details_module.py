@@ -4,11 +4,12 @@ from app.data.data_model import ClaimData
 from app.portals.newindia.automation.ui_utils import (
     fill_input_with_delay, select_dropdown_with_delay
 )
+from app.automation.automation_logger import _ts
 
 async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_delay_ms: int = 600) -> bool:
     if stop_cb(): return False
 
-    log("Opening FIR Details section...")
+    log(f"[{_ts()}]  📝 Opening FIR Details section...")
     
     # Click to expand FIR Details accordion
     try:
@@ -21,11 +22,11 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
         if is_collapsed:
             await acc_heading.click()
             await asyncio.sleep(1.5)
-            log("  ✅ Expanded FIR Details.")
+            log(f"[{_ts()}]   ✅ Expanded FIR Details.")
         else:
-            log("  ℹ️ FIR Details already expanded.")
+            log(f"[{_ts()}]   ℹ️ FIR Details already expanded.")
     except Exception as e:
-        log(f"  ⚠️ Could not expand FIR Details: {e}")
+        log(f"[{_ts()}]   ⚠️ Could not expand FIR Details: {e}")
 
     if stop_cb(): return False
 
@@ -35,9 +36,9 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
         if val:
             await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.firNo"]', val, "FIR Number", log, field_delay_ms)
         else:
-            log("  ℹ️ FIR Number missing, skipping (Optional).")
+            log(f"[{_ts()}]   ⏭️ [FIR Number] — Optional, not in Excel. Skipping.")
     except Exception as e:
-        log(f"  ⚠️ Error filling FIR Number: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling FIR Number: {e}")
 
     if stop_cb(): return False
 
@@ -47,9 +48,9 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
         if val:
             await fill_input_with_delay(page, 'input[name="firDate"]', val, "FIR Date", log, field_delay_ms)
         else:
-            log("  ℹ️ FIR Date missing, skipping (Optional).")
+            log(f"[{_ts()}]   ⏭️ [FIR Date] — Optional, not in Excel. Skipping.")
     except Exception as e:
-        log(f"  ⚠️ Error filling FIR Date: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling FIR Date: {e}")
 
     if stop_cb(): return False
 
@@ -59,9 +60,9 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
         if val:
             await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.policeStation"]', val, "Police Station", log, field_delay_ms)
         else:
-            log("  ℹ️ Police Station Name missing, skipping (Optional).")
+            log(f"[{_ts()}]   ⏭️ [Police Station] — Optional, not in Excel. Skipping.")
     except Exception as e:
-        log(f"  ⚠️ Error filling Police Station Name: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling Police Station Name: {e}")
 
     if stop_cb(): return False
 
@@ -71,9 +72,9 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
         if val:
             await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.chargedUSMotorVehAct"]', val, "Charged U/S MV Act", log, field_delay_ms)
         else:
-            log("  ℹ️ Charged U/S Motor Vehicle Act missing, skipping (Optional).")
+            log(f"[{_ts()}]   ⏭️ [Charged U/S MV Act] — Optional, not in Excel. Skipping.")
     except Exception as e:
-        log(f"  ⚠️ Error filling Charged U/S Motor Vehicle Act: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling Charged U/S Motor Vehicle Act: {e}")
 
     if stop_cb(): return False
 
@@ -83,9 +84,9 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
         if val:
             await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.chargedUSIPC"]', val, "Charged U/S IPC", log, field_delay_ms)
         else:
-            log("  ℹ️ Charged U/S IPC missing, skipping (Optional).")
+            log(f"[{_ts()}]   ⏭️ [Charged U/S IPC] — Optional, not in Excel. Skipping.")
     except Exception as e:
-        log(f"  ⚠️ Error filling Charged U/S IPC: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling Charged U/S IPC: {e}")
 
     if stop_cb(): return False
 
@@ -96,9 +97,9 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
             normalized = "Yes" if str(val).strip().lower() == "yes" else "No"
             await select_dropdown_with_delay(page, 'select[name="Whether driver without license ?"]', normalized, "Driver Without License", log, field_delay_ms)
         else:
-            log("  ⚠️ Whether driver without license missing from Excel.")
+            log(f"[{_ts()}]   ⚠️ Whether driver without license missing from Excel.")
     except Exception as e:
-        log(f"  ⚠️ Error selecting Whether Driver Without License: {e}")
+        log(f"[{_ts()}]   ⚠️ Error selecting Whether Driver Without License: {e}")
 
     if stop_cb(): return False
 
@@ -109,9 +110,9 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
             normalized = "Yes" if str(val).strip().lower() == "yes" else "No"
             await select_dropdown_with_delay(page, 'select[data-ng-model="surveyorData.worklist.additionalDetails.prevPoliceRecords"]', normalized, "Previous Records", log, field_delay_ms)
         else:
-            log("  ℹ️ Previous Police Records missing, skipping (Optional).")
+            log(f"[{_ts()}]   ⏭️ [Previous Police Records] — Optional, not in Excel. Skipping.")
     except Exception as e:
-        log(f"  ⚠️ Error selecting Previous Police Records: {e}")
+        log(f"[{_ts()}]   ⚠️ Error selecting Previous Police Records: {e}")
 
     if stop_cb(): return False
 
@@ -122,9 +123,9 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
             normalized = "Yes" if str(val).strip().lower() == "yes" else "No"
             await select_dropdown_with_delay(page, 'select[name="Is there any TP claim?"]', normalized, "TP Claim", log, field_delay_ms)
         else:
-            log("  ⚠️ Is there any TP claim missing from Excel.")
+            log(f"[{_ts()}]   ⚠️ Is there any TP claim missing from Excel.")
     except Exception as e:
-        log(f"  ⚠️ Error selecting TP Claim: {e}")
+        log(f"[{_ts()}]   ⚠️ Error selecting TP Claim: {e}")
 
-    log("Phase 7 (FIR Details) completed successfully.")
+    log(f"[{_ts()}]  ✅ FIR Details completed successfully.")
     return True

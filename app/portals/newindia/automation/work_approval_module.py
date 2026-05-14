@@ -7,6 +7,7 @@ from app.portals.newindia.automation.ui_utils import (
     fill_input_with_delay,
     select_dropdown_with_delay
 )
+from app.automation.automation_logger import _ts
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,7 @@ async def fill_work_approval_details(
     def log(msg: str):
         logger.info(msg)
         if log_cb:
-            log_cb(msg)
+            log_cb(f"[{_ts()}]   [WA] {msg}")
 
     log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     log("  📝 STEP 9/9 ─ Work Approval Details")

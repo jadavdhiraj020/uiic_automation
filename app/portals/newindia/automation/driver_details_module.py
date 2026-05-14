@@ -4,11 +4,12 @@ from app.data.data_model import ClaimData
 from app.portals.newindia.automation.ui_utils import (
     fill_input_with_delay, select_dropdown_with_delay, format_date_ddmmyyyy
 )
+from app.automation.automation_logger import _ts
 
 async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_delay_ms: int = 600) -> bool:
     if stop_cb(): return False
 
-    log("Opening Driver Details section...")
+    log(f"[{_ts()}]  📝 Opening Driver Details section...")
     
     # Click to expand Driver Details accordion
     try:
@@ -21,17 +22,17 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
         if is_collapsed:
             await acc_heading.click()
             await asyncio.sleep(1.5)
-            log("  ✅ Expanded Driver Details.")
+            log(f"[{_ts()}]   ✅ Expanded Driver Details.")
         else:
-            log("  ℹ️ Driver Details already expanded.")
+            log(f"[{_ts()}]   ℹ️ Driver Details already expanded.")
     except Exception as e:
-        log(f"  ⚠️ Could not expand Driver Details: {e}")
+        log(f"[{_ts()}]   ⚠️ Could not expand Driver Details: {e}")
 
     if stop_cb(): return False
 
     # 1. Was Vehicle Parked During Accident (ALWAYS NO)
     try:
-        log("Selecting Vehicle Parked During Accident = NO...")
+        log(f"[{_ts()}]  ✏️ Selecting Vehicle Parked During Accident = NO...")
         await select_dropdown_with_delay(
             page, 'select[name="Was the vehicle parked during accident ?"]',
             "No", "Vehicle Parked", log, field_delay_ms
@@ -39,7 +40,7 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
 
         # Wait for the Relationship dropdown to become VISIBLE (not just attached)
         # 'attached' means it exists in the DOM but may be hidden by ng-show/ng-if
-        log("Waiting for Relationship dropdown to become visible...")
+        log(f"[{_ts()}]  ⏳ Waiting for Relationship dropdown to become visible...")
         try:
             await page.wait_for_selector(
                 'select[name="Relationship of the driver with the Insured"]',
@@ -53,7 +54,7 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
             )
         await asyncio.sleep(0.8)  # Safety wait for Angular to finish rendering
     except Exception as e:
-        log(f"  ⚠️ Error selecting Vehicle Parked During Accident: {e}")
+        log(f"[{_ts()}]   ⚠️ Error selecting Vehicle Parked During Accident: {e}")
 
     if stop_cb(): return False
 
@@ -70,7 +71,7 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
                     return Array.from(s.options).map(o => o.text.trim());
                 }
             """)
-            log(f"  ℹ️ [Relationship] available options: {opts}")
+            log(f"[{_ts()}]   🔍 [Relationship] available options: {opts}")
         except Exception:
             pass
 
@@ -81,14 +82,14 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
                 val, "Relationship", log, field_delay_ms
             )
         else:
-            log("  ⚠️ Relationship with Insured missing from Excel, defaulting to 'Self'")
+            log(f"[{_ts()}]   ⚠️ Relationship with Insured missing from Excel, defaulting to 'Self'")
             await select_dropdown_with_delay(
                 page,
                 'select[name="Relationship of the driver with the Insured"]',
                 "Self", "Relationship", log, field_delay_ms
             )
     except Exception as e:
-        log(f"  ⚠️ Error selecting Relationship With Insured: {e}")
+        log(f"[{_ts()}]   ⚠️ Error selecting Relationship With Insured: {e}")
 
     if stop_cb(): return False
 
@@ -98,9 +99,9 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
         if val:
             await select_dropdown_with_delay(page, 'select[name="License Type of Driver"]', val, "License Type", log, field_delay_ms)
         else:
-            log("  ⚠️ License Type of Driver missing from Excel.")
+            log(f"[{_ts()}]   ⚠️ License Type of Driver missing from Excel.")
     except Exception as e:
-        log(f"  ⚠️ Error selecting License Type of Driver: {e}")
+        log(f"[{_ts()}]   ⚠️ Error selecting License Type of Driver: {e}")
 
     if stop_cb(): return False
 
@@ -111,9 +112,9 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
             formatted_date = format_date_ddmmyyyy(val)
             await fill_input_with_delay(page, 'input[name="DOB of Driver"]', formatted_date, "Driver DOB", log, field_delay_ms)
         else:
-            log("  ⚠️ DOB of Driver missing from Excel.")
+            log(f"[{_ts()}]   ⚠️ DOB of Driver missing from Excel.")
     except Exception as e:
-        log(f"  ⚠️ Error filling DOB of Driver: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling DOB of Driver: {e}")
 
     if stop_cb(): return False
 
@@ -123,9 +124,9 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
         if val:
             await fill_input_with_delay(page, 'input[name="Driver Name"]', val, "Driver Name", log, field_delay_ms)
         else:
-            log("  ⚠️ Driver Name missing from Excel.")
+            log(f"[{_ts()}]   ⚠️ Driver Name missing from Excel.")
     except Exception as e:
-        log(f"  ⚠️ Error filling Driver Name: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling Driver Name: {e}")
 
     if stop_cb(): return False
 
@@ -135,9 +136,9 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
         if val:
             await fill_input_with_delay(page, 'input[name="Age of Driver"]', val, "Driver Age", log, field_delay_ms)
         else:
-            log("  ⚠️ Age of Driver missing from Excel.")
+            log(f"[{_ts()}]   ⚠️ Age of Driver missing from Excel.")
     except Exception as e:
-        log(f"  ⚠️ Error filling Age of Driver: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling Age of Driver: {e}")
 
     if stop_cb(): return False
 
@@ -156,9 +157,9 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
                     }
                 """)
                 await asyncio.sleep(field_delay_ms / 1000.0)
-                log("  ✅ License Valid set to YES")
+                log(f"[{_ts()}]   ✅ License Valid set to YES")
     except Exception as e:
-        log(f"  ⚠️ Error selecting License Valid: {e}")
+        log(f"[{_ts()}]   ⚠️ Error selecting License Valid: {e}")
 
     if stop_cb(): return False
 
@@ -168,9 +169,9 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
         if val:
             await fill_input_with_delay(page, 'input[name="License Issuing Authority"]', val, "Issuing Authority", log, field_delay_ms)
         else:
-            log("  ⚠️ License Issuing Authority missing from Excel.")
+            log(f"[{_ts()}]   ⚠️ License Issuing Authority missing from Excel.")
     except Exception as e:
-        log(f"  ⚠️ Error filling License Issuing Authority: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling License Issuing Authority: {e}")
 
     if stop_cb(): return False
 
@@ -180,9 +181,9 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
         if val:
             await fill_input_with_delay(page, 'input[name="Driver driving License Number"]', val, "License No", log, field_delay_ms)
         else:
-            log("  ⚠️ License Number missing from Excel.")
+            log(f"[{_ts()}]   ⚠️ License Number missing from Excel.")
     except Exception as e:
-        log(f"  ⚠️ Error filling License Number: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling License Number: {e}")
 
     if stop_cb(): return False
 
@@ -193,9 +194,9 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
             formatted_date = format_date_ddmmyyyy(val)
             await fill_input_with_delay(page, 'input[name="Driver driving License Issue Date"]', formatted_date, "Issue Date", log, field_delay_ms)
         else:
-            log("  ⚠️ License Issue Date missing from Excel.")
+            log(f"[{_ts()}]   ⚠️ License Issue Date missing from Excel.")
     except Exception as e:
-        log(f"  ⚠️ Error filling License Issue Date: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling License Issue Date: {e}")
 
     if stop_cb(): return False
 
@@ -206,9 +207,9 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
             formatted_date = format_date_ddmmyyyy(val)
             await fill_input_with_delay(page, 'input[name="Driver driving License Expiry Date"]', formatted_date, "Expiry Date", log, field_delay_ms)
         else:
-            log("  ⚠️ License Expiry Date missing from Excel.")
+            log(f"[{_ts()}]   ⚠️ License Expiry Date missing from Excel.")
     except Exception as e:
-        log(f"  ⚠️ Error filling License Expiry Date: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling License Expiry Date: {e}")
 
     if stop_cb(): return False
 
@@ -218,9 +219,9 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
         if val:
             await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.badgeNo"]', val, "Badge No", log, field_delay_ms)
         else:
-            log("  ℹ️ Badge Number missing, skipping (Optional).")
+            log(f"[{_ts()}]   ⏭️ [Badge Number] — Optional, not in Excel. Skipping.")
     except Exception as e:
-        log(f"  ⚠️ Error filling Badge Number: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling Badge Number: {e}")
 
-    log("Phase 6 (Driver Details) completed successfully.")
+    log(f"[{_ts()}]  ✅ Driver Details completed successfully.")
     return True

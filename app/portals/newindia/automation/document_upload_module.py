@@ -33,6 +33,7 @@ from app.portals.newindia.automation.ui_utils import (
     select_dropdown_with_delay,
     upload_file_via_input,
 )
+from app.automation.automation_logger import _ts
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +181,7 @@ def merge_files_to_pdf(
     """
     if not file_paths:
         if log:
-            log("  ℹ️ No remaining files to merge.")
+            log(f"[{_ts()}]   ℹ️ No remaining files to merge.")
         return None
 
     _log = log or (lambda msg: None)
@@ -196,7 +197,7 @@ def merge_files_to_pdf(
             _image_exts, _pdf_exts, PdfMerger, PdfReader
         )
     except ImportError:
-        _log("  ℹ️ PyPDF2 not available. Using Pillow fallback for merge.")
+        _log(f"[{_ts()}]   ℹ️ PyPDF2 not available. Using Pillow fallback for merge.")
 
     # ── Strategy 2: Pillow-only fallback ──────────────────────────────────────
     return _merge_with_pillow_fallback(
@@ -225,11 +226,11 @@ def _merge_with_pypdf2(
                     if len(reader.pages) > 0:
                         merger.append(fpath)
                         merged_count += 1
-                        _log(f"    📄 Added PDF: {fname} ({len(reader.pages)} pages)")
+                        _log(f"[{_ts()}]     📄 Added PDF: {fname} ({len(reader.pages)} pages)")
                     else:
-                        _log(f"    ⚠️ Empty PDF skipped: {fname}")
+                        _log(f"[{_ts()}]     ⚠️ Empty PDF skipped: {fname}")
                 except Exception as e:
-                    _log(f"    ⚠️ Could not read PDF {fname}: {e}")
+                    _log(f"[{_ts()}]     ⚠️ Could not read PDF {fname}: {e}")
                     skipped_files.append(fname)
 
             elif ext in _image_exts:
@@ -242,16 +243,16 @@ def _merge_with_pypdf2(
                     image_pdfs.append(temp_pdf.name)
                     merger.append(temp_pdf.name)
                     merged_count += 1
-                    _log(f"    🖼️ Converted image to PDF: {fname}")
+                    _log(f"[{_ts()}]     🖼️ Converted image to PDF: {fname}")
                 except Exception as e:
-                    _log(f"    ⚠️ Could not convert image {fname}: {e}")
+                    _log(f"[{_ts()}]     ⚠️ Could not convert image {fname}: {e}")
                     skipped_files.append(fname)
             else:
-                _log(f"    ⏭️ Skipping non-mergeable file: {fname} ({ext})")
+                _log(f"[{_ts()}]     ⏭️ Skipping non-mergeable file: {fname} ({ext})")
                 skipped_files.append(fname)
 
         if merged_count == 0:
-            _log("  ⚠️ No files could be merged into PDF.")
+            _log(f"[{_ts()}]   ⚠️ No files could be merged into PDF.")
             return None
 
         merger.write(output_path)
@@ -260,7 +261,7 @@ def _merge_with_pypdf2(
         return _validate_merged_pdf(output_path, max_bytes, merged_count, skipped_files, _log)
 
     except Exception as e:
-        _log(f"  ❌ PDF merge failed: {e}")
+        _log(f"[{_ts()}]   ❌ PDF merge failed: {e}")
         return None
     finally:
         for tmp in image_pdfs:
@@ -286,7 +287,7 @@ def _merge_with_pillow_fallback(
     skipped = [f for f in file_paths if f not in pdf_files and f not in image_files]
 
     for sf in skipped:
-        _log(f"    ⏭️ Skipping non-mergeable: {Path(sf).name}")
+        _log(f"[{_ts()}]     ⏭️ Skipping non-mergeable: {Path(sf).name}")
 
     merged_count = 0
 
@@ -302,9 +303,9 @@ def _merge_with_pillow_fallback(
                         img = img.convert("RGB")
                     images.append(img)
                     merged_count += 1
-                    _log(f"    🖼️ Added image: {Path(img_path).name}")
+                    _log(f"[{_ts()}]     🖼️ Added image: {Path(img_path).name}")
                 except Exception as e:
-                    _log(f"    ⚠️ Could not open image {Path(img_path).name}: {e}")
+                    _log(f"[{_ts()}]     ⚠️ Could not open image {Path(img_path).name}: {e}")
 
             if images:
                 first = images[0]
@@ -312,7 +313,7 @@ def _merge_with_pillow_fallback(
                 first.save(output_path, "PDF", save_all=True, append_images=rest)
                 return _validate_merged_pdf(output_path, max_bytes, merged_count, [Path(s).name for s in skipped], _log)
         except Exception as e:
-            _log(f"  ❌ Pillow image merge failed: {e}")
+            _log(f"[{_ts()}]   ❌ Pillow image merge failed: {e}")
             return None
 
     # Case 2: Single PDF (with or without images) → just copy the PDF
@@ -320,10 +321,10 @@ def _merge_with_pillow_fallback(
         try:
             shutil.copy2(pdf_files[0], output_path)
             merged_count = 1
-            _log(f"    📄 Copied single PDF: {Path(pdf_files[0]).name}")
+            _log(f"[{_ts()}]     📄 Copied single PDF: {Path(pdf_files[0]).name}")
             return _validate_merged_pdf(output_path, max_bytes, merged_count, [Path(s).name for s in skipped], _log)
         except Exception as e:
-            _log(f"  ❌ Could not copy PDF: {e}")
+            _log(f"[{_ts()}]   ❌ Could not copy PDF: {e}")
             return None
 
     # Case 3: Multiple PDFs or mix → copy first PDF only, warn about rest
@@ -331,16 +332,16 @@ def _merge_with_pillow_fallback(
         try:
             shutil.copy2(pdf_files[0], output_path)
             merged_count = 1
-            _log(f"    📄 Copied first PDF: {Path(pdf_files[0]).name}")
+            _log(f"[{_ts()}]     📄 Copied first PDF: {Path(pdf_files[0]).name}")
             if len(pdf_files) > 1:
-                _log(f"    ⚠️ Cannot merge {len(pdf_files)-1} additional PDFs without PyPDF2.")
-                _log(f"    ℹ️ Install PyPDF2 for full merge: pip install PyPDF2")
+                _log(f"[{_ts()}]     ⚠️ Cannot merge {len(pdf_files)-1} additional PDFs without PyPDF2.")
+                _log(f"[{_ts()}]     ℹ️ Install PyPDF2 for full merge: pip install PyPDF2")
             return _validate_merged_pdf(output_path, max_bytes, merged_count, [Path(s).name for s in skipped], _log)
         except Exception as e:
-            _log(f"  ❌ Could not copy PDF: {e}")
+            _log(f"[{_ts()}]   ❌ Could not copy PDF: {e}")
             return None
 
-    _log("  ⚠️ No mergeable files found.")
+    _log(f"[{_ts()}]   ⚠️ No mergeable files found.")
     return None
 
 
@@ -353,17 +354,17 @@ def _validate_merged_pdf(
     mb = file_size / (1024 * 1024)
 
     if file_size > max_bytes:
-        _log(f"  ❌ Merged PDF exceeds 15MB limit ({mb:.1f}MB). Cannot upload.")
+        _log(f"[{_ts()}]   ❌ Merged PDF exceeds 15MB limit ({mb:.1f}MB). Cannot upload.")
         try:
             os.remove(output_path)
         except OSError:
             pass
         return None
 
-    _log(f"  ✅ Merged PDF created: {Path(output_path).name} ({mb:.1f}MB, {merged_count} files)")
+    _log(f"[{_ts()}]   ✅ Merged PDF created: {Path(output_path).name} ({mb:.1f}MB, {merged_count} files)")
 
     if skipped_files:
-        _log(f"  ⏭️ Skipped {len(skipped_files)} non-mergeable files: {', '.join(skipped_files)}")
+        _log(f"[{_ts()}]   ⏭️ Skipped {len(skipped_files)} non-mergeable files: {', '.join(skipped_files)}")
 
     return output_path
 
@@ -387,16 +388,16 @@ async def fill_document_upload_section(
         return False
 
     log_cb("")
-    log_cb("═" * 60)
-    log_cb("📤 Phase 9: Document Upload Section")
-    log_cb("═" * 60)
+    log_cb(f"[{_ts()}] ═" * 60)
+    log_cb(f"[{_ts()}] 📤 Phase 9: Document Upload Section")
+    log_cb(f"[{_ts()}] ═" * 60)
 
     # ══════════════════════════════════════════════════════════════════════════
     # SECTION 1 — UPLOADED DOCUMENTS (SKIP — Informational only)
     # ══════════════════════════════════════════════════════════════════════════
     log_cb("")
-    log_cb("  ── Section 1: Uploaded Documents (Informational) ──")
-    log_cb("  ℹ️ Skipping — display-only section, no interaction needed.")
+    log_cb(f"[{_ts()}]   ── Section 1: Uploaded Documents (Informational) ──")
+    log_cb(f"[{_ts()}]   ℹ️ Skipping — display-only section, no interaction needed.")
 
     if stop_cb():
         return False
@@ -405,7 +406,7 @@ async def fill_document_upload_section(
     # SECTION 2 — UPLOAD NEW DOCUMENTS
     # ══════════════════════════════════════════════════════════════════════════
     log_cb("")
-    log_cb("  ── Section 2: Upload New Documents ──")
+    log_cb(f"[{_ts()}]   ── Section 2: Upload New Documents ──")
 
     # 2a. Open the "Upload New Documents" accordion
     try:
@@ -418,11 +419,11 @@ async def fill_document_upload_section(
         if is_collapsed:
             await accordion_link.click()
             await asyncio.sleep(1.5)
-            log_cb("  ✅ Opened 'Upload New Documents' accordion.")
+            log_cb(f"[{_ts()}]   ✅ Opened 'Upload New Documents' accordion.")
         else:
-            log_cb("  ℹ️ 'Upload New Documents' accordion already open.")
+            log_cb(f"[{_ts()}]   ℹ️ 'Upload New Documents' accordion already open.")
     except Exception as e:
-        log_cb(f"  ⚠️ Could not open accordion (may already be open): {e}")
+        log_cb(f"[{_ts()}]   ⚠️ Could not open accordion (may already be open): {e}")
         # Try clicking anyway
         try:
             await page.locator('a.accordion-toggle:has(span:text("Upload New Documents"))').first.click()
@@ -437,7 +438,7 @@ async def fill_document_upload_section(
     try:
         await page.wait_for_selector('ng-form[name="mandatoryDocForm"]', state="visible", timeout=5000)
     except Exception:
-        log_cb("  ⚠️ Mandatory document form not visible. Attempting to proceed...")
+        log_cb(f"[{_ts()}]   ⚠️ Mandatory document form not visible. Attempting to proceed...")
 
     # ── Track which files have been uploaded in this section ──────────────────
     uploaded_keys: Set[str] = set()
@@ -457,7 +458,7 @@ async def fill_document_upload_section(
         if file_path and os.path.isfile(file_path):
             active_docs.append((doc_key, dropdown_text, label, file_path))
         else:
-            log_cb(f"  ℹ️ No '{label}' file found in folder. Skipping.")
+            log_cb(f"[{_ts()}]   ℹ️ No '{label}' file found in folder. Skipping.")
 
     # ── Upload each document in its own row ───────────────────────────────────
     # Row 0 already exists. For rows 1, 2, ... we click the "+" button first.
@@ -467,7 +468,7 @@ async def fill_document_upload_section(
             return False
 
         log_cb(f"")
-        log_cb(f"  📎 Uploading: {label} (row {current_row})")
+        log_cb(f"[{_ts()}]   📎 Uploading: {label} (row {current_row})")
 
         # If not the first row, click "+" to add a new row
         if idx > 0:
@@ -478,9 +479,9 @@ async def fill_document_upload_section(
                     add_btn = page.locator('ng-form[name="mandatoryDocForm"] span.fa-plus-circle').first
                 await add_btn.click()
                 await asyncio.sleep(1.0)
-                log_cb(f"    ✅ Added new row (row {current_row})")
+                log_cb(f"[{_ts()}]     ✅ Added new row (row {current_row})")
             except Exception as e:
-                log_cb(f"    ⚠️ Could not add new row: {e}. Trying to use row {current_row} anyway.")
+                log_cb(f"[{_ts()}]     ⚠️ Could not add new row: {e}. Trying to use row {current_row} anyway.")
 
         # Step 1: Select document type in dropdown for this row
         dropdown_sel = f'select#docType{current_row}'
@@ -491,7 +492,7 @@ async def fill_document_upload_section(
             )
             await asyncio.sleep(0.5)
         except Exception as e:
-            log_cb(f"    ⚠️ Could not select dropdown for {label}: {e}")
+            log_cb(f"[{_ts()}]     ⚠️ Could not select dropdown for {label}: {e}")
             current_row += 1
             continue
 
@@ -507,11 +508,11 @@ async def fill_document_upload_section(
             )
             if success:
                 uploaded_keys.add(doc_key)
-                log_cb(f"    ✅ [{label}] attached → '{Path(file_path).name}'")
+                log_cb(f"[{_ts()}]     ✅ [{label}] attached → '{Path(file_path).name}'")
             else:
-                log_cb(f"    ⚠️ [{label}] attachment failed.")
+                log_cb(f"[{_ts()}]     ⚠️ [{label}] attachment failed.")
         except Exception as e:
-            log_cb(f"    ⚠️ [{label}] error during file attach: {e}")
+            log_cb(f"[{_ts()}]     ⚠️ [{label}] error during file attach: {e}")
 
         current_row += 1
         # Small delay between uploads to avoid race conditions
@@ -522,19 +523,19 @@ async def fill_document_upload_section(
 
     # ── CLAIM RELATED DOCUMENTS — Merge remaining files ──────────────────────
     log_cb("")
-    log_cb("  📎 Preparing: Claim Related Documents (merged PDF)")
+    log_cb(f"[{_ts()}]   📎 Preparing: Claim Related Documents (merged PDF)")
 
     # Collect used files
     used_files = _get_used_files(data, uploaded_keys)
-    log_cb(f"    📊 Already used/uploaded: {len(used_files)} files")
+    log_cb(f"[{_ts()}]     📊 Already used/uploaded: {len(used_files)} files")
 
     # Collect remaining files from folder
     remaining_files = _collect_remaining_files(data, used_files)
-    log_cb(f"    📊 Remaining unmatched files: {len(remaining_files)}")
+    log_cb(f"[{_ts()}]     📊 Remaining unmatched files: {len(remaining_files)}")
 
     if remaining_files:
         for rf in remaining_files:
-            log_cb(f"      • {Path(rf).name}")
+            log_cb(f"[{_ts()}]       • {Path(rf).name}")
 
         # Determine output path for merged PDF
         folder_path = _get_folder_path(data) or tempfile.gettempdir()
@@ -548,7 +549,7 @@ async def fill_document_upload_section(
                 pass
 
         # Merge files
-        log_cb("    🔄 Merging remaining files into single PDF...")
+        log_cb(f"[{_ts()}]     🔄 Merging remaining files into single PDF...")
         merged_path = merge_files_to_pdf(
             file_paths=remaining_files,
             output_path=merged_pdf_path,
@@ -565,9 +566,9 @@ async def fill_document_upload_section(
                         add_btn = page.locator('ng-form[name="mandatoryDocForm"] span.fa-plus-circle').first
                     await add_btn.click()
                     await asyncio.sleep(1.0)
-                    log_cb(f"    ✅ Added new row (row {current_row}) for Claim Related Documents")
+                    log_cb(f"[{_ts()}]     ✅ Added new row (row {current_row}) for Claim Related Documents")
                 except Exception as e:
-                    log_cb(f"    ⚠️ Could not add new row: {e}")
+                    log_cb(f"[{_ts()}]     ⚠️ Could not add new row: {e}")
 
             # Select "Claim Related Documents" in dropdown
             dropdown_sel = f'select#docType{current_row}'
@@ -578,7 +579,7 @@ async def fill_document_upload_section(
                 )
                 await asyncio.sleep(0.5)
             except Exception as e:
-                log_cb(f"    ⚠️ Could not select dropdown for Claim Related Documents: {e}")
+                log_cb(f"[{_ts()}]     ⚠️ Could not select dropdown for Claim Related Documents: {e}")
 
             # Attach merged PDF
             file_input_sel = f'input#mandatoryFiles{current_row}'
@@ -592,23 +593,23 @@ async def fill_document_upload_section(
                 )
                 if success:
                     mb = os.path.getsize(merged_path) / (1024 * 1024)
-                    log_cb(f"    ✅ Merged PDF attached ({mb:.1f}MB)")
+                    log_cb(f"[{_ts()}]     ✅ Merged PDF attached ({mb:.1f}MB)")
                 else:
-                    log_cb("    ⚠️ Merged PDF attachment failed.")
+                    log_cb(f"[{_ts()}]     ⚠️ Merged PDF attachment failed.")
             except Exception as e:
-                log_cb(f"    ⚠️ Error attaching merged PDF: {e}")
+                log_cb(f"[{_ts()}]     ⚠️ Error attaching merged PDF: {e}")
 
             current_row += 1
         else:
-            log_cb("    ⚠️ PDF merge produced no output. Claim Related Documents not attached.")
+            log_cb(f"[{_ts()}]     ⚠️ PDF merge produced no output. Claim Related Documents not attached.")
     else:
-        log_cb("    ℹ️ No remaining files to merge. Skipping Claim Related Documents.")
+        log_cb(f"[{_ts()}]     ℹ️ No remaining files to merge. Skipping Claim Related Documents.")
 
     # ── Summary: prompt user to click Upload ──────────────────────────────────
     if current_row > 0:
         log_cb("")
-        log_cb(f"  📋 All {current_row} document(s) attached in mandatory rows.")
-        log_cb(f"  ℹ️ Click the 'Upload' button on the website to save all documents.")
+        log_cb(f"[{_ts()}]   📋 All {current_row} document(s) attached in mandatory rows.")
+        log_cb(f"[{_ts()}]   ℹ️ Click the 'Upload' button on the website to save all documents.")
 
     if stop_cb():
         return False
@@ -617,8 +618,8 @@ async def fill_document_upload_section(
     # NON-MANDATORY DOCUMENTS — SKIP ENTIRELY
     # ══════════════════════════════════════════════════════════════════════════
     log_cb("")
-    log_cb("  ── List of Non-Mandatory Documents ──")
-    log_cb("  ℹ️ Skipping — all remaining docs already merged into Claim Related Documents.")
+    log_cb(f"[{_ts()}]   ── List of Non-Mandatory Documents ──")
+    log_cb(f"[{_ts()}]   ℹ️ Skipping — all remaining docs already merged into Claim Related Documents.")
 
     if stop_cb():
         return False
@@ -627,11 +628,11 @@ async def fill_document_upload_section(
     # SECTION 3 — REMINDER TO INSURED (SKIP)
     # ══════════════════════════════════════════════════════════════════════════
     log_cb("")
-    log_cb("  ── Section 3: Reminder to Insured ──")
-    log_cb("  ℹ️ Skipping — no automation interaction needed.")
+    log_cb(f"[{_ts()}]   ── Section 3: Reminder to Insured ──")
+    log_cb(f"[{_ts()}]   ℹ️ Skipping — no automation interaction needed.")
 
     log_cb("")
-    log_cb("═" * 60)
-    log_cb("✅ Phase 9 (Document Upload Section) completed successfully.")
-    log_cb("═" * 60)
+    log_cb(f"[{_ts()}] ═" * 60)
+    log_cb(f"[{_ts()}] ✅ Phase 9 (Document Upload Section) completed successfully.")
+    log_cb(f"[{_ts()}] ═" * 60)
     return True

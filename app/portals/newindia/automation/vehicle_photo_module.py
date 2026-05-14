@@ -3,6 +3,7 @@ import os
 from typing import Callable, Optional
 from playwright.async_api import Page
 from app.portals.newindia.automation.ui_utils import select_dropdown_with_delay
+from app.automation.automation_logger import _ts
 
 # Dropdown values exactly as they appear in the portal HTML option[value]
 _DOCTYPE_CHASSIS  = "CHASSIS NUMBER PHOTOGRAPH"
@@ -222,7 +223,7 @@ async def fill_vehicle_photo_graph(
     stop_cb: Callable[[], bool] = lambda: False,
     field_delay_ms: int = 600
 ) -> bool:
-    def log(msg): log_cb(f"  [VP] {msg}")
+    def log(msg): log_cb(f"[{_ts()}]   [VP] {msg}")
 
     log("Starting Phase 4 — Vehicle Photo Graph")
 

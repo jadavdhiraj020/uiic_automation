@@ -5,11 +5,12 @@ from app.data.data_model import ClaimData
 from app.portals.newindia.automation.ui_utils import (
     fill_input_with_delay, select_dropdown_with_delay, format_date_ddmmyyyy
 )
+from app.automation.automation_logger import _ts
 
 async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_cb, field_delay_ms: int = 600) -> bool:
     if stop_cb(): return False
 
-    log("Opening Registration Certificate Details section...")
+    log(f"[{_ts()}] Opening Registration Certificate Details section...")
     
     # Click to expand Registration Certificate Details accordion
     try:
@@ -22,11 +23,11 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
         if is_collapsed:
             await acc_heading.click()
             await asyncio.sleep(1.0)
-            log("  ✅ Expanded Registration Certificate Details.")
+            log(f"[{_ts()}]   ✅ Expanded Registration Certificate Details.")
         else:
-            log("  ℹ️ Registration Certificate Details already expanded.")
+            log(f"[{_ts()}]   ℹ️ Registration Certificate Details already expanded.")
     except Exception as e:
-        log(f"  ⚠️ Could not expand Registration Certificate Details: {e}")
+        log(f"[{_ts()}]   ⚠️ Could not expand Registration Certificate Details: {e}")
 
     if stop_cb(): return False
 
@@ -45,9 +46,9 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
             
             await fill_input_with_delay(page, sel_to_use, val, "Reference No", log, field_delay_ms)
         else:
-            log("  ℹ️ Reference No missing from Excel, skipping (Optional).")
+            log(f"[{_ts()}]   ℹ️ Reference No missing from Excel, skipping (Optional).")
     except Exception as e:
-        log(f"  ⚠️ Error filling Reference No: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling Reference No: {e}")
 
     if stop_cb(): return False
 
@@ -57,9 +58,9 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
         if val:
             await fill_input_with_delay(page, 'input[name="Registered Owner Name"]', val, "Owner Name", log, field_delay_ms)
         else:
-            log("  ⚠️ Registered Owner Name missing from Excel.")
+            log(f"[{_ts()}]   ⚠️ Registered Owner Name missing from Excel.")
     except Exception as e:
-        log(f"  ⚠️ Error filling owner name: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling owner name: {e}")
 
     if stop_cb(): return False
 
@@ -74,18 +75,18 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
             if m:
                 p1, p2, p3, p4 = m.groups()
                 p3 = p3 or ""
-                log(f"Filling Registration Number: {p1}-{p2}-{p3}-{p4}")
+                log(f"[{_ts()}] Filling Registration Number: {p1}-{p2}-{p3}-{p4}")
                 await fill_input_with_delay(page, 'input[name="registrationNo1"]', p1, "Reg1", log, field_delay_ms)
                 await fill_input_with_delay(page, 'input[name="registrationNo2"]', p2, "Reg2", log, field_delay_ms)
                 if p3:
                     await fill_input_with_delay(page, 'input[name="registrationNo3"]', p3, "Reg3", log, field_delay_ms)
                 await fill_input_with_delay(page, 'input[name="registrationNo4"]', p4, "Reg4", log, field_delay_ms)
             else:
-                log(f"  ⚠️ Regex failed to match standard format for {reg_no}. Automation skipping fields.")
+                log(f"[{_ts()}]   ⚠️ Regex failed to match standard format for {reg_no}. Automation skipping fields.")
         else:
-            log("  ℹ️ Vehicle Registration Number missing, skipping (Optional).")
+            log(f"[{_ts()}]   ℹ️ Vehicle Registration Number missing, skipping (Optional).")
     except Exception as e:
-        log(f"  ⚠️ Error filling Registration Number: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling Registration Number: {e}")
 
     if stop_cb(): return False
 
@@ -96,9 +97,9 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
             formatted_date = format_date_ddmmyyyy(val)
             await fill_input_with_delay(page, 'input[name="registrationDate"]', formatted_date, "Reg Date", log, field_delay_ms)
         else:
-            log("  ℹ️ Date of Registration missing, skipping (Optional).")
+            log(f"[{_ts()}]   ℹ️ Date of Registration missing, skipping (Optional).")
     except Exception as e:
-        log(f"  ⚠️ Error filling Date of Registration: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling Date of Registration: {e}")
 
     if stop_cb(): return False
 
@@ -108,9 +109,9 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
         if val:
             await fill_input_with_delay(page, 'input[name="Engine no"]', val, "Engine No", log, field_delay_ms)
         else:
-            log("  ⚠️ Engine Number missing from Excel.")
+            log(f"[{_ts()}]   ⚠️ Engine Number missing from Excel.")
     except Exception as e:
-        log(f"  ⚠️ Error filling Engine Number: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling Engine Number: {e}")
 
     if stop_cb(): return False
 
@@ -120,9 +121,9 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
         if val:
             await fill_input_with_delay(page, 'input[name="Chassis no"]', val, "Chassis No", log, field_delay_ms)
         else:
-            log("  ⚠️ Chassis Number missing from Excel.")
+            log(f"[{_ts()}]   ⚠️ Chassis Number missing from Excel.")
     except Exception as e:
-        log(f"  ⚠️ Error filling Chassis Number: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling Chassis Number: {e}")
 
     if stop_cb(): return False
 
@@ -141,9 +142,9 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
                     }
                 """)
                 await asyncio.sleep(field_delay_ms / 1000.0)
-                log("  ✅ Physically Verified set to YES")
+                log(f"[{_ts()}]   ✅ Physically Verified set to YES")
     except Exception as e:
-        log(f"  ⚠️ Error checking Physically Verified: {e}")
+        log(f"[{_ts()}]   ⚠️ Error checking Physically Verified: {e}")
 
     if stop_cb(): return False
 
@@ -153,9 +154,9 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
         if val:
             await select_dropdown_with_delay(page, 'select[name="Type of Body"]', val, "Type of Body", log, field_delay_ms)
         else:
-            log("  ⚠️ Type Of Body missing from Excel.")
+            log(f"[{_ts()}]   ⚠️ Type Of Body missing from Excel.")
     except Exception as e:
-        log(f"  ⚠️ Error selecting Type Of Body: {e}")
+        log(f"[{_ts()}]   ⚠️ Error selecting Type Of Body: {e}")
 
     if stop_cb(): return False
 
@@ -165,9 +166,9 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
         if val:
             await fill_input_with_delay(page, 'input[name="Class of Vehicle"]', val, "Class of Vehicle", log, field_delay_ms)
         else:
-            log("  ⚠️ Class of Vehicle missing from Excel.")
+            log(f"[{_ts()}]   ⚠️ Class of Vehicle missing from Excel.")
     except Exception as e:
-        log(f"  ⚠️ Error filling Class of Vehicle: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling Class of Vehicle: {e}")
 
     if stop_cb(): return False
 
@@ -177,9 +178,9 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
         if val:
             await fill_input_with_delay(page, 'input[name="Pre-Accident Condition"]', val, "Pre-Accident Condition", log, field_delay_ms)
         else:
-            log("  ⚠️ Pre-Accident Condition missing from Excel.")
+            log(f"[{_ts()}]   ⚠️ Pre-Accident Condition missing from Excel.")
     except Exception as e:
-        log(f"  ⚠️ Error filling Pre-Accident Condition: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling Pre-Accident Condition: {e}")
 
     if stop_cb(): return False
 
@@ -189,9 +190,9 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
         if val:
             await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.routeOfOprtn"]', val, "Route/Area", log, field_delay_ms)
         else:
-            log("  ℹ️ Route/Area of Operation missing, skipping (Optional).")
+            log(f"[{_ts()}]   ℹ️ Route/Area of Operation missing, skipping (Optional).")
     except Exception as e:
-        log(f"  ⚠️ Error filling Route/Area of Operation: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling Route/Area of Operation: {e}")
 
     if stop_cb(): return False
 
@@ -201,9 +202,9 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
         if val:
             await fill_input_with_delay(page, 'input[name="taxPaidUpto"]', val, "Tax Paid Upto", log, field_delay_ms)
         else:
-            log("  ℹ️ Tax Paid Upto missing, skipping (Optional).")
+            log(f"[{_ts()}]   ℹ️ Tax Paid Upto missing, skipping (Optional).")
     except Exception as e:
-        log(f"  ⚠️ Error filling Tax Paid Upto: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling Tax Paid Upto: {e}")
 
     if stop_cb(): return False
 
@@ -213,9 +214,9 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
         if val:
             await fill_input_with_delay(page, 'input[name="RTO Name"]', val, "RTO Name", log, field_delay_ms)
         else:
-            log("  ⚠️ RTO Name missing from Excel.")
+            log(f"[{_ts()}]   ⚠️ RTO Name missing from Excel.")
     except Exception as e:
-        log(f"  ⚠️ Error filling RTO Name: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling RTO Name: {e}")
 
     if stop_cb(): return False
 
@@ -226,9 +227,9 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
             formatted_date = format_date_ddmmyyyy(val)
             await fill_input_with_delay(page, 'input[name="transferDate"]', formatted_date, "Transfer Date", log, field_delay_ms)
         else:
-            log("  ℹ️ Transfer Date missing, skipping (Optional).")
+            log(f"[{_ts()}]   ℹ️ Transfer Date missing, skipping (Optional).")
     except Exception as e:
-        log(f"  ⚠️ Error filling Transfer Date: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling Transfer Date: {e}")
 
     if stop_cb(): return False
 
@@ -241,11 +242,11 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
             if cleaned_val:
                 await fill_input_with_delay(page, 'input[name="Odometer Reading"]', cleaned_val, "Odometer Reading", log, field_delay_ms)
             else:
-                log(f"  ⚠️ Odometer value '{val}' contained no digits. Skipping.")
+                log(f"[{_ts()}]   ⚠️ Odometer value '{val}' contained no digits. Skipping.")
         else:
-            log("  ⚠️ Odometer Reading missing from Excel.")
+            log(f"[{_ts()}]   ⚠️ Odometer Reading missing from Excel.")
     except Exception as e:
-        log(f"  ⚠️ Error filling Odometer Reading: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling Odometer Reading: {e}")
 
     if stop_cb(): return False
 
@@ -255,9 +256,9 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
         if val:
             await fill_input_with_delay(page, 'input[name="Vehicle Color"]', val, "Vehicle Color", log, field_delay_ms)
         else:
-            log("  ⚠️ Vehicle Color missing from Excel.")
+            log(f"[{_ts()}]   ⚠️ Vehicle Color missing from Excel.")
     except Exception as e:
-        log(f"  ⚠️ Error filling Vehicle Color: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling Vehicle Color: {e}")
 
     if stop_cb(): return False
 
@@ -267,9 +268,9 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
         if val:
             await fill_input_with_delay(page, 'input[name="Vehicle Color Type"]', val, "Color Type", log, field_delay_ms)
         else:
-            log("  ⚠️ Vehicle Color Type missing from Excel.")
+            log(f"[{_ts()}]   ⚠️ Vehicle Color Type missing from Excel.")
     except Exception as e:
-        log(f"  ⚠️ Error filling Vehicle Color Type: {e}")
+        log(f"[{_ts()}]   ⚠️ Error filling Vehicle Color Type: {e}")
 
     if stop_cb(): return False
 
@@ -293,7 +294,7 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
                 try:
                     await page.wait_for_selector(_veh_sel_fb, state="visible", timeout=4000)
                     sel_to_use = _veh_sel_fb
-                    log("  ℹ️ [Type of Vehicle] using ng-model fallback selector.")
+                    log(f"[{_ts()}]   ℹ️ [Type of Vehicle] using ng-model fallback selector.")
                 except Exception:
                     sel_to_use = _veh_sel  # let select_dropdown log the error
 
@@ -306,15 +307,15 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
                         return Array.from(s.options).map(o => o.text.trim());
                     }}
                 """)
-                log(f"  ℹ️ [Type of Vehicle] available options: {opts}")
+                log(f"[{_ts()}]   ℹ️ [Type of Vehicle] available options: {opts}")
             except Exception:
                 pass
 
             await select_dropdown_with_delay(page, sel_to_use, val, "Type of Vehicle", log, field_delay_ms)
         else:
-            log("  ⚠️ Type Of Vehicle missing from Excel.")
+            log(f"[{_ts()}]   ⚠️ Type Of Vehicle missing from Excel.")
     except Exception as e:
-        log(f"  ⚠️ Error selecting Type Of Vehicle: {e}")
+        log(f"[{_ts()}]   ⚠️ Error selecting Type Of Vehicle: {e}")
 
     if stop_cb(): return False
 
@@ -333,7 +334,7 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
                 try:
                     await page.wait_for_selector(_fuel_sel_fb, state="visible", timeout=4000)
                     sel_to_use = _fuel_sel_fb
-                    log("  ℹ️ [Type of Fuel] using ng-model fallback selector.")
+                    log(f"[{_ts()}]   ℹ️ [Type of Fuel] using ng-model fallback selector.")
                 except Exception:
                     sel_to_use = _fuel_sel
 
@@ -346,15 +347,15 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
                         return Array.from(s.options).map(o => o.text.trim());
                     }}
                 """)
-                log(f"  ℹ️ [Type of Fuel] available options: {opts}")
+                log(f"[{_ts()}]   ℹ️ [Type of Fuel] available options: {opts}")
             except Exception:
                 pass
 
             await select_dropdown_with_delay(page, sel_to_use, val, "Type of Fuel", log, field_delay_ms)
         else:
-            log("  ⚠️ Type Of Fuel missing from Excel.")
+            log(f"[{_ts()}]   ⚠️ Type Of Fuel missing from Excel.")
     except Exception as e:
-        log(f"  ⚠️ Error selecting Type Of Fuel: {e}")
+        log(f"[{_ts()}]   ⚠️ Error selecting Type Of Fuel: {e}")
 
-    log("Phase 5 (Registration Certificate Details) completed successfully.")
+    log(f"[{_ts()}] Phase 5 (Registration Certificate Details) completed successfully.")
     return True

@@ -6,11 +6,12 @@ from app.portals.newindia.automation.ui_utils import (
     select_dropdown_with_delay,
     upload_file_via_input,
 )
+from app.automation.automation_logger import _ts
 
 async def fill_claim_assessment_details(page: Page, data: ClaimData, log_cb, stop_cb, field_delay_ms: int = 600) -> bool:
     if stop_cb(): return False
 
-    log_cb("Opening Claim Assessment Details section...")
+    log_cb(f"[{_ts()}] Opening Claim Assessment Details section...")
 
     # 0. Handle Alert Popup (if any)
     try:
@@ -22,14 +23,14 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log_cb, sto
             
             ok_btn = modal.locator('button:has-text("OK")').first
             if await ok_btn.is_visible():
-                log_cb("  ℹ️ Handling alert popup before Claim Assessment...")
+                log_cb(f"[{_ts()}]   ℹ️ Handling alert popup before Claim Assessment...")
                 await ok_btn.click()
                 await asyncio.sleep(1.0)
-                log_cb("  ✅ Alert popup dismissed.")
+                log_cb(f"[{_ts()}]   ✅ Alert popup dismissed.")
         except Exception:
             pass # No modal appeared, completely fine
     except Exception as e:
-        log_cb(f"  ⚠️ Error handling Claim Assessment popup: {e}")
+        log_cb(f"[{_ts()}]   ⚠️ Error handling Claim Assessment popup: {e}")
 
     if stop_cb(): return False
 
@@ -37,7 +38,7 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log_cb, sto
     try:
         await page.wait_for_selector('select[data-ng-model*="isPaymentInvoice"]', state="visible", timeout=10000)
     except Exception as e:
-        log_cb(f"  ⚠️ Claim Assessment form not found or timed out: {e}")
+        log_cb(f"[{_ts()}]   ⚠️ Claim Assessment form not found or timed out: {e}")
         # Proceed anyway just in case
 
     if stop_cb(): return False
@@ -48,13 +49,13 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log_cb, sto
         sel = 'select[data-ng-model*="isPaymentInvoice"]'
         await select_dropdown_with_delay(page, sel, "Yes", "Payment Invoice in NIA Name", log_cb, field_delay_ms)
     except Exception as e:
-        log_cb(f"  ⚠️ Error selecting Payment Invoice in NIA Name: {e}")
+        log_cb(f"[{_ts()}]   ⚠️ Error selecting Payment Invoice in NIA Name: {e}")
 
     if stop_cb(): return False
 
     # 2. Is GST Applicable
     # Behavior: READONLY, safely skip
-    log_cb("  ℹ️ Skipping 'Is GST Applicable' (Readonly field).")
+    log_cb(f"[{_ts()}]   ℹ️ Skipping 'Is GST Applicable' (Readonly field).")
 
     if stop_cb(): return False
 
@@ -65,9 +66,9 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log_cb, sto
             sel = 'input[data-ng-model*="vendorTaxInvoiceDate"]'
             await fill_input_with_delay(page, sel, val, "Vendor/Tax Invoice Date", log_cb, field_delay_ms)
         else:
-            log_cb("  ⚠️ Vendor/Tax Invoice Date missing (Not extracted from PDF).")
+            log_cb(f"[{_ts()}]   ⚠️ Vendor/Tax Invoice Date missing (Not extracted from PDF).")
     except Exception as e:
-        log_cb(f"  ⚠️ Error filling Vendor/Tax Invoice Date: {e}")
+        log_cb(f"[{_ts()}]   ⚠️ Error filling Vendor/Tax Invoice Date: {e}")
 
     if stop_cb(): return False
 
@@ -78,9 +79,9 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log_cb, sto
             sel = 'input[data-ng-model*="vendorTaxInvoiceNumber"]'
             await fill_input_with_delay(page, sel, val, "Vendor/Tax Invoice Number", log_cb, field_delay_ms)
         else:
-            log_cb("  ⚠️ Vendor/Tax Invoice Number missing (Not extracted from PDF).")
+            log_cb(f"[{_ts()}]   ⚠️ Vendor/Tax Invoice Number missing (Not extracted from PDF).")
     except Exception as e:
-        log_cb(f"  ⚠️ Error filling Vendor/Tax Invoice Number: {e}")
+        log_cb(f"[{_ts()}]   ⚠️ Error filling Vendor/Tax Invoice Number: {e}")
 
     if stop_cb(): return False
 
@@ -88,7 +89,7 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log_cb, sto
     # SECTION 1 — PRIMARY ASSESSMENT
     # ══════════════════════════════════════════════════════════════════════════
     log_cb("")
-    log_cb("  ── Section 1: Primary Assessment ──")
+    log_cb(f"[{_ts()}]   ── Section 1: Primary Assessment ──")
 
     # Field 1: Primary Assessment dropdown → ALWAYS "Yes"
     try:
@@ -96,7 +97,7 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log_cb, sto
         await select_dropdown_with_delay(page, sel, "Yes", "Primary Assessment", log_cb, field_delay_ms)
         await asyncio.sleep(1.5)  # Wait for conditional sections to appear
     except Exception as e:
-        log_cb(f"  ⚠️ Error selecting Primary Assessment: {e}")
+        log_cb(f"[{_ts()}]   ⚠️ Error selecting Primary Assessment: {e}")
 
     if stop_cb(): return False
 
@@ -110,9 +111,9 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log_cb, sto
             label="Primary Assessment Excel",
             log=log_cb,
         )
-        log_cb("  ℹ️ [Primary Assessment] File attached. Click Upload → Validate manually.")
+        log_cb(f"[{_ts()}]   ℹ️ [Primary Assessment] File attached. Click Upload → Validate manually.")
     else:
-        log_cb("  ⚠️ No assessment Excel file found in folder (expected: assessment.xlsx / primary_assessment.xlsx).")
+        log_cb(f"[{_ts()}]   ⚠️ No assessment Excel file found in folder (expected: assessment.xlsx / primary_assessment.xlsx).")
 
     if stop_cb(): return False
 
@@ -121,7 +122,7 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log_cb, sto
         sel = 'select#pDocTypeOCR'
         await select_dropdown_with_delay(page, sel, "Garage Bill", "Garage Bill Dropdown", log_cb, field_delay_ms)
     except Exception as e:
-        log_cb(f"  ⚠️ Error selecting Garage Bill: {e}")
+        log_cb(f"[{_ts()}]   ⚠️ Error selecting Garage Bill: {e}")
 
     if stop_cb(): return False
 
@@ -135,9 +136,9 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log_cb, sto
             label="Garage Bill (Invoice)",
             log=log_cb,
         )
-        log_cb("  ℹ️ [Garage Bill] File attached. Click Populate Data manually.")
+        log_cb(f"[{_ts()}]   ℹ️ [Garage Bill] File attached. Click Populate Data manually.")
     else:
-        log_cb("  ⚠️ No invoice file found in folder (expected: invoice.pdf / final_invoice.pdf).")
+        log_cb(f"[{_ts()}]   ⚠️ No invoice file found in folder (expected: invoice.pdf / final_invoice.pdf).")
 
     if stop_cb(): return False
 
@@ -145,7 +146,7 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log_cb, sto
     # SECTION 2 — SUPPLEMENTARY ASSESSMENT
     # ══════════════════════════════════════════════════════════════════════════
     log_cb("")
-    log_cb("  ── Section 2: Supplementary Assessment ──")
+    log_cb(f"[{_ts()}]   ── Section 2: Supplementary Assessment ──")
 
     has_estimate = bool(data.assessment_files.get("estimate_excel", ""))
     supp_value = "Yes" if has_estimate else "No"
@@ -162,7 +163,7 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log_cb, sto
         await select_dropdown_with_delay(page, sel, supp_value, "Supplementary Estimate", log_cb, field_delay_ms)
         await asyncio.sleep(1.5)
     except Exception as e:
-        log_cb(f"  ⚠️ Error selecting Supplementary Estimate: {e}")
+        log_cb(f"[{_ts()}]   ⚠️ Error selecting Supplementary Estimate: {e}")
 
     if stop_cb(): return False
 
@@ -177,9 +178,9 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log_cb, sto
                 label="Supplementary Estimate Excel",
                 log=log_cb,
             )
-            log_cb("  ℹ️ [Supplementary Excel] File attached. Click Upload → Validate manually.")
+            log_cb(f"[{_ts()}]   ℹ️ [Supplementary Excel] File attached. Click Upload → Validate manually.")
         else:
-            log_cb("  ⚠️ Supplementary Estimate set to Yes but no estimate Excel found.")
+            log_cb(f"[{_ts()}]   ⚠️ Supplementary Estimate set to Yes but no estimate Excel found.")
 
         if stop_cb(): return False
 
@@ -197,11 +198,11 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log_cb, sto
                 label="Supplementary Garage Bill",
                 log=log_cb,
             )
-            log_cb("  ℹ️ [Supp Garage Bill] File attached. Click Populate Data manually.")
+            log_cb(f"[{_ts()}]   ℹ️ [Supp Garage Bill] File attached. Click Populate Data manually.")
         else:
-            log_cb("  ℹ️ No estimate invoice file found (optional). Skipping.")
+            log_cb(f"[{_ts()}]   ℹ️ No estimate invoice file found (optional). Skipping.")
     else:
-        log_cb("  ℹ️ Supplementary Estimate = No. Section complete.")
+        log_cb(f"[{_ts()}]   ℹ️ Supplementary Estimate = No. Section complete.")
 
     if stop_cb(): return False
 
@@ -209,13 +210,13 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log_cb, sto
     # SECTION 3 — PAINTING CHARGES
     # ══════════════════════════════════════════════════════════════════════════
     log_cb("")
-    log_cb("  ── Section 3: Painting Charges ──")
+    log_cb(f"[{_ts()}]   ── Section 3: Painting Charges ──")
 
     # Labour Charges — READONLY, skip
-    log_cb("  ℹ️ Skipping 'Labour Charges' (Readonly field).")
+    log_cb(f"[{_ts()}]   ℹ️ Skipping 'Labour Charges' (Readonly field).")
 
     # Paint Material Charges — READONLY, skip
-    log_cb("  ℹ️ Skipping 'Paint Material Charges' (Readonly field).")
+    log_cb(f"[{_ts()}]   ℹ️ Skipping 'Paint Material Charges' (Readonly field).")
 
     # Painting Work Details — Dropdown from ClaimData
     try:
@@ -234,9 +235,9 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log_cb, sto
             await select_dropdown_with_delay(page, sel, dropdown_val, "Painting Work Details", log_cb, field_delay_ms)
             await asyncio.sleep(1.0)  # Wait for painting table to update
         else:
-            log_cb("  ⚠️ Painting Work Details not found in ClaimData. Skipping.")
+            log_cb(f"[{_ts()}]   ⚠️ Painting Work Details not found in ClaimData. Skipping.")
     except Exception as e:
-        log_cb(f"  ⚠️ Error selecting Painting Work Details: {e}")
+        log_cb(f"[{_ts()}]   ⚠️ Error selecting Painting Work Details: {e}")
 
     if stop_cb(): return False
 
@@ -244,7 +245,7 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log_cb, sto
     # SECTION 4 — DELIVERY ORDER DETAILS
     # ══════════════════════════════════════════════════════════════════════════
     log_cb("")
-    log_cb("  ── Section 4: Delivery Order Details ──")
+    log_cb(f"[{_ts()}]   ── Section 4: Delivery Order Details ──")
 
     # Net Salvage — Optional
     try:
@@ -253,20 +254,20 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log_cb, sto
             sel = 'input#netSlavage'
             await fill_input_with_delay(page, sel, val.strip(), "Net Salvage", log_cb, field_delay_ms)
         else:
-            log_cb("  ℹ️ Net Salvage = 0 or empty. Skipping.")
+            log_cb(f"[{_ts()}]   ℹ️ Net Salvage = 0 or empty. Skipping.")
     except Exception as e:
-        log_cb(f"  ⚠️ Error filling Net Salvage: {e}")
+        log_cb(f"[{_ts()}]   ⚠️ Error filling Net Salvage: {e}")
 
     if stop_cb(): return False
 
     # Net Salvage to map with Invoice — READONLY, skip
-    log_cb("  ℹ️ Skipping 'Net Salvage to map with Invoice' (Readonly field).")
+    log_cb(f"[{_ts()}]   ℹ️ Skipping 'Net Salvage to map with Invoice' (Readonly field).")
 
     # Less Compulsory Excess — READONLY, skip
-    log_cb("  ℹ️ Skipping 'Less Compulsory Excess' (Readonly field).")
+    log_cb(f"[{_ts()}]   ℹ️ Skipping 'Less Compulsory Excess' (Readonly field).")
 
     # Less Voluntary Excess — READONLY, skip
-    log_cb("  ℹ️ Skipping 'Less Voluntary Excess' (Readonly field).")
+    log_cb(f"[{_ts()}]   ℹ️ Skipping 'Less Voluntary Excess' (Readonly field).")
 
     # Less Any Other Deductions — Optional
     try:
@@ -275,14 +276,14 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log_cb, sto
             sel = 'input#lessOtherDeductions'
             await fill_input_with_delay(page, sel, val.strip(), "Less Any Other Deductions", log_cb, field_delay_ms)
         else:
-            log_cb("  ℹ️ Less Any Other Deductions = 0 or empty. Skipping.")
+            log_cb(f"[{_ts()}]   ℹ️ Less Any Other Deductions = 0 or empty. Skipping.")
     except Exception as e:
-        log_cb(f"  ⚠️ Error filling Less Any Other Deductions: {e}")
+        log_cb(f"[{_ts()}]   ⚠️ Error filling Less Any Other Deductions: {e}")
 
     if stop_cb(): return False
 
     # Less Imposed Excess — READONLY, skip
-    log_cb("  ℹ️ Skipping 'Less Imposed Excess' (Readonly field).")
+    log_cb(f"[{_ts()}]   ℹ️ Skipping 'Less Imposed Excess' (Readonly field).")
 
     # Towing Charges — Optional
     try:
@@ -293,9 +294,9 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log_cb, sto
             sel = 'input#towingCharges'
             await fill_input_with_delay(page, sel, towing_val.strip(), "Towing Charges", log_cb, field_delay_ms)
         else:
-            log_cb("  ℹ️ Towing Charges = 0 or empty. Skipping.")
+            log_cb(f"[{_ts()}]   ℹ️ Towing Charges = 0 or empty. Skipping.")
     except Exception as e:
-        log_cb(f"  ⚠️ Error filling Towing Charges: {e}")
+        log_cb(f"[{_ts()}]   ⚠️ Error filling Towing Charges: {e}")
 
     if stop_cb(): return False
 
@@ -306,9 +307,9 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log_cb, sto
             sel = 'input#additionalTowingCharges'
             await fill_input_with_delay(page, sel, val.strip(), "Additional Towing Charges", log_cb, field_delay_ms)
         else:
-            log_cb("  ℹ️ Additional Towing Charges = 0 or empty. Skipping.")
+            log_cb(f"[{_ts()}]   ℹ️ Additional Towing Charges = 0 or empty. Skipping.")
     except Exception as e:
-        log_cb(f"  ⚠️ Error filling Additional Towing Charges: {e}")
+        log_cb(f"[{_ts()}]   ⚠️ Error filling Additional Towing Charges: {e}")
 
     if stop_cb(): return False
 
@@ -317,7 +318,7 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log_cb, sto
         sel = 'select#whetherReinspectionRequired'
         await select_dropdown_with_delay(page, sel, "No", "Whether Re-Inspection Required", log_cb, field_delay_ms)
     except Exception as e:
-        log_cb(f"  ⚠️ Error selecting Whether Re-Inspection Required: {e}")
+        log_cb(f"[{_ts()}]   ⚠️ Error selecting Whether Re-Inspection Required: {e}")
 
     if stop_cb(): return False
 
@@ -325,7 +326,7 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log_cb, sto
     # SECTION 5 — ADD-ON COVER WISE ASSESSMENT
     # ══════════════════════════════════════════════════════════════════════════
     log_cb("")
-    log_cb("  ── Section 5: Add-On Cover Wise Assessment ──")
+    log_cb(f"[{_ts()}]   ── Section 5: Add-On Cover Wise Assessment ──")
 
     # These are all optional — fill only if values exist and are non-zero
     addon_fields = [
@@ -347,29 +348,29 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log_cb, sto
                     if is_visible:
                         await fill_input_with_delay(page, selector, val.strip(), label, log_cb, field_delay_ms)
                     else:
-                        log_cb(f"  ℹ️ [{label}] field not visible on page (add-on not applicable). Skipping.")
+                        log_cb(f"[{_ts()}]   ℹ️ [{label}] field not visible on page (add-on not applicable). Skipping.")
                 except Exception:
-                    log_cb(f"  ℹ️ [{label}] field not found on page. Skipping.")
+                    log_cb(f"[{_ts()}]   ℹ️ [{label}] field not found on page. Skipping.")
             else:
-                log_cb(f"  ℹ️ [{label}] = 0 or empty. Skipping.")
+                log_cb(f"[{_ts()}]   ℹ️ [{label}] = 0 or empty. Skipping.")
         except Exception as e:
-            log_cb(f"  ⚠️ Error filling {label}: {e}")
+            log_cb(f"[{_ts()}]   ⚠️ Error filling {label}: {e}")
 
     # ═══════════════════════════════════════════════════════════════════════════
     # STEP: Click "Next" button to proceed to next page
     # ═══════════════════════════════════════════════════════════════════════════
     if stop_cb(): return False
     log_cb("")
-    log_cb("── Clicking Next button ──")
+    log_cb(f"[{_ts()}] ── Clicking Next button ──")
     try:
         next_btn = page.locator('button.success-blue:has-text("Next")').first
         await next_btn.wait_for(state="visible", timeout=5000)
         await next_btn.click()
-        log_cb("  ✅ Clicked 'Next' button — proceeding to next page.")
+        log_cb(f"[{_ts()}]   ✅ Clicked 'Next' button — proceeding to next page.")
         await page.wait_for_timeout(2000)  # Allow page transition
     except Exception as e:
-        log_cb(f"  ⚠️ Could not click Next button: {e}")
+        log_cb(f"[{_ts()}]   ⚠️ Could not click Next button: {e}")
 
     log_cb("")
-    log_cb("Phase 10 (Claim Assessment Details — All 5 Sections) completed successfully.")
+    log_cb(f"[{_ts()}] ✅ Phase 10 (Claim Assessment Details — All 5 Sections) completed successfully.")
     return True

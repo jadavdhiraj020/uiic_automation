@@ -13,6 +13,7 @@ import asyncio
 import logging
 import os
 import time
+from datetime import datetime
 from dataclasses import dataclass
 from typing import Callable, List, Optional
 
@@ -25,6 +26,7 @@ from app.automation.navigation_module import WORKLIST_URL, navigate_to_claim
 from app.data.data_model import ClaimData
 
 from app.utils import load_settings, resource_path
+from app.automation.automation_logger import AutomationLogger, _ts
 
 try:
     from app.portals.registry import get_portal
@@ -211,14 +213,14 @@ class AutomationEngine:
 
     def request_stop(self):
         if not self._stop_requested:
-            self.log_cb("Stop requested. Closing automation safely...")
+            self.log_cb(f"[{_ts()}]  ⛔ Stop requested. Closing automation safely...")
             self._stop_requested = True
 
     def _check_stop(self) -> bool:
         return self._stop_requested
 
     async def _wait_for_manual_review(self, browser) -> None:
-        self.log_cb("Browser left open for manual review. Click Stop in the app when you are done.")
+        self.log_cb(f"[{_ts()}]  ⏳ Browser left open for manual review. Click Stop when done.")
         while True:
             if self._check_stop():
                 return
@@ -269,7 +271,7 @@ class AutomationEngine:
             # Portal may show alerts during upload — auto-dismiss them.
             # (Proven approach from Doc_uploader.py)
             async def _on_dialog(dialog):
-                self.log_cb(f"Dialog detected ({dialog.type}): {dialog.message} — auto-accepting.")
+                self.log_cb(f"[{_ts()}]  💬 Dialog detected ({dialog.type}): {dialog.message} — auto-accepting.")
                 try:
                     await dialog.accept()
                 except Exception:
@@ -287,21 +289,26 @@ class AutomationEngine:
                 portal_display = portal_info.display_name if portal_info else "UIIC"
 
                 self.log_cb("")
-                self.log_cb("╔" + "═" * 48 + "╗")
-                self.log_cb(f"║  🚀 SURVEYOR AUTOMATION                        ║")
-                self.log_cb(f"║  Portal: {portal_display:<38} ║")
-                self.log_cb("╠" + "═" * 48 + "╣")
-                self.log_cb(f"║  Claim:  {claim.claim_no:<38} ║")
-                self.log_cb(f"║  Type:   {claim_type:<38} ║")
-                self.log_cb(f"║  Survey: {claim.date_of_survey or '—':<38} ║")
-                self.log_cb(f"║  Loss:   ₹{claim.initial_loss_amount or '—':<37} ║")
-                self.log_cb("╚" + "═" * 48 + "╝")
+                self.log_cb("╔" + "═" * 54 + "╗")
+                self.log_cb(f"║  🚀 SURVEYOR AUTOMATION                              ║")
+                self.log_cb(f"║  Portal: {portal_display:<44} ║")
+                self.log_cb("╠" + "═" * 54 + "╣")
+                self.log_cb(f"║  Claim:  {claim.claim_no:<44} ║")
+                self.log_cb(f"║  Type:   {claim_type:<44} ║")
+                self.log_cb(f"║  Survey: {claim.date_of_survey or '—':<44} ║")
+                self.log_cb(f"║  Loss:   ₹{claim.initial_loss_amount or '—':<43} ║")
+                self.log_cb(f"║  Start:  {datetime.now().strftime('%Y-%m-%d %H:%M:%S'):<44} ║")
+                self.log_cb("╚" + "═" * 54 + "╝")
                 self.log_cb("")
 
+                # Determine total steps based on portal
+                total_steps = 11 if self.portal_id == "newindia" else 5
+
                 self.step_cb(0, steps[0])
-                self.log_cb("━" * 48)
-                self.log_cb("  📌 STEP 1/5 ─ Login to Portal")
-                self.log_cb("━" * 48)
+                self.log_cb("")
+                self.log_cb("━" * 56)
+                self.log_cb(f"  📌 STEP 1/{total_steps} — Login to Portal")
+                self.log_cb("━" * 56)
 
                 if self.portal_id == "newindia":
                     from app.portals.newindia.automation.login_module import do_login
@@ -335,10 +342,11 @@ class AutomationEngine:
                     return AutomationRunResult(False, "Automation stopped by user.")
 
                 self.step_cb(1, steps[1])
-                self.log_cb("━" * 48)
-                self.log_cb(f"  🔎 STEP 2/5 ─ Navigate to Claim")
+                self.log_cb("")
+                self.log_cb("━" * 56)
+                self.log_cb(f"  🔎 STEP 2/{total_steps} — Navigate to Claim")
                 self.log_cb(f"  Claim No: {claim.claim_no}")
-                self.log_cb("━" * 48)
+                self.log_cb("━" * 56)
 
                 if self.portal_id == "newindia":
                     from app.portals.newindia.automation.navigation_module import navigate_to_claim
@@ -467,22 +475,29 @@ class AutomationEngine:
                         message = "Automation stopped by user." if self._check_stop() else "Phase 11 failed."
                         return AutomationRunResult(False, message)
 
-                    self.log_cb("╔" + "═" * 48 + "╗")
-                    self.log_cb("║  🚧 AUTOMATION PAUSED (PHASE 3 to 11)          ║")
-                    self.log_cb("╠" + "═" * 48 + "╣")
-                    self.log_cb("║  New India Phase 3 to 11 are complete.         ║")
-                    self.log_cb("║  Review the Quick Update, Vehicle Photo, Reg   ║")
-                    self.log_cb("║  Cert, Driver, FIR, NEFT, Work Appr, Claim    ║")
-                    self.log_cb("║  Assessment, and Doc Upload before submitting. ║")
-                    self.log_cb("╚" + "═" * 48 + "╝")
+                    t_total = time.time() - t_start
+                    dur_str = f"{t_total:.0f}s ({t_total/60:.1f} min)"
+                    end_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+                    self.log_cb("")
+                    self.log_cb("╔" + "═" * 54 + "╗")
+                    self.log_cb("║  🎉 ALL 11 PHASES COMPLETE                           ║")
+                    self.log_cb("╠" + "═" * 54 + "╣")
+                    self.log_cb(f"║  Claim:    {claim.claim_no:<42} ║")
+                    self.log_cb(f"║  Duration: {dur_str:<42} ║")
+                    self.log_cb(f"║  Ended:    {end_str:<42} ║")
+                    self.log_cb("║                                                      ║")
+                    self.log_cb("║  ⚠️  Review all filled sections, then click           ║")
+                    self.log_cb("║     'Upload' / 'Submit' manually on the portal.      ║")
+                    self.log_cb("╚" + "═" * 54 + "╝")
                     await self._wait_for_manual_review(browser)
                     return AutomationRunResult(True, "New India Phase 3 to 11 complete. Session open.")
 
                 self.log_cb("")
                 self.step_cb(2, steps[2])
-                self.log_cb("━" * 48)
-                self.log_cb("  ✏️  STEP 3/5 ─ Fill Interim Report")
-                self.log_cb("━" * 48)
+                self.log_cb("━" * 56)
+                self.log_cb(f"  ✏️  STEP 3/{total_steps} — Fill Interim Report")
+                self.log_cb("━" * 56)
                 await page.bring_to_front()
                 await page.evaluate("window.scrollTo(0, 0)")
                 await fill_interim_report(page, claim, log_cb=self.log_cb, settings=settings)
@@ -494,9 +509,9 @@ class AutomationEngine:
 
                 self.log_cb("")
                 self.step_cb(3, steps[3])
-                self.log_cb("━" * 48)
-                self.log_cb("  📤 STEP 4/5 ─ Upload Claim Documents")
-                self.log_cb("━" * 48)
+                self.log_cb("━" * 56)
+                self.log_cb(f"  📤 STEP 4/{total_steps} — Upload Claim Documents")
+                self.log_cb("━" * 56)
                 await page.evaluate("window.scrollTo(0, 0)")
                 await fill_claim_documents(page, claim, log_cb=self.log_cb, settings=settings)
                 if self._check_stop():
@@ -507,9 +522,9 @@ class AutomationEngine:
 
                 self.log_cb("")
                 self.step_cb(4, steps[4])
-                self.log_cb("━" * 48)
-                self.log_cb("  📊 STEP 5/5 ─ Fill Claim Assessment")
-                self.log_cb("━" * 48)
+                self.log_cb("━" * 56)
+                self.log_cb(f"  📊 STEP 5/{total_steps} — Fill Claim Assessment")
+                self.log_cb("━" * 56)
                 await page.evaluate("window.scrollTo(0, 0)")
                 await fill_claim_assessment(page, claim, log_cb=self.log_cb, settings=settings)
                 if self._check_stop():
@@ -518,15 +533,18 @@ class AutomationEngine:
                 t_total = time.time() - t_start
                 self.step_cb(5, "Complete")
                 self.log_cb("")
-                self.log_cb("╔" + "═" * 48 + "╗")
-                self.log_cb("║  🎉 AUTOMATION COMPLETE                        ║")
-                self.log_cb("╠" + "═" * 48 + "╣")
-                self.log_cb(f"║  Claim:    {claim.claim_no:<36} ║")
-                self.log_cb(f"║  Duration: {t_total:.0f}s ({t_total/60:.1f} min){' ' * max(0, 28-len(f'{t_total:.0f}s ({t_total/60:.1f} min)'))} ║")
-                self.log_cb("║                                                 ║")
-                self.log_cb("║  ⚠️  Review all tabs in browser, then click     ║")
-                self.log_cb("║     'Final Submit' manually.                    ║")
-                self.log_cb("╚" + "═" * 48 + "╝")
+                self.log_cb("╔" + "═" * 54 + "╗")
+                self.log_cb("║  🎉 AUTOMATION COMPLETE                              ║")
+                self.log_cb("╠" + "═" * 54 + "╣")
+                self.log_cb(f"║  Claim:    {claim.claim_no:<42} ║")
+                dur_str = f"{t_total:.0f}s ({t_total/60:.1f} min)"
+                self.log_cb(f"║  Duration: {dur_str:<42} ║")
+                end_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                self.log_cb(f"║  Ended:    {end_str:<42} ║")
+                self.log_cb("║                                                      ║")
+                self.log_cb("║  ⚠️  Review all tabs in browser, then click           ║")
+                self.log_cb("║     'Final Submit' manually.                         ║")
+                self.log_cb("╚" + "═" * 54 + "╝")
                 self.log_cb("")
 
                 await self._wait_for_manual_review(browser)
