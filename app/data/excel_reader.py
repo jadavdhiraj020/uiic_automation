@@ -328,9 +328,55 @@ def _format_date(raw: str) -> str:
         y, mon, d = m2.groups()
         return f"{int(d):02d}/{int(mon):02d}/{y}"
         
-    # Final fallback, just return the date portion
-    return val.split(" ")[0]
+    # Final fallback: if it looks like a timestamp (date + space + time), return just the date.
+    # Otherwise return the string as-is to preserve alphabetic dates that didn't match formats.
+    if " " in val and ":" in val:
+        return val.split(" ")[0]
+    return val
 
+
+def _extract_time_from_adjacent_cells(wb, sheet_name, found_label, cfg, claim) -> bool:
+    """Helper to scan adjacent cells for survey time if missing from main cell."""
+    time_found = False
+    try:
+        all_sheets = wb.all_sheets() if sheet_name == "ALL" else [wb.get_sheet(sheet_name)]
+        for sh in all_sheets:
+            if sh is None:
+                continue
+            for r_idx, row in enumerate(sh.rows()):
+                for c_idx, cell in enumerate(row):
+                    cell_lower = str(cell).strip().lower()
+                    if found_label.lower() in cell_lower and cell_lower:
+                        target_r = r_idx + cfg.get("row_offset", 0)
+                        all_row_data = list(sh.rows())
+                        if 0 <= target_r < len(all_row_data):
+                            target_row = all_row_data[target_r]
+                            for tc in range(c_idx + 1, len(target_row)):
+                                tc_str = str(target_row[tc]).strip()
+                                tm = re.search(r"(\d{1,2})[.:]?(\d{2})?\s*([aA]\.?[mM]\.?|[pP]\.?[mM]\.?)", tc_str)
+                                if tm:
+                                    h = int(tm.group(1))
+                                    m = tm.group(2) or "00"
+                                    ampm = tm.group(3).replace(".", "").lower()
+                                    if ampm == "pm" and h < 12:
+                                        h += 12
+                                    elif ampm == "am" and h == 12:
+                                        h = 0
+                                    claim.time_hh = f"{h:02d}"
+                                    claim.time_mm = f"{int(m):02d}"
+                                    time_found = True
+                                    logger.info(f"  [TIME] Extracted from adjacent cell R{target_r+1}C{tc+1}: {claim.time_hh}:{claim.time_mm}")
+                                    return True
+                                tm24 = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", tc_str)
+                                if tm24:
+                                    claim.time_hh = f"{int(tm24.group(1)):02d}"
+                                    claim.time_mm = f"{int(tm24.group(2)):02d}"
+                                    time_found = True
+                                    logger.info(f"  [TIME] Extracted 24h from adjacent cell R{target_r+1}C{tc+1}: {claim.time_hh}:{claim.time_mm}")
+                                    return True
+    except Exception as e:
+        logger.warning(f"  [TIME] Adjacent cell scan failed: {e}")
+    return False
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
@@ -445,48 +491,7 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
 
                 # Second: if no time in value, scan adjacent cells in the row
                 if not time_found:
-                    try:
-                        all_sheets = wb.all_sheets() if sheet_name == "ALL" else [wb.get_sheet(sheet_name)]
-                        for sh in all_sheets:
-                            if sh is None:
-                                continue
-                            for r_idx, row in enumerate(sh.rows()):
-                                for c_idx, cell in enumerate(row):
-                                    cell_lower = str(cell).strip().lower()
-                                    if found_label.lower() in cell_lower and cell_lower:
-                                        target_r = r_idx + cfg.get("row_offset", 0)
-                                        all_row_data = list(sh.rows())
-                                        if 0 <= target_r < len(all_row_data):
-                                            target_row = all_row_data[target_r]
-                                            for tc in range(c_idx + 1, len(target_row)):
-                                                tc_str = str(target_row[tc]).strip()
-                                                tm = re.search(r"(\d{1,2})[.:]?(\d{2})?\s*([aA]\.?[mM]\.?|[pP]\.?[mM]\.?)", tc_str)
-                                                if tm:
-                                                    h = int(tm.group(1))
-                                                    m = tm.group(2) or "00"
-                                                    ampm = tm.group(3).replace(".", "").lower()
-                                                    if ampm == "pm" and h < 12:
-                                                        h += 12
-                                                    elif ampm == "am" and h == 12:
-                                                        h = 0
-                                                    claim.time_hh = f"{h:02d}"
-                                                    claim.time_mm = f"{int(m):02d}"
-                                                    time_found = True
-                                                    logger.info(f"  [TIME] Extracted from adjacent cell R{target_r+1}C{tc+1}: {claim.time_hh}:{claim.time_mm}")
-                                                    break
-                                                tm24 = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", tc_str)
-                                                if tm24:
-                                                    claim.time_hh = f"{int(tm24.group(1)):02d}"
-                                                    claim.time_mm = f"{int(tm24.group(2)):02d}"
-                                                    time_found = True
-                                                    logger.info(f"  [TIME] Extracted 24h from adjacent cell R{target_r+1}C{tc+1}: {claim.time_hh}:{claim.time_mm}")
-                                                    break
-                                            if time_found: break
-                                    if time_found: break
-                                if time_found: break
-                            if time_found: break
-                    except Exception as e:
-                        logger.warning(f"  [TIME] Adjacent cell scan failed: {e}")
+                    time_found = _extract_time_from_adjacent_cells(wb, sheet_name, found_label, cfg, claim)
 
                 if time_found:
                     logger.info(f"  [TIME] Survey time set: HH={claim.time_hh} MM={claim.time_mm}")
@@ -522,32 +527,8 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
                 missing_fields.append(f"{field_name} (labels: '{labels_str}')")
                 logger.warning(f"  [MISSING] {field_name}: labels '{labels_str}' not found or value empty")
 
-    # Expected completion date no longer needs separate Excel extraction or +10 day calculation.
-    # Keep it aligned with Date of Survey so every downstream consumer sees the same value.
-    if claim.date_of_survey:
-        claim.expected_completion_date = claim.date_of_survey
-        if "expected_completion_date" not in claim._excel_coords:
-            claim._excel_coords["expected_completion_date"] = claim._excel_coords.get("date_of_survey", "")
-        logger.info(
-            "  [SYNC] expected_completion_date = %s (same as date_of_survey)",
-            claim.expected_completion_date,
-        )
-
-    # ── Calculate Total Claimed Amount ──────────────────────────────────────
-    # To ensure UI preview and Backend automation are synchronized (Point 6),
-    # we dynamically calculate the sum of surveyor charges here instead of
-    # relying on the explicitly extracted field.
-    try:
-        calculated_total = sum(
-            int(float(getattr(claim, k) or 0))
-            for k in ["traveling_expenses", "professional_fee", "daily_allowance", "photo_charges"]
-        )
-        claim.total_claimed_amount = str(calculated_total)
-        claim._excel_coords["total_claimed_amount"] = "Calculated"
-        claim._excel_logs.append(f"  📊 total_claimed_amount: '{claim.total_claimed_amount}' (Source: Calculated)")
-        logger.info(f"  [MATH] Calculated total_claimed_amount = {claim.total_claimed_amount}")
-    except Exception as e:
-        logger.warning(f"  [MATH] Failed to calculate total claimed amount: {e}")
+    # ── Calculate Derived Business Logic ──────────────────────────────────────
+    claim.calculate_derived_fields()
 
     logger.info(f"Excel read complete: {found_count} fields found, "
                 f"{len(missing_fields)} missing: {missing_fields}")

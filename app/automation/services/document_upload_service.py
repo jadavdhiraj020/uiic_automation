@@ -371,25 +371,35 @@ class DocumentUploadService:
         for idx, (doc_type, file_path) in enumerate(queue):
             fname = os.path.basename(file_path) if file_path else "[no file]"
             self.log_cb(f"\n  [{idx+1}/{len(queue)}] '{doc_type}' → {fname}")
+            panel = await self.get_upload_panel()
+            before_count = await panel.locator('select[name^="docType"]').count()
 
             if idx == 0:
-                panel = await self.get_upload_panel()
-                existing = await panel.locator('select[name^="docType"]').count()
-                if existing == 0:
+                if before_count == 0:
                     self.log_cb("    ⚠️  No pre-existing row found — adding first row")
-                    await self.click_plus(timeout_ms=wait_timeout_ms)
+                    added = await self.click_plus(timeout_ms=wait_timeout_ms)
+                    panel = await self.get_upload_panel()
+                    after_count = await panel.locator('select[name^="docType"]').count()
+                    if not added and after_count == 0:
+                        self.log_cb(f"    ❌ Could not add first row — skipping '{doc_type}'")
+                        logger.error("PLUS button failed for first upload row (doc: %s)", doc_type)
+                        upload_results.append((doc_type, fname, "FAILED", "Could not add upload row"))
+                        continue
+                    row_idx = 0
                 else:
-                    self.log_cb(f"    ℹ️  Using pre-existing row (row count: {existing})")
+                    self.log_cb(f"    ℹ️  Using pre-existing row (row count: {before_count})")
+                    row_idx = 0
             else:
                 self.log_cb("    ➕ Clicking PLUS for new row...")
                 added = await self.click_plus(timeout_ms=wait_timeout_ms)
-                if not added:
+                panel = await self.get_upload_panel()
+                after_count = await panel.locator('select[name^="docType"]').count()
+                if not added or after_count <= before_count:
                     self.log_cb(f"    ❌ Could not add row — skipping '{doc_type}'")
                     logger.error("PLUS button failed for row %d (doc: %s)", idx, doc_type)
                     upload_results.append((doc_type, fname, "FAILED", "Could not add upload row"))
                     continue
-
-            row_idx = idx
+                row_idx = after_count - 1
 
             if file_path:
                 try:

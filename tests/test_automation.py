@@ -1546,7 +1546,7 @@ class TestFolderScanner:
     def test_load_doc_mapping(self):
         from app.data.folder_scanner import get_doc_mapping_tuple
 
-        claim_map, assessment_map, other_slots, expected_docs = get_doc_mapping_tuple()
+        claim_map, assessment_map, other_slots, expected_docs, upload_map = get_doc_mapping_tuple()
         assert isinstance(claim_map, dict)
         assert isinstance(assessment_map, dict)
         assert isinstance(other_slots, list)
@@ -1555,7 +1555,7 @@ class TestFolderScanner:
     def test_doc_mapping_other_slots(self):
         from app.data.folder_scanner import get_doc_mapping_tuple
 
-        _, _, other_slots, _ = get_doc_mapping_tuple()
+        _, _, other_slots, _, _ = get_doc_mapping_tuple()
         assert len(other_slots) >= 3, "Need at least 3 Other slots"
 
 
@@ -3851,15 +3851,12 @@ async def test_fill_claim_documents_uses_upload_service(monkeypatch, tmp_path):
     monkeypatch.setattr(claim_documents, "_click_doc_radios", _async_noop)
     monkeypatch.setattr(claim_documents, "_click_payment_option", _async_noop)
     monkeypatch.setattr(claim_documents, "DocumentUploadService", _FakeUploadService)
-    monkeypatch.setattr(
-        claim_documents, "load_settings", lambda: {"upload_wait_ms": 3100}
-    )
 
     logs = []
     page = _FakePageForDocs()
 
     await claim_documents.fill_claim_documents(
-        page=page, claim=claim, log_cb=logs.append
+        page=page, claim=claim, log_cb=logs.append, settings={"upload_wait_ms": 3100}
     )
 
     assert len(_FakeUploadService.instances) == 1
@@ -3905,6 +3902,7 @@ def test_process_folder_success_with_excel(monkeypatch, tmp_path):
         skipped_files=[],
         unknown_files=[],
         expected_docs=["PAN Card"],
+        upload_doc_files={},
     )
 
     fake_claim = SimpleNamespace(
@@ -3941,6 +3939,7 @@ def test_process_folder_without_excel(monkeypatch, tmp_path):
         skipped_files=[],
         unknown_files=[],
         expected_docs=[],
+        upload_doc_files={},
     )
 
     monkeypatch.setattr(

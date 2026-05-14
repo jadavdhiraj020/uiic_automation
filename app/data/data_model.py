@@ -14,8 +14,29 @@ MULTI-PORTAL SUPPORT (2026-05-09):
   - UIIC fields are unchanged — 100% backward compatible.
   - New India fields are additive (new attributes with empty defaults).
 """
+import logging
+import re
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from typing import Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
+
+
+def _parse_amount_for_total(value) -> int:
+    """Parse an extracted amount into an integer rupee value for derived totals."""
+    if value is None or str(value).strip() == "":
+        return 0
+
+    normalized = str(value).replace(",", "")
+    matches = re.findall(r"-?\d+(?:\.\d+)?", normalized)
+    if not matches:
+        return 0
+
+    try:
+        return int(Decimal(matches[-1]))
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(f"Invalid amount value: {value!r}") from exc
 
 
 def _get_active_portal_id(override: Optional[str] = None) -> str:
@@ -196,6 +217,35 @@ class ClaimData:
     additional_towing_charges: str = "0" # Optional — separate from towing charges
     less_other_deductions: str = "0"     # Optional
     verification_checkbox: str = ""
+
+    def calculate_derived_fields(self):
+        """Calculate fields that are derived from other extracted values."""
+        # 1. Expected completion date aligns with date of survey
+        if self.date_of_survey:
+            self.expected_completion_date = self.date_of_survey
+            self._excel_coords["expected_completion_date"] = self._excel_coords.get("date_of_survey", "")
+
+        # 2. Total Claimed Amount (Sum of surveyor charges)
+        try:
+            calculated_total = 0
+            invalid_values = []
+            for key in ["traveling_expenses", "professional_fee", "daily_allowance", "photo_charges"]:
+                try:
+                    calculated_total += _parse_amount_for_total(getattr(self, key, "0"))
+                except ValueError:
+                    invalid_values.append(f"{key}={getattr(self, key, '')!r}")
+
+            if invalid_values:
+                logger.warning(
+                    "Invalid surveyor charge values while calculating total_claimed_amount: %s",
+                    ", ".join(invalid_values),
+                )
+
+            self.total_claimed_amount = str(calculated_total)
+            self._excel_coords["total_claimed_amount"] = "Calculated"
+            self._excel_logs.append(f"  📊 total_claimed_amount: '{self.total_claimed_amount}' (Source: Calculated)")
+        except Exception as exc:
+            logger.warning("Failed to calculate total_claimed_amount: %s", exc)
 
     def validate(self) -> Tuple[List[str], List[str]]:
         """

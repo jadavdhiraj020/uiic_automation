@@ -350,9 +350,25 @@ class MainWindow(QMainWindow):
     def _open_log_file(self):
         try:
             log_dir = ensure_dir(user_data_dir("logs"))
-            base_log = os.path.join(log_dir, "automation.log")
-            self._log_file = open(base_log, "w", encoding="utf-8")
-        except:
+            
+            # 1. Create a unique timestamped log.
+            import glob
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            base_log = os.path.join(log_dir, f"automation_{ts}_{os.getpid()}.log")
+            self._log_file = open(base_log, "x", encoding="utf-8")
+
+            # 2. Cleanup old logs after creating this one (keep last 10 total).
+            existing_logs = sorted(
+                glob.glob(os.path.join(log_dir, "automation_*.log")),
+                key=lambda path: (os.path.getmtime(path), path),
+            )
+            for old_log in existing_logs[:-10]:
+                try:
+                    if os.path.abspath(old_log) != os.path.abspath(base_log):
+                        os.remove(old_log)
+                except Exception:
+                    pass
+        except Exception:
             pass
 
     def _browse_folder(self):

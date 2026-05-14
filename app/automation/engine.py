@@ -10,6 +10,7 @@ Post-login strategy:
 """
 
 import asyncio
+from contextlib import suppress
 import logging
 import os
 import time
@@ -281,7 +282,50 @@ class AutomationEngine:
             captured_pages: List[Page] = []
             context.on("page", lambda p: captured_pages.append(p))
 
+            health_task = None
+            health_state = {
+                "authenticated_page_ready": False,
+                "empty_pages_since": None,
+            }
+
             try:
+                # ── Background Circuit Breaker ───────────────────────────────────────
+                # Monitors the connection and page state so we fail-fast if the network
+                # drops or the user closes the window, preventing endless timeouts.
+                async def _monitor_health():
+                    while not self._check_stop():
+                        try:
+                            if not browser.is_connected():
+                                self.log_cb("🚨 CIRCUIT BREAKER: Browser connection lost. Aborting run.")
+                                self.request_stop()
+                                break
+                            
+                            alive = [p for p in context.pages if not p.is_closed()]
+                            if not alive:
+                                now = time.monotonic()
+                                if health_state["empty_pages_since"] is None:
+                                    health_state["empty_pages_since"] = now
+
+                                grace_seconds = 2.0 if health_state["authenticated_page_ready"] else 10.0
+                                if now - health_state["empty_pages_since"] >= grace_seconds:
+                                    self.log_cb("🚨 CIRCUIT BREAKER: All pages were closed. Aborting run.")
+                                    self.request_stop()
+                                    break
+                                await asyncio.sleep(0.5)
+                                continue
+                            health_state["empty_pages_since"] = None
+                                
+                            active = alive[-1]
+                            if active.url.startswith("chrome-error://"):
+                                self.log_cb("🚨 CIRCUIT BREAKER: Network disconnected or 502/504 error. Aborting run.")
+                                self.request_stop()
+                                break
+                        except Exception:
+                            pass
+                        await asyncio.sleep(2)
+
+                health_task = asyncio.create_task(_monitor_health())
+
                 t_start = time.time()
 
                 # Resolve portal display name
@@ -331,6 +375,7 @@ class AutomationEngine:
                 if page is None:
                     message = "Automation stopped by user." if self._check_stop() else "Could not find an authenticated Worklist page."
                     return AutomationRunResult(False, message)
+                health_state["authenticated_page_ready"] = True
 
                 try:
                     await page.wait_for_load_state("domcontentloaded", timeout=12000)
@@ -558,6 +603,10 @@ class AutomationEngine:
                 logger.exception("Automation error")
                 return AutomationRunResult(False, f"Automation failed: {exc}")
             finally:
+                if health_task and not health_task.done():
+                    health_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await health_task
                 # B7 FIX: Do NOT call browser.close() here.
                 # The 'async with async_playwright()' context manager closes
                 # the browser automatically when the block exits.
