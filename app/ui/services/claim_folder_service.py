@@ -72,6 +72,7 @@ class ClaimFolderService:
             claim = extract_claim_data(scan_result.excel_path, portal_id=self.portal_id)
             claim.claim_doc_files = scan_result.claim_doc_files
             claim.assessment_files = scan_result.assessment_files
+            claim.upload_doc_files = scan_result.upload_doc_files
 
             # SSOT is now fully isolated and calculated directly within excel_reader.py
 

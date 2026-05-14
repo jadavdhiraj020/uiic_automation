@@ -42,7 +42,7 @@ def _join_export_path(folder_path: str, filename: str) -> str:
     return os.path.join(folder_path, filename)
 
 
-def get_doc_mapping_tuple(portal_id: str = "uiic") -> Tuple[Dict[str, List[str]], Dict[str, List[str]], List[str], List[str]]:
+def get_doc_mapping_tuple(portal_id: str = "uiic") -> Tuple[Dict[str, List[str]], Dict[str, List[str]], List[str], List[str], Dict[str, List[str]]]:
     """Load doc_mapping.json from app settings and return tuple."""
     from app.utils import load_doc_mapping
     raw = load_doc_mapping(portal_id=portal_id)
@@ -50,7 +50,10 @@ def get_doc_mapping_tuple(portal_id: str = "uiic") -> Tuple[Dict[str, List[str]]
     assessment_map = raw.get("claim_assessment_tab", {})
     other_slots = raw.get("other_slots", ["Other 1", "Other 2", "Other 3"])
     expected_docs = raw.get("expected_claim_docs", [])
-    return claim_map, assessment_map, other_slots, expected_docs
+    upload_map = raw.get("document_upload_tab", {})
+    # Remove _comment key from upload_map if present
+    upload_map = {k: v for k, v in upload_map.items() if not k.startswith("_")}
+    return claim_map, assessment_map, other_slots, expected_docs, upload_map
 
 
 import re
@@ -91,6 +94,7 @@ class FolderScanResult:
         self.excel_path: Optional[str] = None
         self.claim_doc_files: Dict[str, str] = {}
         self.assessment_files: Dict[str, str] = {}
+        self.upload_doc_files: Dict[str, str] = {}  # For document upload section (DL, RC, Claim Form)
         self.unknown_files: List[str] = []
         self.skipped_files: List[Tuple[str, str]] = []
         self.expected_docs: List[str] = []
@@ -103,6 +107,8 @@ class FolderScanResult:
             lines.append(f"[{key}] -> {Path(value).name}")
         for key, value in self.assessment_files.items():
             lines.append(f"[{key}] -> {Path(value).name}")
+        for key, value in self.upload_doc_files.items():
+            lines.append(f"[Upload:{key}] -> {Path(value).name}")
         for file_path in self.unknown_files:
             lines.append(f"Unknown: {Path(file_path).name}")
         for file_path, reason in self.skipped_files:
@@ -234,7 +240,7 @@ def _extract_sheet_for_reinspection(full_path: str, folder_path: str, sheet_inde
 def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
     # 1. Load keywords from doc_mapping.json
     result = FolderScanResult()
-    claim_map, assessment_map, other_slots, expected_docs = get_doc_mapping_tuple(portal_id=portal_id)
+    claim_map, assessment_map, other_slots, expected_docs, upload_map = get_doc_mapping_tuple(portal_id=portal_id)
     result.expected_docs = expected_docs
 
     if not os.path.isdir(folder_path):
@@ -386,6 +392,17 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
             other_files.append(full_path)
             continue
 
+        # ── Try Upload Document tab match (DL, RC, Claim Form) ────────────────
+        if upload_map:
+            upload_key = _match_keyword(fname_lower, upload_map)
+            if upload_key:
+                if upload_key not in result.upload_doc_files:
+                    result.upload_doc_files[upload_key] = full_path
+                    logger.info("Upload doc [%s]: %s", upload_key, fname)
+                else:
+                    logger.info("Duplicate upload doc mapping for [%s], keeping first file.", upload_key)
+                # Don't skip — file could also match claim/assessment tabs
+
         # ── Try Assessment tab match first (more specific labels) ─────────────
         assessment_key = _match_keyword(fname_lower, assessment_map)
         if assessment_key:
@@ -484,6 +501,13 @@ def _log_scan_summary(result: FolderScanResult, claim_map: Dict[str, str]) -> No
             lines.append(f"    ✅ [{doc_type}] → {Path(fpath).name}")
     else:
         lines.append("    ⚠️  No assessment files matched from folder")
+
+    # ── Upload document files matched ─────────────────────────────────────────
+    if result.upload_doc_files:
+        lines.append("")
+        lines.append("  📎 Upload Documents (matched):")
+        for doc_type, fpath in result.upload_doc_files.items():
+            lines.append(f"    ✅ [{doc_type}] → {Path(fpath).name}")
 
     # ── Missing mandatory documents ───────────────────────────────────────────
     matched_types = set(result.claim_doc_files.keys())

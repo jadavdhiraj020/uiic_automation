@@ -61,5 +61,28 @@
       "estimate invoice",
       "estimate_bill"
     ]
+  },
+  "document_upload_tab": {
+    "_comment": "Maps mandatory upload document types to filename keywords for auto-detection.",
+    "driving_license": [
+      "dl",
+      "driving_license",
+      "driving_licence",
+      "driving license",
+      "driving licence",
+      "license"
+    ],
+    "registration_certificate": [
+      "rc",
+      "rc_book",
+      "registration_certificate",
+      "registration certificate",
+      "regn_cert"
+    ],
+    "claim_form": [
+      "claim_form",
+      "claim form",
+      "claimform"
+    ]
   }
 }

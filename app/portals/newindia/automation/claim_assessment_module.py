@@ -355,6 +355,21 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log_cb, sto
         except Exception as e:
             log_cb(f"  ⚠️ Error filling {label}: {e}")
 
+    # ═══════════════════════════════════════════════════════════════════════════
+    # STEP: Click "Next" button to proceed to next page
+    # ═══════════════════════════════════════════════════════════════════════════
+    if stop_cb(): return False
+    log_cb("")
+    log_cb("── Clicking Next button ──")
+    try:
+        next_btn = page.locator('button.success-blue:has-text("Next")').first
+        await next_btn.wait_for(state="visible", timeout=5000)
+        await next_btn.click()
+        log_cb("  ✅ Clicked 'Next' button — proceeding to next page.")
+        await page.wait_for_timeout(2000)  # Allow page transition
+    except Exception as e:
+        log_cb(f"  ⚠️ Could not click Next button: {e}")
+
     log_cb("")
     log_cb("Phase 10 (Claim Assessment Details — All 5 Sections) completed successfully.")
     return True

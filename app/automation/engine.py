@@ -362,7 +362,7 @@ class AutomationEngine:
                     self.log_cb("")
                     self.step_cb(2, steps[2])
                     self.log_cb("━" * 48)
-                    self.log_cb("  ✏️  STEP 3/5 ─ Fill Quick Update Details")
+                    self.log_cb("  ✏️  STEP 3/11 ─ Fill Quick Update Details")
                     self.log_cb("━" * 48)
                     
                     from app.portals.newindia.automation.quick_update_module import fill_quick_update_details
@@ -374,10 +374,9 @@ class AutomationEngine:
                     self.log_cb("")
                     self.step_cb(3, steps[3])
                     self.log_cb("━" * 48)
-                    self.log_cb("  📸 STEP 4/5 ─ Vehicle Photo Graph")
+                    self.log_cb("  📸 STEP 4/11 ─ Vehicle Photo Graph")
                     self.log_cb("━" * 48)
 
-                    from app.portals.newindia.automation.vehicle_photo_module import fill_vehicle_photo_graph
                     from app.portals.newindia.automation.vehicle_photo_module import fill_vehicle_photo_graph
                     success = await fill_vehicle_photo_graph(page, claim, log_cb=self.log_cb, stop_cb=self._check_stop, field_delay_ms=field_delay)
                     if not success:
@@ -387,7 +386,7 @@ class AutomationEngine:
                     self.log_cb("")
                     self.step_cb(4, "Registration Cert Details")
                     self.log_cb("━" * 48)
-                    self.log_cb("  📝 STEP 5/6 ─ Registration Certificate Details")
+                    self.log_cb("  📝 STEP 5/11 ─ Registration Certificate Details")
                     self.log_cb("━" * 48)
 
                     from app.portals.newindia.automation.registration_cert_module import fill_registration_cert_details
@@ -399,7 +398,7 @@ class AutomationEngine:
                     self.log_cb("")
                     self.step_cb(5, "Driver Details")
                     self.log_cb("━" * 48)
-                    self.log_cb("  📝 STEP 6/7 ─ Driver Details")
+                    self.log_cb("  📝 STEP 6/11 ─ Driver Details")
                     self.log_cb("━" * 48)
 
                     from app.portals.newindia.automation.driver_details_module import fill_driver_details
@@ -411,7 +410,7 @@ class AutomationEngine:
                     self.log_cb("")
                     self.step_cb(6, "FIR Details")
                     self.log_cb("━" * 48)
-                    self.log_cb("  📝 STEP 7/8 ─ FIR Details")
+                    self.log_cb("  📝 STEP 7/11 ─ FIR Details")
                     self.log_cb("━" * 48)
 
                     from app.portals.newindia.automation.fir_details_module import fill_fir_details
@@ -423,7 +422,7 @@ class AutomationEngine:
                     self.log_cb("")
                     self.step_cb(7, "NEFT Details")
                     self.log_cb("━" * 48)
-                    self.log_cb("  📝 STEP 8/9 ─ NEFT Details")
+                    self.log_cb("  📝 STEP 8/11 ─ NEFT Details")
                     self.log_cb("━" * 48)
 
                     from app.portals.newindia.automation.neft_module import fill_neft_details
@@ -435,7 +434,7 @@ class AutomationEngine:
                     self.log_cb("")
                     self.step_cb(8, "Work Approval")
                     self.log_cb("━" * 48)
-                    self.log_cb("  📝 STEP 9/10 ─ Work Approval")
+                    self.log_cb("  📝 STEP 9/11 ─ Work Approval")
                     self.log_cb("━" * 48)
 
                     from app.portals.newindia.automation.work_approval_module import fill_work_approval_details
@@ -447,7 +446,7 @@ class AutomationEngine:
                     self.log_cb("")
                     self.step_cb(9, "Claim Assessment")
                     self.log_cb("━" * 48)
-                    self.log_cb("  📝 STEP 10/10 ─ Claim Assessment")
+                    self.log_cb("  📝 STEP 10/11 ─ Claim Assessment")
                     self.log_cb("━" * 48)
 
                     from app.portals.newindia.automation.claim_assessment_module import fill_claim_assessment_details
@@ -456,16 +455,28 @@ class AutomationEngine:
                         message = "Automation stopped by user." if self._check_stop() else "Phase 10 failed."
                         return AutomationRunResult(False, message)
 
+                    self.log_cb("")
+                    self.step_cb(10, "Document Upload")
+                    self.log_cb("━" * 48)
+                    self.log_cb("  📤 STEP 11/11 ─ Document Upload")
+                    self.log_cb("━" * 48)
+
+                    from app.portals.newindia.automation.document_upload_module import fill_document_upload_section
+                    success = await fill_document_upload_section(page, claim, log_cb=self.log_cb, stop_cb=self._check_stop, field_delay_ms=field_delay)
+                    if not success:
+                        message = "Automation stopped by user." if self._check_stop() else "Phase 11 failed."
+                        return AutomationRunResult(False, message)
+
                     self.log_cb("╔" + "═" * 48 + "╗")
-                    self.log_cb("║  🚧 AUTOMATION PAUSED (PHASE 3 to 10)          ║")
+                    self.log_cb("║  🚧 AUTOMATION PAUSED (PHASE 3 to 11)          ║")
                     self.log_cb("╠" + "═" * 48 + "╣")
-                    self.log_cb("║  New India Phase 3 to 10 are complete.         ║")
+                    self.log_cb("║  New India Phase 3 to 11 are complete.         ║")
                     self.log_cb("║  Review the Quick Update, Vehicle Photo, Reg   ║")
-                    self.log_cb("║  Cert, Driver, FIR, NEFT, Work Appr, and       ║")
-                    self.log_cb("║  Claim Assessment tabs before submitting.      ║")
+                    self.log_cb("║  Cert, Driver, FIR, NEFT, Work Appr, Claim    ║")
+                    self.log_cb("║  Assessment, and Doc Upload before submitting. ║")
                     self.log_cb("╚" + "═" * 48 + "╝")
                     await self._wait_for_manual_review(browser)
-                    return AutomationRunResult(True, "New India Phase 3 to 10 complete. Session open.")
+                    return AutomationRunResult(True, "New India Phase 3 to 11 complete. Session open.")
 
                 self.log_cb("")
                 self.step_cb(2, steps[2])

@@ -92,6 +92,7 @@ class ClaimData:
     # ── File Paths (from folder_scanner) ─────────────────────────────────────
     claim_doc_files: Dict[str, str] = field(default_factory=dict)
     assessment_files: Dict[str, str] = field(default_factory=dict)
+    upload_doc_files: Dict[str, str] = field(default_factory=dict)  # DL, RC, Claim Form for doc upload section
 
     # ══════════════════════════════════════════════════════════════════════════
     # NEW INDIA ASSURANCE — Additional Fields
