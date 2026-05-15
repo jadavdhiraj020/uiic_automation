@@ -5,10 +5,7 @@ import re
 from datetime import datetime
 
 
-def _ts() -> str:
-    """Current timestamp as HH:MM:SS.mmm"""
-    now = datetime.now()
-    return now.strftime("%H:%M:%S.") + f"{now.microsecond // 1000:03d}"
+from app.automation.automation_logger import AutomationLogger, _ts
 
 # ── JavaScript Snippets ───────────────────────────────────────────────────────
 
@@ -123,54 +120,84 @@ _JS_CLICK_RADIO = r"""
 
 async def fill_input_with_delay(
     page: Page, selector: str, value: str, label: str,
-    log: Callable, delay_ms: int = 600
+    log, delay_ms: int = 600
 ):
     """Angular-aware text fill with configurable post-fill delay."""
     try:
         await page.wait_for_selector(selector, state="visible", timeout=5000)
         res = await page.evaluate(_JS_FILL, [selector, str(value)])
         if res and res.get("ok"):
-            log(f"[{_ts()}]   ✅ [{label}] filled → '{str(value)[:60]}'")
+            if isinstance(log, AutomationLogger):
+                log.field_filled(label, value)
+            else:
+                log(f"[{_ts()}]   ✅ [{label}] filled → '{str(value)[:60]}'")
         else:
-            log(f"[{_ts()}]   ⚠️ [{label}] fill failed (element not found in DOM)")
+            if isinstance(log, AutomationLogger):
+                log.field_failed(label, "Element not found in DOM")
+            else:
+                log(f"[{_ts()}]   ⚠️ [{label}] fill failed (element not found in DOM)")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ [{label}] error: {e}")
+        if isinstance(log, AutomationLogger):
+            log.field_failed(label, str(e))
+        else:
+            log(f"[{_ts()}]   ⚠️ [{label}] error: {e}")
 
     await asyncio.sleep(delay_ms / 1000.0)
 
 
 async def select_dropdown_with_delay(
     page: Page, selector: str, value: str, label: str,
-    log: Callable, delay_ms: int = 600
+    log, delay_ms: int = 600
 ):
     """Standard <select> dropdown helper with 3-pass matching and configurable delay."""
     try:
         await page.wait_for_selector(selector, state="visible", timeout=5000)
         res = await page.evaluate(_JS_SELECT, [selector, str(value)])
         if res and res.get("ok"):
-            log(f"[{_ts()}]   ✅ [{label}] selected → '{res.get('text')}'")
+            if isinstance(log, AutomationLogger):
+                log.field_selected(label, res.get("text"))
+            else:
+                log(f"[{_ts()}]   ✅ [{label}] selected → '{res.get('text')}'")
         else:
-            log(f"[{_ts()}]   ⚠️ [{label}] select failed (no match for '{value}'): {res.get('err') if res else 'unknown'}")
+            err = res.get('err') if res else 'unknown'
+            if isinstance(log, AutomationLogger):
+                log.field_failed(label, f"No match for '{value}': {err}")
+            else:
+                log(f"[{_ts()}]   ⚠️ [{label}] select failed (no match for '{value}'): {err}")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ [{label}] error: {e}")
+        if isinstance(log, AutomationLogger):
+            log.field_failed(label, str(e))
+        else:
+            log(f"[{_ts()}]   ⚠️ [{label}] error: {e}")
 
     await asyncio.sleep(delay_ms / 1000.0)
 
 
 async def click_radio_with_delay(
     page: Page, name: str, value: str, label: str,
-    log: Callable, delay_ms: int = 600
+    log, delay_ms: int = 600
 ):
     """Click radio via label with delay."""
     try:
         res = await page.evaluate(_JS_CLICK_RADIO, [name, value])
         if res and res.get("ok"):
             already = res.get("already", False)
-            log(f"[{_ts()}]   {'✔' if already else '✅'} [{label}] → '{value}'" + (" (already set)" if already else ""))
+            msg = f"'{value}'" + (" (already set)" if already else "")
+            if isinstance(log, AutomationLogger):
+                log.field_filled(label, msg)
+            else:
+                log(f"[{_ts()}]   {'✔' if already else '✅'} [{label}] → {msg}")
         else:
-            log(f"[{_ts()}]   ⚠️ [{label}] click failed: {res.get('err') if res else 'unknown'}")
+            err = res.get('err') if res else 'unknown'
+            if isinstance(log, AutomationLogger):
+                log.field_failed(label, f"Click failed: {err}")
+            else:
+                log(f"[{_ts()}]   ⚠️ [{label}] click failed: {err}")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ [{label}] error: {e}")
+        if isinstance(log, AutomationLogger):
+            log.field_failed(label, str(e))
+        else:
+            log(f"[{_ts()}]   ⚠️ [{label}] error: {e}")
 
     await asyncio.sleep(delay_ms / 1000.0)
 
@@ -216,18 +243,29 @@ async def upload_file_via_input(
     """
     import os
     if not file_path or not os.path.exists(file_path):
-        log(f"[{_ts()}]   ⚠️ [{label}] file not found: {file_path}")
+        if isinstance(log, AutomationLogger):
+            log.upload_failed(label, f"File not found: {file_path}")
+        else:
+            log(f"[{_ts()}]   ⚠️ [{label}] file not found: {file_path}")
         return False
 
     try:
         file_input = page.locator(file_input_selector).first
         await file_input.wait_for(state="attached", timeout=5000)
         await file_input.set_input_files(file_path)
-        log(f"[{_ts()}]   ✅ [{label}] file attached → '{os.path.basename(file_path)}'")
+        
+        if isinstance(log, AutomationLogger):
+            log.upload_attached(label, os.path.basename(file_path))
+        else:
+            log(f"[{_ts()}]   ✅ [{label}] file attached → '{os.path.basename(file_path)}'")
+            
         await asyncio.sleep(delay_ms / 1000.0)
         return True
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ [{label}] attach error: {e}")
+        if isinstance(log, AutomationLogger):
+            log.upload_failed(label, str(e))
+        else:
+            log(f"[{_ts()}]   ⚠️ [{label}] attach error: {e}")
         return False
 
 

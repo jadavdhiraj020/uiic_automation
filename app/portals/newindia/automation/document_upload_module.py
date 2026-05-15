@@ -33,7 +33,7 @@ from app.portals.newindia.automation.ui_utils import (
     select_dropdown_with_delay,
     upload_file_via_input,
 )
-from app.automation.automation_logger import _ts
+from app.automation.automation_logger import AutomationLogger, _ts
 
 logger = logging.getLogger(__name__)
 
@@ -180,8 +180,10 @@ def merge_files_to_pdf(
       3. Other file types (doc, xls, xlsx) → skip with warning
     """
     if not file_paths:
-        if log:
-            log(f"[{_ts()}]   ℹ️ No remaining files to merge.")
+        if isinstance(log, AutomationLogger):
+            log.info("No remaining files to merge.")
+        elif log:
+            log(f"   ℹ️ No remaining files to merge.")
         return None
 
     _log = log or (lambda msg: None)
@@ -197,7 +199,10 @@ def merge_files_to_pdf(
             _image_exts, _pdf_exts, PdfMerger, PdfReader
         )
     except ImportError:
-        _log(f"[{_ts()}]   ℹ️ PyPDF2 not available. Using Pillow fallback for merge.")
+        if isinstance(log, AutomationLogger):
+            log.info("PyPDF2 not available. Using Pillow fallback for merge.")
+        else:
+            _log(f"   ℹ️ PyPDF2 not available. Using Pillow fallback for merge.")
 
     # ── Strategy 2: Pillow-only fallback ──────────────────────────────────────
     return _merge_with_pillow_fallback(
@@ -226,11 +231,20 @@ def _merge_with_pypdf2(
                     if len(reader.pages) > 0:
                         merger.append(fpath)
                         merged_count += 1
-                        _log(f"[{_ts()}]     📄 Added PDF: {fname} ({len(reader.pages)} pages)")
+                        if isinstance(_log, AutomationLogger):
+                            _log.info(f"Added PDF: {fname} ({len(reader.pages)} pages)")
+                        else:
+                            _log(f"     📄 Added PDF: {fname} ({len(reader.pages)} pages)")
                     else:
-                        _log(f"[{_ts()}]     ⚠️ Empty PDF skipped: {fname}")
+                        if isinstance(_log, AutomationLogger):
+                            _log.warning(f"Empty PDF skipped: {fname}")
+                        else:
+                            _log(f"     ⚠️ Empty PDF skipped: {fname}")
                 except Exception as e:
-                    _log(f"[{_ts()}]     ⚠️ Could not read PDF {fname}: {e}")
+                    if isinstance(_log, AutomationLogger):
+                        _log.error(f"Could not read PDF {fname}: {e}")
+                    else:
+                        _log(f"     ⚠️ Could not read PDF {fname}: {e}")
                     skipped_files.append(fname)
 
             elif ext in _image_exts:
@@ -354,17 +368,26 @@ def _validate_merged_pdf(
     mb = file_size / (1024 * 1024)
 
     if file_size > max_bytes:
-        _log(f"[{_ts()}]   ❌ Merged PDF exceeds 15MB limit ({mb:.1f}MB). Cannot upload.")
+        if isinstance(_log, AutomationLogger):
+            _log.upload_failed("Merged PDF", f"Exceeds 15MB limit ({mb:.1f}MB).")
+        else:
+            _log(f"   ❌ Merged PDF exceeds 15MB limit ({mb:.1f}MB). Cannot upload.")
         try:
             os.remove(output_path)
         except OSError:
             pass
         return None
 
-    _log(f"[{_ts()}]   ✅ Merged PDF created: {Path(output_path).name} ({mb:.1f}MB, {merged_count} files)")
+    if isinstance(_log, AutomationLogger):
+        _log.success(f"Merged PDF created: {Path(output_path).name} ({mb:.1f}MB, {merged_count} files)")
+    else:
+        _log(f"   ✅ Merged PDF created: {Path(output_path).name} ({mb:.1f}MB, {merged_count} files)")
 
     if skipped_files:
-        _log(f"[{_ts()}]   ⏭️ Skipped {len(skipped_files)} non-mergeable files: {', '.join(skipped_files)}")
+        if isinstance(_log, AutomationLogger):
+            _log.warning(f"Skipped {len(skipped_files)} non-mergeable files: {', '.join(skipped_files)}")
+        else:
+            _log(f"   ⏭️ Skipped {len(skipped_files)} non-mergeable files: {', '.join(skipped_files)}")
 
     return output_path
 
@@ -376,37 +399,43 @@ def _validate_merged_pdf(
 async def fill_document_upload_section(
     page: Page,
     data: ClaimData,
-    log_cb: Callable,
+    log,
     stop_cb: Callable,
     field_delay_ms: int = 600,
 ) -> bool:
-    """
-    Phase 9: Document Upload Section.
-    Handles all three accordion sections on the document upload page.
-    """
-    if stop_cb():
-        return False
+    if stop_cb(): return False
 
-    log_cb("")
-    log_cb(f"[{_ts()}] ═" * 60)
-    log_cb(f"[{_ts()}] 📤 Phase 9: Document Upload Section")
-    log_cb(f"[{_ts()}] ═" * 60)
+    if isinstance(log, AutomationLogger):
+        log.info("Starting Document Upload Section phase...")
+        log.indent()
+    else:
+        log("")
+        log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        log("  📝 Phase 9: Document Upload Section")
+        log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
     # ══════════════════════════════════════════════════════════════════════════
     # SECTION 1 — UPLOADED DOCUMENTS (SKIP — Informational only)
     # ══════════════════════════════════════════════════════════════════════════
-    log_cb("")
-    log_cb(f"[{_ts()}]   ── Section 1: Uploaded Documents (Informational) ──")
-    log_cb(f"[{_ts()}]   ℹ️ Skipping — display-only section, no interaction needed.")
+    if isinstance(log, AutomationLogger):
+        log.info("Section 1: Uploaded Documents (Informational)")
+        log.info("Skipping display-only section.")
+    else:
+        log("")
+        log(f"[{_ts()}]   ── Section 1: Uploaded Documents (Informational) ──")
+        log(f"[{_ts()}]   ℹ️ Skipping — display-only section, no interaction needed.")
 
-    if stop_cb():
-        return False
+    if stop_cb(): return False
 
     # ══════════════════════════════════════════════════════════════════════════
     # SECTION 2 — UPLOAD NEW DOCUMENTS
     # ══════════════════════════════════════════════════════════════════════════
-    log_cb("")
-    log_cb(f"[{_ts()}]   ── Section 2: Upload New Documents ──")
+    if isinstance(log, AutomationLogger):
+        log.info("Section 2: Upload New Documents")
+        log.indent()
+    else:
+        log("")
+        log(f"[{_ts()}]   ── Section 2: Upload New Documents ──")
 
     # 2a. Open the "Upload New Documents" accordion
     try:
@@ -419,32 +448,36 @@ async def fill_document_upload_section(
         if is_collapsed:
             await accordion_link.click()
             await asyncio.sleep(1.5)
-            log_cb(f"[{_ts()}]   ✅ Opened 'Upload New Documents' accordion.")
+            if isinstance(log, AutomationLogger):
+                log.success("Accordion expanded.")
+            else:
+                log(f"[{_ts()}]   ✅ Opened 'Upload New Documents' accordion.")
         else:
-            log_cb(f"[{_ts()}]   ℹ️ 'Upload New Documents' accordion already open.")
+            if isinstance(log, AutomationLogger):
+                log.info("Accordion already open.")
+            else:
+                log(f"[{_ts()}]   ℹ️ 'Upload New Documents' accordion already open.")
     except Exception as e:
-        log_cb(f"[{_ts()}]   ⚠️ Could not open accordion (may already be open): {e}")
-        # Try clicking anyway
-        try:
-            await page.locator('a.accordion-toggle:has(span:text("Upload New Documents"))').first.click()
-            await asyncio.sleep(1.5)
-        except Exception:
-            pass
+        if isinstance(log, AutomationLogger):
+            log.warning(f"Accordion interaction warning: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Could not open accordion (may already be open): {e}")
 
-    if stop_cb():
-        return False
+    if stop_cb(): return False
 
     # Wait for the mandatory document form to be visible
     try:
         await page.wait_for_selector('ng-form[name="mandatoryDocForm"]', state="visible", timeout=5000)
     except Exception:
-        log_cb(f"[{_ts()}]   ⚠️ Mandatory document form not visible. Attempting to proceed...")
+        if isinstance(log, AutomationLogger):
+            log.warning("Mandatory document form not visible; attempting to proceed.")
+        else:
+            log(f"[{_ts()}]   ⚠️ Mandatory document form not visible. Attempting to proceed...")
 
     # ── Track which files have been uploaded in this section ──────────────────
     uploaded_keys: Set[str] = set()
 
     # ── Define the upload sequence ────────────────────────────────────────────
-    # Each entry: (internal_key, portal_dropdown_text, human_label)
     upload_sequence = [
         ("driving_license",          "Driving License",          "Driving License"),
         ("registration_certificate", "Registration Certificate", "Registration Certificate"),
@@ -458,41 +491,55 @@ async def fill_document_upload_section(
         if file_path and os.path.isfile(file_path):
             active_docs.append((doc_key, dropdown_text, label, file_path))
         else:
-            log_cb(f"[{_ts()}]   ℹ️ No '{label}' file found in folder. Skipping.")
+            if isinstance(log, AutomationLogger):
+                log.info(f"Skipping '{label}' (File not found).")
+            else:
+                log(f"[{_ts()}]   ℹ️ No '{label}' file found in folder. Skipping.")
 
     # ── Upload each document in its own row ───────────────────────────────────
-    # Row 0 already exists. For rows 1, 2, ... we click the "+" button first.
     current_row = 0
     for idx, (doc_key, dropdown_text, label, file_path) in enumerate(active_docs):
-        if stop_cb():
-            return False
+        if stop_cb(): return False
 
-        log_cb(f"")
-        log_cb(f"[{_ts()}]   📎 Uploading: {label} (row {current_row})")
+        if isinstance(log, AutomationLogger):
+            log.info(f"Processing mandatory row {current_row}: {label}")
+            log.indent()
+        else:
+            log(f"")
+            log(f"[{_ts()}]   📎 Uploading: {label} (row {current_row})")
 
         # If not the first row, click "+" to add a new row
         if idx > 0:
             try:
                 add_btn = page.locator('span.fa-plus-circle[data-ng-click="surveyorWorklistSurvey.addRow(\'man\')"]').first
                 if not await add_btn.is_visible():
-                    # Fallback: try any plus icon inside mandatory form
                     add_btn = page.locator('ng-form[name="mandatoryDocForm"] span.fa-plus-circle').first
                 await add_btn.click()
                 await asyncio.sleep(1.0)
-                log_cb(f"[{_ts()}]     ✅ Added new row (row {current_row})")
+                if isinstance(log, AutomationLogger):
+                    log.success("New row added.")
+                else:
+                    log(f"[{_ts()}]     ✅ Added new row (row {current_row})")
             except Exception as e:
-                log_cb(f"[{_ts()}]     ⚠️ Could not add new row: {e}. Trying to use row {current_row} anyway.")
+                if isinstance(log, AutomationLogger):
+                    log.warning(f"Row addition failed: {str(e)[:100]}")
+                else:
+                    log(f"[{_ts()}]     ⚠️ Could not add new row: {e}. Trying to use row {current_row} anyway.")
 
         # Step 1: Select document type in dropdown for this row
         dropdown_sel = f'select#docType{current_row}'
         try:
             await select_dropdown_with_delay(
                 page, dropdown_sel, dropdown_text,
-                f"Doc Type → {label}", log_cb, field_delay_ms
+                f"Row {current_row} Type", log, field_delay_ms
             )
             await asyncio.sleep(0.5)
         except Exception as e:
-            log_cb(f"[{_ts()}]     ⚠️ Could not select dropdown for {label}: {e}")
+            if isinstance(log, AutomationLogger):
+                log.error(f"Dropdown selection failed: {str(e)[:100]}")
+                log.outdent()
+            else:
+                log(f"[{_ts()}]     ⚠️ Could not select dropdown for {label}: {e}")
             current_row += 1
             continue
 
@@ -503,39 +550,55 @@ async def fill_document_upload_section(
                 page,
                 file_input_selector=file_input_sel,
                 file_path=file_path,
-                label=label,
-                log=log_cb,
+                label=f"Row {current_row} File",
+                log=log,
             )
             if success:
                 uploaded_keys.add(doc_key)
-                log_cb(f"[{_ts()}]     ✅ [{label}] attached → '{Path(file_path).name}'")
             else:
-                log_cb(f"[{_ts()}]     ⚠️ [{label}] attachment failed.")
+                if isinstance(log, AutomationLogger):
+                    log.error("File attachment failed.")
         except Exception as e:
-            log_cb(f"[{_ts()}]     ⚠️ [{label}] error during file attach: {e}")
+            if isinstance(log, AutomationLogger):
+                log.error(f"Attachment error: {str(e)[:100]}")
 
+        if isinstance(log, AutomationLogger):
+            log.outdent()
+        
         current_row += 1
-        # Small delay between uploads to avoid race conditions
         await asyncio.sleep(0.8)
 
-    if stop_cb():
-        return False
+    if stop_cb(): return False
 
     # ── CLAIM RELATED DOCUMENTS — Merge remaining files ──────────────────────
-    log_cb("")
-    log_cb(f"[{_ts()}]   📎 Preparing: Claim Related Documents (merged PDF)")
+    if isinstance(log, AutomationLogger):
+        log.info("Processing 'Claim Related Documents' (Merged PDF)")
+        log.indent()
+    else:
+        log("")
+        log(f"[{_ts()}]   📎 Preparing: Claim Related Documents (merged PDF)")
 
     # Collect used files
     used_files = _get_used_files(data, uploaded_keys)
-    log_cb(f"[{_ts()}]     📊 Already used/uploaded: {len(used_files)} files")
+    if isinstance(log, AutomationLogger):
+        log.info(f"Context: {len(used_files)} files already used.")
+    else:
+        log(f"[{_ts()}]     📊 Already used/uploaded: {len(used_files)} files")
 
     # Collect remaining files from folder
     remaining_files = _collect_remaining_files(data, used_files)
-    log_cb(f"[{_ts()}]     📊 Remaining unmatched files: {len(remaining_files)}")
+    if isinstance(log, AutomationLogger):
+        log.info(f"Unmatched files found: {len(remaining_files)}")
+    else:
+        log(f"[{_ts()}]     📊 Remaining unmatched files: {len(remaining_files)}")
 
     if remaining_files:
-        for rf in remaining_files:
-            log_cb(f"[{_ts()}]       • {Path(rf).name}")
+        if isinstance(log, AutomationLogger):
+            for rf in remaining_files:
+                log.info(f"Merging: {Path(rf).name}")
+        else:
+            for rf in remaining_files:
+                log(f"[{_ts()}]       • {Path(rf).name}")
 
         # Determine output path for merged PDF
         folder_path = _get_folder_path(data) or tempfile.gettempdir()
@@ -543,18 +606,20 @@ async def fill_document_upload_section(
 
         # Remove old merged file if exists
         if os.path.exists(merged_pdf_path):
-            try:
-                os.remove(merged_pdf_path)
-            except OSError:
-                pass
+            try: os.remove(merged_pdf_path)
+            except OSError: pass
 
         # Merge files
-        log_cb(f"[{_ts()}]     🔄 Merging remaining files into single PDF...")
+        if isinstance(log, AutomationLogger):
+            log.wait("Creating consolidated PDF...")
+        else:
+            log(f"[{_ts()}]     🔄 Merging remaining files into single PDF...")
+        
         merged_path = merge_files_to_pdf(
             file_paths=remaining_files,
             output_path=merged_pdf_path,
             max_bytes=MAX_MERGED_PDF_BYTES,
-            log=log_cb,
+            log=log,
         )
 
         if merged_path:
@@ -566,20 +631,29 @@ async def fill_document_upload_section(
                         add_btn = page.locator('ng-form[name="mandatoryDocForm"] span.fa-plus-circle').first
                     await add_btn.click()
                     await asyncio.sleep(1.0)
-                    log_cb(f"[{_ts()}]     ✅ Added new row (row {current_row}) for Claim Related Documents")
+                    if isinstance(log, AutomationLogger):
+                        log.success("New row added for merged document.")
+                    else:
+                        log(f"[{_ts()}]     ✅ Added new row (row {current_row}) for Claim Related Documents")
                 except Exception as e:
-                    log_cb(f"[{_ts()}]     ⚠️ Could not add new row: {e}")
+                    if isinstance(log, AutomationLogger):
+                        log.warning(f"Row addition failed: {str(e)[:100]}")
+                    else:
+                        log(f"[{_ts()}]     ⚠️ Could not add new row: {e}")
 
             # Select "Claim Related Documents" in dropdown
             dropdown_sel = f'select#docType{current_row}'
             try:
                 await select_dropdown_with_delay(
                     page, dropdown_sel, "Claim Related Documents",
-                    "Doc Type → Claim Related Documents", log_cb, field_delay_ms
+                    f"Row {current_row} Type", log, field_delay_ms
                 )
                 await asyncio.sleep(0.5)
             except Exception as e:
-                log_cb(f"[{_ts()}]     ⚠️ Could not select dropdown for Claim Related Documents: {e}")
+                if isinstance(log, AutomationLogger):
+                    log.error(f"Dropdown selection failed: {str(e)[:100]}")
+                else:
+                    log(f"[{_ts()}]     ⚠️ Could not select dropdown for Claim Related Documents: {e}")
 
             # Attach merged PDF
             file_input_sel = f'input#mandatoryFiles{current_row}'
@@ -588,51 +662,80 @@ async def fill_document_upload_section(
                     page,
                     file_input_selector=file_input_sel,
                     file_path=merged_path,
-                    label="Claim Related Documents (merged)",
-                    log=log_cb,
+                    label=f"Row {current_row} Merged File",
+                    log=log,
                 )
                 if success:
                     mb = os.path.getsize(merged_path) / (1024 * 1024)
-                    log_cb(f"[{_ts()}]     ✅ Merged PDF attached ({mb:.1f}MB)")
+                    if not isinstance(log, AutomationLogger):
+                        log(f"[{_ts()}]     ✅ Merged PDF attached ({mb:.1f}MB)")
                 else:
-                    log_cb(f"[{_ts()}]     ⚠️ Merged PDF attachment failed.")
+                    if isinstance(log, AutomationLogger):
+                        log.error("Merged PDF attachment failed.")
+                    else:
+                        log(f"[{_ts()}]     ⚠️ Merged PDF attachment failed.")
             except Exception as e:
-                log_cb(f"[{_ts()}]     ⚠️ Error attaching merged PDF: {e}")
+                if isinstance(log, AutomationLogger):
+                    log.error(f"Attachment error: {str(e)[:100]}")
+                else:
+                    log(f"[{_ts()}]     ⚠️ Error attaching merged PDF: {e}")
 
             current_row += 1
         else:
-            log_cb(f"[{_ts()}]     ⚠️ PDF merge produced no output. Claim Related Documents not attached.")
+            if isinstance(log, AutomationLogger):
+                log.error("PDF merge failed; no output generated.")
+            else:
+                log(f"[{_ts()}]     ⚠️ PDF merge produced no output. Claim Related Documents not attached.")
     else:
-        log_cb(f"[{_ts()}]     ℹ️ No remaining files to merge. Skipping Claim Related Documents.")
+        if isinstance(log, AutomationLogger):
+            log.info("No remaining files to merge.")
+        else:
+            log(f"[{_ts()}]     ℹ️ No remaining files to merge. Skipping Claim Related Documents.")
+
+    if isinstance(log, AutomationLogger):
+        log.outdent()
 
     # ── Summary: prompt user to click Upload ──────────────────────────────────
     if current_row > 0:
-        log_cb("")
-        log_cb(f"[{_ts()}]   📋 All {current_row} document(s) attached in mandatory rows.")
-        log_cb(f"[{_ts()}]   ℹ️ Click the 'Upload' button on the website to save all documents.")
+        if isinstance(log, AutomationLogger):
+            log.success(f"All {current_row} documents attached. USER ACTION: Click 'Upload' on portal.")
+        else:
+            log("")
+            log(f"[{_ts()}]   📋 All {current_row} document(s) attached in mandatory rows.")
+            log(f"[{_ts()}]   ℹ️ Click the 'Upload' button on the website to save all documents.")
 
-    if stop_cb():
-        return False
+    if stop_cb(): return False
 
     # ══════════════════════════════════════════════════════════════════════════
     # NON-MANDATORY DOCUMENTS — SKIP ENTIRELY
     # ══════════════════════════════════════════════════════════════════════════
-    log_cb("")
-    log_cb(f"[{_ts()}]   ── List of Non-Mandatory Documents ──")
-    log_cb(f"[{_ts()}]   ℹ️ Skipping — all remaining docs already merged into Claim Related Documents.")
+    if isinstance(log, AutomationLogger):
+        log.info("Section: Non-Mandatory Documents")
+        log.info("Skipping — handled via merged PDF.")
+    else:
+        log("")
+        log(f"[{_ts()}]   ── List of Non-Mandatory Documents ──")
+        log(f"[{_ts()}]   ℹ️ Skipping — all remaining docs already merged into Claim Related Documents.")
 
-    if stop_cb():
-        return False
+    if stop_cb(): return False
 
     # ══════════════════════════════════════════════════════════════════════════
     # SECTION 3 — REMINDER TO INSURED (SKIP)
     # ══════════════════════════════════════════════════════════════════════════
-    log_cb("")
-    log_cb(f"[{_ts()}]   ── Section 3: Reminder to Insured ──")
-    log_cb(f"[{_ts()}]   ℹ️ Skipping — no automation interaction needed.")
+    if isinstance(log, AutomationLogger):
+        log.info("Section: Reminder to Insured")
+        log.info("Skipping — no action required.")
+    else:
+        log("")
+        log(f"[{_ts()}]   ── Section 3: Reminder to Insured ──")
+        log(f"[{_ts()}]   ℹ️ Skipping — no automation interaction needed.")
 
-    log_cb("")
-    log_cb(f"[{_ts()}] ═" * 60)
-    log_cb(f"[{_ts()}] ✅ Phase 9 (Document Upload Section) completed successfully.")
-    log_cb(f"[{_ts()}] ═" * 60)
+    if isinstance(log, AutomationLogger):
+        log.outdent()
+        log.success("Document Upload phase completed.")
+    else:
+        log("")
+        log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        log("  ✅ Phase 9 (Document Upload Section) complete")
+        log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     return True

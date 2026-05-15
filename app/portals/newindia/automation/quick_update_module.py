@@ -5,7 +5,7 @@ from playwright.async_api import Page
 from app.portals.newindia.automation.ui_utils import (
     fill_input_with_delay, click_radio_with_delay
 )
-from app.automation.automation_logger import _ts
+from app.automation.automation_logger import AutomationLogger
 
 # ── JavaScript helpers ────────────────────────────────────────────────────────
 
@@ -26,20 +26,29 @@ _JS_IS_CHECKED = """
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 async def _ensure_yes(page: Page, name: str, label: str,
-                      log_cb: Callable, delay_ms: int = 600) -> None:
+                      log, delay_ms: int = 600) -> None:
     """Check current state; only click Yes if not already checked."""
     try:
         count = await page.locator(f'input[name="{name}"]').count()
         if not count:
-            log_cb(f"[{_ts()}]   ⏭  [{label}] not in DOM")
+            if isinstance(log, AutomationLogger):
+                log.info(f"[{label}] field not found in DOM.")
+            else:
+                log(f"   ⏭  [{label}] not in DOM")
             return
         already = await page.evaluate(_JS_IS_CHECKED, [name, "Y"])
         if already:
-            log_cb(f"[{_ts()}]   ✔  [{label}] already YES")
+            if isinstance(log, AutomationLogger):
+                log.info(f"[{label}] already set to YES.")
+            else:
+                log(f"   ✔  [{label}] already YES")
             return
-        await click_radio_with_delay(page, name, "Y", label, log_cb, delay_ms)
+        await click_radio_with_delay(page, name, "Y", label, log, delay_ms)
     except Exception as e:
-        log_cb(f"[{_ts()}]   ⚠️  [{label}] error: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"[{label}] toggle error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️  [{label}] error: {e}")
 
 
 def _normalise_time(raw: str) -> str:
@@ -52,22 +61,30 @@ def _normalise_time(raw: str) -> str:
 async def fill_quick_update_details(
     page: Page,
     claim_data,
-    log_cb: Callable[[str], None] = print,
+    log = None,
     stop_cb: Callable[[], bool] = lambda: False,
     field_delay_ms: int = 600
 ) -> bool:
-    def log(msg): log_cb(f"[{_ts()}]   [QU] {msg}")
-
-    log("Starting Phase 3 — Quick Update Details")
+    if isinstance(log, AutomationLogger):
+        log.info("Starting Quick Update Details phase...")
+        log.indent()
+    elif log:
+        log(f"Starting Phase 3 — Quick Update Details")
 
     try:
         await page.wait_for_selector(
             'h4.headerClip:has-text("Quick Update Details")',
             state="visible", timeout=20000
         )
-        log("Section visible — waiting for Angular to finish rendering...")
+        if isinstance(log, AutomationLogger):
+            log.info("Phase container located.")
+        else:
+            log("Section visible — waiting for Angular to finish rendering...")
     except Exception as e:
-        log(f"Section not found: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Quick Update section not found: {str(e)[:100]}")
+        else:
+            log(f"Section not found: {e}")
         return False
 
     await asyncio.sleep(1.5)
@@ -76,15 +93,21 @@ async def fill_quick_update_details(
     # ── 1. Date Of Survey ────────────────────────────────────────────────────
     date_of_survey = getattr(claim_data, "date_of_survey", "").strip()
     if date_of_survey:
-        log(f"Date of Survey: {date_of_survey}")
+        if isinstance(log, AutomationLogger):
+            log.info(f"Filling Survey Date: {date_of_survey}")
+        else:
+            log(f"Date of Survey: {date_of_survey}")
+
         try:
             available = await page.evaluate(_JS_DATE_VALUES)
-            log(f"  Options: {available}")
             if date_of_survey in (available or []):
                 await click_radio_with_delay(page, "dateOfSurveyRadio", date_of_survey,
                                    "Date of Survey", log, field_delay_ms)
             else:
-                log("  Not in options — selecting 'Others'")
+                if isinstance(log, AutomationLogger):
+                    log.info("Target date not in radio options; selecting 'Others' for manual input.")
+                else:
+                    log("  Not in options — selecting 'Others'")
                 await click_radio_with_delay(page, "dateOfSurveyRadio", "Others",
                                    "Date of Survey (Others)", log, field_delay_ms)
                 await asyncio.sleep(0.8)
@@ -94,9 +117,15 @@ async def fill_quick_update_details(
                     await fill_input_with_delay(page, 'input[name="dateOfSurvey"]',
                                    date_of_survey, "Date (manual)", log, field_delay_ms)
                 except Exception as de:
-                    log(f"  ⚠️  Manual date input: {de}")
+                    if isinstance(log, AutomationLogger):
+                        log.error(f"Manual date input failed: {str(de)[:100]}")
+                    else:
+                        log(f"  ⚠️  Manual date input: {de}")
         except Exception as e:
-            log(f"  ⚠️  Date error: {e}")
+            if isinstance(log, AutomationLogger):
+                log.error(f"Date selection process failed: {str(e)[:100]}")
+            else:
+                log(f"  ⚠️  Date error: {e}")
 
     await asyncio.sleep(0.5)
     if stop_cb(): return False
@@ -109,47 +138,67 @@ async def fill_quick_update_details(
         if hh and mm:
             time_raw = f"{hh}:{mm}"
     if time_raw:
-        log(f"Time of Survey: {_normalise_time(time_raw)}")
+        n_time = _normalise_time(time_raw)
+        if isinstance(log, AutomationLogger):
+            log.info(f"Filling Survey Time: {n_time}")
+        else:
+            log(f"Time of Survey: {n_time}")
         await fill_input_with_delay(page, 'input[name="timeOfSurvey"]',
-                       _normalise_time(time_raw), "Time of Survey", log, field_delay_ms)
+                       n_time, "Time of Survey", log, field_delay_ms)
     await asyncio.sleep(0.4)
     if stop_cb(): return False
 
     # ── 3. Place Of Survey ───────────────────────────────────────────────────
     place = getattr(claim_data, "place_of_survey", "")
     if place:
-        log(f"Place of Survey: {place}")
+        if isinstance(log, AutomationLogger):
+            log.info(f"Filling Survey Place: {place[:50]}...")
+        else:
+            log(f"Place of Survey: {place}")
         await fill_input_with_delay(page, 'textarea[name="placeOfSurvey"]',
                        place, "Place of Survey", log, field_delay_ms)
     await asyncio.sleep(0.4)
     if stop_cb(): return False
 
     # ── 4-10. Boolean Yes/No fields — always ensure YES ──────────────────────
-    log("Setting boolean fields to YES...")
+    if isinstance(log, AutomationLogger):
+        log.info("Setting compliance toggles to 'Yes'...")
+        log.indent()
+    else:
+        log("Setting boolean fields to YES...")
 
     bool_fields = [
         ("radioDataCompleted",          "Survey Completed"),
-        ("radioDrivingLicenseApplicable","Driving License Applicable"),
-        ("radioDrivingLicense",         "DL Verified with Original"),
-        ("radioRCbook",                 "RC Book Verified with Original"),
-        ("radioDrivingLicensePar",      "DL Verified via Parivahan"),
-        ("radioRCbookPar",              "RC Book Verified via Parivahan"),
+        ("radioDrivingLicenseApplicable","DL Applicable"),
+        ("radioDrivingLicense",         "DL Verified (Original)"),
+        ("radioRCbook",                 "RC Verified (Original)"),
+        ("radioDrivingLicensePar",      "DL Verified (Parivahan)"),
+        ("radioRCbookPar",              "RC Verified (Parivahan)"),
         ("isCloseProximityBreakIn",     "Close Proximity / Break-In"),
     ]
     for radio_name, label in bool_fields:
         await _ensure_yes(page, radio_name, label, log, field_delay_ms)
-        if stop_cb(): return False
+        if stop_cb():
+            if isinstance(log, AutomationLogger): log.outdent()
+            return False
 
     # Conditional field — revealed after Close Proximity = Y
     await asyncio.sleep(0.5)
     await _ensure_yes(page, "inspectionReportUploaded", "Inspection Report Uploaded", log, field_delay_ms)
+    
+    if isinstance(log, AutomationLogger):
+        log.outdent()
+        
     await asyncio.sleep(0.4)
     if stop_cb(): return False
 
     # ── 11. Remarks ──────────────────────────────────────────────────────────
     remarks = getattr(claim_data, "remarks", "") or \
               getattr(claim_data, "surveyor_observation", "") or "Ok"
-    log(f"Remarks: {remarks[:80]}")
+    if isinstance(log, AutomationLogger):
+        log.info(f"Filling Remarks: {remarks[:50]}...")
+    else:
+        log(f"Remarks: {remarks[:80]}")
     await fill_input_with_delay(page, 'textarea[name="remarks"]', remarks, "Remarks", log, field_delay_ms)
     await asyncio.sleep(0.4)
     if stop_cb(): return False
@@ -157,7 +206,10 @@ async def fill_quick_update_details(
     # ── 12. Mobile No ────────────────────────────────────────────────────────
     mobile = re.sub(r"\D", "", str(getattr(claim_data, "mobile_no", "")))[:10]
     if mobile:
-        log(f"Mobile No: {mobile}")
+        if isinstance(log, AutomationLogger):
+            log.info(f"Filling Mobile No: {mobile}")
+        else:
+            log(f"Mobile No: {mobile}")
         await fill_input_with_delay(page, 'input[name="mobileNo"]', mobile, "Mobile No", log, field_delay_ms)
     await asyncio.sleep(0.4)
     if stop_cb(): return False
@@ -165,17 +217,27 @@ async def fill_quick_update_details(
     # ── 13. Email ID ─────────────────────────────────────────────────────────
     email = getattr(claim_data, "email_id", "")
     if email:
-        log(f"Email ID: {email}")
+        if isinstance(log, AutomationLogger):
+            log.info(f"Filling Email ID: {email}")
+        else:
+            log(f"Email ID: {email}")
         await fill_input_with_delay(page, 'input[name="emailId"]', email, "Email ID", log, field_delay_ms)
     await asyncio.sleep(0.4)
     if stop_cb(): return False
 
     # ── 14. Expected Date of Repair = Date of Survey ─────────────────────────
     if date_of_survey:
-        log(f"Expected Date of Repair (= Survey Date): {date_of_survey}")
+        if isinstance(log, AutomationLogger):
+            log.info(f"Filling Expected Repair Date: {date_of_survey}")
+        else:
+            log(f"Expected Date of Repair (= Survey Date): {date_of_survey}")
         await fill_input_with_delay(page, 'input[name="expectedDateOfRepair"]',
                        date_of_survey, "Expected Date of Repair", log, field_delay_ms)
     await asyncio.sleep(0.4)
 
-    log("Phase 3 complete — all fields filled.")
+    if isinstance(log, AutomationLogger):
+        log.outdent()
+        log.success("Quick Update Details phase completed.")
+    elif log:
+        log("Phase 3 complete — all fields filled.")
     return True

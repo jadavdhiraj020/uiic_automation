@@ -1,13 +1,3 @@
-"""
-claim_assessment.py — Fills the "Claim Assessment" tab.
-
-PRODUCTION REWRITE 2026-04-18:
-  - Declaration radio: now uses AngularJS-compatible JS (set .checked + 'change' event)
-  - Invoice no/date fallback: strict empty-string check (not falsy) to avoid "0" override
-  - Upload wait: replaced sleep(2.5) with network-idle wait → faster and reliable
-  - _click_tab: unified shared helper (no longer duplicated)
-  - Each section isolated in try/except — one bad field cannot crash the whole tab
-"""
 import asyncio
 import logging
 import os
@@ -20,6 +10,7 @@ from app.automation.form_helpers import (
 )
 from app.automation.selectors import ASSESSMENT, ASSESSMENT_SLOTS, TABS, TAB_SEL
 from app.automation.tab_utils import click_tab
+from app.automation.automation_logger import AutomationLogger
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +26,9 @@ ASSESSMENT_UPLOAD_LABELS = {
 }
 
 
-async def _click_declaration_radio(page, log_cb: Callable) -> None:
+async def _click_declaration_radio(page, log) -> None:
     """
     Click the Yes radio for Declaration (ynPerused).
-    Uses JS only — avoids f-string quoting issues with CSS selectors.
     """
     result = await page.evaluate("""
         (function() {
@@ -81,34 +71,36 @@ async def _click_declaration_radio(page, log_cb: Callable) -> None:
         })();
     """)
     if result:
-        log_cb(f"  ✅ Declaration: Yes ({result})")
+        if isinstance(log, AutomationLogger):
+            log.success(f"Declaration set to 'Yes' ({result})")
+        else:
+            log(f"  ✅ Declaration: Yes ({result})")
     else:
         # Playwright fallback
         try:
             r = page.locator(ASSESSMENT["radio_declaration"]).first
             if await r.is_visible(timeout=2000):
                 await r.click(force=True)
-                log_cb("  ✅ Declaration: Yes (Playwright force)")
+                if isinstance(log, AutomationLogger):
+                    log.success("Declaration set to 'Yes' (Playwright force)")
+                else:
+                    log("  ✅ Declaration: Yes (Playwright force)")
             else:
-                log_cb("  ⚠️  Declaration radio: not found on page")
+                if isinstance(log, AutomationLogger):
+                    log.warning("Declaration radio not found on page")
+                else:
+                    log("  ⚠️  Declaration radio: not found on page")
         except Exception as e:
-            log_cb(f"  ⚠️  Declaration radio: {str(e)[:80]}")
+            if isinstance(log, AutomationLogger):
+                log.error(f"Declaration radio error: {str(e)[:80]}")
+            else:
+                log(f"  ⚠️  Declaration radio: {str(e)[:80]}")
 
 
 async def _upload_by_label(page, upload_label: str, file_path: str,
-                            log_cb: Callable, settings: dict, slot_key: str = "") -> bool:
+                            log, settings: dict, slot_key: str = "") -> bool:
     """
-    Find the file input associated with the given upload label.
-
-    REWRITTEN 2026-04-21 — Confirmed from live DOM:
-      Portal uses name="fileToUploadN" where N = slot index (0-4).
-      Strategy 0: Direct input[name='fileToUploadN'] — bulletproof
-      Strategy 1: JS DOM scan — walks li.clearfix rows by text
-      Strategy 2: li.clearfix Playwright filter
-      Strategy 3: label parent/grandparent traversal
-      Strategy 4: XPath following fallback
-
-    Also handles Angular's data-ng-disabled by removing disabled attr via JS.
+    Find the file input associated with the given upload label and upload.
     """
     cfg = settings or {}
     upload_wait_s = cfg.get("upload_wait_ms", 3000) / 1000.0
@@ -116,20 +108,24 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
 
     fname = os.path.basename(file_path)
     if not os.path.isfile(file_path):
-        log_cb(f"  ⚠️  Not found: {fname}")
+        if isinstance(log, AutomationLogger):
+            log.warning(f"File not found: {fname}")
+        else:
+            log(f"  ⚠️  Not found: {fname}")
         return False
+        
     mb = os.path.getsize(file_path) / (1024 * 1024)
     if mb > MAX_FILE_MB:
         logger.info("Large assessment file (%.1fMB): %s — portal alert will be auto-accepted", mb, fname)
 
-
-    log_cb(f"  ▶ [{upload_label}] ← {fname}")
+    if isinstance(log, AutomationLogger):
+        log.info(f"[{upload_label}] ← {fname}")
+    else:
+        log(f"  ▶ [{upload_label}] ← {fname}")
+        
     abs_path = str(os.path.abspath(file_path))
 
     # Strategy 0: Direct name selector + Fallbacks
-    # Portal uses 'fileToUploadMan' for mandatory docs and 'fileToUploadOpt' for others,
-    # or sometimes 'fileToUpload1'. We will query by name or just use a robust relative locator.
-    slot_idx = ASSESSMENT_SLOTS.get(slot_key)
     try:
         # First try to find the row by label, then find the input inside it
         row = page.locator("li.clearfix").filter(has_text=upload_label).first
@@ -150,10 +146,13 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
                 except Exception:
                     pass
                 await asyncio.sleep(upload_wait_s)
-                log_cb(f"  ✅ Uploaded: {fname} (li.clearfix relative selector)")
+                if isinstance(log, AutomationLogger):
+                    log.success(f"Uploaded: {fname}")
+                else:
+                    log(f"  ✅ Uploaded: {fname} (li.clearfix relative selector)")
                 return True
     except Exception as e:
-        log_cb(f"  ⚠️  Strategy 0 failed: {str(e)[:80]}")
+        logger.debug(f"Strategy 0 failed: {e}")
 
     # Strategy 1: JS that finds the input, removes disabled, and returns it
     try:
@@ -203,70 +202,19 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
                 except Exception:
                     pass
                 await asyncio.sleep(upload_wait_s)
-                log_cb(f"  ✅ Uploaded: {fname} (JS DOM scan)")
+                if isinstance(log, AutomationLogger):
+                    log.success(f"Uploaded: {fname}")
+                else:
+                    log(f"  ✅ Uploaded: {fname} (JS DOM scan)")
                 return True
     except Exception as e:
-        log_cb(f"  ⚠️  JS strategy failed for [{upload_label}]: {str(e)[:80]}")
-
-    # Strategy 2: Playwright li.clearfix filter
-    try:
-        row = page.locator("li.clearfix").filter(
-            has=page.locator(f"*:has-text('{upload_label}')")
-        ).filter(
-            has=page.locator('input[type="file"]')
-        ).first
-        if await row.count() > 0:
-            file_input = row.locator('input[type="file"]').first
-            if await file_input.count() > 0:
-                await file_input.set_input_files(abs_path)
-                try:
-                    await page.evaluate("el => el.dispatchEvent(new Event('change', { bubbles: true }))", arg=file_input)
-                except Exception:
-                    pass
-                await asyncio.sleep(upload_wait_s)
-                log_cb(f"  ✅ Uploaded: {fname} (li.clearfix)")
-                return True
-    except Exception:
-        pass
-
-    # Strategy 3: label parent/grandparent traversal
-    try:
-        labels = page.locator(f"label:has-text('{upload_label}')")
-        label_count = await labels.count()
-        for i in range(label_count):
-            lbl = labels.nth(i)
-            parent = lbl.locator("xpath=..")
-            sibling_input = parent.locator('input[type="file"]')
-            if await sibling_input.count() > 0:
-                await sibling_input.first.set_input_files(abs_path)
-                try:
-                    await page.evaluate("el => el.dispatchEvent(new Event('change', { bubbles: true }))", arg=sibling_input.first)
-                except Exception:
-                    pass
-                await asyncio.sleep(upload_wait_s)
-                log_cb(f"  ✅ Uploaded: {fname} (label parent)")
-                return True
-            grandparent = parent.locator("xpath=..")
-            gp_input = grandparent.locator('input[type="file"]')
-            if await gp_input.count() > 0:
-                await gp_input.first.set_input_files(abs_path)
-                try:
-                    await page.evaluate("el => el.dispatchEvent(new Event('change', { bubbles: true }))", arg=gp_input.first)
-                except Exception:
-                    pass
-                await asyncio.sleep(upload_wait_s)
-                log_cb(f"  ✅ Uploaded: {fname} (label grandparent)")
-                return True
-    except Exception:
-        pass
+        logger.debug(f"Strategy 1 failed: {e}")
 
     # Strategy 4: XPath following fallback
     label_selectors = [
         f"span:has-text('{upload_label}')",
         f"label:has-text('{upload_label}')",
         f"td:has-text('{upload_label}')",
-        f"b:has-text('{upload_label}')",
-        f"strong:has-text('{upload_label}')",
     ]
     for label_sel in label_selectors:
         try:
@@ -280,17 +228,28 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
                     await page.wait_for_load_state("networkidle", timeout=timeout_ms)
                 except Exception:
                     await asyncio.sleep(upload_wait_s / 2.0)
-                log_cb(f"  ✅ Uploaded: {fname} (XPath following)")
+                if isinstance(log, AutomationLogger):
+                    log.success(f"Uploaded: {fname}")
+                else:
+                    log(f"  ✅ Uploaded: {fname} (XPath following)")
                 return True
         except Exception:
             continue
 
-    log_cb(f"  ❌ Upload input not found for: {upload_label}")
+    if isinstance(log, AutomationLogger):
+        log.error(f"Upload input not found for: {upload_label}")
+    else:
+        log(f"  ❌ Upload input not found for: {upload_label}")
     return False
 
 
-async def _fill_parts(page, claim: ClaimData, log_cb: Callable, _src) -> None:
-    log_cb("\n🔩 Parts Depreciation:")
+async def _fill_parts(page, claim: ClaimData, log, _src) -> None:
+    if isinstance(log, AutomationLogger):
+        log.info("Filling Parts Depreciation section...")
+        log.indent()
+    else:
+        log("\n🔩 Parts Depreciation:")
+        
     try:
         nil_dep_raw = (claim.nil_depreciation or "").strip().lower()
         should_check = nil_dep_raw == "yes"
@@ -331,22 +290,31 @@ async def _fill_parts(page, claim: ClaimData, log_cb: Callable, _src) -> None:
 
             if toggle_result and toggle_result.get("ok"):
                 state_label = "Yes" if should_check else "No"
-                source = _src("nil_depreciation") or "Excel Data"
                 if toggle_result.get("before") != toggle_result.get("after"):
-                    log_cb(f"  ✅ Nil Depreciation checkbox: set to {state_label} (Source: {source})")
+                    if isinstance(log, AutomationLogger):
+                        log.success(f"Nil Depreciation checkbox set to {state_label}")
+                    else:
+                        log(f"  ✅ Nil Depreciation checkbox: set to {state_label}")
                 else:
-                    log_cb(f"  ✅ Nil Depreciation checkbox: already {state_label} (Source: {source})")
+                    if isinstance(log, AutomationLogger):
+                        log.info(f"Nil Depreciation already {state_label}")
+                    else:
+                        log(f"  ✅ Nil Depreciation checkbox: already {state_label}")
                 await asyncio.sleep(0.3)
             else:
                 reason = toggle_result.get("reason") if isinstance(toggle_result, dict) else "unknown error"
-                log_cb(f"  ⚠️  Nil Depreciation checkbox: {reason}")
+                if isinstance(log, AutomationLogger):
+                    log.warning(f"Nil Depreciation checkbox: {reason}")
+                else:
+                    log(f"  ⚠️  Nil Depreciation checkbox: {reason}")
         else:
-            log_cb("  ⏭️  Nil Depreciation checkbox: skipped (Excel value missing or not Yes/No)")
+            if isinstance(log, AutomationLogger):
+                log.info("Nil Depreciation checkbox skipped (no data)")
+            else:
+                log("  ⏭️  Nil Depreciation checkbox: skipped (Excel value missing or not Yes/No)")
 
         # ── Parts values ─────────────────────────────────────────────────
         if should_check:
-            # ── Nil Depreciation YES: Manually compute Total = Age + 50% + Nil ──
-            # Ignore Excel's parts_gst18_amount — calculate from the 3 components safely
             import re
             def parse_amt(val):
                 clean = re.sub(r"[^\d.]", "", str(val or "0"))
@@ -365,210 +333,298 @@ async def _fill_parts(page, claim: ClaimData, log_cb: Callable, _src) -> None:
             val_nil = str(v_nil)
             val_target = str(v_target)
             
-            log_cb(f"  ⚖️  Nil ON: Total = {v_age} + {v_50} + {v_nil} = {v_target} (calculated, Excel total ignored)")
+            if isinstance(log, AutomationLogger):
+                log.info(f"Nil ON: Total = {v_age} + {v_50} + {v_nil} = {v_target}")
+            else:
+                log(f"  ⚖️  Nil ON: Total = {v_age} + {v_50} + {v_nil} = {v_target}")
         else:
-            # ── Nil Depreciation NO / Blank: Enter all Excel values as-is ────
-            # No math adjustments — trust the Excel data exactly
             val_age = claim.parts_age_dep_excl_gst
             val_50 = claim.parts_50_dep_excl_gst
             val_nil = claim.parts_nil_dep_excl_gst
             val_target = claim.parts_gst18_amount
             
-            log_cb("  📊 Nil OFF/Blank: Using all Excel values as-is without modification")
+            if isinstance(log, AutomationLogger):
+                log.info("Nil OFF/Blank: Using Excel values as-is")
+            else:
+                log("  📊 Nil OFF/Blank: Using all Excel values as-is without modification")
 
         await safe_fill_amount(page, ASSESSMENT["age_dep"],
-                               val_age, "Age Dep (Metal)", log_cb,
+                               val_age, "Age Dep (Metal)", log,
                                source=_src("parts_age_dep_excl_gst"))
         await safe_fill_amount(page, ASSESSMENT["dep_50"],
-                               val_50, "50% Dep (Plastic)", log_cb,
+                               val_50, "50% Dep (Plastic)", log,
                                source=_src("parts_50_dep_excl_gst"))
         await safe_fill_amount(page, ASSESSMENT["nil_dep"],
-                               val_nil, "Nil Dep", log_cb,
+                               val_nil, "Nil Dep", log,
                                source=_src("parts_nil_dep_excl_gst"))
         await safe_fill_amount(page, ASSESSMENT["gst_18_parts"],
-                               val_target, "Parts GST 18%", log_cb,
+                               val_target, "Parts GST 18%", log,
                                source=_src("parts_gst18_amount") if not should_check else "Calculated")
     except Exception as e:
-        log_cb(f"  ❌ Parts section error: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Parts section error: {e}")
+        else:
+            log(f"  ❌ Parts section error: {e}")
+    finally:
+        if isinstance(log, AutomationLogger): log.outdent()
 
 
-async def _fill_labour(page, claim: ClaimData, log_cb: Callable, _src) -> None:
-    log_cb("\n👷 Labour:")
+async def _fill_labour(page, claim: ClaimData, log, _src) -> None:
+    if isinstance(log, AutomationLogger):
+        log.info("Filling Labour section...")
+        log.indent()
+    else:
+        log("\n👷 Labour:")
+        
     try:
         await safe_fill_amount(page, ASSESSMENT["labour"],
-                               claim.labour_excl_gst, "Labour (Excl GST)", log_cb,
+                               claim.labour_excl_gst, "Labour (Excl GST)", log,
                                source=_src("labour_excl_gst"))
         await safe_fill_amount(page, ASSESSMENT["gst_18_labour"],
-                               claim.labour_excl_gst, "Labour GST 18%", log_cb,
+                               claim.labour_excl_gst, "Labour GST 18%", log,
                                source=_src("labour_excl_gst"))
     except Exception as e:
-        log_cb(f"  ❌ Labour section error: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Labour section error: {e}")
+        else:
+            log(f"  ❌ Labour section error: {e}")
+    finally:
+        if isinstance(log, AutomationLogger): log.outdent()
 
 
-async def _fill_workshop_invoice(page, claim: ClaimData, log_cb: Callable, _src) -> None:
-    log_cb("\n🧾 Workshop Invoice:")
+async def _fill_workshop_invoice(page, claim: ClaimData, log, _src) -> None:
+    if isinstance(log, AutomationLogger):
+        log.info("Filling Workshop Invoice section...")
+        log.indent()
+    else:
+        log("\n🧾 Workshop Invoice:")
+        
     try:
-        # Strip trailing "(CREDIT)" or anything after a space, and limit to 20 chars
         ws_no = str(claim.workshop_invoice_no).split(" ")[0].split("(")[0][:20]
         await safe_fill(page, ASSESSMENT["ws_invoice_no"],
-                        ws_no, "WS Invoice No", log_cb,
+                        ws_no, "WS Invoice No", log,
                         source=_src("workshop_invoice_no"))
         await safe_fill_date(page, ASSESSMENT["ws_invoice_date"],
-                             claim.workshop_invoice_date, "WS Invoice Date", log_cb,
+                             claim.workshop_invoice_date, "WS Invoice Date", log,
                              source=_src("workshop_invoice_date"))
     except Exception as e:
-        log_cb(f"  ❌ Workshop invoice error: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Workshop invoice error: {e}")
+        else:
+            log(f"  ❌ Workshop invoice error: {e}")
+    finally:
+        if isinstance(log, AutomationLogger): log.outdent()
 
 
-async def _fill_other_charges(page, claim: ClaimData, log_cb: Callable, _src) -> None:
-    log_cb("\n💰 Other Charges:")
+async def _fill_other_charges(page, claim: ClaimData, log, _src) -> None:
+    if isinstance(log, AutomationLogger):
+        log.info("Filling Other Charges section...")
+        log.indent()
+    else:
+        log("\n💰 Other Charges:")
+        
     try:
         await safe_fill_amount(page, ASSESSMENT["towing"],
-                               claim.towing_charges, "Towing Charges", log_cb,
+                               claim.towing_charges, "Towing Charges", log,
                                source=_src("towing_charges"))
         await safe_fill_amount(page, ASSESSMENT["spot_repairs"],
-                               claim.spot_repairs, "Spot Repairs", log_cb,
+                               claim.spot_repairs, "Spot Repairs", log,
                                source=_src("spot_repairs"))
         await safe_fill_amount(page, ASSESSMENT["vol_excess"],
-                               claim.voluntary_excess, "Voluntary Excess", log_cb,
+                               claim.voluntary_excess, "Voluntary Excess", log,
                                source=_src("voluntary_excess"))
         await safe_fill_amount(page, ASSESSMENT["comp_excess"],
-                               claim.compulsory_excess, "Compulsory Excess", log_cb,
+                               claim.compulsory_excess, "Compulsory Excess", log,
                                source=_src("compulsory_excess"))
         await safe_fill_amount(page, ASSESSMENT["imp_excess"],
-                               claim.imposed_excess, "Imposed Excess", log_cb,
+                               claim.imposed_excess, "Imposed Excess", log,
                                source=_src("imposed_excess"))
         await safe_fill_amount(page, ASSESSMENT["salvage"],
-                               claim.salvage_value, "Salvage Value", log_cb,
+                               claim.salvage_value, "Salvage Value", log,
                                source=_src("salvage_value"))
     except Exception as e:
-        log_cb(f"  ❌ Other charges error: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Other charges error: {e}")
+        else:
+            log(f"  ❌ Other charges error: {e}")
+    finally:
+        if isinstance(log, AutomationLogger): log.outdent()
 
 
-async def _fill_invoice_details(page, claim: ClaimData, log_cb: Callable, _src) -> None:
-    log_cb("\n📋 Invoice Details:")
+async def _fill_invoice_details(page, claim: ClaimData, log, _src) -> None:
+    if isinstance(log, AutomationLogger):
+        log.info("Filling Invoice Details section...")
+        log.indent()
+    else:
+        log("\n📋 Invoice Details:")
+        
     try:
-        # BUG FIX (B6): Use explicit empty-string check, NOT falsy check.
-        # claim.invoice_no == "0" is valid; only fall back when truly absent.
         inv_no   = claim.invoice_no   if claim.invoice_no.strip()   else claim.workshop_invoice_no
         inv_date = claim.invoice_date if claim.invoice_date.strip() else claim.workshop_invoice_date
-        
-        # Strip trailing "(CREDIT)" or anything after a space, and limit to 20 chars
         inv_no_clean = str(inv_no).split(" ")[0].split("(")[0][:20]
         
         await safe_fill(page, ASSESSMENT["invoice_no"],
-                        inv_no_clean, "Invoice No", log_cb,
+                        inv_no_clean, "Invoice No", log,
                         source=_src("invoice_no") or _src("workshop_invoice_no"))
         await safe_fill_date(page, ASSESSMENT["invoice_date"],
-                             inv_date, "Invoice Date", log_cb,
+                             inv_date, "Invoice Date", log,
                              source=_src("invoice_date") or _src("workshop_invoice_date"))
     except Exception as e:
-        log_cb(f"  ❌ Invoice details error: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Invoice details error: {e}")
+        else:
+            log(f"  ❌ Invoice details error: {e}")
+    finally:
+        if isinstance(log, AutomationLogger): log.outdent()
 
 
-async def _fill_report_details(page, claim: ClaimData, log_cb: Callable, _src) -> None:
-    log_cb("\n📝 Report Details:")
+async def _fill_report_details(page, claim: ClaimData, log, _src) -> None:
+    if isinstance(log, AutomationLogger):
+        log.info("Filling Report Details section...")
+        log.indent()
+    else:
+        log("\n📝 Report Details:")
+        
     try:
         import re
         raw_ref = claim.final_report_no or ""
-        
-        # Safe Fallback: Only use invoice number if final report number is completely empty
         if not raw_ref.strip():
             raw_ref = claim.invoice_no or ""
-            
-        # The user requested to only enter the last value after dash/slash (e.g., '116')
         clean_report_no = re.split(r'[/\\-]', raw_ref)[-1].strip() if raw_ref else ""
         
         await safe_fill(page, ASSESSMENT["report_no"],
-                        clean_report_no, "Report No", log_cb,
+                        clean_report_no, "Report No", log,
                         source=_src("final_report_no"))
         if claim.final_report_date and claim.final_report_date.strip():
             await safe_fill_date(page, ASSESSMENT["report_date"],
-                                 claim.final_report_date, "Report Date", log_cb,
+                                 claim.final_report_date, "Report Date", log,
                                  source=_src("final_report_date"))
         else:
-            log_cb("  ⏭️  Report Date: skipped (portal auto-fills today's date)")
+            if isinstance(log, AutomationLogger):
+                log.info("Report Date skipped (using portal default)")
+            else:
+                log("  ⏭️  Report Date: skipped (portal auto-fills today's date)")
     except Exception as e:
-        log_cb(f"  ❌ Report details error: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Report details error: {e}")
+        else:
+            log(f"  ❌ Report details error: {e}")
+    finally:
+        if isinstance(log, AutomationLogger): log.outdent()
 
 
-async def _fill_surveyor_charges(page, claim: ClaimData, log_cb: Callable, _src) -> None:
-    log_cb("\n💼 Surveyor Charges:")
+async def _fill_surveyor_charges(page, claim: ClaimData, log, _src) -> None:
+    if isinstance(log, AutomationLogger):
+        log.info("Filling Surveyor Charges section...")
+        log.indent()
+    else:
+        log("\n💼 Surveyor Charges:")
+        
     try:
         await safe_fill_amount(page, ASSESSMENT["travel"],
-                               claim.traveling_expenses, "Travel Expenses", log_cb,
+                               claim.traveling_expenses, "Travel Expenses", log,
                                source=_src("traveling_expenses"))
         await safe_fill_amount(page, ASSESSMENT["prof_fee"],
-                               claim.professional_fee, "Professional Fee", log_cb,
+                               claim.professional_fee, "Professional Fee", log,
                                source=_src("professional_fee"))
         await safe_fill_amount(page, ASSESSMENT["daily_allowance"],
-                               claim.daily_allowance, "Daily Allowance", log_cb,
+                               claim.daily_allowance, "Daily Allowance", log,
                                source=_src("daily_allowance"))
         await safe_fill_amount(page, ASSESSMENT["photo"],
-                               claim.photo_charges, "Photo Charges", log_cb,
+                               claim.photo_charges, "Photo Charges", log,
                                source=_src("photo_charges"))
-        # Total Claimed is now calculated during Excel extraction to ensure
-        # the UI preview and the automation submit exact matching values.
         await safe_fill_amount(page, ASSESSMENT["total"],
-                               str(claim.total_claimed_amount or 0), "Total Claimed Amount", log_cb,
+                               str(claim.total_claimed_amount or 0), "Total Claimed Amount", log,
                                source="Calculated")
     except Exception as e:
-        log_cb(f"  ❌ Surveyor charges error: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Surveyor charges error: {e}")
+        else:
+            log(f"  ❌ Surveyor charges error: {e}")
+    finally:
+        if isinstance(log, AutomationLogger): log.outdent()
 
 
-async def _upload_all(page, claim: ClaimData, log_cb: Callable, settings: dict) -> None:
-    log_cb("\n📤 Uploading Assessment Documents...")
+async def _upload_all(page, claim: ClaimData, log, settings: dict) -> None:
+    if isinstance(log, AutomationLogger):
+        log.info("Uploading Assessment Documents...")
+        log.indent()
+    else:
+        log("\n📤 Uploading Assessment Documents...")
+        
     count = 0
-    for slot_key, file_path in claim.assessment_files.items():
-        if not file_path:
-            continue
+    files_to_upload = [ (k, v) for k, v in claim.assessment_files.items() if v ]
+    
+    for slot_key, file_path in files_to_upload:
         upload_label = ASSESSMENT_UPLOAD_LABELS.get(slot_key, slot_key)
         try:
-            ok = await _upload_by_label(page, upload_label, file_path, log_cb,
+            ok = await _upload_by_label(page, upload_label, file_path, log,
                                          settings=settings, slot_key=slot_key)
             if ok:
                 count += 1
         except Exception as e:
-            log_cb(f"  ❌ [{slot_key}] upload error: {e}")
-    log_cb(f"  📁 {count}/{len(claim.assessment_files)} files uploaded")
+            if isinstance(log, AutomationLogger):
+                log.error(f"[{slot_key}] upload error: {e}")
+            else:
+                log(f"  ❌ [{slot_key}] upload error: {e}")
+                
+    if isinstance(log, AutomationLogger):
+        log.success(f"Assessment uploads complete: {count}/{len(files_to_upload)} files")
+        log.outdent()
+    else:
+        log(f"  📁 {count}/{len(files_to_upload)} files uploaded")
 
 
 async def fill_claim_assessment(page, claim: ClaimData,
-                                 log_cb: Callable[[str], None] = print,
+                                 log = print,
                                  settings: dict = None) -> None:
     """
     Fill the entire Claim Assessment tab.
-    Each section is isolated — a failure in one section does NOT stop others.
     """
-    await click_tab(page, "assessment", log_cb)
+    await click_tab(page, "assessment", log)
 
-    log_cb("📊 Filling Claim Assessment...")
+    if isinstance(log, AutomationLogger):
+        log.info("Filling Claim Assessment tab...")
+        log.indent()
+    else:
+        log("📊 Filling Claim Assessment...")
 
     # Helper to look up Excel source coordinate for a field
     def _src(key: str) -> str:
         return claim._excel_coords.get(key, "")
 
-    await _fill_parts(page, claim, log_cb, _src)
-    await _fill_labour(page, claim, log_cb, _src)
-    await _fill_workshop_invoice(page, claim, log_cb, _src)
-    await _fill_other_charges(page, claim, log_cb, _src)
-    await _fill_invoice_details(page, claim, log_cb, _src)
-    await _fill_report_details(page, claim, log_cb, _src)
-    await _fill_surveyor_charges(page, claim, log_cb, _src)
+    await _fill_parts(page, claim, log, _src)
+    await _fill_labour(page, claim, log, _src)
+    await _fill_workshop_invoice(page, claim, log, _src)
+    await _fill_other_charges(page, claim, log, _src)
+    await _fill_invoice_details(page, claim, log, _src)
+    await _fill_report_details(page, claim, log, _src)
+    await _fill_surveyor_charges(page, claim, log, _src)
 
-    # Declaration radio (AngularJS-compatible)
-    log_cb("\n✍️  Declaration:")
-    await _click_declaration_radio(page, log_cb)
+    # Declaration radio
+    if isinstance(log, AutomationLogger):
+        log.info("Filling Declaration...")
+    else:
+        log("\n✍️  Declaration:")
+    await _click_declaration_radio(page, log)
 
-    # Remarks (optional — same text as observation)
+    # Remarks
     try:
         await safe_fill_portal_text(page, ASSESSMENT["remarks"],
-                             "Done", "Remarks", log_cb,
+                             "Done", "Remarks", log,
                              source="Hardcoded")
     except Exception as e:
-        log_cb(f"  ⚠️  Remarks: {e}")
+        if isinstance(log, AutomationLogger):
+            log.warning(f"Remarks error: {e}")
+        else:
+            log(f"  ⚠️  Remarks: {e}")
 
-    await _upload_all(page, claim, log_cb, settings=settings)
+    await _upload_all(page, claim, log, settings=settings)
 
-    log_cb("\n✅ Claim Assessment complete.")
-    log_cb("👀 Review all tabs then click 'Final Submit' manually.")
+    if isinstance(log, AutomationLogger):
+        log.success("Claim Assessment tab complete.")
+        log.info("READY FOR FINAL SUBMISSION")
+        log.outdent()
+    else:
+        log("\n✅ Claim Assessment complete.")
+        log("👀 Review all tabs then click 'Final Submit' manually.")

@@ -24,7 +24,7 @@ class AutomationWorker(QObject):
         )
         try:
             result = loop.run_until_complete(
-                self._engine.run(self.claim, self.settings_override)
+                self._engine.run_automation(self.claim, self.settings_override)
             )
             success = bool(getattr(result, "success", False))
             message = getattr(result, "message", "Automation finished.")

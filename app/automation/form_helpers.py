@@ -12,7 +12,8 @@ import asyncio
 import logging
 import os
 import re
-from typing import Callable
+from typing import Callable, Optional
+from app.automation.automation_logger import AutomationLogger, _ts
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +89,7 @@ def _to_iso_date(value: str) -> str:
 # ── Internal raw fill (no value filtering) ───────────────────────────────────
 
 async def _raw_fill(page, sel: str, value_str: str, label: str,
-                    log_cb: Callable, timeout_ms: int = 5000,
+                    log, timeout_ms: int = 5000,
                     retries: int = 1, source: str = "") -> bool:
     """
     Core fill operation with one automatic retry on failure.
@@ -103,14 +104,24 @@ async def _raw_fill(page, sel: str, value_str: str, label: str,
             await el.fill(value_str) 
             await el.press("Tab")
             await asyncio.sleep(0.1)
-            log_cb(f"  ✅ [Filled] {label} : '{value_str[:60]}' ({src_tag})")
+            
+            if isinstance(log, AutomationLogger):
+                log.field_filled(label, value_str)
+            else:
+                log(f"  ✅ [Filled] {label} : '{value_str[:60]}' ({src_tag})")
             return True
         except Exception as e:
             if attempt < retries:
-                log_cb(f"  🔄 {label}: retry {attempt+1} ({str(e)[:60]})")
+                if isinstance(log, AutomationLogger):
+                    log.retry(label, attempt + 1, retries + 1)
+                else:
+                    log(f"  🔄 {label}: retry {attempt+1} ({str(e)[:60]})")
                 await asyncio.sleep(0.5)
             else:
-                log_cb(f"  ⚠️  {label}: {str(e)[:100]}")
+                if isinstance(log, AutomationLogger):
+                    log.field_failed(label, str(e))
+                else:
+                    log(f"  ⚠️  {label}: {str(e)[:100]}")
     return False
 
 
@@ -129,7 +140,7 @@ def format_date_for_uiic(value: str) -> str:
 # ── Public fill helpers ───────────────────────────────────────────────────────
 
 async def safe_fill(page, sel: str, value, label: str,
-                    log_cb: Callable, timeout_ms: int = 5000,
+                    log, timeout_ms: int = 5000,
                     source: str = "") -> bool:
     """
     Fill a text / number input.
@@ -138,11 +149,11 @@ async def safe_fill(page, sel: str, value, label: str,
     """
     if value is None or str(value).strip() == "":
         return False
-    return await _raw_fill(page, sel, str(value).strip(), label, log_cb, timeout_ms, source=source)
+    return await _raw_fill(page, sel, str(value).strip(), label, log, timeout_ms, source=source)
 
 
 async def safe_fill_amount(page, sel: str, value, label: str,
-                           log_cb: Callable, timeout_ms: int = 5000,
+                           log, timeout_ms: int = 5000,
                            source: str = "") -> bool:
     """
     Fill a monetary field (rounds to nearest integer).
@@ -153,11 +164,11 @@ async def safe_fill_amount(page, sel: str, value, label: str,
         return False
     int_val = _to_int_amount(str(value))
     # Use _raw_fill directly (not safe_fill) so "0" is NOT filtered out
-    return await _raw_fill(page, sel, int_val, label, log_cb, timeout_ms, source=source)
+    return await _raw_fill(page, sel, int_val, label, log, timeout_ms, source=source)
 
 
 async def safe_fill_date(page, sel: str, value, label: str,
-                         log_cb: Callable, timeout_ms: int = 5000,
+                         log, timeout_ms: int = 5000,
                          source: str = "") -> bool:
     """
     Fill an Angular custom datepicker field (text input with calendar icon).
@@ -172,12 +183,18 @@ async def safe_fill_date(page, sel: str, value, label: str,
     Portal expects: DD/MM/YYYY format in these text inputs.
     """
     if not value or str(value).strip() == "" or str(value).strip() == "00:00:00":
-        log_cb(f"  ⏭️  [Skipped] {label} : (Empty or Invalid Date)")
+        if isinstance(log, AutomationLogger):
+            log.info(f"{label} skipped (empty or invalid date)")
+        else:
+            log(f"  ⏭️  [Skipped] {label} : (Empty or Invalid Date)")
         return False
 
     iso_date = _to_iso_date(str(value).strip())
     if not iso_date:
-        log_cb(f"  ⚠️  {label}: bad date '{value}'")
+        if isinstance(log, AutomationLogger):
+            log.warning(f"{label}: bad date '{value}'")
+        else:
+            log(f"  ⚠️  {label}: bad date '{value}'")
         return False
 
     src_tag = f"Source: {source}" if source else "Source: Excel Data"
@@ -227,16 +244,22 @@ async def safe_fill_date(page, sel: str, value, label: str,
             if actual and actual.strip():
                 await page.keyboard.press("Escape")  # close any stray popup
                 await asyncio.sleep(0.1)
-                log_cb(f"  ✅ [Filled] {label} : '{actual}' ({src_tag}, Mode: JS)")
+                if isinstance(log, AutomationLogger):
+                    log.field_filled(label, actual)
+                else:
+                    log(f"  ✅ [Filled] {label} : '{actual}' ({src_tag}, Mode: JS)")
                 return True
 
     except Exception as e1:
-        log_cb(f"  ⚠️  {label}: JS strategy failed ({str(e1)[:60]})")
+        if isinstance(log, AutomationLogger):
+            log.field_failed(label, f"JS strategy failed: {e1}")
+        else:
+            log(f"  ⚠️  {label}: JS strategy failed ({str(e1)[:60]})")
         return False
 
 
 async def safe_fill_text(page, sel: str, value, label: str,
-                         log_cb: Callable, timeout_ms: int = 5000,
+                         log, timeout_ms: int = 5000,
                          source: str = "") -> bool:
     """Fill a general text/textarea — strips portal-rejected chars (NOT commas)."""
     if not value or str(value).strip() == "":
@@ -244,11 +267,11 @@ async def safe_fill_text(page, sel: str, value, label: str,
     clean = _clean_text_for_portal(str(value))
     if not clean:
         return False
-    return await _raw_fill(page, sel, clean, label, log_cb, timeout_ms, source=source)
+    return await _raw_fill(page, sel, clean, label, log, timeout_ms, source=source)
 
 
 async def safe_fill_portal_text(page, sel: str, value, label: str,
-                                log_cb: Callable, timeout_ms: int = 5000,
+                                log, timeout_ms: int = 5000,
                                 source: str = "") -> bool:
     """Fill a portal text field with STRICT char stripping (commas, dots, special chars).
     Use for: Place of Survey, Surveyor Observation, Remarks.
@@ -259,11 +282,11 @@ async def safe_fill_portal_text(page, sel: str, value, label: str,
     clean = _clean_text_strict(str(value))
     if not clean:
         return False
-    return await _raw_fill(page, sel, clean, label, log_cb, timeout_ms, source=source)
+    return await _raw_fill(page, sel, clean, label, log, timeout_ms, source=source)
 
 
 async def safe_select(page, sel: str, value: str, label: str,
-                      log_cb: Callable, timeout_ms: int = 5000,
+                      log, timeout_ms: int = 5000,
                       source: str = "") -> bool:
     """
     Select a dropdown option by label, value, or partial text match.
@@ -281,7 +304,10 @@ async def safe_select(page, sel: str, value: str, label: str,
         try:
             await el.select_option(label=value, timeout=timeout_ms)
             await asyncio.sleep(0.1)
-            log_cb(f"  ✅ [Selected] {label} : '{value}' ({src_tag}, Mode: Exact Label)")
+            if isinstance(log, AutomationLogger):
+                log.field_selected(label, value)
+            else:
+                log(f"  ✅ [Selected] {label} : '{value}' ({src_tag}, Mode: Exact Label)")
             return True
         except Exception:
             pass
@@ -290,7 +316,10 @@ async def safe_select(page, sel: str, value: str, label: str,
         try:
             await el.select_option(value=value, timeout=timeout_ms)
             await asyncio.sleep(0.1)
-            log_cb(f"  ✅ [Selected] {label} : '{value}' ({src_tag}, Mode: Exact Value)")
+            if isinstance(log, AutomationLogger):
+                log.field_selected(label, value)
+            else:
+                log(f"  ✅ [Selected] {label} : '{value}' ({src_tag}, Mode: Exact Value)")
             return True
         except Exception:
             pass
@@ -306,7 +335,10 @@ async def safe_select(page, sel: str, value: str, label: str,
             if val_lower == txt_lower or val_lower in txt_lower or txt_lower in val_lower:
                 await el.select_option(value=opt_val)
                 await asyncio.sleep(0.1)
-                log_cb(f"  ✅ [Selected] {label} : '{txt}' ({src_tag}, Mode: Partial Text)")
+                if isinstance(log, AutomationLogger):
+                    log.field_selected(label, txt)
+                else:
+                    log(f"  ✅ [Selected] {label} : '{txt}' ({src_tag}, Mode: Partial Text)")
                 return True
             # Match by stripping Angular prefixes from option value
             # e.g. 'number:10' → '10', 'string:HH' → 'HH'
@@ -314,7 +346,10 @@ async def safe_select(page, sel: str, value: str, label: str,
             if val_lower == stripped:
                 await el.select_option(value=opt_val)
                 await asyncio.sleep(0.1)
-                log_cb(f"  ✅ [Selected] {label} : '{txt}' ({src_tag}, Mode: Angular Value)")
+                if isinstance(log, AutomationLogger):
+                    log.field_selected(label, txt)
+                else:
+                    log(f"  ✅ [Selected] {label} : '{txt}' ({src_tag}, Mode: Angular Value)")
                 return True
 
         # ── Strategy 4: JS fallback for AngularJS select ──────────────────────
@@ -347,32 +382,48 @@ async def safe_select(page, sel: str, value: str, label: str,
         """)
         if set_ok:
             await asyncio.sleep(0.1)
-            log_cb(f"  ✅ [Selected] {label} : '{set_ok}' ({src_tag}, Mode: JS Fallback)")
+            if isinstance(log, AutomationLogger):
+                log.field_selected(label, str(set_ok))
+            else:
+                log(f"  ✅ [Selected] {label} : '{set_ok}' ({src_tag}, Mode: JS Fallback)")
             return True
 
-        log_cb(f"  ⚠️  {label}: no match for '{value}'")
+        if isinstance(log, AutomationLogger):
+            log.field_failed(label, f"No match found for '{value}'")
+        else:
+            log(f"  ⚠️  {label}: no match for '{value}'")
         return False
     except Exception as e:
-        log_cb(f"  ⚠️  {label}: {str(e)[:100]}")
+        if isinstance(log, AutomationLogger):
+            log.field_failed(label, str(e))
+        else:
+            log(f"  ⚠️  {label}: {str(e)[:100]}")
         return False
 
 
 async def safe_radio(page, sel: str, label: str,
-                     log_cb: Callable, timeout_ms: int = 3000) -> bool:
+                     log, timeout_ms: int = 3000) -> bool:
     """Click a radio button."""
     try:
         el = page.locator(sel).first
         await el.wait_for(state="visible", timeout=timeout_ms)
         await el.click()
         await asyncio.sleep(0.1)
-        log_cb(f"  ✅ {label}: Yes")
+        
+        if isinstance(log, AutomationLogger):
+            log.info(f"{label}: Yes")
+        else:
+            log(f"  ✅ {label}: Yes")
         return True
     except Exception as e:
-        log_cb(f"  ⚠️  {label}: {str(e)[:100]}")
+        if isinstance(log, AutomationLogger):
+            log.field_failed(label, str(e))
+        else:
+            log(f"  ⚠️  {label}: {str(e)[:100]}")
         return False
 
 
-async def safe_click(page, sel: str, log_cb: Callable = lambda _: None, label: str = "", timeout_ms: int = 5000, retries: int = 1) -> bool:
+async def safe_click(page, sel: str, log = None, label: str = "", timeout_ms: int = 5000, retries: int = 1) -> bool:
     """Click an element safely with retries."""
     for attempt in range(retries + 1):
         try:
@@ -380,20 +431,29 @@ async def safe_click(page, sel: str, log_cb: Callable = lambda _: None, label: s
             await el.wait_for(state="visible", timeout=timeout_ms)
             await el.click()
             if label:
-                log_cb(f"  ✅ [Clicked] {label}")
+                if isinstance(log, AutomationLogger):
+                    log.info(f"[Clicked] {label}")
+                elif log:
+                    log(f"  ✅ [Clicked] {label}")
             return True
         except Exception as e:
             if attempt < retries:
                 if label:
-                    log_cb(f"  🔄 {label}: retry {attempt+1} ({str(e)[:60]})")
+                    if isinstance(log, AutomationLogger):
+                        log.retry(label, attempt + 1, retries + 1)
+                    elif log:
+                        log(f"  🔄 {label}: retry {attempt+1} ({str(e)[:60]})")
                 await asyncio.sleep(0.5)
             else:
                 if label:
-                    log_cb(f"  ⚠️  {label}: {str(e)[:100]}")
+                    if isinstance(log, AutomationLogger):
+                        log.field_failed(label, str(e))
+                    elif log:
+                        log(f"  ⚠️  {label}: {str(e)[:100]}")
     return False
 
 
-async def click_all_yes_radios(page, radio_names: list, log_cb: Callable) -> int:
+async def click_all_yes_radios(page, radio_names: list, log) -> int:
     """
     JS-based click of all Yes (value='Y') radios by ng-model / name attribute.
     Returns count of successfully clicked radios.
@@ -424,12 +484,15 @@ async def click_all_yes_radios(page, radio_names: list, log_cb: Callable) -> int
         }})();
     """)
     clicked = result or []
-    log_cb(f"  🔘 Radios: {len(clicked)}/{len(radio_names)} clicked")
+    if isinstance(log, AutomationLogger):
+        log.info(f"Radios: {len(clicked)}/{len(radio_names)} clicked")
+    else:
+        log(f"  🔘 Radios: {len(clicked)}/{len(radio_names)} clicked")
     return len(clicked)
 
 
 async def js_select_option(page, sel_index: int, doc_type: str,
-                           ng_model: str, log_cb: Callable) -> bool:
+                           ng_model: str, log) -> bool:
     """JS partial-text dropdown selection for AngularJS selects."""
     result = await page.evaluate(f"""
         (function() {{
@@ -457,9 +520,16 @@ async def js_select_option(page, sel_index: int, doc_type: str,
         }})();
     """)
     if result:
-        log_cb(f"      ✅ Doc type: '{result}'")
+        if isinstance(log, AutomationLogger):
+            log.field_selected(f"Dropdown[{sel_index}]", str(result))
+        else:
+            log(f"  ✅ [Selected] {doc_type} : '{result}' (JS)")
         return True
-    log_cb(f"      ⚠️  No match for '{doc_type}'")
+    
+    if isinstance(log, AutomationLogger):
+        log.field_failed(doc_type, "No matching dropdown option found via JS")
+    else:
+        log(f"  ⚠️  {doc_type}: JS selection failed")
     return False
 
 
@@ -470,12 +540,12 @@ async def quick_visible(locator, timeout_ms: int = 1000) -> bool:
         return False
 
 
-async def get_form_frame(page, log_cb: Callable):
+async def get_form_frame(page, log = None):
     """No iframe on this portal — returns page directly (no delay)."""
     return page
 
 
-async def dump_visible_fields(page, tab_name: str, log_cb: Callable):
+async def dump_visible_fields(page, tab_name: str, log = None):
     """Save DOM snapshot for debugging (only call when diagnosing issues)."""
     try:
         os.makedirs("logs", exist_ok=True)
@@ -483,6 +553,9 @@ async def dump_visible_fields(page, tab_name: str, log_cb: Callable):
         path = f"logs/dom_{tab_name.replace(' ', '_')}.html"
         with open(path, "w", encoding="utf-8") as f:
             f.write(html)
-        log_cb(f"  💾 DOM saved: {path}")
+        if isinstance(log, AutomationLogger):
+            log.info(f"DOM saved: {path}")
+        elif log:
+            log(f"  💾 DOM saved: {path}")
     except Exception:
         pass

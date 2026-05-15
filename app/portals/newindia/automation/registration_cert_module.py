@@ -5,12 +5,16 @@ from app.data.data_model import ClaimData
 from app.portals.newindia.automation.ui_utils import (
     fill_input_with_delay, select_dropdown_with_delay, format_date_ddmmyyyy
 )
-from app.automation.automation_logger import _ts
+from app.automation.automation_logger import AutomationLogger
 
 async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_cb, field_delay_ms: int = 600) -> bool:
     if stop_cb(): return False
 
-    log(f"[{_ts()}] Opening Registration Certificate Details section...")
+    if isinstance(log, AutomationLogger):
+        log.info("Opening Registration Certificate Details section...")
+        log.indent()
+    else:
+        log(f"Opening Registration Certificate Details section...")
     
     # Click to expand Registration Certificate Details accordion
     try:
@@ -23,11 +27,20 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
         if is_collapsed:
             await acc_heading.click()
             await asyncio.sleep(1.0)
-            log(f"[{_ts()}]   ✅ Expanded Registration Certificate Details.")
+            if isinstance(log, AutomationLogger):
+                log.success("Accordion expanded.")
+            else:
+                log(f"   ✅ Expanded Registration Certificate Details.")
         else:
-            log(f"[{_ts()}]   ℹ️ Registration Certificate Details already expanded.")
+            if isinstance(log, AutomationLogger):
+                log.info("Accordion already expanded.")
+            else:
+                log(f"   ℹ️ Registration Certificate Details already expanded.")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Could not expand Registration Certificate Details: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Expansion failed: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Could not expand Registration Certificate Details: {e}")
 
     if stop_cb(): return False
 
@@ -35,8 +48,6 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
     try:
         val = getattr(data, 'reference_no', '')
         if val:
-            # The exact name attribute from the DOM is "Reference No" without a period
-            # Or fallback to the angular model data-ng-model="surveyorData.worklist.additionalDetails.refernceNo"
             ref_sel = 'input[name="Reference No"]'
             try:
                 await page.wait_for_selector(ref_sel, state="attached", timeout=2000)
@@ -46,9 +57,15 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
             
             await fill_input_with_delay(page, sel_to_use, val, "Reference No", log, field_delay_ms)
         else:
-            log(f"[{_ts()}]   ℹ️ Reference No missing from Excel, skipping (Optional).")
+            if isinstance(log, AutomationLogger):
+                log.info("Reference No missing; skipping.")
+            else:
+                log(f"   ℹ️ Reference No missing from Excel, skipping (Optional).")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error filling Reference No: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Reference No field error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Error filling Reference No: {e}")
 
     if stop_cb(): return False
 
@@ -58,35 +75,51 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
         if val:
             await fill_input_with_delay(page, 'input[name="Registered Owner Name"]', val, "Owner Name", log, field_delay_ms)
         else:
-            log(f"[{_ts()}]   ⚠️ Registered Owner Name missing from Excel.")
+            if isinstance(log, AutomationLogger):
+                log.warning("Owner Name is missing from source data.")
+            else:
+                log(f"   ⚠️ Registered Owner Name missing from Excel.")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error filling owner name: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Owner Name field error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Error filling owner name: {e}")
 
     if stop_cb(): return False
 
     # 2. Vehicle Registration Number (Optional, split into 4)
     try:
         reg_no = data.vehicle_registration_number or ""
-        # Clean: remove spaces, special chars
         reg_no = re.sub(r'[^A-Z0-9]', '', str(reg_no).upper())
         if reg_no:
-            # Simple regex to split: 2 letters, 1-2 digits, 1-3 letters, 1-4 digits
             m = re.match(r'^([A-Z]{2})(\d{1,2})([A-Z]{1,3})?(\d{1,4})$', reg_no)
             if m:
                 p1, p2, p3, p4 = m.groups()
                 p3 = p3 or ""
-                log(f"[{_ts()}] Filling Registration Number: {p1}-{p2}-{p3}-{p4}")
+                if isinstance(log, AutomationLogger):
+                    log.info(f"Filling Registration Number: {p1}-{p2}-{p3}-{p4}")
+                else:
+                    log(f"Filling Registration Number: {p1}-{p2}-{p3}-{p4}")
                 await fill_input_with_delay(page, 'input[name="registrationNo1"]', p1, "Reg1", log, field_delay_ms)
                 await fill_input_with_delay(page, 'input[name="registrationNo2"]', p2, "Reg2", log, field_delay_ms)
                 if p3:
                     await fill_input_with_delay(page, 'input[name="registrationNo3"]', p3, "Reg3", log, field_delay_ms)
                 await fill_input_with_delay(page, 'input[name="registrationNo4"]', p4, "Reg4", log, field_delay_ms)
             else:
-                log(f"[{_ts()}]   ⚠️ Regex failed to match standard format for {reg_no}. Automation skipping fields.")
+                if isinstance(log, AutomationLogger):
+                    log.warning(f"Registration format {reg_no} not supported for split-field automation.")
+                else:
+                    log(f"   ⚠️ Regex failed to match standard format for {reg_no}. Automation skipping fields.")
         else:
-            log(f"[{_ts()}]   ℹ️ Vehicle Registration Number missing, skipping (Optional).")
+            if isinstance(log, AutomationLogger):
+                log.info("Registration Number missing; skipping.")
+            else:
+                log(f"   ℹ️ Vehicle Registration Number missing, skipping (Optional).")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error filling Registration Number: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Registration Number field error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Error filling Registration Number: {e}")
 
     if stop_cb(): return False
 
@@ -97,9 +130,15 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
             formatted_date = format_date_ddmmyyyy(val)
             await fill_input_with_delay(page, 'input[name="registrationDate"]', formatted_date, "Reg Date", log, field_delay_ms)
         else:
-            log(f"[{_ts()}]   ℹ️ Date of Registration missing, skipping (Optional).")
+            if isinstance(log, AutomationLogger):
+                log.info("Registration Date missing; skipping.")
+            else:
+                log(f"   ℹ️ Date of Registration missing, skipping (Optional).")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error filling Date of Registration: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Registration Date field error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Error filling Date of Registration: {e}")
 
     if stop_cb(): return False
 
@@ -109,9 +148,15 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
         if val:
             await fill_input_with_delay(page, 'input[name="Engine no"]', val, "Engine No", log, field_delay_ms)
         else:
-            log(f"[{_ts()}]   ⚠️ Engine Number missing from Excel.")
+            if isinstance(log, AutomationLogger):
+                log.warning("Engine Number is missing from source data.")
+            else:
+                log(f"   ⚠️ Engine Number missing from Excel.")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error filling Engine Number: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Engine Number field error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Error filling Engine Number: {e}")
 
     if stop_cb(): return False
 
@@ -121,9 +166,15 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
         if val:
             await fill_input_with_delay(page, 'input[name="Chassis no"]', val, "Chassis No", log, field_delay_ms)
         else:
-            log(f"[{_ts()}]   ⚠️ Chassis Number missing from Excel.")
+            if isinstance(log, AutomationLogger):
+                log.warning("Chassis Number is missing from source data.")
+            else:
+                log(f"   ⚠️ Chassis Number missing from Excel.")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error filling Chassis Number: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Chassis Number field error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Error filling Chassis Number: {e}")
 
     if stop_cb(): return False
 
@@ -142,9 +193,15 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
                     }
                 """)
                 await asyncio.sleep(field_delay_ms / 1000.0)
-                log(f"[{_ts()}]   ✅ Physically Verified set to YES")
+                if isinstance(log, AutomationLogger):
+                    log.success("Physically Verified toggled to YES")
+                else:
+                    log(f"   ✅ Physically Verified set to YES")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error checking Physically Verified: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Verification toggle error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Error checking Physically Verified: {e}")
 
     if stop_cb(): return False
 
@@ -154,9 +211,15 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
         if val:
             await select_dropdown_with_delay(page, 'select[name="Type of Body"]', val, "Type of Body", log, field_delay_ms)
         else:
-            log(f"[{_ts()}]   ⚠️ Type Of Body missing from Excel.")
+            if isinstance(log, AutomationLogger):
+                log.warning("Type of Body missing from source data.")
+            else:
+                log(f"   ⚠️ Type Of Body missing from Excel.")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error selecting Type Of Body: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Body Type field error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Error selecting Type Of Body: {e}")
 
     if stop_cb(): return False
 
@@ -166,9 +229,15 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
         if val:
             await fill_input_with_delay(page, 'input[name="Class of Vehicle"]', val, "Class of Vehicle", log, field_delay_ms)
         else:
-            log(f"[{_ts()}]   ⚠️ Class of Vehicle missing from Excel.")
+            if isinstance(log, AutomationLogger):
+                log.warning("Class of Vehicle missing from source data.")
+            else:
+                log(f"   ⚠️ Class of Vehicle missing from Excel.")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error filling Class of Vehicle: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Vehicle Class field error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Error filling Class of Vehicle: {e}")
 
     if stop_cb(): return False
 
@@ -176,11 +245,17 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
     try:
         val = data.pre_accident_condition
         if val:
-            await fill_input_with_delay(page, 'input[name="Pre-Accident Condition"]', val, "Pre-Accident Condition", log, field_delay_ms)
+            await fill_input_with_delay(page, 'input[name="Pre-Accident Condition"]', val, "Condition", log, field_delay_ms)
         else:
-            log(f"[{_ts()}]   ⚠️ Pre-Accident Condition missing from Excel.")
+            if isinstance(log, AutomationLogger):
+                log.warning("Pre-Accident Condition missing from source data.")
+            else:
+                log(f"   ⚠️ Pre-Accident Condition missing from Excel.")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error filling Pre-Accident Condition: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Condition field error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Error filling Pre-Accident Condition: {e}")
 
     if stop_cb(): return False
 
@@ -190,9 +265,15 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
         if val:
             await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.routeOfOprtn"]', val, "Route/Area", log, field_delay_ms)
         else:
-            log(f"[{_ts()}]   ℹ️ Route/Area of Operation missing, skipping (Optional).")
+            if isinstance(log, AutomationLogger):
+                log.info("Route/Area missing; skipping.")
+            else:
+                log(f"   ℹ️ Route/Area of Operation missing, skipping (Optional).")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error filling Route/Area of Operation: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Route field error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Error filling Route/Area of Operation: {e}")
 
     if stop_cb(): return False
 
@@ -202,9 +283,15 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
         if val:
             await fill_input_with_delay(page, 'input[name="taxPaidUpto"]', val, "Tax Paid Upto", log, field_delay_ms)
         else:
-            log(f"[{_ts()}]   ℹ️ Tax Paid Upto missing, skipping (Optional).")
+            if isinstance(log, AutomationLogger):
+                log.info("Tax Paid Upto missing; skipping.")
+            else:
+                log(f"   ℹ️ Tax Paid Upto missing, skipping (Optional).")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error filling Tax Paid Upto: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Tax field error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Error filling Tax Paid Upto: {e}")
 
     if stop_cb(): return False
 
@@ -214,9 +301,15 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
         if val:
             await fill_input_with_delay(page, 'input[name="RTO Name"]', val, "RTO Name", log, field_delay_ms)
         else:
-            log(f"[{_ts()}]   ⚠️ RTO Name missing from Excel.")
+            if isinstance(log, AutomationLogger):
+                log.warning("RTO Name missing from source data.")
+            else:
+                log(f"   ⚠️ RTO Name missing from Excel.")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error filling RTO Name: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"RTO field error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Error filling RTO Name: {e}")
 
     if stop_cb(): return False
 
@@ -227,9 +320,15 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
             formatted_date = format_date_ddmmyyyy(val)
             await fill_input_with_delay(page, 'input[name="transferDate"]', formatted_date, "Transfer Date", log, field_delay_ms)
         else:
-            log(f"[{_ts()}]   ℹ️ Transfer Date missing, skipping (Optional).")
+            if isinstance(log, AutomationLogger):
+                log.info("Transfer Date missing; skipping.")
+            else:
+                log(f"   ℹ️ Transfer Date missing, skipping (Optional).")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error filling Transfer Date: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Transfer Date field error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Error filling Transfer Date: {e}")
 
     if stop_cb(): return False
 
@@ -237,16 +336,24 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
     try:
         val = data.odometer_reading
         if val:
-            # Clean: extract ONLY numeric digits (removes 'KM', 'kilometers', etc.)
             cleaned_val = re.sub(r'\D', '', str(val))
             if cleaned_val:
                 await fill_input_with_delay(page, 'input[name="Odometer Reading"]', cleaned_val, "Odometer Reading", log, field_delay_ms)
             else:
-                log(f"[{_ts()}]   ⚠️ Odometer value '{val}' contained no digits. Skipping.")
+                if isinstance(log, AutomationLogger):
+                    log.warning(f"Odometer value '{val}' contained no digits.")
+                else:
+                    log(f"   ⚠️ Odometer value '{val}' contained no digits. Skipping.")
         else:
-            log(f"[{_ts()}]   ⚠️ Odometer Reading missing from Excel.")
+            if isinstance(log, AutomationLogger):
+                log.warning("Odometer Reading missing from source data.")
+            else:
+                log(f"   ⚠️ Odometer Reading missing from Excel.")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error filling Odometer Reading: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Odometer field error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Error filling Odometer Reading: {e}")
 
     if stop_cb(): return False
 
@@ -254,11 +361,17 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
     try:
         val = data.vehicle_color
         if val:
-            await fill_input_with_delay(page, 'input[name="Vehicle Color"]', val, "Vehicle Color", log, field_delay_ms)
+            await fill_input_with_delay(page, 'input[name="Vehicle Color"]', val, "Color", log, field_delay_ms)
         else:
-            log(f"[{_ts()}]   ⚠️ Vehicle Color missing from Excel.")
+            if isinstance(log, AutomationLogger):
+                log.warning("Vehicle Color missing from source data.")
+            else:
+                log(f"   ⚠️ Vehicle Color missing from Excel.")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error filling Vehicle Color: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Color field error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Error filling Vehicle Color: {e}")
 
     if stop_cb(): return False
 
@@ -268,59 +381,54 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
         if val:
             await fill_input_with_delay(page, 'input[name="Vehicle Color Type"]', val, "Color Type", log, field_delay_ms)
         else:
-            log(f"[{_ts()}]   ⚠️ Vehicle Color Type missing from Excel.")
+            if isinstance(log, AutomationLogger):
+                log.warning("Color Type missing from source data.")
+            else:
+                log(f"   ⚠️ Vehicle Color Type missing from Excel.")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error filling Vehicle Color Type: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Color Type field error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Error filling Vehicle Color Type: {e}")
 
     if stop_cb(): return False
 
     # 18. Type of Vehicle (Dropdown - Mandatory)
-    # FIX: Try primary selector first, then ng-model fallback.
-    #      Also dump available options when no match found to aid debugging.
     try:
         val = data.type_of_vehicle
         if val:
-            # Primary selector (name attribute)
             _veh_sel = 'select[name="Type of Vehicle"]'
-            # Fallback selector (ng-model)
             _veh_sel_fb = 'select[data-ng-model*="typeOfVehicle"], select[ng-model*="typeOfVehicle"]'
 
-            # Try primary
             try:
                 await page.wait_for_selector(_veh_sel, state="visible", timeout=4000)
                 sel_to_use = _veh_sel
             except Exception:
-                # Try fallback
                 try:
                     await page.wait_for_selector(_veh_sel_fb, state="visible", timeout=4000)
                     sel_to_use = _veh_sel_fb
-                    log(f"[{_ts()}]   ℹ️ [Type of Vehicle] using ng-model fallback selector.")
+                    if isinstance(log, AutomationLogger):
+                        log.info("Using ng-model fallback for Vehicle Type.")
+                    else:
+                        log(f"   ℹ️ [Type of Vehicle] using ng-model fallback selector.")
                 except Exception:
-                    sel_to_use = _veh_sel  # let select_dropdown log the error
-
-            # Debug: log available options
-            try:
-                opts = await page.evaluate(f"""
-                    () => {{
-                        const s = document.querySelector('{sel_to_use}');
-                        if (!s) return [];
-                        return Array.from(s.options).map(o => o.text.trim());
-                    }}
-                """)
-                log(f"[{_ts()}]   ℹ️ [Type of Vehicle] available options: {opts}")
-            except Exception:
-                pass
+                    sel_to_use = _veh_sel 
 
             await select_dropdown_with_delay(page, sel_to_use, val, "Type of Vehicle", log, field_delay_ms)
         else:
-            log(f"[{_ts()}]   ⚠️ Type Of Vehicle missing from Excel.")
+            if isinstance(log, AutomationLogger):
+                log.warning("Type of Vehicle missing from source data.")
+            else:
+                log(f"   ⚠️ Type Of Vehicle missing from Excel.")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error selecting Type Of Vehicle: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Vehicle Type field error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Error selecting Type Of Vehicle: {e}")
 
     if stop_cb(): return False
 
     # 19. Type of Fuel (Dropdown - Mandatory)
-    # FIX: Same dual-selector strategy as Type of Vehicle.
     try:
         val = data.type_of_fuel
         if val:
@@ -334,28 +442,28 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
                 try:
                     await page.wait_for_selector(_fuel_sel_fb, state="visible", timeout=4000)
                     sel_to_use = _fuel_sel_fb
-                    log(f"[{_ts()}]   ℹ️ [Type of Fuel] using ng-model fallback selector.")
+                    if isinstance(log, AutomationLogger):
+                        log.info("Using ng-model fallback for Fuel Type.")
+                    else:
+                        log(f"   ℹ️ [Type of Fuel] using ng-model fallback selector.")
                 except Exception:
                     sel_to_use = _fuel_sel
 
-            # Debug: log available options
-            try:
-                opts = await page.evaluate(f"""
-                    () => {{
-                        const s = document.querySelector('{sel_to_use}');
-                        if (!s) return [];
-                        return Array.from(s.options).map(o => o.text.trim());
-                    }}
-                """)
-                log(f"[{_ts()}]   ℹ️ [Type of Fuel] available options: {opts}")
-            except Exception:
-                pass
-
             await select_dropdown_with_delay(page, sel_to_use, val, "Type of Fuel", log, field_delay_ms)
         else:
-            log(f"[{_ts()}]   ⚠️ Type Of Fuel missing from Excel.")
+            if isinstance(log, AutomationLogger):
+                log.warning("Type of Fuel missing from source data.")
+            else:
+                log(f"   ⚠️ Type Of Fuel missing from Excel.")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error selecting Type Of Fuel: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Fuel Type field error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Error selecting Type Of Fuel: {e}")
 
-    log(f"[{_ts()}] Phase 5 (Registration Certificate Details) completed successfully.")
+    if isinstance(log, AutomationLogger):
+        log.outdent()
+        log.success("Registration Certificate Details phase completed.")
+    else:
+        log(f" Phase 5 (Registration Certificate Details) completed successfully.")
     return True

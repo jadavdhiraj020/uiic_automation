@@ -1,14 +1,3 @@
-"""
-interim_report.py — Fills the "Interim Report" tab.
-
-PRODUCTION FIX 2026-04-18:
-  - Radios: Use JS to set .checked + dispatch 'change' (AngularJS listens to 'change' not 'click')
-  - Datepickers: JS injection of value + input/change events, then Tab to confirm
-  - Time dropdowns: Angular 'number:X' / 'string:HH' option value prefix support
-  - Place of Survey: commas now preserved in address (fixed _clean_text_for_portal)
-  - Mobile/Email: filled unconditionally when present; skipped gracefully when absent
-  - Robust wait after tab-click so Angular re-renders all fields before filling
-"""
 import asyncio
 import logging
 from typing import Callable
@@ -20,6 +9,7 @@ from app.automation.form_helpers import (
 )
 from app.automation.selectors import INTERIM
 from app.automation.tab_utils import click_tab
+from app.automation.automation_logger import AutomationLogger
 
 import re
 
@@ -48,25 +38,14 @@ INTERIM_RADIO_NAMES = [
 ]
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Radio button handling (AngularJS-compatible)
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Radio button handling (AngularJS-compatible)
-# ─────────────────────────────────────────────────────────────────────────────
-
-async def _click_yes_radios(page, log_cb: Callable) -> None:
+async def _click_yes_radios(page, log) -> None:
     """
     Click all 'Yes' radio buttons on the Interim Report tab.
-
-    AngularJS does NOT respond to native .click() on hidden/styled radios.
-    The reliable approach:
-      1. JS: find the radio, set .checked = true, dispatch 'change' event.
-      2. Fallback: Playwright locator click on visible radios.
     """
-    log_cb("  🔘 Setting Yes radios...")
+    if isinstance(log, AutomationLogger):
+        log.info("Setting 'Yes' radios...")
+    else:
+        log("  🔘 Setting Yes radios...")
 
     # Strategy 1: Pure JS — set checked + fire 'change' for Angular ng-model
     js_result = await page.evaluate("""
@@ -103,7 +82,10 @@ async def _click_yes_radios(page, log_cb: Callable) -> None:
         })();
     """)
     clicked_names = js_result or []
-    log_cb(f"  🔘 JS radios set: {len(clicked_names)}/{len(INTERIM_RADIO_NAMES)} → {clicked_names}")
+    if isinstance(log, AutomationLogger):
+        log.success(f"JS radios set: {len(clicked_names)}/{len(INTERIM_RADIO_NAMES)}")
+    else:
+        log(f"  🔘 JS radios set: {len(clicked_names)}/{len(INTERIM_RADIO_NAMES)} → {clicked_names}")
 
     # Strategy 2: Playwright click fallback for any radio that JS missed
     if len(clicked_names) < len(INTERIM_RADIO_NAMES):
@@ -125,7 +107,10 @@ async def _click_yes_radios(page, log_cb: Callable) -> None:
                 if await r.is_visible(timeout=800):
                     await r.click(force=True)
                     await asyncio.sleep(0.1)
-                    log_cb(f"  ✅ Radio fallback clicked: {name}")
+                    if isinstance(log, AutomationLogger):
+                        log.success(f"Radio fallback clicked: {name}")
+                    else:
+                        log(f"  ✅ Radio fallback clicked: {name}")
                 else:
                     # Final resort: force JS click
                     await page.evaluate(f"""
@@ -137,23 +122,29 @@ async def _click_yes_radios(page, log_cb: Callable) -> None:
                             }}
                         }})();
                     """)
-                    log_cb(f"  ✅ Radio force-JS: {name}")
+                    if isinstance(log, AutomationLogger):
+                        log.success(f"Radio force-JS: {name}")
+                    else:
+                        log(f"  ✅ Radio force-JS: {name}")
             except Exception as e:
-                log_cb(f"  ⚠️  Radio {name}: {str(e)[:60]}")
+                if isinstance(log, AutomationLogger):
+                    log.warning(f"Radio {name}: {str(e)[:60]}")
+                else:
+                    log(f"  ⚠️  Radio {name}: {str(e)[:60]}")
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Main fill function
-# ─────────────────────────────────────────────────────────────────────────────
 
 async def fill_interim_report(page, claim: ClaimData,
-                               log_cb: Callable[[str], None] = print,
+                               log = print,
                                settings: dict = None) -> None:
-    await click_tab(page, "interim", log_cb)
+    await click_tab(page, "interim", log)
     # Brief additional wait for Angular digest cycle
     await asyncio.sleep(0.2)
 
-    log_cb("✏️  Filling Interim Report...")
+    if isinstance(log, AutomationLogger):
+        log.info("Filling Interim Report section...")
+        log.indent()
+    else:
+        log("✏️  Filling Interim Report...")
 
     T = 5000  # field timeout ms — use 5s for safety after tab switch
 
@@ -163,85 +154,103 @@ async def fill_interim_report(page, claim: ClaimData,
 
     # ── 1. Type of Settlement (dropdown) ─────────────────────────────────────
     await safe_select(page, INTERIM["settlement_type"],
-                      claim.type_of_settlement, "Type of Settlement", log_cb, T,
+                      claim.type_of_settlement, "Type of Settlement", log, T,
                       source=_src("type_of_settlement"))
 
     # ── 2. Date of Survey (Angular datepicker — text input) ──────────────────
     await safe_fill_date(page, INTERIM["survey_date"],
-                         claim.date_of_survey, "Date of Survey", log_cb, T,
+                         claim.date_of_survey, "Date of Survey", log, T,
                          source=_src("date_of_survey"))
 
     # ── 3. Time of Survey — HH and MM dropdowns ──────────────────────────────
-    # These are Angular <select> elements with options like:
-    #   <option value="string:HH">HH</option>
-    #   <option value="number:0">00</option>  ... <option value="number:23">23</option>
     if claim.time_hh:
         await safe_select(page, INTERIM["time_hours"],
-                          claim.time_hh, "Time HH", log_cb, T,
+                          claim.time_hh, "Time HH", log, T,
                           source=_src("date_of_survey"))
     else:
-        log_cb("  ⏭️  Time HH: skipped (not set in Excel)")
+        if isinstance(log, AutomationLogger):
+            log.info("Time HH: skipped (not set in Excel)")
+        else:
+            log("  ⏭️  Time HH: skipped (not set in Excel)")
 
     if claim.time_mm:
         await safe_select(page, INTERIM["time_minutes"],
-                          claim.time_mm, "Time MM", log_cb, T,
+                          claim.time_mm, "Time MM", log, T,
                           source=_src("date_of_survey"))
     else:
-        log_cb("  ⏭️  Time MM: skipped (not set in Excel)")
+        if isinstance(log, AutomationLogger):
+            log.info("Time MM: skipped (not set in Excel)")
+        else:
+            log("  ⏭️  Time MM: skipped (not set in Excel)")
 
     # ── 4. Odometer reading (READ ONLY - skip unconditionally) ─────────────────
-    # Portal field is read-only. Attempting to fill it wastes 30s timeout.
-    log_cb("  ⏭️  Odometer Reading: skipped (portal field is read-only)")
+    if isinstance(log, AutomationLogger):
+        log.info("Odometer Reading: skipped (portal field is read-only)")
+    else:
+        log("  ⏭️  Odometer Reading: skipped (portal field is read-only)")
 
     # ── 5. Place of Survey (portal: no special chars incl commas) ────────────────
     await safe_fill_portal_text(page, INTERIM["place"],
-                                claim.place_of_survey, "Place of Survey", log_cb, T,
+                                claim.place_of_survey, "Place of Survey", log, T,
                                 source=_src("place_of_survey"))
 
     # ── 6. Yes/No Radio buttons ───────────────────────────────────────────────
-    await _click_yes_radios(page, log_cb)
+    await _click_yes_radios(page, log)
 
     # ── 7. Initial Loss Assessment Amount ────────────────────────────────────
     await safe_fill_amount(page, INTERIM["initial_loss"],
-                           claim.initial_loss_amount, "Initial Loss Amount", log_cb, T,
+                           claim.initial_loss_amount, "Initial Loss Amount", log, T,
                            source=_src("initial_loss_amount"))
 
     # ── 8. Mobile No (mandatory on portal — clean to 10 digits) ──────────────
     if claim.mobile_no and str(claim.mobile_no).strip():
         clean_mobile = _clean_mobile(claim.mobile_no)
         await safe_fill(page, INTERIM["mobile"],
-                        clean_mobile, "Mobile No", log_cb, T,
+                        clean_mobile, "Mobile No", log, T,
                         source=_src("mobile_no"))
     else:
-        log_cb("  ⏭️  Mobile No: not in Excel (fill manually if required)")
+        if isinstance(log, AutomationLogger):
+            log.warning("Mobile No: not in Excel (fill manually if required)")
+        else:
+            log("  ⏭️  Mobile No: not in Excel (fill manually if required)")
 
     # ── 9. Email ID (optional) ────────────────────────────────────────────────
     if claim.email_id and str(claim.email_id).strip():
         await safe_fill(page, INTERIM["email"],
-                        str(claim.email_id).strip(), "Email ID", log_cb, T,
+                        str(claim.email_id).strip(), "Email ID", log, T,
                         source=_src("email_id"))
     else:
-        log_cb("  ⏭️  Email ID: not in Excel")
+        if isinstance(log, AutomationLogger):
+            log.info("Email ID: not in Excel")
+        else:
+            log("  ⏭️  Email ID: not in Excel")
 
     # ── 10. Expected date of completion of repair (same as Date of Survey) ────
     if claim.expected_completion_date and str(claim.expected_completion_date).strip():
         await safe_fill_date(page, INTERIM["repair_date"],
                              claim.expected_completion_date,
-                             "Expected Completion Date", log_cb, T,
+                             "Expected Completion Date", log, T,
                              source=_src("expected_completion_date") or _src("date_of_survey"))
     else:
-        log_cb("  ⏭️  Expected Completion Date: not set")
+        if isinstance(log, AutomationLogger):
+            log.info("Expected Completion Date: not set")
+        else:
+            log("  ⏭️  Expected Completion Date: not set")
 
     # ── 11. Surveyor's Observation & Remarks (no special chars) ───────────────────
     await safe_fill_portal_text(page, INTERIM["observation"],
                                 claim.surveyor_observation,
-                                "Surveyor's Observation", log_cb, T,
+                                "Surveyor's Observation", log, T,
                                 source=_src("surveyor_observation"))
     
     # User requested 'Remarks *' field is blank on interim report
     await safe_fill_portal_text(page, "#remarks, textarea[ng-model*='remark'], textarea[name*='emarks']",
                                 "Done",
-                                "Remarks", log_cb, T,
+                                "Remarks", log, T,
                                 source="Hardcoded")
 
-    log_cb("✅ Interim Report complete.")
+    if isinstance(log, AutomationLogger):
+        log.success("Interim Report section complete.")
+        log.outdent()
+    else:
+        log("✅ Interim Report complete.")

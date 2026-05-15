@@ -417,14 +417,17 @@ class MainWindow(QMainWindow):
         self.log("Starting automation thread...")
 
         portal_id = get_active_portal_id()
+        settings = load_settings(portal_id=portal_id)
+
         self._thread = QThread()
-        self._worker = AutomationWorker(self._claim, portal_id=portal_id)
+        self._worker = AutomationWorker(self._claim, settings_override=settings, portal_id=portal_id)
         self._worker.moveToThread(self._thread)
 
         self._thread.started.connect(self._worker.run)
         self._worker.done_signal.connect(self._thread.quit)        # stop event loop
         self._worker.done_signal.connect(self._on_automation_ui_reset)  # update UI
         self._thread.finished.connect(self._on_thread_fully_stopped)    # clear refs
+        
         self._worker.log_signal.connect(self._append_log)
         self._worker.step_signal.connect(self.progress_page.set_step)
 

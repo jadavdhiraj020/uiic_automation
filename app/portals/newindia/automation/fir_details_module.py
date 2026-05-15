@@ -4,12 +4,16 @@ from app.data.data_model import ClaimData
 from app.portals.newindia.automation.ui_utils import (
     fill_input_with_delay, select_dropdown_with_delay
 )
-from app.automation.automation_logger import _ts
+from app.automation.automation_logger import AutomationLogger
 
 async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_delay_ms: int = 600) -> bool:
     if stop_cb(): return False
 
-    log(f"[{_ts()}]  📝 Opening FIR Details section...")
+    if isinstance(log, AutomationLogger):
+        log.info("Opening FIR Details section...")
+        log.indent()
+    else:
+        log(f"Opening FIR Details section...")
     
     # Click to expand FIR Details accordion
     try:
@@ -22,11 +26,20 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
         if is_collapsed:
             await acc_heading.click()
             await asyncio.sleep(1.5)
-            log(f"[{_ts()}]   ✅ Expanded FIR Details.")
+            if isinstance(log, AutomationLogger):
+                log.success("Accordion expanded.")
+            else:
+                log(f"   ✅ Expanded FIR Details.")
         else:
-            log(f"[{_ts()}]   ℹ️ FIR Details already expanded.")
+            if isinstance(log, AutomationLogger):
+                log.info("Accordion already expanded.")
+            else:
+                log(f"   ℹ️ FIR Details already expanded.")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Could not expand FIR Details: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Expansion attempt failed: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Could not expand FIR Details: {e}")
 
     if stop_cb(): return False
 
@@ -36,9 +49,15 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
         if val:
             await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.firNo"]', val, "FIR Number", log, field_delay_ms)
         else:
-            log(f"[{_ts()}]   ⏭️ [FIR Number] — Optional, not in Excel. Skipping.")
+            if isinstance(log, AutomationLogger):
+                log.info("FIR Number missing; skipping (Optional).")
+            else:
+                log(f"   ⏭️ [FIR Number] — Optional, not in Excel. Skipping.")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error filling FIR Number: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"FIR Number field error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Error filling FIR Number: {e}")
 
     if stop_cb(): return False
 
@@ -48,9 +67,15 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
         if val:
             await fill_input_with_delay(page, 'input[name="firDate"]', val, "FIR Date", log, field_delay_ms)
         else:
-            log(f"[{_ts()}]   ⏭️ [FIR Date] — Optional, not in Excel. Skipping.")
+            if isinstance(log, AutomationLogger):
+                log.info("FIR Date missing; skipping (Optional).")
+            else:
+                log(f"   ⏭️ [FIR Date] — Optional, not in Excel. Skipping.")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error filling FIR Date: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"FIR Date field error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Error filling FIR Date: {e}")
 
     if stop_cb(): return False
 
@@ -58,11 +83,17 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
     try:
         val = data.police_station_name
         if val:
-            await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.policeStation"]', val, "Police Station", log, field_delay_ms)
+            await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.policeStation"]', val, "Station Name", log, field_delay_ms)
         else:
-            log(f"[{_ts()}]   ⏭️ [Police Station] — Optional, not in Excel. Skipping.")
+            if isinstance(log, AutomationLogger):
+                log.info("Police Station missing; skipping (Optional).")
+            else:
+                log(f"   ⏭️ [Police Station] — Optional, not in Excel. Skipping.")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error filling Police Station Name: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Police Station field error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Error filling Police Station Name: {e}")
 
     if stop_cb(): return False
 
@@ -72,9 +103,15 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
         if val:
             await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.chargedUSMotorVehAct"]', val, "Charged U/S MV Act", log, field_delay_ms)
         else:
-            log(f"[{_ts()}]   ⏭️ [Charged U/S MV Act] — Optional, not in Excel. Skipping.")
+            if isinstance(log, AutomationLogger):
+                log.info("Charged U/S MV Act missing; skipping (Optional).")
+            else:
+                log(f"   ⏭️ [Charged U/S MV Act] — Optional, not in Excel. Skipping.")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error filling Charged U/S Motor Vehicle Act: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"MV Act field error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Error filling Charged U/S Motor Vehicle Act: {e}")
 
     if stop_cb(): return False
 
@@ -84,9 +121,15 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
         if val:
             await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.chargedUSIPC"]', val, "Charged U/S IPC", log, field_delay_ms)
         else:
-            log(f"[{_ts()}]   ⏭️ [Charged U/S IPC] — Optional, not in Excel. Skipping.")
+            if isinstance(log, AutomationLogger):
+                log.info("Charged U/S IPC missing; skipping (Optional).")
+            else:
+                log(f"   ⏭️ [Charged U/S IPC] — Optional, not in Excel. Skipping.")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error filling Charged U/S IPC: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"IPC field error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Error filling Charged U/S IPC: {e}")
 
     if stop_cb(): return False
 
@@ -95,11 +138,17 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
         val = data.whether_driver_without_license
         if val:
             normalized = "Yes" if str(val).strip().lower() == "yes" else "No"
-            await select_dropdown_with_delay(page, 'select[name="Whether driver without license ?"]', normalized, "Driver Without License", log, field_delay_ms)
+            await select_dropdown_with_delay(page, 'select[name="Whether driver without license ?"]', normalized, "Driver w/o License", log, field_delay_ms)
         else:
-            log(f"[{_ts()}]   ⚠️ Whether driver without license missing from Excel.")
+            if isinstance(log, AutomationLogger):
+                log.warning("Driver Without License status missing from source data.")
+            else:
+                log("   ⚠️ Whether driver without license missing from Excel.")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error selecting Whether Driver Without License: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"License Status dropdown error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Error selecting Whether Driver Without License: {e}")
 
     if stop_cb(): return False
 
@@ -108,11 +157,17 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
         val = data.any_previous_police_records
         if val:
             normalized = "Yes" if str(val).strip().lower() == "yes" else "No"
-            await select_dropdown_with_delay(page, 'select[data-ng-model="surveyorData.worklist.additionalDetails.prevPoliceRecords"]', normalized, "Previous Records", log, field_delay_ms)
+            await select_dropdown_with_delay(page, 'select[data-ng-model="surveyorData.worklist.additionalDetails.prevPoliceRecords"]', normalized, "Police Records", log, field_delay_ms)
         else:
-            log(f"[{_ts()}]   ⏭️ [Previous Police Records] — Optional, not in Excel. Skipping.")
+            if isinstance(log, AutomationLogger):
+                log.info("Police Records missing; skipping (Optional).")
+            else:
+                log(f"   ⏭️ [Previous Police Records] — Optional, not in Excel. Skipping.")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error selecting Previous Police Records: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Police Records dropdown error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Error selecting Previous Police Records: {e}")
 
     if stop_cb(): return False
 
@@ -123,9 +178,19 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
             normalized = "Yes" if str(val).strip().lower() == "yes" else "No"
             await select_dropdown_with_delay(page, 'select[name="Is there any TP claim?"]', normalized, "TP Claim", log, field_delay_ms)
         else:
-            log(f"[{_ts()}]   ⚠️ Is there any TP claim missing from Excel.")
+            if isinstance(log, AutomationLogger):
+                log.warning("TP Claim status missing from source data.")
+            else:
+                log("   ⚠️ Is there any TP claim missing from Excel.")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error selecting TP Claim: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"TP Claim dropdown error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Error selecting TP Claim: {e}")
 
-    log(f"[{_ts()}]  ✅ FIR Details completed successfully.")
+    if isinstance(log, AutomationLogger):
+        log.outdent()
+        log.success("FIR Details phase completed.")
+    else:
+        log(f" ✅ FIR Details completed successfully.")
     return True

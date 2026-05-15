@@ -3,7 +3,7 @@ import os
 from typing import Callable, Optional
 from playwright.async_api import Page
 from app.portals.newindia.automation.ui_utils import select_dropdown_with_delay
-from app.automation.automation_logger import _ts
+from app.automation.automation_logger import AutomationLogger
 
 # Dropdown values exactly as they appear in the portal HTML option[value]
 _DOCTYPE_CHASSIS  = "CHASSIS NUMBER PHOTOGRAPH"
@@ -89,14 +89,17 @@ _JS_DISMISS_POPUP = r"""
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-async def _attach_file(page: Page, idx: int, file_path: str, log: Callable) -> bool:
+async def _attach_file(page: Page, idx: int, file_path: str, log) -> bool:
     """Attach file to the file input for row idx."""
     name = f"mandatoryFiles{idx}"
     fname = os.path.basename(file_path)
     abs_path = os.path.abspath(file_path)
 
     if not os.path.isfile(abs_path):
-        log(f"  ❌ [Row {idx}] File not found: {abs_path}")
+        if isinstance(log, AutomationLogger):
+            log.upload_failed(f"Row {idx} Photo", f"File not found: {fname}")
+        else:
+            log(f"  ❌ [Row {idx}] File not found: {fname}")
         return False
 
     try:
@@ -104,23 +107,35 @@ async def _attach_file(page: Page, idx: int, file_path: str, log: Callable) -> b
         await file_input.wait_for(state="attached", timeout=6000)
         await file_input.set_input_files(abs_path)
         await asyncio.sleep(0.8)
-        log(f"  ✅ [Row {idx}] File attached → '{fname}'")
+        if isinstance(log, AutomationLogger):
+            log.upload_attached(f"Row {idx} Photo", fname)
+        else:
+            log(f"  ✅ [Row {idx}] File attached → '{fname}'")
         return True
     except Exception as e:
-        log(f"  ⚠️  [Row {idx}] File attach failed: {e}")
+        if isinstance(log, AutomationLogger):
+            log.upload_failed(f"Row {idx} Photo", str(e))
+        else:
+            log(f"  ⚠️  [Row {idx}] File attach failed: {e}")
         return False
 
 
-async def _click_plus_and_wait(page: Page, log: Callable,
+async def _click_plus_and_wait(page: Page, log,
                                before_count: int, timeout_s: float = 5.0) -> bool:
     """Click the + button and wait for a new row to appear in the DOM."""
     try:
         res = await page.evaluate(_JS_CLICK_PLUS)
         if not res or not res.get("ok"):
-            log(f"  ⚠️  Plus click failed: {res}")
+            if isinstance(log, AutomationLogger):
+                log.error(f"Row addition failed: {res.get('err')}")
+            else:
+                log(f"  ⚠️  Plus click failed: {res}")
             return False
     except Exception as e:
-        log(f"  ⚠️  Plus click error: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Row addition error: {str(e)[:100]}")
+        else:
+            log(f"  ⚠️  Plus click error: {e}")
         return False
 
     deadline = asyncio.get_event_loop().time() + timeout_s
@@ -129,27 +144,28 @@ async def _click_plus_and_wait(page: Page, log: Callable,
         try:
             count = await page.evaluate(_JS_ROW_COUNT)
             if count > before_count:
-                log(f"  ✅ New row added (total rows: {count})")
+                if isinstance(log, AutomationLogger):
+                    log.info(f"Row added successfully (Total rows: {count})")
+                else:
+                    log(f"  ✅ New row added (total rows: {count})")
                 return True
         except Exception:
             pass
-    log(f"  ⚠️  Row count did not increase after Plus click")
+    if isinstance(log, AutomationLogger):
+        log.warning("Row count did not increase after click")
+    else:
+        log(f"  ⚠️  Row count did not increase after Plus click")
     return False
 
 
-async def _handle_popup_after_next(page: Page, log: Callable, max_wait_s: float = 8.0) -> bool:
+async def _handle_popup_after_next(page: Page, log, max_wait_s: float = 8.0) -> bool:
     """
     After clicking Next, poll for any modal/popup overlay and dismiss it.
-
-    Returns True if popup was handled (or no popup appeared), False on error.
-
-    Strategy:
-      1. Poll up to max_wait_s for a popup to appear.
-      2. Once detected, log what it is and dismiss it.
-      3. Wait briefly for it to close.
-      4. Return — caller is responsible for continuing.
     """
-    log("Polling for popup/modal after Next...")
+    if isinstance(log, AutomationLogger):
+        log.wait("Polling for confirmation popup...")
+    else:
+        log("Polling for popup/modal after Next...")
     poll_interval = 0.4
     elapsed = 0.0
 
@@ -160,25 +176,41 @@ async def _handle_popup_after_next(page: Page, log: Callable, max_wait_s: float 
         try:
             popup_info = await page.evaluate(_JS_DETECT_POPUP)
         except Exception as e:
-            log(f"  ⚠️ Popup detection error: {e}")
+            if isinstance(log, AutomationLogger):
+                log.error(f"Popup detection error: {str(e)[:100]}")
+            else:
+                log(f"  ⚠️ Popup detection error: {e}")
             continue
 
         if popup_info.get("found"):
             ptype = popup_info.get("type", "unknown")
             title = popup_info.get("title", "")
             body  = popup_info.get("body", "")
-            log(f"  🔔 Popup detected! type={ptype} | title='{title}' | body='{body[:80]}'")
+            if isinstance(log, AutomationLogger):
+                log.info(f"Modal detected: {title or ptype}")
+                log.info(f"Modal content: {body[:100]}...")
+            else:
+                log(f"  🔔 Popup detected! type={ptype} | title='{title}' | body='{body[:80]}'")
 
             # Dismiss it
             try:
                 dismiss_res = await page.evaluate(_JS_DISMISS_POPUP)
                 if dismiss_res.get("ok"):
-                    log(f"  ✅ Popup dismissed via: {dismiss_res.get('via')}")
+                    if isinstance(log, AutomationLogger):
+                        log.success(f"Modal dismissed via {dismiss_res.get('via')}")
+                    else:
+                        log(f"  ✅ Popup dismissed via: {dismiss_res.get('via')}")
                 else:
-                    log(f"  ⚠️ Could not dismiss popup: {dismiss_res.get('err')}")
+                    if isinstance(log, AutomationLogger):
+                        log.warning(f"Could not dismiss modal: {dismiss_res.get('err')}")
+                    else:
+                        log(f"  ⚠️ Could not dismiss popup: {dismiss_res.get('err')}")
                     return False
             except Exception as e:
-                log(f"  ⚠️ Popup dismiss error: {e}")
+                if isinstance(log, AutomationLogger):
+                    log.error(f"Modal dismissal error: {str(e)[:100]}")
+                else:
+                    log(f"  ⚠️ Popup dismiss error: {e}")
                 return False
 
             # Wait for overlay to fade out
@@ -188,17 +220,26 @@ async def _handle_popup_after_next(page: Page, log: Callable, max_wait_s: float 
             try:
                 still_open = await page.evaluate(_JS_DETECT_POPUP)
                 if still_open.get("found"):
-                    log("  ⚠️ Popup still visible after dismiss — trying once more...")
+                    if isinstance(log, AutomationLogger):
+                        log.warning("Modal still visible; retrying dismissal...")
+                    else:
+                        log("  ⚠️ Popup still visible after dismiss — trying once more...")
                     await page.evaluate(_JS_DISMISS_POPUP)
                     await asyncio.sleep(1.0)
                 else:
-                    log("  ✅ Popup closed successfully.")
+                    if isinstance(log, AutomationLogger):
+                        log.success("Modal closed successfully.")
+                    else:
+                        log("  ✅ Popup closed successfully.")
             except Exception:
                 pass
 
             return True
 
-    log("  ℹ️ No popup detected within timeout — continuing normally.")
+    if isinstance(log, AutomationLogger):
+        log.info("No confirmation popup appeared.")
+    else:
+        log("  ℹ️ No popup detected within timeout — continuing normally.")
     return True
 
 
@@ -219,22 +260,30 @@ def _find_file(claim_data, key: str, fallback_keys: list) -> Optional[str]:
 async def fill_vehicle_photo_graph(
     page: Page,
     claim_data,
-    log_cb: Callable[[str], None] = print,
+    log = None,
     stop_cb: Callable[[], bool] = lambda: False,
     field_delay_ms: int = 600
 ) -> bool:
-    def log(msg): log_cb(f"[{_ts()}]   [VP] {msg}")
-
-    log("Starting Phase 4 — Vehicle Photo Graph")
+    if isinstance(log, AutomationLogger):
+        log.info("Starting Vehicle Photo Graph phase...")
+        log.indent()
+    elif log:
+        log(f"Starting Phase 4 — Vehicle Photo Graph")
 
     try:
         await page.wait_for_selector(
             'h4.headerClip:has-text("Vehicle Photo Graph")',
             state="visible", timeout=15000
         )
-        log("Section visible.")
+        if isinstance(log, AutomationLogger):
+            log.info("Phase container located.")
+        else:
+            log("Section visible.")
     except Exception as e:
-        log(f"Section not found: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Vehicle Photo section not found: {str(e)[:100]}")
+        else:
+            log(f"Section not found: {e}")
         return False
 
     await asyncio.sleep(0.8)
@@ -244,27 +293,51 @@ async def fill_vehicle_photo_graph(
     odometer_file = _find_file(claim_data, "Odometer Reading Photograph", ["odometer", "odo"])
 
     # ROW 0 — Chassis
-    log("Setting Row 0 → Chassis...")
+    if isinstance(log, AutomationLogger):
+        log.info("Processing Row 0 (Chassis Photo)...")
+        log.indent()
+    else:
+        log("Setting Row 0 → Chassis...")
+        
     await select_dropdown_with_delay(page, 'select[name="docType0"]', _DOCTYPE_CHASSIS, "Row 0 Type", log, field_delay_ms)
     if chassis_file:
         await _attach_file(page, 0, chassis_file, log)
+    else:
+        if isinstance(log, AutomationLogger):
+            log.warning("No Chassis photo found in source data.")
+            
+    if isinstance(log, AutomationLogger): log.outdent()
 
     if stop_cb(): return False
 
     # ROW 1 — Odometer (optional)
     if odometer_file:
-        log("Adding Row 1 for Odometer...")
+        if isinstance(log, AutomationLogger):
+            log.info("Processing Row 1 (Odometer Photo)...")
+            log.indent()
+        else:
+            log("Adding Row 1 for Odometer...")
+            
         before_count = await page.evaluate(_JS_ROW_COUNT)
         if await _click_plus_and_wait(page, log, before_count):
             await select_dropdown_with_delay(page, 'select[name="docType1"]', _DOCTYPE_ODOMETER, "Row 1 Type", log, field_delay_ms)
             await _attach_file(page, 1, odometer_file, log)
+        
+        if isinstance(log, AutomationLogger): log.outdent()
     else:
-        log("  ℹ️ No Odometer file found — skipping Row 1.")
+        if isinstance(log, AutomationLogger):
+            log.info("No Odometer photo found; skipping Row 1.")
+        else:
+            log("  ℹ️ No Odometer file found — skipping Row 1.")
 
     if stop_cb(): return False
 
     # ── Click Next button ─────────────────────────────────────────────────────
-    log("Clicking Next button...")
+    if isinstance(log, AutomationLogger):
+        log.wait("Submitting step (Next)...")
+    else:
+        log("Clicking Next button...")
+        
     try:
         # Use Playwright's trusted click (not JS inject) so the portal's
         # Angular click-handler fires correctly and produces the modal.
@@ -273,21 +346,41 @@ async def fill_vehicle_photo_graph(
         await next_btn.scroll_into_view_if_needed()
         await asyncio.sleep(0.3)
         await next_btn.click()
-        log("  ✅ Next button clicked.")
+        if isinstance(log, AutomationLogger):
+            log.success("Next button clicked.")
+        else:
+            log("  ✅ Next button clicked.")
     except Exception as e:
-        log(f"  ⚠️ Next button not found via locator, falling back to JS click: {e}")
+        if isinstance(log, AutomationLogger):
+            log.warning("Primary Next button not clickable; attempting JS fallback...")
+        else:
+            log(f"  ⚠️ Next button not found via locator, falling back to JS click: {e}")
         try:
             await page.evaluate("document.getElementById('saveQuickUpdateNM').click()")
-            log("  ✅ Next button clicked (JS fallback).")
+            if isinstance(log, AutomationLogger):
+                log.success("Next button clicked via JS.")
+            else:
+                log("  ✅ Next button clicked (JS fallback).")
         except Exception as e2:
-            log(f"  ❌ Next button click failed: {e2}")
+            if isinstance(log, AutomationLogger):
+                log.error(f"Next submission failed: {str(e2)[:100]}")
+            else:
+                log(f"  ❌ Next button click failed: {e2}")
             return False
 
     # ── Handle popup / modal that appears after Next ──────────────────────────
     await _handle_popup_after_next(page, log, max_wait_s=10.0)
 
     # ── Wait for page to stabilise before handing off to Phase 5 ─────────────
-    log("Waiting for page to stabilise after Next...")
+    if isinstance(log, AutomationLogger):
+        log.wait("Waiting for page transition...")
+    else:
+        log("Waiting for page to stabilise after Next...")
+        
     await asyncio.sleep(1.5)
-    log("Phase 4 complete.")
+    if isinstance(log, AutomationLogger):
+        log.outdent()
+        log.success("Vehicle Photo Graph phase completed.")
+    elif log:
+        log("Phase 4 complete.")
     return True

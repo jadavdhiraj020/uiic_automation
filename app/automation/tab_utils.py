@@ -11,6 +11,7 @@ import logging
 from typing import Callable
 
 from app.automation.selectors import TABS, TAB_SEL
+from app.automation.automation_logger import AutomationLogger
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 _TAB_RENDER_WAIT = 1.2   # seconds
 
 
-async def click_tab(page, tab_key: str, log_cb: Callable) -> None:
+async def click_tab(page, tab_key: str, log = print) -> None:
     """
     Click the portal tab identified by tab_key (one of: 'interim', 'documents', 'assessment').
     Falls back to index-based click if text-matching fails.
@@ -29,7 +30,11 @@ async def click_tab(page, tab_key: str, log_cb: Callable) -> None:
     fallback_idx = tab_cfg["index"]
     label = tab_key.replace("_", " ").title()
 
-    log_cb(f"📑 Clicking '{label}' tab...")
+    if isinstance(log, AutomationLogger):
+        log.info(f"Clicking '{label}' tab...")
+    else:
+        log(f"📑 Clicking '{label}' tab...")
+        
     tabs = page.locator(TAB_SEL)
     count = await tabs.count()
 
@@ -41,7 +46,10 @@ async def click_tab(page, tab_key: str, log_cb: Callable) -> None:
                 await asyncio.sleep(_TAB_RENDER_WAIT)
                 await page.bring_to_front()
                 await page.evaluate("window.scrollTo(0, 250)")
-                log_cb(f"  ✅ '{label}' tab (idx {i})")
+                if isinstance(log, AutomationLogger):
+                    log.success(f"'{label}' tab selected (idx {i})")
+                else:
+                    log(f"  ✅ '{label}' tab (idx {i})")
                 return
         except Exception:
             continue
@@ -50,10 +58,17 @@ async def click_tab(page, tab_key: str, log_cb: Callable) -> None:
     try:
         await tabs.nth(fallback_idx).click()
     except Exception as e:
-        log_cb(f"  ⚠️  Tab click by index failed: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Tab click by index failed: {e}")
+        else:
+            log(f"  ⚠️  Tab click by index failed: {e}")
         return
 
     await asyncio.sleep(_TAB_RENDER_WAIT)
     await page.bring_to_front()
     await page.evaluate("window.scrollTo(0, 250)")
-    log_cb(f"  ✅ '{label}' tab (fallback idx {fallback_idx})")
+    
+    if isinstance(log, AutomationLogger):
+        log.success(f"'{label}' tab selected (fallback idx {fallback_idx})")
+    else:
+        log(f"  ✅ '{label}' tab (fallback idx {fallback_idx})")

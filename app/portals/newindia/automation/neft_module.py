@@ -4,8 +4,7 @@ from app.data.data_model import ClaimData
 from app.portals.newindia.automation.ui_utils import (
     fill_input_with_delay, select_dropdown_with_delay
 )
-from app.automation.automation_logger import _ts
-from app.portals.newindia.automation.ocr_helper import ChequeExtractor
+from app.automation.automation_logger import AutomationLogger
 
 def _find_cheque_document(data: ClaimData) -> str:
     """Scans uploaded documents to find the cheque image/PDF."""
@@ -17,7 +16,11 @@ def _find_cheque_document(data: ClaimData) -> str:
 async def fill_neft_details(page: Page, data: ClaimData, log, stop_cb, field_delay_ms: int = 600) -> bool:
     if stop_cb(): return False
 
-    log(f"[{_ts()}] Opening NEFT Details section...")
+    if isinstance(log, AutomationLogger):
+        log.info("Opening NEFT Details section...")
+        log.indent()
+    else:
+        log(f"Opening NEFT Details section...")
     
     try:
         acc_heading = page.locator('a.accordion-toggle:has-text("NEFT Details")').first
@@ -28,43 +31,72 @@ async def fill_neft_details(page: Page, data: ClaimData, log, stop_cb, field_del
         if is_collapsed:
             await acc_heading.click()
             await asyncio.sleep(1.5)
-            log(f"[{_ts()}]   ✅ Expanded NEFT Details.")
+            if isinstance(log, AutomationLogger):
+                log.success("Accordion expanded.")
+            else:
+                log(f"   ✅ Expanded NEFT Details.")
         else:
-            log(f"[{_ts()}]   ℹ️ NEFT Details already expanded.")
+            if isinstance(log, AutomationLogger):
+                log.info("Accordion already expanded.")
+            else:
+                log(f"   ℹ️ NEFT Details already expanded.")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Could not expand NEFT Details: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Expansion attempt failed: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Could not expand NEFT Details: {e}")
 
     if stop_cb(): return False
 
-    log(f"[{_ts()}] Scanning uploaded documents for cheque...")
+    if isinstance(log, AutomationLogger):
+        log.info("Scanning uploaded documents for cheque...")
+    else:
+        log(f"Scanning uploaded documents for cheque...")
     cheque_path = _find_cheque_document(data)
     
     if cheque_path:
-        log(f"[{_ts()}]   ✅ Cheque document detected.")
+        if isinstance(log, AutomationLogger):
+            log.success("Cheque document detected.")
+            log.extraction_started("Cheque OCR", source=cheque_path)
+        else:
+            log(f"   ✅ Cheque document detected.")
+            log(f"   ℹ️ Extracting details from cheque...")
         
-        # OCR Extraction
-        log(f"[{_ts()}]   ℹ️ Extracting details from cheque...")
+        from app.portals.newindia.automation.ocr_helper import ChequeExtractor
         extractor = ChequeExtractor(cheque_path)
-        cheque_details = extractor.extract_details()
+        cheque_details = extractor.extract_details(log=log)
         
         ifsc = cheque_details.get("ifsc") or data.ifsc_code
         acc_no = cheque_details.get("account_number") or data.account_number
         acc_type = cheque_details.get("account_type") or data.account_type
         
-        if not cheque_details.get("ifsc"):
-            log(f"[{_ts()}]   ⚠️ IFSC not found in cheque. Falling back to Excel.")
-        if not cheque_details.get("account_number"):
-            log(f"[{_ts()}]   ⚠️ Account Number not found in cheque. Falling back to Excel.")
+        if isinstance(log, AutomationLogger):
+            log.extraction_success("Cheque OCR", {"IFSC": ifsc, "Account": acc_no})
+            if not cheque_details.get("ifsc"):
+                log.warning("IFSC not found in cheque; using Excel fallback.")
+            if not cheque_details.get("account_number"):
+                log.warning("Account Number not found in cheque; using Excel fallback.")
+        else:
+            if not cheque_details.get("ifsc"):
+                log(f"   ⚠️ IFSC not found in cheque. Falling back to Excel.")
+            if not cheque_details.get("account_number"):
+                log(f"   ⚠️ Account Number not found in cheque. Falling back to Excel.")
             
     else:
-        log(f"[{_ts()}]   ⚠️ Cheque document NOT detected.")
+        if isinstance(log, AutomationLogger):
+            log.warning("Cheque document NOT detected; strictly using Excel data.")
+        else:
+            log(f"   ⚠️ Cheque document NOT detected.")
         ifsc = data.ifsc_code
         acc_no = data.account_number
         acc_type = data.account_type
 
     # Single Source of Truth: Read payment type established during extraction
     payment_to_value = data.bank_payment_to or "Dealer"
-    log(f"[{_ts()}]   ℹ️ Using pre-calculated Payment Type: '{payment_to_value}'")
+    if isinstance(log, AutomationLogger):
+        log.info(f"Target Payment Entity: '{payment_to_value}'")
+    else:
+        log(f"[{_ts()}]   ℹ️ Using pre-calculated Payment Type: '{payment_to_value}'")
 
     # 1. Provide bank details for payment to
     try:
@@ -77,7 +109,10 @@ async def fill_neft_details(page: Page, data: ClaimData, log, stop_cb, field_del
             field_delay_ms
         )
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error selecting Payment To: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Payment To field error: {str(e)[:100]}")
+        else:
+            log(f"[{_ts()}]   ⚠️ Error selecting Payment To: {e}")
 
     if stop_cb(): return False
 
@@ -88,7 +123,10 @@ async def fill_neft_details(page: Page, data: ClaimData, log, stop_cb, field_del
             if val:
                 await fill_input_with_delay(page, 'input[name="Dealer Name"]', val, "Dealer Name", log, field_delay_ms)
         except Exception as e:
-            log(f"[{_ts()}]   ⚠️ Error filling Dealer Name: {e}")
+            if isinstance(log, AutomationLogger):
+                log.error(f"Dealer Name field error: {str(e)[:100]}")
+            else:
+                log(f"[{_ts()}]   ⚠️ Error filling Dealer Name: {e}")
 
     if stop_cb(): return False
 
@@ -101,33 +139,51 @@ async def fill_neft_details(page: Page, data: ClaimData, log, stop_cb, field_del
             if await find_btn.count() > 0:
                 await find_btn.click()
                 await asyncio.sleep(1.5)  # Wait for AJAX to populate readonly fields
-                log(f"[{_ts()}]   ✅ Clicked 'Find' to fetch bank details.")
+                if isinstance(log, AutomationLogger):
+                    log.success("Bank details fetched via 'Find' button.")
+                else:
+                    log(f"[{_ts()}]   ✅ Clicked 'Find' to fetch bank details.")
         else:
-            log(f"[{_ts()}]   ⚠️ IFSC Code missing from both Cheque and Excel.")
+            if isinstance(log, AutomationLogger):
+                log.warning("IFSC Code missing from all sources.")
+            else:
+                log(f"[{_ts()}]   ⚠️ IFSC Code missing from both Cheque and Excel.")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error filling IFSC Code: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"IFSC lookup error: {str(e)[:100]}")
+        else:
+            log(f"[{_ts()}]   ⚠️ Error filling IFSC Code: {e}")
 
     if stop_cb(): return False
 
     # 4. Readonly fields: Bank Name, Bank Branch Name, Bank Addess
     # We skip filling these as they are populated by the Find button.
-    log(f"[{_ts()}]   ℹ️ Skipping readonly fields (Bank Name, Branch Name, Bank Address).")
+    if isinstance(log, AutomationLogger):
+        log.info("Populated readonly bank fields; skipping manual entry.")
+    else:
+        log(f"[{_ts()}]   ℹ️ Skipping readonly fields (Bank Name, Branch Name, Bank Address).")
 
     # 5. Account Number
     try:
         if acc_no:
             await fill_input_with_delay(page, 'input[name="Account Number"]', acc_no, "Account Number", log, field_delay_ms)
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error filling Account Number: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Account Number field error: {str(e)[:100]}")
+        else:
+            log(f"[{_ts()}]   ⚠️ Error filling Account Number: {e}")
 
     if stop_cb(): return False
 
     # 6. Re-Enter Account Number
     try:
         if acc_no:
-            await fill_input_with_delay(page, 'input[name="Re-Enter Account Number"]', acc_no, "Re-Enter Account Number", log, field_delay_ms)
+            await fill_input_with_delay(page, 'input[name="Re-Enter Account Number"]', acc_no, "Account Re-entry", log, field_delay_ms)
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error filling Re-Enter Account Number: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Account Re-entry field error: {str(e)[:100]}")
+        else:
+            log(f"[{_ts()}]   ⚠️ Error filling Re-Enter Account Number: {e}")
 
     if stop_cb(): return False
 
@@ -136,18 +192,30 @@ async def fill_neft_details(page: Page, data: ClaimData, log, stop_cb, field_del
         if acc_type:
             await select_dropdown_with_delay(page, 'select[name="Account Type"]', acc_type.upper(), "Account Type", log, field_delay_ms)
         else:
-            log(f"[{_ts()}]   ⚠️ Account Type missing from both Cheque and Excel.")
+            if isinstance(log, AutomationLogger):
+                log.warning("Account Type missing from all sources.")
+            else:
+                log(f"[{_ts()}]   ⚠️ Account Type missing from both Cheque and Excel.")
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error selecting Account Type: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Account Type dropdown error: {str(e)[:100]}")
+        else:
+            log(f"[{_ts()}]   ⚠️ Error selecting Account Type: {e}")
 
     if stop_cb(): return False
 
     # 8. Party Payment Method
     try:
-        # Default is NEFT, just ensuring it is set.
         await select_dropdown_with_delay(page, 'select[name="Party Payment Method"]', "NEFT", "Payment Method", log, field_delay_ms)
     except Exception as e:
-        log(f"[{_ts()}]   ⚠️ Error selecting Payment Method: {e}")
+        if isinstance(log, AutomationLogger):
+            log.error(f"Payment Method dropdown error: {str(e)[:100]}")
+        else:
+            log(f"[{_ts()}]   ⚠️ Error selecting Payment Method: {e}")
 
-    log(f"[{_ts()}] Phase 7 (NEFT Details) completed successfully.")
+    if isinstance(log, AutomationLogger):
+        log.outdent()
+        log.success("NEFT Details phase completed.")
+    else:
+        log(f" Phase 7 (NEFT Details) completed successfully.")
     return True
