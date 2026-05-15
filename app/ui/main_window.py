@@ -221,10 +221,11 @@ class MainWindow(QMainWindow):
         self.portal_combo.setFixedHeight(32)
         self.portal_combo.setStyleSheet("""
             QComboBox {
-                background: #FFFFFF; border: 2px solid #CBD5E1; border-radius: 6px;
+                background: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 6px;
                 padding: 4px 10px; color: #0F172A; font-weight: 700; font-size: 9pt;
             }
-            QComboBox:hover { border-color: #4F46E5; }
+            QComboBox:hover { border-color: #94A3B8; }
+            QComboBox:focus { border-color: #6366F1; }
             QComboBox::drop-down { border: none; width: 24px; }
             QComboBox::down-arrow { image: none; border: none; }
         """)

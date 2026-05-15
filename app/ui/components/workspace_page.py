@@ -1,9 +1,11 @@
+import html
 import os
 import re
+from datetime import datetime
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -61,7 +63,7 @@ class WorkflowRail(QWidget):
             btn.setProperty("state", "pending")
             btn.setProperty("active", idx == 0)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setMinimumHeight(58)
+            btn.setMinimumHeight(64)
             btn.clicked.connect(lambda checked=False, i=idx: self.stage_selected.emit(i))
             lay.addWidget(btn)
             self._buttons.append(btn)
@@ -113,11 +115,14 @@ class LogsDrawer(QWidget):
 
         self.btn_copy = QPushButton("Copy")
         self.btn_copy.setObjectName("logsSmallBtn")
+        self.btn_copy.setToolTip("Copy logs")
         self.btn_copy.clicked.connect(lambda: QApplication.clipboard().setText(self.log_text()))
         self.btn_clear = QPushButton("Clear")
         self.btn_clear.setObjectName("logsSmallBtn")
+        self.btn_clear.setToolTip("Clear logs")
         self.btn_export = QPushButton("Export")
         self.btn_export.setObjectName("logsSmallBtn")
+        self.btn_export.setToolTip("Export logs")
 
         h.addWidget(self.btn_toggle)
         h.addWidget(self.latest_label, 1)
@@ -211,12 +216,15 @@ class StructuredLogsPanel(QWidget):
         search, self.search_input = _search_row("Search logs by action, phase, file, warning, error, or upload...", self._apply_filters)
         self.btn_copy = QPushButton("Copy")
         self.btn_copy.setObjectName("logsSmallBtn")
+        self.btn_copy.setToolTip("Copy visible logs")
         self.btn_copy.clicked.connect(self.copy_clicked.emit)
         self.btn_clear = QPushButton("Clear")
         self.btn_clear.setObjectName("logsSmallBtn")
+        self.btn_clear.setToolTip("Clear logs")
         self.btn_clear.clicked.connect(self.clear_clicked.emit)
         self.btn_export = QPushButton("Export")
         self.btn_export.setObjectName("logsSmallBtn")
+        self.btn_export.setToolTip("Export logs")
         self.btn_export.clicked.connect(self.export_clicked.emit)
         fl.addWidget(search, 1)
         fl.addWidget(self.btn_copy)
@@ -225,19 +233,23 @@ class StructuredLogsPanel(QWidget):
         root.addWidget(filters)
 
         self.table = QTableWidget(0, 4)
+        self.table.setObjectName("logsTable")
         self.table.setHorizontalHeaderLabels(["TIME", "LEVEL", "PHASE", "ACTION"])
+        self.table.setAlternatingRowColors(True)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(42)
+        self.table.verticalHeader().setDefaultSectionSize(46)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         root.addWidget(self.table, 1)
 
     def append_log(self, text, portal_id="uiic", phase=""):
         entry = self._parse_entry(text, portal_id, phase)
+        if not entry:
+            return
         self._entries.append(entry)
         self._append_table_row(entry)
         self._apply_filters()
@@ -246,22 +258,27 @@ class StructuredLogsPanel(QWidget):
         self._entries.clear()
         self.table.setRowCount(0)
 
-    def log_text(self):
-        return "\n".join(
-            f"[{e['time']}] [{e['level']}] [{e['phase']}] {e['message']}"
-            for e in self._entries
-        )
+    def log_text(self, visible_only=False):
+        rows = []
+        for row, entry in enumerate(self._entries):
+            if visible_only and self.table.isRowHidden(row):
+                continue
+            rows.append(f"[{entry['time']}] [{entry['level']}] [{entry['phase']}] {entry['message']}")
+        return "\n".join(rows)
 
     def _set_auto_scroll(self, checked):
         self._auto_scroll = checked
 
     def _parse_entry(self, text, portal_id, phase):
         raw = "" if text is None else str(text)
-        plain = re.sub(r"<[^>]+>", " ", raw).strip()
+        plain = html.unescape(re.sub(r"<[^>]+>", " ", raw)).strip()
         ts_match = re.search(r"\[(\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\]", plain)
-        timestamp = ts_match.group(1) if ts_match else ""
+        timestamp = ts_match.group(1) if ts_match else datetime.now().strftime("%H:%M:%S.%f")[:-3]
         if ts_match:
             plain = (plain[:ts_match.start()] + plain[ts_match.end():]).strip()
+        plain = self._clean_action_text(plain)
+        if not plain:
+            return None
 
         lower = plain.lower()
         level = "Info"
@@ -277,16 +294,34 @@ class StructuredLogsPanel(QWidget):
             level = "Wait"
 
         phase_match = re.search(r"STEP\s+\d+/\d+\s+[—-]\s+(.+)", plain)
-        inferred_phase = phase_match.group(1).strip() if phase_match else phase
+        inferred_phase = phase_match.group(1).strip() if phase_match else (phase or "General")
 
         return {
-            "time": timestamp or "—",
+            "time": timestamp,
             "level": level,
             "portal": (portal_id or "uiic").upper(),
-            "phase": inferred_phase or "—",
-            "message": plain or raw,
+            "phase": inferred_phase or "General",
+            "message": plain,
             "search": " ".join([timestamp, level, portal_id or "", inferred_phase or "", plain]).lower(),
         }
+
+    def _clean_action_text(self, text):
+        text = (text or "").replace("\u00a0", " ")
+        text = re.sub(r"\s+", " ", text).strip()
+        if not text:
+            return ""
+
+        # Hide pure visual separators and box borders from the operator table.
+        decorative = r"=\-─═━|║╔╗╚╝╠╣╦╩╬┌┐└┘├┤┬┴┼█▔▁▏▕_ "
+        if not re.sub(f"[{re.escape(decorative)}]", "", text).strip():
+            return ""
+
+        # Keep banner content, but remove the surrounding box art.
+        text = text.strip(decorative)
+        text = re.sub(r"^[|║]+", "", text).strip()
+        text = re.sub(r"[|║]+$", "", text).strip()
+        text = re.sub(r"\s*[|║]{2,}\s*", "  ", text).strip()
+        return re.sub(r"\s+", " ", text).strip()
 
     def _append_table_row(self, entry):
         row = self.table.rowCount()
@@ -294,10 +329,16 @@ class StructuredLogsPanel(QWidget):
         values = [entry["time"], entry["level"], entry["phase"], entry["message"]]
         for col, value in enumerate(values):
             item = QTableWidgetItem(str(value))
+            if col == 0:
+                item.setFont(QFont("Cascadia Code", 9))
             if col == 1:
                 item.setForeground(self._level_color(entry["level"]))
+                item.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+                item.setBackground(self._level_background(entry["level"]))
+            if col == 3:
+                item.setToolTip(str(value))
             self.table.setItem(row, col, item)
-        if self._auto_scroll:
+        if self._auto_scroll and not self.search_input.text().strip():
             self.table.scrollToBottom()
 
     def _level_color(self, level):
@@ -309,6 +350,15 @@ class StructuredLogsPanel(QWidget):
             "Wait": QColor("#0284C7"),
         }.get(level, QColor("#0F172A"))
 
+    def _level_background(self, level):
+        return {
+            "Error": QColor("#FEF2F2"),
+            "Warning": QColor("#FFFBEB"),
+            "Success": QColor("#ECFDF5"),
+            "Retry": QColor("#F5F3FF"),
+            "Wait": QColor("#F0F9FF"),
+        }.get(level, QColor("#FFFFFF"))
+
     def _apply_filters(self, *_args):
         text = self.search_input.text().strip().lower()
         for row, entry in enumerate(self._entries):
@@ -316,7 +366,7 @@ class StructuredLogsPanel(QWidget):
             if text and text not in entry["search"]:
                 visible = False
             self.table.setRowHidden(row, not visible)
-        if self._auto_scroll:
+        if self._auto_scroll and not text:
             self.table.scrollToBottom()
 
 
@@ -326,7 +376,7 @@ class FolderReviewPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(28, 24, 28, 24)
+        lay.setContentsMargins(32, 28, 32, 28)
         lay.setSpacing(18)
 
         header = QLabel("Folder Intake")
@@ -399,7 +449,7 @@ class DataReviewPanel(QWidget):
         self.inner = QWidget()
         self.inner.setObjectName("workspaceScrollInner")
         self.lay = QVBoxLayout(self.inner)
-        self.lay.setContentsMargins(28, 24, 28, 24)
+        self.lay.setContentsMargins(32, 28, 32, 28)
         self.lay.setSpacing(16)
 
         header = QLabel("Extraction Review")
@@ -448,12 +498,16 @@ class DataReviewPanel(QWidget):
         if errors:
             self.validation_bar.setText("MISSING FIELDS - Review before starting:\n" + "\n".join(f"  - {e}" for e in errors))
             self.validation_bar.setObjectName("validationError")
-            self.validation_bar.setStyleSheet("background:#FFF7ED; color:#C2410C; border:2px solid #C2410C; padding:14px; font-weight:800;")
+            self.validation_bar.setStyleSheet("")
+            self.validation_bar.style().unpolish(self.validation_bar)
+            self.validation_bar.style().polish(self.validation_bar)
             self.validation_bar.setVisible(True)
         elif warnings:
             self.validation_bar.setText("Optional fields missing: " + " | ".join(warnings))
             self.validation_bar.setObjectName("validationWarn")
-            self.validation_bar.setStyleSheet("background:#FFFBEB; color:#B45309; border:2px solid #B45309; padding:14px; font-weight:800;")
+            self.validation_bar.setStyleSheet("")
+            self.validation_bar.style().unpolish(self.validation_bar)
+            self.validation_bar.style().polish(self.validation_bar)
             self.validation_bar.setVisible(True)
         else:
             self.validation_bar.setVisible(False)
@@ -515,6 +569,7 @@ class DataReviewPanel(QWidget):
 
     def _build_table(self, rows):
         table = QTableWidget(0, 4)
+        table.setAlternatingRowColors(True)
         table.setHorizontalHeaderLabels(["FIELD", "VALUE", "SOURCE", "STATUS"])
         table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
@@ -524,6 +579,7 @@ class DataReviewPanel(QWidget):
         table.verticalHeader().setDefaultSectionSize(40)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        table.setWordWrap(False)
         table.setMinimumHeight(min(380, max(120, 48 + len(rows) * 42)))
         table.setRowCount(len(rows))
         for i, (label, value, is_critical, source) in enumerate(rows):
@@ -573,7 +629,8 @@ class DocumentReviewPanel(QWidget):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.inner = QWidget()
         self.lay = QVBoxLayout(self.inner)
-        self.lay.setContentsMargins(28, 24, 28, 24)
+        self.inner.setObjectName("workspaceScrollInner")
+        self.lay.setContentsMargins(32, 28, 32, 28)
         self.lay.setSpacing(16)
         self.header = QLabel("Document Review")
         self.header.setObjectName("workspaceHeading")
@@ -649,6 +706,7 @@ class DocumentReviewPanel(QWidget):
 
     def _add_doc_group(self, title, rows):
         table = QTableWidget(0, 5)
+        table.setAlternatingRowColors(True)
         table.setHorizontalHeaderLabels(["STATUS", "PORTAL / TYPE", "FILENAME", "DETAIL", "BUCKET"])
         table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
@@ -656,7 +714,10 @@ class DocumentReviewPanel(QWidget):
         table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         table.verticalHeader().setVisible(False)
+        table.verticalHeader().setDefaultSectionSize(42)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        table.setWordWrap(False)
         table.setMinimumHeight(min(320, max(96, 48 + len(rows) * 38)))
         table.setRowCount(len(rows))
         for i, (doc_type, value, bucket, status) in enumerate(rows):
@@ -750,7 +811,7 @@ class WorkspacePage(QWidget):
         self.data_panel = DataReviewPanel()
         self.document_panel = DocumentReviewPanel()
         self.logs_panel = StructuredLogsPanel()
-        self._current_phase = ""
+        self._current_phase = "General"
         for panel in (
             self.folder_panel,
             self.data_panel,
@@ -766,7 +827,7 @@ class WorkspacePage(QWidget):
         self.logs_drawer = LogsDrawer()
         self.logs_drawer.btn_clear.clicked.connect(self.clear_logs)
         self.logs_drawer.btn_export.clicked.connect(self.export_log_clicked.emit)
-        self.logs_panel.copy_clicked.connect(lambda: QApplication.clipboard().setText(self.log_text()))
+        self.logs_panel.copy_clicked.connect(lambda: QApplication.clipboard().setText(self.logs_panel.log_text(visible_only=True)))
         self.logs_panel.clear_clicked.connect(self.clear_logs)
         self.logs_panel.export_clicked.connect(self.export_log_clicked.emit)
 
@@ -795,7 +856,7 @@ class WorkspacePage(QWidget):
         self.document_panel.reset()
         self.logs_panel.clear_logs()
         self.logs_drawer.clear_logs()
-        self._current_phase = ""
+        self._current_phase = "General"
         self.rail.reset()
         self.set_stage(0)
 
@@ -842,18 +903,20 @@ class WorkspacePage(QWidget):
     def set_automation_running(self, running: bool):
         self.btn_start.setEnabled(not running)
         self.btn_stop.setEnabled(running)
+        self._current_phase = "Startup" if running else "General"
         self.rail.set_stage_state(3, "active" if running else "done")
         self.set_stage(3)
 
     def set_automation_finished(self, success: bool):
         self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(False)
+        self._current_phase = "Finished" if success else "Stopped"
         self.rail.set_stage_state(3, "done" if success else "failed")
         self.set_stage(3)
 
     def append_log(self, text):
         self.logs_drawer.append_log(text)
-        self.logs_panel.append_log(text, portal_id=self._portal_id, phase=self._current_phase)
+        self.logs_panel.append_log(text, portal_id=self._portal_id, phase=self._current_phase or "General")
 
     def clear_logs(self):
         self.logs_drawer.clear_logs()

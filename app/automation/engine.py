@@ -20,6 +20,29 @@ from app.portals.registry import get_portal
 logger = logging.getLogger(__name__)
 
 
+def _setting_int(settings: dict, primary_key: str, legacy_key: str, default: int) -> int:
+    value = settings.get(primary_key)
+    if value in (None, ""):
+        value = settings.get(legacy_key, default)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _setting_bool(settings: dict, key: str, default: bool = False) -> bool:
+    value = settings.get(key, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return bool(value)
+
+
 class AutomationRunResult:
     def __init__(self, success: bool, message: str):
         self.success = success
@@ -226,7 +249,7 @@ class AutomationEngine:
         else:
             steps = ["Login", "Navigate", "Interim Report", "Claim Documents", "Claim Assessment"]
 
-        field_delay = settings.get("field_delay_ms", 400)
+        field_delay = _setting_int(settings, "field_wait_ms", "field_delay_ms", 400)
         
         async with async_playwright() as p:
             # 1. Launch Browser
@@ -236,9 +259,9 @@ class AutomationEngine:
                 launch_args.append(f"--proxy-server={settings['proxy_url']}")
 
             browser = await browser_type.launch(
-                headless=False,
+                headless=_setting_bool(settings, "browser_headless", False),
                 args=launch_args,
-                slow_mo=settings.get("slow_mo_ms", 0)
+                slow_mo=_setting_int(settings, "browser_slow_mo_ms", "slow_mo_ms", 0)
             )
 
             # Create context without viewport to allow --start-maximized to work

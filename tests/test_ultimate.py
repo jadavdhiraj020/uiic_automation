@@ -54,6 +54,7 @@ Sections:
   22. FOLDER SCANNER             — FolderScanResult, keyword matching
   23. ASSESSMENT UPLOAD LABELS   — mapping completeness
   24. CROSS-MODULE CONSISTENCY   — verify modules agree on conventions
+  25. PORTAL SETTINGS SAFETY    — synchronization & isolation
 """
 import os
 import sys
@@ -85,6 +86,8 @@ from app.automation.form_helpers import (
     _to_iso_date,
 )
 from app.automation.interim_report import _clean_mobile
+from app import utils
+from app.automation.engine import _setting_bool, _setting_int
 
 CONFIG_DIR = os.path.join(PROJECT_ROOT, "app", "config")
 
@@ -4385,3 +4388,114 @@ class TestSystemHealthReporter:
                 print("-" * 40)
         
         print("=" * 60)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 25. PORTAL SETTINGS & ISOLATION SAFETY
+# ═════════════════════════════════════════════════════════════════════════════
+
+class TestPortalSettingsSafety:
+    """Rigorous verification of settings synchronization, isolation, and runtime behavior."""
+
+    def _write_json(self, path, data):
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+    def test_doc_mapping_merge_preserves_missing_bundled_sections(self, tmp_path, monkeypatch):
+        default_path = tmp_path / "default_doc_mapping.json"
+        user_path = tmp_path / "user_doc_mapping.json"
+
+        self._write_json(
+            default_path,
+            {
+                "claim_documents_tab": {
+                    "Driving License": ["dl"],
+                    "RC Book": ["rc"],
+                },
+                "claim_assessment_tab": {
+                    "invoice": ["invoice"],
+                },
+                "document_upload_tab": {
+                    "driving_license": ["driving_license"],
+                    "registration_certificate": ["registration_certificate"],
+                },
+                "expected_claim_docs": ["Driving License", "RC Book"],
+                "other_slots": ["Other 1"],
+            },
+        )
+        self._write_json(
+            user_path,
+            {
+                "claim_documents_tab": {
+                    "Driving License": ["license_custom"],
+                },
+                "expected_claim_docs": ["Driving License"],
+            },
+        )
+
+        monkeypatch.setattr(
+            utils,
+            "doc_mapping_paths",
+            lambda portal_id=None: {"default": str(default_path), "user": str(user_path)},
+        )
+
+        loaded = utils.load_doc_mapping(portal_id="newindia")
+
+        assert loaded["claim_documents_tab"]["Driving License"] == ["license_custom"]
+        assert loaded["claim_documents_tab"]["RC Book"] == ["rc"]
+        assert loaded["document_upload_tab"]["driving_license"] == ["driving_license"]
+        assert loaded["document_upload_tab"]["registration_certificate"] == ["registration_certificate"]
+        assert loaded["expected_claim_docs"] == ["Driving License"]
+        assert loaded["other_slots"] == ["Other 1"]
+
+    def test_doc_mapping_merge_supports_missing_user_file(self, tmp_path, monkeypatch):
+        default_path = tmp_path / "default_doc_mapping.json"
+        user_path = tmp_path / "missing_user_doc_mapping.json"
+
+        self._write_json(default_path, {"document_upload_tab": {"claim_form": ["claim_form"]}})
+        monkeypatch.setattr(
+            utils,
+            "doc_mapping_paths",
+            lambda portal_id=None: {"default": str(default_path), "user": str(user_path)},
+        )
+
+        assert utils.load_doc_mapping(portal_id="uiic") == {
+            "document_upload_tab": {"claim_form": ["claim_form"]}
+        }
+
+    def test_load_settings_uses_separate_portal_paths(self, tmp_path, monkeypatch):
+        uiic_default = tmp_path / "uiic_default_settings.json"
+        uiic_user = tmp_path / "uiic_user_settings.json"
+        newindia_default = tmp_path / "newindia_default_settings.json"
+        newindia_user = tmp_path / "newindia_user_settings.json"
+
+        self._write_json(uiic_default, {"portal": "uiic", "field_wait_ms": 600})
+        self._write_json(uiic_user, {"field_wait_ms": 700})
+        self._write_json(newindia_default, {"portal": "newindia", "field_wait_ms": 600})
+        self._write_json(newindia_user, {"field_wait_ms": 900})
+
+        def fake_settings_paths(portal_id=None):
+            if portal_id == "newindia":
+                return {"default": str(newindia_default), "user": str(newindia_user)}
+            return {"default": str(uiic_default), "user": str(uiic_user)}
+
+        monkeypatch.setattr(utils, "settings_paths", fake_settings_paths)
+
+        assert utils.load_settings(portal_id="uiic") == {"portal": "uiic", "field_wait_ms": 700}
+        assert utils.load_settings(portal_id="newindia") == {
+            "portal": "newindia",
+            "field_wait_ms": 900,
+        }
+
+    def test_engine_runtime_settings_prefer_ui_schema_with_legacy_fallbacks(self):
+        assert _setting_int({"field_wait_ms": "750", "field_delay_ms": 100}, "field_wait_ms", "field_delay_ms", 400) == 750
+        assert _setting_int({"field_delay_ms": "650"}, "field_wait_ms", "field_delay_ms", 400) == 650
+        assert _setting_int({"browser_slow_mo_ms": 250}, "browser_slow_mo_ms", "slow_mo_ms", 0) == 250
+        assert _setting_int({"slow_mo_ms": "150"}, "browser_slow_mo_ms", "slow_mo_ms", 0) == 150
+        assert _setting_int({"field_wait_ms": "bad"}, "field_wait_ms", "field_delay_ms", 400) == 400
+
+    def test_engine_runtime_bool_settings_handle_json_and_string_values(self):
+        assert _setting_bool({"browser_headless": True}, "browser_headless") is True
+        assert _setting_bool({"browser_headless": False}, "browser_headless") is False
+        assert _setting_bool({"browser_headless": "true"}, "browser_headless") is True
+        assert _setting_bool({"browser_headless": "no"}, "browser_headless", True) is False
+        assert _setting_bool({}, "browser_headless", True) is True

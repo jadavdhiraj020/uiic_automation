@@ -234,13 +234,31 @@ def doc_mapping_paths(portal_id: Optional[str] = None) -> dict[str, str]:
     }
 
 
+def _merge_doc_mapping(base: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
+    """Merge portal doc mappings while preserving new bundled sections."""
+    merged = dict(base or {})
+    for key, value in (user or {}).items():
+        base_value = merged.get(key)
+        if isinstance(base_value, dict) and isinstance(value, dict):
+            section = dict(base_value)
+            section.update(value)
+            merged[key] = section
+        else:
+            merged[key] = value
+    return merged
+
+
 def load_doc_mapping(portal_id: Optional[str] = None) -> dict[str, Any]:
-    """Load doc mapping, preferring user overrides over bundled defaults."""
+    """
+    Load doc mapping with user overrides layered over bundled defaults.
+
+    This preserves newly bundled top-level sections such as
+    ``document_upload_tab`` when an older user override file exists.
+    """
     paths = doc_mapping_paths(portal_id=portal_id)
-    user = read_json_file(paths["user"])
-    if user is not None:
-        return user
-    return read_json_file(paths["default"]) or {}
+    base = read_json_file(paths["default"]) or {}
+    user = read_json_file(paths["user"]) or {}
+    return _merge_doc_mapping(base, user)
 
 
 def save_doc_mapping(mapping: dict[str, Any], portal_id: Optional[str] = None) -> str:

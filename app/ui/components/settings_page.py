@@ -52,12 +52,14 @@ class SettingsPage(QWidget):
         
         # Header
         header = QFrame(); header.setFixedHeight(56)
+        header.setObjectName("settingsHeader")
         h_lay = QHBoxLayout(header); h_lay.setContentsMargins(32, 0, 32, 0)
-        title = QLabel("\u2699  Settings"); title.setStyleSheet("font-size:15pt; font-weight:700; color:#1E293B;")
+        title = QLabel("Settings"); title.setObjectName("settingsTitle")
         h_lay.addWidget(title); h_lay.addStretch(); root.addWidget(header)
 
         # Tabs
         self.tab_bar = QFrame(); tl = QHBoxLayout(self.tab_bar); tl.setContentsMargins(32, 10, 32, 0)
+        self.tab_bar.setObjectName("settingsTabBar")
         self.tabs = []
         for i, name in enumerate(["General", "Field Mapping", "Document Mapping", "PDF Mapping"]):
             btn = QPushButton(name); btn.setObjectName("settingsTabBtn"); btn.setProperty("active", i==0)
@@ -74,6 +76,7 @@ class SettingsPage(QWidget):
 
         # Footer
         footer = QFrame(); footer.setFixedHeight(68); fl = QHBoxLayout(footer); fl.setContentsMargins(32, 0, 32, 0)
+        footer.setObjectName("settingsFooter")
         br = QPushButton("  Reset to Defaults  ")
         br.setObjectName("btnSettingsReset")
         br.clicked.connect(self._reset_defaults); fl.addWidget(br); fl.addStretch()
@@ -90,63 +93,58 @@ class SettingsPage(QWidget):
         w = QWidget(); l = QVBoxLayout(w); l.setContentsMargins(32, 24, 32, 24); l.setSpacing(16)
         
         def _f(text):
-            lbl = QLabel(text); lbl.setStyleSheet("color:#475569; font-weight:600;"); return lbl
+            lbl = QLabel(text); lbl.setObjectName("settingsFieldLabel"); return lbl
 
         l.addWidget(_f("Username"))
-        self.inp_username = QLineEdit(); self.inp_username.setMinimumHeight(40); l.addWidget(self.inp_username)
+        self.inp_username = QLineEdit(); self.inp_username.setObjectName("settingsInput"); self.inp_username.setMinimumHeight(40); l.addWidget(self.inp_username)
         l.addWidget(_f("Password"))
         row = QWidget(); rl = QHBoxLayout(row); rl.setContentsMargins(0,0,0,0)
-        self.inp_password = QLineEdit(); self.inp_password.setEchoMode(QLineEdit.EchoMode.Password); self.inp_password.setMinimumHeight(40)
+        self.inp_password = QLineEdit(); self.inp_password.setObjectName("settingsInput"); self.inp_password.setEchoMode(QLineEdit.EchoMode.Password); self.inp_password.setMinimumHeight(40)
         self.btn_eye = QPushButton(); self.btn_eye.setIcon(self._icon_eye_closed); self.btn_eye.setFixedSize(44, 44); self.btn_eye.setCheckable(True); self.btn_eye.clicked.connect(self._toggle_pwd)
-        self.btn_eye.setStyleSheet("QPushButton { border: 2px solid #0F172A; border-radius: 0px; background: #FFFFFF; } QPushButton:hover { background: #F8FAFC; border-color: #4F46E5; }")
+        self.btn_eye.setObjectName("iconButton")
+        self.btn_eye.setToolTip("Show password")
         rl.addWidget(self.inp_password); rl.addWidget(self.btn_eye); l.addWidget(row)
         l.addWidget(_f("Portal URL"))
-        self.inp_url = QLineEdit(); self.inp_url.setMinimumHeight(40); l.addWidget(self.inp_url)
+        self.inp_url = QLineEdit(); self.inp_url.setObjectName("settingsInput"); self.inp_url.setMinimumHeight(40); l.addWidget(self.inp_url)
         
         # New inputs for previously hidden settings
-        self.chk_headless = QCheckBox("Run Browser Headless (Invisible)"); self.chk_headless.setStyleSheet("color:#475569; font-weight:600; padding-top: 8px;")
+        self.chk_headless = QCheckBox("Run Browser Headless (Invisible)"); self.chk_headless.setObjectName("settingsFieldLabel")
         l.addWidget(self.chk_headless)
 
         l.addWidget(_f("Slow-Mo (ms) - Time between clicks"))
-        self.inp_slowmo = QLineEdit(); self.inp_slowmo.setMinimumHeight(40); l.addWidget(self.inp_slowmo)
+        self.inp_slowmo = QLineEdit(); self.inp_slowmo.setObjectName("settingsInput"); self.inp_slowmo.setMinimumHeight(40); l.addWidget(self.inp_slowmo)
         
         l.addWidget(_f("Timeout (ms) - General max wait time"))
-        self.inp_timeout = QLineEdit(); self.inp_timeout.setMinimumHeight(40); l.addWidget(self.inp_timeout)
+        self.inp_timeout = QLineEdit(); self.inp_timeout.setObjectName("settingsInput"); self.inp_timeout.setMinimumHeight(40); l.addWidget(self.inp_timeout)
         
         l.addWidget(_f("Captcha Max Retries"))
-        self.inp_captcha = QLineEdit(); self.inp_captcha.setMinimumHeight(40); l.addWidget(self.inp_captcha)
+        self.inp_captcha = QLineEdit(); self.inp_captcha.setObjectName("settingsInput"); self.inp_captcha.setMinimumHeight(40); l.addWidget(self.inp_captcha)
         
         l.addWidget(_f("Upload Wait (ms)"))
-        self.inp_upload_wait = QLineEdit(); self.inp_upload_wait.setMinimumHeight(40); l.addWidget(self.inp_upload_wait)
+        self.inp_upload_wait = QLineEdit(); self.inp_upload_wait.setObjectName("settingsInput"); self.inp_upload_wait.setMinimumHeight(40); l.addWidget(self.inp_upload_wait)
         
         l.addWidget(_f("Field Wait (ms)"))
-        self.inp_field_wait = QLineEdit(); self.inp_field_wait.setMinimumHeight(40); l.addWidget(self.inp_field_wait)
+        self.inp_field_wait = QLineEdit(); self.inp_field_wait.setObjectName("settingsInput"); self.inp_field_wait.setMinimumHeight(40); l.addWidget(self.inp_field_wait)
 
         l.addStretch(); s.setWidget(w); return s
 
     def _toggle_pwd(self, ch):
         self.inp_password.setEchoMode(QLineEdit.EchoMode.Normal if ch else QLineEdit.EchoMode.Password)
         self.btn_eye.setIcon(self._icon_eye_open if ch else self._icon_eye_closed)
+        self.btn_eye.setToolTip("Hide password" if ch else "Show password")
 
     def _build_field_mapping_tab(self):
         s = QScrollArea(); s.setWidgetResizable(True); s.setFrameShape(QFrame.Shape.NoFrame)
         w = QWidget(); l = QVBoxLayout(w); l.setContentsMargins(32, 24, 32, 24)
-        # Search Bar
-        search_box = QWidget()
-        search_lay = QHBoxLayout(search_box); search_lay.setContentsMargins(0,0,0,10)
-        self.search_input = QLineEdit(); self.search_input.setPlaceholderText("🔍 Filter fields by name or label..."); self.search_input.setObjectName("settingsInput")
-        self.search_input.textChanged.connect(self._filter_table)
-        
-        btn_clear_filter = QPushButton("✕")
-        btn_clear_filter.setFixedWidth(36); btn_clear_filter.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_clear_filter.clicked.connect(lambda: self.search_input.clear())
-        btn_clear_filter.setStyleSheet("QPushButton { border-radius: 8px; padding: 0; background: #F1F5F9; color: #64748B; font-size: 12pt; } QPushButton:hover { background: #E2E8F0; color: #0F172A; }")
-        
-        search_lay.addWidget(self.search_input)
-        search_lay.addWidget(btn_clear_filter)
+        search_box, self.search_input = _search_row(
+            "Filter fields by name or label...",
+            self._filter_table,
+        )
         l.addWidget(search_box)
 
         self.mapping_table = QTableWidget(0, 4)
+        self.mapping_table.setObjectName("settingsTable")
+        self.mapping_table.setAlternatingRowColors(True)
         self.mapping_table.setHorizontalHeaderLabels(["FIELD NAME", "SEARCH LABEL", "SHEET", "COL OFFSET"])
         self.mapping_table.verticalHeader().setVisible(False)
         self.mapping_table.verticalHeader().setDefaultSectionSize(48)
@@ -156,11 +154,6 @@ class SettingsPage(QWidget):
         self.mapping_table.setColumnWidth(2, 120)
         self.mapping_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
         self.mapping_table.setColumnWidth(3, 100)
-        self.mapping_table.setStyleSheet("""
-            QTableWidget::item { padding: 4px; }
-            QTableWidget::item:selected { background-color: #F1F5F9; color: #1E293B; }
-            QLineEdit { background: white; border: 2px solid #3B82F6; border-radius: 6px; padding: 4px; color: #1E293B; font-weight: 500; }
-        """)
         self.mapping_table.setItemDelegateForColumn(1, TagDelegate(self.mapping_table))
         l.addWidget(self.mapping_table)
         s.setWidget(w); return s
@@ -174,17 +167,14 @@ class SettingsPage(QWidget):
         )
         l.addWidget(search)
         self.doc_table = QTableWidget(0, 3)
+        self.doc_table.setObjectName("settingsTable")
+        self.doc_table.setAlternatingRowColors(True)
         self.doc_table.setHorizontalHeaderLabels(["SECTION", "PORTAL DOC TYPE", "FILENAME KEYWORDS"])
         self.doc_table.verticalHeader().setVisible(False)
         self.doc_table.verticalHeader().setDefaultSectionSize(48)
         self.doc_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.doc_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.doc_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        self.doc_table.setStyleSheet("""
-            QTableWidget::item { padding: 4px; }
-            QTableWidget::item:selected { background-color: #F1F5F9; color: #1E293B; }
-            QLineEdit { background: white; border: 2px solid #3B82F6; border-radius: 6px; padding: 4px; color: #1E293B; font-weight: 500; }
-        """)
         self.doc_table.setItemDelegateForColumn(2, TagDelegate(self.doc_table))
         l.addWidget(self.doc_table)
         s.setWidget(w); return s
@@ -192,9 +182,9 @@ class SettingsPage(QWidget):
     def _build_pdf_mapping_tab(self):
         s = QScrollArea(); s.setWidgetResizable(True); s.setFrameShape(QFrame.Shape.NoFrame)
         w = QWidget(); l = QVBoxLayout(w); l.setContentsMargins(32, 24, 32, 24); l.setSpacing(16)
-        l.addWidget(QLabel("Invoice No Labels"))
+        inv_label = QLabel("Invoice No Labels"); inv_label.setObjectName("settingsFieldLabel"); l.addWidget(inv_label)
         self.inp_pdf_inv = ChipLineEdit(); l.addWidget(self.inp_pdf_inv)
-        l.addWidget(QLabel("Invoice Date Labels"))
+        date_label = QLabel("Invoice Date Labels"); date_label.setObjectName("settingsFieldLabel"); l.addWidget(date_label)
         self.inp_pdf_date = ChipLineEdit(); l.addWidget(self.inp_pdf_date)
         l.addStretch(); s.setWidget(w); return s
 
@@ -233,12 +223,8 @@ class SettingsPage(QWidget):
             
             # Sheet Dropdown
             sheet_combo = SafeComboBox()
+            sheet_combo.setObjectName("embeddedCombo")
             sheet_combo.addItems(["ALL", "Sheet1", "Sheet2", "Sheet3", "Sheet4", "Sheet5", "Sheet6", "Sheet7", "Sheet8", "Sheet9", "Sheet10"])
-            sheet_combo.setStyleSheet("""
-                QComboBox { padding: 5px; border: 1px solid #CBD5E1; border-radius: 4px; background: white; }
-                QComboBox::drop-down { border: 0px; }
-                QComboBox::down-arrow { image: none; border: 0px; }
-            """)
             sheet_val = cfg.get("sheet", "ALL")
             idx = sheet_combo.findText(sheet_val)
             if idx >= 0: sheet_combo.setCurrentIndex(idx)
@@ -249,9 +235,9 @@ class SettingsPage(QWidget):
 
             # Col Offset SpinBox
             offset_spin = SafeSpinBox()
+            offset_spin.setObjectName("embeddedSpin")
             offset_spin.setRange(0, 100) # Prevent negative values as requested
             offset_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
-            offset_spin.setStyleSheet("QSpinBox { padding: 5px; border: 1px solid #CBD5E1; border-radius: 4px; background: white; }")
             offset_spin.setValue(int(cfg.get("col_offset", 1)))
             self.mapping_table.setCellWidget(i, 3, offset_spin)
         self._filter_table(self.search_input.text())
@@ -274,11 +260,19 @@ class SettingsPage(QWidget):
         self._filter_doc_table(self.doc_search_input.text())
 
     def _filter_table(self, text):
-        text = text.lower()
+        text = (text or "").strip().lower()
         for i in range(self.mapping_table.rowCount()):
-            field = self.mapping_table.item(i, 0).text().lower()
-            label = self.mapping_table.item(i, 1).text().lower()
-            self.mapping_table.setRowHidden(i, text not in field and text not in label)
+            values = []
+            for col in range(self.mapping_table.columnCount()):
+                item = self.mapping_table.item(i, col)
+                if item:
+                    values.append(item.text().lower())
+                widget = self.mapping_table.cellWidget(i, col)
+                if isinstance(widget, QComboBox):
+                    values.append(widget.currentText().lower())
+                elif isinstance(widget, QSpinBox):
+                    values.append(str(widget.value()))
+            self.mapping_table.setRowHidden(i, bool(text) and text not in " ".join(values))
 
     def _filter_doc_table(self, text):
         text = (text or "").strip().lower()
@@ -293,6 +287,15 @@ class SettingsPage(QWidget):
     def _save_all(self):
         try:
             current_settings = load_settings()
+            def _int_from_input(widget, label, default):
+                raw = widget.text().strip()
+                if not raw:
+                    return default
+                try:
+                    return int(raw)
+                except ValueError as exc:
+                    widget.setFocus()
+                    raise ValueError(f"{label} must be a whole number.") from exc
             
             # Update only from UI widgets, keeping other keys (if any) intact
             current_settings.update({
@@ -300,11 +303,11 @@ class SettingsPage(QWidget):
                 "password": self.inp_password.text().strip(),
                 "portal_url": self.inp_url.text().strip(),
                 "browser_headless": self.chk_headless.isChecked(),
-                "browser_slow_mo_ms": int(self.inp_slowmo.text() or 400),
-                "timeout_ms": int(self.inp_timeout.text() or 4000),
-                "captcha_max_retries": int(self.inp_captcha.text() or 2),
-                "upload_wait_ms": int(self.inp_upload_wait.text() or 3000),
-                "field_wait_ms": int(self.inp_field_wait.text() or 600),
+                "browser_slow_mo_ms": _int_from_input(self.inp_slowmo, "Slow-Mo (ms)", 400),
+                "timeout_ms": _int_from_input(self.inp_timeout, "Timeout (ms)", 4000),
+                "captcha_max_retries": _int_from_input(self.inp_captcha, "Captcha Max Retries", 2),
+                "upload_wait_ms": _int_from_input(self.inp_upload_wait, "Upload Wait (ms)", 3000),
+                "field_wait_ms": _int_from_input(self.inp_field_wait, "Field Wait (ms)", 600),
                 "pdf_invoice_no_labels": [l.strip() for l in self.inp_pdf_inv.text().split("|") if l.strip()],
                 "pdf_invoice_date_labels": [l.strip() for l in self.inp_pdf_date.text().split("|") if l.strip()],
             })
