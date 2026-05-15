@@ -183,15 +183,29 @@ def stat_card(value_text, label_text, accent_color):
 
 # ── Horizontal Step Pipeline (replaces sidebar) ──────────────────────
 class StepPipeline(QWidget):
-    """Horizontal step indicators for the Progress page."""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(14)
-        self._items: list[tuple[QFrame, QLabel, QLabel]] = []
+    """Horizontal step indicators for portal-aware automation phases."""
 
-        for i, (name, number) in enumerate(STEPS):
+    def __init__(self, phases=None, parent=None):
+        super().__init__(parent)
+        self._lay = QHBoxLayout(self)
+        self._lay.setContentsMargins(0, 0, 0, 0)
+        self._lay.setSpacing(10)
+        self._items: list[tuple[QFrame, QLabel, QLabel]] = []
+        self.set_phases(phases or [name for name, _ in STEPS])
+
+    def set_phases(self, phases):
+        while self._lay.count():
+            item = self._lay.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+        self._items.clear()
+
+        phase_labels = [getattr(p, "label", str(p)) for p in phases]
+        if not phase_labels:
+            phase_labels = [name for name, _ in STEPS]
+
+        for i, name in enumerate(phase_labels):
             card = QFrame()
             card.setObjectName("stepCard")
             card.setProperty("state", "pending")
@@ -201,7 +215,7 @@ class StepPipeline(QWidget):
             v.setSpacing(10)
             v.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-            badge = QLabel(number)
+            badge = QLabel(str(i + 1))
             badge.setObjectName("stepBadge")
             badge.setFixedSize(36, 36)
             badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -217,7 +231,9 @@ class StepPipeline(QWidget):
             v.addWidget(lbl, 0, Qt.AlignmentFlag.AlignCenter)
 
             self._items.append((card, badge, lbl))
-            lay.addWidget(card, 1)
+            self._lay.addWidget(card, 1)
+
+        self.set_step(-1)
 
     def set_step(self, active_idx: int):
         for i, (card, badge, lbl) in enumerate(self._items):

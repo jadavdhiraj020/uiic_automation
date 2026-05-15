@@ -8,7 +8,7 @@ QWidget {
 }
 
 /* ── Root Containers ──────────────── */
-QMainWindow, #rootWidget, #homePage, #progressPage {
+QMainWindow, #rootWidget, #homePage, #progressPage, #workspacePage, #workspaceScrollInner {
     background-color: #F8FAFC;
 }
 
@@ -480,6 +480,120 @@ QToolTip {
 #actionBar {
     background-color: rgba(255, 255, 255, 0.92);
     border-top: 1px solid #E2E8F0;
+}
+
+/* ── Workflow Workspace ───────────────── */
+#workflowRailWrap {
+    background-color: #FFFFFF;
+    border-right: 1px solid #E2E8F0;
+    min-width: 240px;
+    max-width: 280px;
+}
+
+#workflowRail {
+    background-color: #FFFFFF;
+}
+
+#railTitle {
+    color: #0F172A;
+    font-size: 13pt;
+    font-weight: 800;
+    padding-bottom: 6px;
+}
+
+#workflowStepBtn {
+    text-align: left;
+    background-color: #FFFFFF;
+    color: #475569;
+    border: 2px solid #E2E8F0;
+    border-left: 5px solid #CBD5E1;
+    border-radius: 4px;
+    padding: 8px 10px;
+    font-size: 9pt;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+#workflowStepBtn:hover {
+    border-color: #94A3B8;
+    background-color: #F8FAFC;
+}
+
+#workflowStepBtn[active="true"] {
+    color: #0F172A;
+    border-color: #0F172A;
+    border-left-color: #3B82F6;
+    background-color: #EFF6FF;
+}
+
+#workflowStepBtn[state="done"] {
+    border-left-color: #10B981;
+}
+
+#workflowStepBtn[state="warning"] {
+    border-left-color: #F59E0B;
+}
+
+#workflowStepBtn[state="active"] {
+    border-left-color: #6366F1;
+    background-color: #EEF2FF;
+}
+
+#workflowStepBtn[state="failed"] {
+    border-left-color: #EF4444;
+    background-color: #FEF2F2;
+}
+
+#railActions {
+    background-color: #FFFFFF;
+    border-top: 1px solid #E2E8F0;
+}
+
+#workspaceHeading {
+    color: #0F172A;
+    font-size: 18pt;
+    font-weight: 800;
+}
+
+#workspaceEmpty {
+    color: #64748B;
+    font-size: 10pt;
+    font-weight: 600;
+}
+
+#logsDrawer {
+    background-color: #FFFFFF;
+    border-top: 1px solid #CBD5E1;
+}
+
+#logsToggleBtn {
+    background-color: #0F172A;
+    color: #FFFFFF;
+    border: 2px solid #0F172A;
+    border-radius: 4px;
+    padding: 6px 14px;
+    min-width: 94px;
+}
+
+#logsLatest {
+    color: #475569;
+    font-size: 9pt;
+    font-weight: 600;
+}
+
+#logsSmallBtn {
+    background-color: #FFFFFF;
+    color: #0F172A;
+    border: 1px solid #CBD5E1;
+    border-radius: 4px;
+    padding: 5px 12px;
+    font-size: 8.5pt;
+    font-weight: 700;
+}
+
+#logsSmallBtn:hover {
+    border-color: #0F172A;
+    background-color: #F8FAFC;
 }
 
 /* ── KPI Stat Cards ─────────────────── */

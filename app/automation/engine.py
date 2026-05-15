@@ -429,7 +429,7 @@ class AutomationEngine:
                 self.log.phase_banner(3, total_steps, "Fill Interim Report")
                 await page.bring_to_front()
                 await page.evaluate("window.scrollTo(0, 0)")
-                await fill_interim_report(page, claim, log=self.log, settings=settings)
+                await fill_interim_report(page, claim, log_cb=self.log, settings=settings)
                 if self._check_stop():
                     return AutomationRunResult(False, "Automation stopped by user.")
 
@@ -439,7 +439,7 @@ class AutomationEngine:
                 self.step_cb(3, steps[3])
                 self.log.phase_banner(4, total_steps, "Upload Claim Documents")
                 await page.evaluate("window.scrollTo(0, 0)")
-                await fill_claim_documents(page, claim, log=self.log, settings=settings)
+                await fill_claim_documents(page, claim, log_cb=self.log, settings=settings)
                 if self._check_stop():
                     return AutomationRunResult(False, "Automation stopped by user.")
 
@@ -449,7 +449,7 @@ class AutomationEngine:
                 self.step_cb(4, steps[4])
                 self.log.phase_banner(5, total_steps, "Fill Claim Assessment")
                 await page.evaluate("window.scrollTo(0, 0)")
-                await fill_claim_assessment(page, claim, log=self.log, settings=settings)
+                await fill_claim_assessment(page, claim, log_cb=self.log, settings=settings)
                 if self._check_stop():
                     return AutomationRunResult(False, "Automation stopped by user.")
 

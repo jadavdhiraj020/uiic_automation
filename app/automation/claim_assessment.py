@@ -576,16 +576,21 @@ async def _upload_all(page, claim: ClaimData, log, settings: dict) -> None:
 
 
 async def fill_claim_assessment(page, claim: ClaimData,
-                                 log = print,
+                                 log_cb = print,
                                  settings: dict = None) -> None:
     """
     Fill the entire Claim Assessment tab.
     """
+    log = log_cb
+    if isinstance(log, AutomationLogger):
+        log.section_start("PHASE 5: CLAIM ASSESSMENT")
+    
     await click_tab(page, "assessment", log)
 
     if isinstance(log, AutomationLogger):
         log.info("Filling Claim Assessment tab...")
         log.indent()
+        log.step(1, 4, "Parts & Labour Details")
     else:
         log("📊 Filling Claim Assessment...")
 
@@ -595,10 +600,16 @@ async def fill_claim_assessment(page, claim: ClaimData,
 
     await _fill_parts(page, claim, log, _src)
     await _fill_labour(page, claim, log, _src)
+    
+    if isinstance(log, AutomationLogger):
+        log.step(2, 4, "Workshop & Invoice Details")
     await _fill_workshop_invoice(page, claim, log, _src)
     await _fill_other_charges(page, claim, log, _src)
     await _fill_invoice_details(page, claim, log, _src)
     await _fill_report_details(page, claim, log, _src)
+    
+    if isinstance(log, AutomationLogger):
+        log.step(3, 4, "Surveyor Charges & Declaration")
     await _fill_surveyor_charges(page, claim, log, _src)
 
     # Declaration radio
@@ -619,6 +630,8 @@ async def fill_claim_assessment(page, claim: ClaimData,
         else:
             log(f"  ⚠️  Remarks: {e}")
 
+    if isinstance(log, AutomationLogger):
+        log.step(4, 4, "Uploading Assessment Documents")
     await _upload_all(page, claim, log, settings=settings)
 
     if isinstance(log, AutomationLogger):

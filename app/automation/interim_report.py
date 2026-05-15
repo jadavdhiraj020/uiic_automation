@@ -134,8 +134,12 @@ async def _click_yes_radios(page, log) -> None:
 
 
 async def fill_interim_report(page, claim: ClaimData,
-                               log = print,
+                               log_cb = print,
                                settings: dict = None) -> None:
+    log = log_cb
+    if isinstance(log, AutomationLogger):
+        log.section_start("PHASE 3: INTERIM REPORT")
+    
     await click_tab(page, "interim", log)
     # Brief additional wait for Angular digest cycle
     await asyncio.sleep(0.2)
@@ -143,8 +147,9 @@ async def fill_interim_report(page, claim: ClaimData,
     if isinstance(log, AutomationLogger):
         log.info("Filling Interim Report section...")
         log.indent()
+        log.step(1, 3, "Survey Details")
     else:
-        log("✏️  Filling Interim Report...")
+        log("📊 Filling Interim Report...")
 
     T = 5000  # field timeout ms — use 5s for safety after tab switch
 
@@ -238,6 +243,8 @@ async def fill_interim_report(page, claim: ClaimData,
             log("  ⏭️  Expected Completion Date: not set")
 
     # ── 11. Surveyor's Observation & Remarks (no special chars) ───────────────────
+    if isinstance(log, AutomationLogger):
+        log.step(2, 3, "Surveyor Observations")
     await safe_fill_portal_text(page, INTERIM["observation"],
                                 claim.surveyor_observation,
                                 "Surveyor's Observation", log, T,
@@ -250,6 +257,7 @@ async def fill_interim_report(page, claim: ClaimData,
                                 source="Hardcoded")
 
     if isinstance(log, AutomationLogger):
+        log.step(3, 3, "Finalizing Interim Report")
         log.success("Interim Report section complete.")
         log.outdent()
     else:

@@ -143,6 +143,10 @@ class AutomationLogger:
     def debug(self, message: str, indent: Optional[int] = None):
         self._emit(LogLevel.DEBUG, message, indent=indent, py_level=logging.DEBUG)
 
+    def step(self, current: int, total: int, message: str, indent: Optional[int] = None):
+        """Log a numbered step within a section (e.g., Step 1/3)."""
+        self._emit(LogLevel.INFO, f"Step {current}/{total}: {message}", indent=indent)
+
     # ── Action-Specific Levels ────────────────────────────────────────────────
 
     def navigation(self, message: str, indent: Optional[int] = None):

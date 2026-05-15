@@ -70,9 +70,8 @@ from app.portals.registry import (
 )
 
 from app.ui.worker import AutomationWorker
-from app.ui.components.home_page import HomePage
-from app.ui.components.progress_page import ProgressPage
 from app.ui.components.settings_page import SettingsPage
+from app.ui.components.workspace_page import WorkspacePage
 
 CONFIG_DIR = resource_path("app", "config")
 
@@ -161,18 +160,16 @@ class MainWindow(QMainWindow):
 
         # Stack
         self.stack = QStackedWidget()
-        self.home_page = HomePage()
-        self.home_page.browse_clicked.connect(self._browse_folder)
-        self.progress_page = ProgressPage()
+        self.workspace_page = WorkspacePage()
+        self.workspace_page.browse_clicked.connect(self._browse_folder)
+        self.workspace_page.start_clicked.connect(self._start_automation)
+        self.workspace_page.stop_clicked.connect(self._stop_automation)
+        self.workspace_page.export_log_clicked.connect(self._export_log)
         self.settings_page = SettingsPage(append_log_cb=self._append_log)
 
-        self.stack.addWidget(self.home_page)  # 0
-        self.stack.addWidget(self.progress_page)  # 1
-        self.stack.addWidget(self.settings_page)  # 2
+        self.stack.addWidget(self.workspace_page)  # 0
+        self.stack.addWidget(self.settings_page)  # 1
         lay.addWidget(self.stack, 1)
-
-        # Action bar
-        lay.addWidget(self._build_action_bar())
 
     def _build_topbar(self):
         bar = QFrame()
@@ -192,8 +189,7 @@ class MainWindow(QMainWindow):
         self.btns = []
         for i, (name, icon) in enumerate(
             [
-                ("  Home", self._icon_home),
-                ("  Progress", self._icon_progress),
+                ("  Workspace", self._icon_home),
                 ("  Settings", self._icon_settings),
             ]
         ):
@@ -269,20 +265,10 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(32, 0, 32, 0)
         lay.setSpacing(12)
 
-        self.btn_start = QPushButton("  ▶  Start Automation  ")
-        self.btn_start.setObjectName("btnStart")
-        self.btn_start.setMinimumHeight(44)
-        self.btn_start.clicked.connect(self._start_automation)
-        self.btn_stop = QPushButton("■  Stop")
-        self.btn_stop.setEnabled(False)
-        self.btn_stop.setMinimumHeight(44)
-        self.btn_stop.clicked.connect(self._stop_automation)
-        self.btn_clear = QPushButton("Clear Log")
-        self.btn_clear.setFixedWidth(110)
-        self.btn_clear.clicked.connect(self.progress_page.clear_logs)
-        self.btn_export = QPushButton("Export Log")
-        self.btn_export.setFixedWidth(120)
-        self.btn_export.clicked.connect(self._export_log)
+        self.btn_start = self.workspace_page.btn_start
+        self.btn_stop = self.workspace_page.btn_stop
+        self.btn_clear = self.workspace_page.logs_drawer.btn_clear
+        self.btn_export = self.workspace_page.logs_drawer.btn_export
 
         lay.addWidget(self.btn_start)
         lay.addWidget(self.btn_stop)
@@ -320,6 +306,7 @@ class MainWindow(QMainWindow):
 
         # Update window title to show active portal
         self.setWindowTitle(f"Surveyor Automation — {portal.display_name}")
+        self.workspace_page.set_portal(portal_id)
 
         # Reload settings page to show portal-specific settings
         self.settings_page._load_data()
@@ -327,14 +314,7 @@ class MainWindow(QMainWindow):
         # Clear any previously loaded claim data (it may not apply to the new portal)
         self._claim = None
         self._scan_result = None
-        self.home_page.inp_folder.setText("")
-        self.home_page.doc_status_label.setText("No folder selected.")
-        self.home_page.preview_table.setRowCount(0)
-        self.home_page.stat_fields.setText("—")
-        self.home_page.stat_docs.setText("—")
-        self.home_page.stat_missing.setText("—")
-        self.home_page.stat_status.setText("Ready")
-        self.home_page.validation_bar.setVisible(False)
+        self.workspace_page.reset_state()
 
     def _setup_animations(self):
         self._pulse_eff = QGraphicsOpacityEffect(self.status_dot)
@@ -374,7 +354,7 @@ class MainWindow(QMainWindow):
     def _browse_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Claim Folder")
         if folder:
-            self.home_page.inp_folder.setText(folder)
+            self.workspace_page.inp_folder.setText(folder)
             self._scan_folder(folder)
 
     def _scan_folder(self, folder):
@@ -392,14 +372,15 @@ class MainWindow(QMainWindow):
         if result.success:
             self._claim = result.claim
             self._scan_result = result.scan_result
-            self.home_page.update_data(self._claim, self._scan_result)
+            self.workspace_page.update_data(self._claim, self._scan_result)
             self._set_status("ready", "Ready")
         else:
             self._scan_result = result.scan_result
             self._claim = None
-            self.home_page.doc_status_label.setText(
+            self.workspace_page.doc_status_label.setText(
                 "❌ No valid Excel data source found."
             )
+            self.workspace_page.set_scan_failed()
             self._set_status("error", "Scan Failed")
 
     def _start_automation(self):
@@ -412,8 +393,8 @@ class MainWindow(QMainWindow):
         if self._worker:
             return
 
-        self._switch_page(1)  # Progress
-        self.progress_page.clear_logs()
+        self._switch_page(0)  # Workspace
+        self.workspace_page.clear_logs()
         self.log("Starting automation thread...")
 
         portal_id = get_active_portal_id()
@@ -429,10 +410,9 @@ class MainWindow(QMainWindow):
         self._thread.finished.connect(self._on_thread_fully_stopped)    # clear refs
         
         self._worker.log_signal.connect(self._append_log)
-        self._worker.step_signal.connect(self.progress_page.set_step)
+        self._worker.step_signal.connect(self.workspace_page.set_step)
 
-        self.btn_start.setEnabled(False)
-        self.btn_stop.setEnabled(True)
+        self.workspace_page.set_automation_running(True)
         self.status_pill.setProperty("status", "running")
         self.status_text.setText("Running")
         self.status_pill.style().unpolish(self.status_pill)
@@ -443,15 +423,14 @@ class MainWindow(QMainWindow):
     def _stop_automation(self):
         if self._worker:
             self._worker.stop()
-            self.btn_stop.setEnabled(False)
+            self.workspace_page.btn_stop.setEnabled(False)
             self.log("Stopping...")
 
     def _on_automation_ui_reset(self, success, message):
         """Called when automation finishes — updates UI. Thread may still be winding down."""
         self._last_success = success
         self._last_message = message
-        self.btn_start.setEnabled(True)
-        self.btn_stop.setEnabled(False)
+        self.workspace_page.set_automation_finished(success)
         self.status_pill.setProperty("status", "ready")
         self.status_text.setText("Ready")
         self.status_pill.style().unpolish(self.status_pill)
@@ -469,7 +448,7 @@ class MainWindow(QMainWindow):
             self.log(f"STOPPED: {message}")
 
     def _append_log(self, text):
-        self.progress_page.append_log(text)
+        self.workspace_page.append_log(text)
         if self._log_file and not self._log_file.closed:
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             self._log_file.write(f"[{ts}] {text}\n")
@@ -488,7 +467,7 @@ class MainWindow(QMainWindow):
         if path:
             try:
                 with open(path, "w", encoding="utf-8") as f:
-                    f.write(self.progress_page.log_output.toPlainText())
+                    f.write(self.workspace_page.log_text())
                 self.log(f"Log exported to {path}")
             except Exception as e:
                 QMessageBox.critical(self, "Export Failed", str(e))

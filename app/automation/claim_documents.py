@@ -190,8 +190,9 @@ def _build_queue(claim: ClaimData, log) -> List[Tuple[str, Optional[str]]]:
     return queue
 
 
-async def fill_claim_documents(page, claim: ClaimData, log, settings: dict = None) -> bool:
+async def fill_claim_documents(page, claim: ClaimData, log_cb, settings: dict = None) -> bool:
     """Main orchestrator for the Claim Documents tab."""
+    log = log_cb
     if isinstance(log, AutomationLogger):
         log.section_start("PHASE 4: CLAIM DOCUMENTS")
     else:
@@ -205,6 +206,7 @@ async def fill_claim_documents(page, claim: ClaimData, log, settings: dict = Non
     if isinstance(log, AutomationLogger):
         log.info("Filling Claim Documents section...")
         log.indent()
+        log.step(1, 3, "Verification & Payment")
     else:
         log("🔘 Setting verification radios...")
         
@@ -212,6 +214,7 @@ async def fill_claim_documents(page, claim: ClaimData, log, settings: dict = Non
     await _click_payment_option(page, claim, log)
 
     if isinstance(log, AutomationLogger):
+        log.step(2, 3, "Building Queue")
         log.info("Building upload queue...")
         log.indent()
     else:
@@ -230,6 +233,7 @@ async def fill_claim_documents(page, claim: ClaimData, log, settings: dict = Non
         return True
 
     if isinstance(log, AutomationLogger):
+        log.step(3, 3, "Uploading Documents")
         log.info(f"Processing {len(queue)} document rows...")
         log.indent()
     else:
