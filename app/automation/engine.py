@@ -85,18 +85,33 @@ def _pick_best_page(pages: List[Page], log) -> Page:
     return pages[-1]
 
 
+async def _page_has_login_form(page: Page, portal_id: str = "uiic") -> bool:
+    """Return True if the page is still showing the login form."""
+    try:
+        login_sel = page.locator("#login-username, input[name='username']").first
+        return await login_sel.is_visible(timeout=1500)
+    except Exception:
+        return False
+
+
 async def _get_active_page(
     context: BrowserContext,
-    log,
-    captured_pages: List[Page],
-    stop_cb: Callable[[], bool],
-    portal_id: str = "uiic"
+    log = None,
+    captured_pages: List[Page] = None,
+    stop_cb: Callable[[], bool] = lambda: False,
+    portal_id: str = "uiic",
+    log_cb = None,   # backwards-compat alias for log
 ) -> Optional[Page]:
     """
     Establish which page to work on after login.
     If the portal is UIIC, it usually opens a new tab 'Surveyor.html'.
     If the portal is NIA, it usually navigates in-place or opens a worklist.
     """
+    # Resolve log — accept either `log` or `log_cb` (legacy alias)
+    if log is None:
+        log = log_cb if log_cb is not None else print
+    if captured_pages is None:
+        captured_pages = []
     if portal_id == "newindia":
         # New India usually doesn't open a new tab immediately after login.
         # We just return the last active page in the context.
@@ -116,7 +131,7 @@ async def _get_active_page(
         if stop_cb():
             if isinstance(log, AutomationLogger): log.outdent()
             return None
-            
+
         pages = context.pages
         surveyor_page = next((p for p in pages if "Surveyor.html" in p.url), None)
         if surveyor_page:
@@ -125,17 +140,28 @@ async def _get_active_page(
                 log.outdent()
             else:
                 log(f"Found Surveyor page: {surveyor_page.url}")
+            try:
+                await surveyor_page.bring_to_front()
+            except Exception:
+                pass
             return surveyor_page
-        
+
         elapsed = time.time() - start_t
-        if elapsed > 10 and int(elapsed) % 5 == 0:
+
+        # Short-circuit: if all open pages are on the login URL, skip the 15s wait
+        all_on_login_url = bool(pages) and all(
+            "home.jsp" in p.url.lower() or p.url in ("about:blank", "")
+            for p in pages if not p.is_closed()
+        )
+
+        if elapsed > 10 and int(elapsed) % 5 == 0 and not all_on_login_url:
             if isinstance(log, AutomationLogger):
                 log.info(f"No dashboard tab yet ({elapsed:.1f}s)...")
             else:
                 log(f"  No dashboard tab yet ({elapsed:.1f}s).")
-                
-        # Attempt direct navigation if tab doesn't open
-        if elapsed > 15:
+
+        # Attempt direct navigation if tab doesn't open OR all pages still on login
+        if elapsed > 15 or all_on_login_url:
             if isinstance(log, AutomationLogger): log.outdent()
             for attempt in range(1, 4):
                 try:
@@ -145,9 +171,11 @@ async def _get_active_page(
                         log(f"Opening authenticated Worklist page (attempt {attempt}/3)...")
                     new_page = await context.new_page()
                     await new_page.goto(WORKLIST_URL, timeout=20000)
-                    await asyncio.sleep(2)
-                    
-                    if "home.jsp" in new_page.url.lower():
+                    await asyncio.sleep(0.5)
+
+                    # Use _page_has_login_form to verify the new page is authenticated
+                    still_login = await _page_has_login_form(new_page, portal_id)
+                    if still_login or "home.jsp" in new_page.url.lower():
                         await new_page.close()
                         if isinstance(log, AutomationLogger):
                             log.warning("Session not settled; retrying...")
@@ -155,7 +183,7 @@ async def _get_active_page(
                             log("Login form is still visible after direct navigation; waiting for session to settle.")
                         await asyncio.sleep(2)
                         continue
-                        
+
                     if isinstance(log, AutomationLogger):
                         log.success("Worklist page ready")
                         log.outdent()
@@ -168,7 +196,7 @@ async def _get_active_page(
                     else:
                         log(f"Direct navigation attempt {attempt} failed: {exc}")
             break
-            
+
         await asyncio.sleep(1)
 
     # Fallback: scan all pages again

@@ -4104,6 +4104,13 @@ async def test_get_active_page_honors_stop_request():
         pages=[_FakePageForPortal("https://portal.uiic.in/surveyor/home.jsp")]
     )
 
+    page = await _get_active_page(
+        context=context,
+        log_cb=lambda _: None,
+        captured_pages=[],
+        stop_cb=lambda: True,  # stop immediately
+    )
+
     assert page is None
 
 

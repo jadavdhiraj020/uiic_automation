@@ -12,9 +12,9 @@ logger = logging.getLogger(__name__)
 class DocumentUploadService:
     """Encapsulates upload panel interaction and row/file lifecycle."""
 
-    def __init__(self, page, log = print):
+    def __init__(self, page, log_cb = print):
         self.page = page
-        self.log = log
+        self.log = log_cb
 
     async def get_upload_panel(self):
         panel = self.page.locator(".panel.panel-yellow").filter(
@@ -306,10 +306,10 @@ class DocumentUploadService:
             pass
 
         try:
-            await self.page.evaluate(
+            await panel.evaluate(
                 """
-                (function() {
-                    var all = document.querySelectorAll('[ng-click],[data-ng-click]');
+                (panelEl) => {
+                    var all = panelEl.querySelectorAll('[ng-click],[data-ng-click]');
                     for (var el of all) {
                         var nc = (el.getAttribute('ng-click') || el.getAttribute('data-ng-click') || '').toLowerCase();
                         if (nc.includes('add') && (nc.includes('row') || nc.includes('document'))) {
@@ -318,7 +318,7 @@ class DocumentUploadService:
                         }
                     }
                     return null;
-                })();
+                }
                 """
             )
             await asyncio.sleep(0.8)
@@ -336,7 +336,7 @@ class DocumentUploadService:
         ]
         for sel in css_selectors:
             try:
-                btn = self.page.locator(sel).last
+                btn = panel.locator(sel).last
                 if await btn.is_visible(timeout=1000):
                     await btn.click(timeout=3000)
                     await asyncio.sleep(0.8)
@@ -345,10 +345,10 @@ class DocumentUploadService:
                 continue
 
         try:
-            await self.page.evaluate(
+            await panel.evaluate(
                 """
-                (function() {
-                    var imgs = document.querySelectorAll('img[src*="plus"]');
+                (panelEl) => {
+                    var imgs = panelEl.querySelectorAll('img[src*="plus"]');
                     for (var img of imgs) {
                         var p = img.parentElement;
                         if (p && (p.tagName === 'A' || p.tagName === 'BUTTON')) {
@@ -357,7 +357,7 @@ class DocumentUploadService:
                         }
                     }
                     return false;
-                })();
+                }
                 """
             )
         except Exception:

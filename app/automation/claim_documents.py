@@ -200,7 +200,7 @@ async def fill_claim_documents(page, claim: ClaimData, log_cb, settings: dict = 
 
     # 1. Click Tab
     from app.automation.selectors import TABS
-    if not await click_tab(page, "documents", log=log):
+    if await click_tab(page, "documents", log=log) is False:
         return False
 
     if isinstance(log, AutomationLogger):
@@ -258,7 +258,7 @@ async def fill_claim_documents(page, claim: ClaimData, log_cb, settings: dict = 
     wait_timeout_ms = int(cfg.get("upload_timeout_ms", cfg.get("upload_wait_ms", 10000)))
     panel_ready_timeout = max(15000, wait_timeout_ms)
 
-    service = DocumentUploadService(page=page, log=log)
+    service = DocumentUploadService(page=page, log_cb=log)
 
     try:
         await service.wait_for_upload_section(panel_ready_timeout)
