@@ -1,7 +1,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 #  UIIC Surveyor Automation — CI/CD Release Pipeline
 # ─────────────────────────────────────────────────────────────────────────────
-#  Triggers on every push to `main`.
+#  Triggers on every branch push and pull requests targeting main.
 #  Steps:
 #    1. Checkout code
 #    2. Set up Python 3.10 (pinned for PaddlePaddle 2.x Windows stability)
@@ -11,17 +11,20 @@
 #    6. Build the Windows EXE via PyInstaller (.spec file)
 #    7. Verify the EXE was produced
 #    8. Create a versioned ZIP of the dist folder
-#    9. Create a GitHub Release and upload the ZIP as an asset
+#    9. Upload ZIP as Build Artifact (available on all branches)
+#    10. Create a GitHub Release and upload ZIP (main push only)
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: Build & Release Windows EXE
 
 on:
   push:
-    branches: [main]
-
-  # Allow manual trigger from Actions tab
-  workflow_dispatch:
+    branches:
+      - '**'        # Run on every branch push
+  pull_request:
+    branches:
+      - main        # Run on PRs targeting main
+  workflow_dispatch:  # Allow manual trigger from Actions tab
 
 # Cancel superseded runs on the same branch
 concurrency:
@@ -196,8 +199,17 @@ jobs:
         id: zip
         shell: pwsh
 
-      # ─── 13. Create GitHub Release ──────────────────────────────────────
+      # ─── 12.5. Upload Artifact (For All Branches) ───────────────────────
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.ZIP_NAME }}
+          path: ${{ steps.version.outputs.ZIP_NAME }}.zip
+          retention-days: 14
+
+      # ─── 13. Create GitHub Release (Only for Main Branch Push) ──────────
       - name: Create GitHub Release
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.TAG }}

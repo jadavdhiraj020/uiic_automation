@@ -1565,6 +1565,56 @@ class TestFolderScanner:
             result = scan_folder(tmpdir)
             assert result.excel_path is None
 
+    def test_strict_excel_enforcement(self):
+        from app.data.folder_scanner import scan_folder
+        import tempfile
+        import os
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create a PDF matching the assessment_excel keyword
+            # and an Excel file matching the assessment_excel keyword
+            pdf_path = os.path.join(tmpdir, "primary_assessment.pdf")
+            xls_path = os.path.join(tmpdir, "primary_assessment.xls")
+            with open(pdf_path, "w") as f:
+                f.write("mock pdf")
+            with open(xls_path, "w") as f:
+                f.write("mock xls")
+
+            result = scan_folder(tmpdir, portal_id="newindia")
+            # assessment_excel must strictly map to the .xls file, not the .pdf file
+            assert result.assessment_files.get("assessment_excel") == xls_path
+            assert result.assessment_files.get("assessment_excel") != pdf_path
+
+    def test_old_merged_pdfs_are_skipped_but_not_reused(self):
+        from app.data.folder_scanner import scan_folder
+        import tempfile
+        import os
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Old merged PDFs from previous runs must never be merged again.
+            legacy_merged_path = os.path.join(tmpdir, "claim_others_documents.pdf")
+            dynamic_merged_path = os.path.join(tmpdir, "claim_others_documents_20260519_120000.pdf")
+            with open(legacy_merged_path, "w") as f:
+                f.write("mock merged pdf")
+            with open(dynamic_merged_path, "w") as f:
+                f.write("mock merged pdf")
+            # Create a random unmapped document
+            unmapped_path = os.path.join(tmpdir, "some_unmapped_document.pdf")
+            with open(unmapped_path, "w") as f:
+                f.write("mock unmapped")
+
+            with patch("app.data.folder_scanner._merge_claim_related_pdf", side_effect=lambda files, out, **k: out) as mock_merge:
+                result = scan_folder(tmpdir, portal_id="newindia")
+
+            # Old merged files are ignored as inputs, but current unmapped files
+            # still trigger a fresh dynamic merged PDF.
+            assert result.claim_related_files == [unmapped_path]
+            mock_merge.assert_called_once()
+            args, kwargs = mock_merge.call_args
+            assert args[0] == [unmapped_path]
+            assert os.path.basename(args[1]).startswith("claim_others_documents_")
+            assert result.claim_related_merged_pdf == args[1]
+
     def test_load_doc_mapping(self):
         from app.data.folder_scanner import get_doc_mapping_tuple
 
@@ -4755,7 +4805,7 @@ class TestClaimRelatedPreMerge:
             }
         }
 
-        with patch("app.data.folder_scanner._merge_claim_related_pdf", return_value=str(d / "claim_others_documents.pdf")) as mock_merge:
+        with patch("app.data.folder_scanner._merge_claim_related_pdf", side_effect=lambda files, out, **k: out) as mock_merge:
             with patch("app.data.folder_scanner.json.load", return_value=mapping):
                 with patch("app.data.folder_scanner.open", create=True):
                     # Must use portal_id="newindia" — NIA is the only portal that
@@ -4775,10 +4825,11 @@ class TestClaimRelatedPreMerge:
         mock_merge.assert_called_once()
         args, kwargs = mock_merge.call_args
         assert len(args[0]) == 2
-        assert "claim_others_documents.pdf" in args[1]
+        assert args[1].endswith(".pdf")
+        assert "claim_others_documents_" in os.path.basename(args[1])
 
         # Verify the result object has the merged path
-        assert result.claim_related_merged_pdf == str(d / "claim_others_documents.pdf")
+        assert result.claim_related_merged_pdf == args[1]
 
     def test_sc27_02_merge_helper_pypdfium2_priority(self, tmp_path):
         """Proves pypdfium2 is the active Strategy 1 and correctly saves output."""

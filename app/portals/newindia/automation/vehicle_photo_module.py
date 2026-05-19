@@ -3,6 +3,7 @@ import os
 from typing import Callable, Optional
 from playwright.async_api import Page
 from app.portals.newindia.automation.ui_utils import select_dropdown_with_delay
+from app.portals.newindia.automation.popup_service import dismiss_portal_popup, quick_check_and_dismiss
 from app.automation.automation_logger import AutomationLogger
 
 # Dropdown values exactly as they appear in the portal HTML option[value]
@@ -26,65 +27,6 @@ _JS_CLICK_PLUS = r"""
 # Count current rows
 _JS_ROW_COUNT = r"""
 () => document.querySelectorAll('select[name^="docType"]').length
-"""
-
-# Detect any visible modal/popup overlay and return info about it
-_JS_DETECT_POPUP = r"""
-() => {
-    // Check for angular-ui-bootstrap modal (most common in NIA portal)
-    const modal = document.querySelector('.modal.in, .modal[style*="display: block"], .modal[style*="display:block"]');
-    if (modal) {
-        const header = modal.querySelector('.modal-header, .modal-title');
-        const body   = modal.querySelector('.modal-body');
-        return {
-            found: true,
-            type: 'modal',
-            title: header ? header.innerText.trim() : '',
-            body:  body   ? body.innerText.trim().substring(0, 120) : ''
-        };
-    }
-    // Check for any swal / custom overlay
-    const swal = document.querySelector('.swal2-container, .sweet-overlay');
-    if (swal) return { found: true, type: 'swal' };
-    // Check for NG-dialog
-    const ngd = document.querySelector('.ngdialog.ngdialog-open');
-    if (ngd) return { found: true, type: 'ngdialog' };
-    return { found: false };
-}
-"""
-
-# Dismiss the modal by clicking the most likely "OK / Close / Cancel" button
-_JS_DISMISS_POPUP = r"""
-() => {
-    // Priority 1: a "Cancel" / close button in the coverChange popup (NIA specific)
-    const cancelBtn = document.querySelector(
-        'button[data-ng-click*="coverChangeObj.cancel"], button[ng-click*="coverChangeObj.cancel"]'
-    );
-    if (cancelBtn && cancelBtn.offsetParent !== null) { cancelBtn.click(); return { ok: true, via: 'coverCancel' }; }
-
-    // Priority 2: generic OK / Close / Yes button in any modal
-    const selectors = [
-        '.modal.in button[data-ng-click*="ok"]',
-        '.modal.in button[ng-click*="ok"]',
-        '.modal.in button[data-ng-click*="confirm"]',
-        '.modal.in button[ng-click*="confirm"]',
-        '.modal.in button[data-ng-click*="close"]',
-        '.modal.in button[ng-click*="close"]',
-        '.modal.in .modal-footer button:last-child',  // last footer button = OK
-        '.modal[style*="display: block"] .modal-footer button:last-child',
-        '.modal[style*="display:block"] .modal-footer button:last-child',
-    ];
-    for (const sel of selectors) {
-        const btn = document.querySelector(sel);
-        if (btn && btn.offsetParent !== null) { btn.click(); return { ok: true, via: sel }; }
-    }
-
-    // Priority 3: click the X (close icon) on any visible modal header
-    const closeX = document.querySelector('.modal.in .close, .modal.in button.close');
-    if (closeX && closeX.offsetParent !== null) { closeX.click(); return { ok: true, via: 'closeX' }; }
-
-    return { ok: false, err: 'no dismissible button found' };
-}
 """
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -158,91 +100,6 @@ async def _click_plus_and_wait(page: Page, log,
     return False
 
 
-async def _handle_popup_after_next(page: Page, log, max_wait_s: float = 8.0) -> bool:
-    """
-    After clicking Next, poll for any modal/popup overlay and dismiss it.
-    """
-    if isinstance(log, AutomationLogger):
-        log.wait("Polling for confirmation popup...")
-    else:
-        log("Polling for popup/modal after Next...")
-    poll_interval = 0.4
-    elapsed = 0.0
-
-    while elapsed < max_wait_s:
-        await asyncio.sleep(poll_interval)
-        elapsed += poll_interval
-
-        try:
-            popup_info = await page.evaluate(_JS_DETECT_POPUP)
-        except Exception as e:
-            if isinstance(log, AutomationLogger):
-                log.error(f"Popup detection error: {str(e)[:100]}")
-            else:
-                log(f"  ⚠️ Popup detection error: {e}")
-            continue
-
-        if popup_info.get("found"):
-            ptype = popup_info.get("type", "unknown")
-            title = popup_info.get("title", "")
-            body  = popup_info.get("body", "")
-            if isinstance(log, AutomationLogger):
-                log.info(f"Modal detected: {title or ptype}")
-                log.info(f"Modal content: {body[:100]}...")
-            else:
-                log(f"  🔔 Popup detected! type={ptype} | title='{title}' | body='{body[:80]}'")
-
-            # Dismiss it
-            try:
-                dismiss_res = await page.evaluate(_JS_DISMISS_POPUP)
-                if dismiss_res.get("ok"):
-                    if isinstance(log, AutomationLogger):
-                        log.success(f"Modal dismissed via {dismiss_res.get('via')}")
-                    else:
-                        log(f"  ✅ Popup dismissed via: {dismiss_res.get('via')}")
-                else:
-                    if isinstance(log, AutomationLogger):
-                        log.warning(f"Could not dismiss modal: {dismiss_res.get('err')}")
-                    else:
-                        log(f"  ⚠️ Could not dismiss popup: {dismiss_res.get('err')}")
-                    return False
-            except Exception as e:
-                if isinstance(log, AutomationLogger):
-                    log.error(f"Modal dismissal error: {str(e)[:100]}")
-                else:
-                    log(f"  ⚠️ Popup dismiss error: {e}")
-                return False
-
-            # Wait for overlay to fade out
-            await asyncio.sleep(1.0)
-
-            # Verify popup is gone
-            try:
-                still_open = await page.evaluate(_JS_DETECT_POPUP)
-                if still_open.get("found"):
-                    if isinstance(log, AutomationLogger):
-                        log.warning("Modal still visible; retrying dismissal...")
-                    else:
-                        log("  ⚠️ Popup still visible after dismiss — trying once more...")
-                    await page.evaluate(_JS_DISMISS_POPUP)
-                    await asyncio.sleep(1.0)
-                else:
-                    if isinstance(log, AutomationLogger):
-                        log.success("Modal closed successfully.")
-                    else:
-                        log("  ✅ Popup closed successfully.")
-            except Exception:
-                pass
-
-            return True
-
-    if isinstance(log, AutomationLogger):
-        log.info("No confirmation popup appeared.")
-    else:
-        log("  ℹ️ No popup detected within timeout — continuing normally.")
-    return True
-
-
 def _find_file(claim_data, key: str, fallback_keys: list) -> Optional[str]:
     files: dict = getattr(claim_data, "claim_doc_files", {}) or {}
     if key in files and files[key]:
@@ -312,18 +169,7 @@ async def fill_vehicle_photo_graph(
     if chassis_file:
         chassis_attached = await _attach_file(page, 0, chassis_file, log)
         # Dismiss any immediate portal alert (file-size / duplicate)
-        try:
-            popup_info = await page.evaluate(_JS_DETECT_POPUP)
-            if popup_info.get("found"):
-                body = popup_info.get("body", "")[:80]
-                if isinstance(log, AutomationLogger):
-                    log.warning(f"Alert after chassis attach: {body}")
-                else:
-                    log(f"  ⚠️ Portal alert after chassis attach: {body}")
-                await page.evaluate(_JS_DISMISS_POPUP)
-                await asyncio.sleep(0.5)
-        except Exception:
-            pass
+        await quick_check_and_dismiss(page, log, context="Chassis attach")
     else:
         if isinstance(log, AutomationLogger):
             log.warning("No Chassis photo found in source data.")
@@ -352,18 +198,7 @@ async def fill_vehicle_photo_graph(
             )
             odometer_attached = await _attach_file(page, 1, odometer_file, log)
             # Dismiss any immediate portal alert after odometer attachment
-            try:
-                popup_info = await page.evaluate(_JS_DETECT_POPUP)
-                if popup_info.get("found"):
-                    body = popup_info.get("body", "")[:80]
-                    if isinstance(log, AutomationLogger):
-                        log.warning(f"Alert after odometer attach: {body}")
-                    else:
-                        log(f"  ⚠️ Portal alert after odometer attach: {body}")
-                    await page.evaluate(_JS_DISMISS_POPUP)
-                    await asyncio.sleep(0.5)
-            except Exception:
-                pass
+            await quick_check_and_dismiss(page, log, context="Odometer attach")
 
         if isinstance(log, AutomationLogger):
             log.outdent()
@@ -420,7 +255,7 @@ async def fill_vehicle_photo_graph(
                 # _handle_popup_after_next detects any visible modal
                 # (success banner, duplicate warning, size error) and
                 # dismisses it. Returns True whether or not a popup appeared.
-                await _handle_popup_after_next(page, log, max_wait_s=8.0)
+                await dismiss_portal_popup(page, log, max_wait_s=8.0, context="Upload Multi-Row")
                 await asyncio.sleep(1.0)
 
         except Exception as e:
@@ -475,7 +310,7 @@ async def fill_vehicle_photo_graph(
             return False
 
     # ── Handle popup / modal that appears after Next ──────────────────────────
-    await _handle_popup_after_next(page, log, max_wait_s=5.0)
+    await dismiss_portal_popup(page, log, max_wait_s=5.0, context="Vehicle Next")
 
     # ── Wait for page to stabilise before handing off to Phase 5 ─────────────
     if isinstance(log, AutomationLogger):

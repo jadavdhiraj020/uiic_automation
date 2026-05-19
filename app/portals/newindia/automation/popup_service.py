@@ -102,6 +102,11 @@ _JS_DISMISS_POPUP = r"""
         '.modal.in .modal-footer button:last-child',
         '.modal[style*="display: block"] .modal-footer button:last-child',
         '.modal[style*="display:block"] .modal-footer button:last-child',
+        '.swal2-container button.swal2-confirm',
+        '.sweet-alert button.confirm',
+        '.ngdialog.ngdialog-open button',
+        'button.confirm',
+        'button.swal2-confirm',
     ];
     for (const sel of selectors) {
         const btn = document.querySelector(sel);
@@ -116,6 +121,20 @@ _JS_DISMISS_POPUP = r"""
     if (closeX && closeX.offsetParent !== null) {
         closeX.click();
         return { ok: true, via: 'closeX' };
+    }
+
+    // Priority 4: text fallback for visible popup buttons
+    const allBtns = document.querySelectorAll(
+        '.modal-content button, .modal-footer button, .modal button, ' +
+        '.swal2-container button, .sweet-alert button, .ngdialog.ngdialog-open button'
+    );
+    for (const btn of allBtns) {
+        const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
+        if ((text === 'ok' || text === 'yes' || text === 'close' || text === 'submit') &&
+            btn.offsetParent !== null) {
+            btn.click();
+            return { ok: true, via: 'genericText' };
+        }
     }
 
     return { ok: false, err: 'no dismissible button found' };

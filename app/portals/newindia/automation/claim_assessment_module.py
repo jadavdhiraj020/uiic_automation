@@ -7,107 +7,10 @@ from app.portals.newindia.automation.ui_utils import (
     select_dropdown_with_delay,
     upload_file_via_input,
 )
+from app.portals.newindia.automation.popup_service import dismiss_portal_popup
 from app.automation.automation_logger import AutomationLogger
 
-# Detect any visible modal/popup overlay and return info about it
-_JS_DETECT_POPUP = r"""
-() => {
-    const modal = document.querySelector('.modal.in, .modal[style*="display: block"], .modal[style*="display:block"]');
-    if (modal) return { found: true, type: 'modal' };
-    const swal = document.querySelector('.swal2-container, .sweet-overlay');
-    if (swal) return { found: true, type: 'swal' };
-    const ngd = document.querySelector('.ngdialog.ngdialog-open');
-    if (ngd) return { found: true, type: 'ngdialog' };
-    return { found: false };
-}
-"""
 
-_JS_DISMISS_POPUP = r"""
-() => {
-    const cancelBtn = document.querySelector('button[data-ng-click*="coverChangeObj.cancel"], button[ng-click*="coverChangeObj.cancel"]');
-    if (cancelBtn && cancelBtn.offsetParent !== null) { cancelBtn.click(); return { ok: true, via: 'coverCancel' }; }
-
-    const selectors = [
-        '.modal.in button[data-ng-click*="ok"]', '.modal.in button[ng-click*="ok"]',
-        '.modal.in button[data-ng-click*="confirm"]', '.modal.in button[ng-click*="confirm"]',
-        '.modal.in button[data-ng-click*="close"]', '.modal.in button[ng-click*="close"]',
-        '.modal-content button:has-text("OK")', '.modal-content button:has-text("Yes")',
-        '.modal.in .modal-footer button:last-child',
-        '.modal[style*="display: block"] .modal-footer button:last-child',
-        '.modal[style*="display:block"] .modal-footer button:last-child',
-        'button.confirm', 'button.swal2-confirm'
-    ];
-    for (const sel of selectors) {
-        try {
-            // Support :has-text via a basic text search if querySelector fails (since standard JS doesn't support :has-text)
-            if (sel.includes(':has-text')) {
-                const textMatch = sel.match(/:has-text\("([^"]+)"\)/)[1].toLowerCase();
-                const btns = document.querySelectorAll(sel.split(':')[0]);
-                for (const b of btns) {
-                    if (b.innerText.toLowerCase().includes(textMatch) && b.offsetParent !== null) {
-                        b.click(); return { ok: true, via: sel };
-                    }
-                }
-            } else {
-                const btn = document.querySelector(sel);
-                if (btn && btn.offsetParent !== null) { btn.click(); return { ok: true, via: sel }; }
-            }
-        } catch(e) {}
-    }
-
-    const closeX = document.querySelector('.modal.in .close, .modal.in button.close');
-    if (closeX && closeX.offsetParent !== null) { closeX.click(); return { ok: true, via: 'closeX' }; }
-
-    // Last resort generic OK buttons
-    const allBtns = document.querySelectorAll('.modal-content button, .modal-footer button, .modal button');
-    for (const b of allBtns) {
-        const text = b.innerText.trim().toLowerCase();
-        if ((text === 'ok' || text === 'yes' || text === 'close') && b.offsetParent !== null) {
-            b.click(); return { ok: true, via: 'generic-text-match' };
-        }
-    }
-
-    return { ok: false, err: 'no dismissible button found' };
-}
-"""
-
-async def _dismiss_modal_if_present(page: Page, log) -> bool:
-    try:
-        popup_info = await page.evaluate(_JS_DETECT_POPUP)
-        if popup_info.get("found"):
-            if isinstance(log, AutomationLogger):
-                log.info("Dismissing popup modal...")
-            else:
-                log("   ℹ️ Dismissing popup modal...")
-            
-            res = await page.evaluate(_JS_DISMISS_POPUP)
-            if res.get("ok"):
-                await asyncio.sleep(1.0)
-                return True
-            else:
-                # If JS failed to find it, fallback to Playwright locator
-                ok_btn = page.locator('.modal-content button, .modal-footer button, .modal button').filter(has_text=re.compile(r"^(OK|Yes|Close|Submit)$", re.IGNORECASE)).first
-                if await ok_btn.is_visible():
-                    await ok_btn.click()
-                    await asyncio.sleep(1.0)
-                    return True
-    except Exception:
-        pass
-    return False
-
-async def _wait_and_dismiss_modal_if_present(page: Page, log, max_wait_seconds: float = 15.0) -> bool:
-    """
-    Polls for modal confirmation or alert popups periodically for up to max_wait_seconds,
-    dismissing them as soon as they appear.
-    """
-    poll_interval = 0.5
-    steps = int(max_wait_seconds / poll_interval)
-    for _ in range(steps):
-        dismissed = await _dismiss_modal_if_present(page, log)
-        if dismissed:
-            return True
-        await asyncio.sleep(poll_interval)
-    return False
 
 
 async def _visible_invalid_required_fields(page: Page, limit: int = 8) -> list[str]:
@@ -298,32 +201,7 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
     """Inner body of fill_claim_assessment_details — called via try/finally wrapper."""
 
     # 0. Handle Alert Popup (if any)
-    try:
-        # Wait briefly for the modal
-        modal_sel = 'div.modal-content.alrt-ncr-brdr'
-        try:
-            modal = page.locator(modal_sel).first
-            await modal.wait_for(state="visible", timeout=3000)
-            
-            ok_btn = modal.locator('button:has-text("OK")').first
-            if await ok_btn.is_visible():
-                if isinstance(log, AutomationLogger):
-                    log.info("Handling alert popup...")
-                else:
-                    log(f"   ℹ️ Handling alert popup before Claim Assessment...")
-                await ok_btn.click()
-                await asyncio.sleep(1.0)
-                if isinstance(log, AutomationLogger):
-                    log.success("Alert popup dismissed.")
-                else:
-                    log(f"   ✅ Alert popup dismissed.")
-        except Exception:
-            pass # No modal appeared, completely fine
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Popup dismissal error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error handling Claim Assessment popup: {e}")
+    await dismiss_portal_popup(page, log, max_wait_s=3.0, context="Claim Assessment Start")
 
     if stop_cb(): return False
 
@@ -442,7 +320,7 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
                 log("   ℹ️ Clicking Primary Assessment Excel Upload button...")
             await upload_btn.click()
             # Wait for upload modal to appear and dismiss it (wait up to 2.0 seconds)
-            await _wait_and_dismiss_modal_if_present(page, log, max_wait_seconds=2.0)
+            await dismiss_portal_popup(page, log, max_wait_s=2.0, context="Assessment Excel")
             await asyncio.sleep(0.5)
             
             if isinstance(log, AutomationLogger):
@@ -500,7 +378,7 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
                 log("   ℹ️ Clicking Populate Data button for Garage Bill...")
             await pop_btn.click()
             # Wait for OCR populate modal to appear and dismiss it (handles variable 5 to 15+ seconds wait time)
-            await _wait_and_dismiss_modal_if_present(page, log, max_wait_seconds=25.0)
+            await dismiss_portal_popup(page, log, max_wait_s=25.0, context="Primary OCR")
             await asyncio.sleep(1.0)
             
             if isinstance(log, AutomationLogger):
@@ -530,13 +408,6 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
 
     has_estimate = bool(data.assessment_files.get("estimate_excel", ""))
     supp_value = "Yes" if has_estimate else "No"
-
-    # Also check ClaimData for user override
-    is_supp = getattr(data, 'is_supplementary_estimate', '')
-    if is_supp and is_supp.strip().lower() in ('yes', 'y'):
-        supp_value = "Yes"
-    elif is_supp and is_supp.strip().lower() in ('no', 'n'):
-        supp_value = "No"
 
     try:
         sel = 'select[name*="Is there any supplementary estimate"]'
@@ -570,7 +441,7 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
                     log("   ℹ️ Clicking Supp Assessment Excel Upload button...")
                 await upload_btn.click()
                 # Wait for upload modal to appear and dismiss it (wait up to 2.0 seconds)
-                await _wait_and_dismiss_modal_if_present(page, log, max_wait_seconds=2.0)
+                await dismiss_portal_popup(page, log, max_wait_s=2.0, context="Supp Excel")
                 await asyncio.sleep(0.5)
                 
                 if isinstance(log, AutomationLogger):
@@ -603,34 +474,11 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
                 label="Supp Garage Bill",
                 log=log,
             )
-            try:
-                pop_btn = page.locator("button[data-ng-click*=\"uploadToOcr\"][data-ng-click*=\"'S'\"]").first
-                await pop_btn.wait_for(state="visible", timeout=5000)
-                
-                # Wait for button to be enabled (Angular digest cycles)
-                for _ in range(12):
-                    if not await pop_btn.is_disabled():
-                        break
-                    await asyncio.sleep(0.5)
-                    
-                if isinstance(log, AutomationLogger):
-                    log.info("Clicking Populate Data button for Supp Garage Bill...")
-                else:
-                    log("   ℹ️ Clicking Populate Data button for Supp Garage Bill...")
-                await pop_btn.click()
-                # Wait for OCR populate modal to appear and dismiss it (handles variable 5 to 15+ seconds wait time)
-                await _wait_and_dismiss_modal_if_present(page, log, max_wait_seconds=25.0)
-                await asyncio.sleep(1.0)
-                
-                if isinstance(log, AutomationLogger):
-                    log.success("Supp Garage Bill OCR Data Populated successfully.")
-                else:
-                    log("   ✅ Supp Garage Bill OCR Data Populated successfully.")
-            except Exception as pe:
-                if isinstance(log, AutomationLogger):
-                    log.error(f"Supp Garage Bill OCR populate failed: {str(pe)[:100]}")
-                else:
-                    log(f"   ⚠️ Supp Garage Bill OCR populate failed: {str(pe)[:100]}")
+            await dismiss_portal_popup(page, log, max_wait_s=2.0, context="Supp Garage Bill Attach")
+            if isinstance(log, AutomationLogger):
+                log.info("Supplementary Garage Bill attached; skipping Populate Data by design.")
+            else:
+                log("   ℹ️ Supplementary Garage Bill attached; skipping Populate Data.")
         else:
             if isinstance(log, AutomationLogger):
                 log.info("No supplementary invoice found; skipping (Optional).")
@@ -882,7 +730,7 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
         # ── The portal shows "Claim job details updated successfully" popup ──
         # We MUST dismiss it (click OK) before the page transitions.
         # The popup may take 1–8 seconds to appear depending on server response.
-        dismissed = await _wait_and_dismiss_modal_if_present(page, log, max_wait_seconds=5.0)
+        dismissed = await dismiss_portal_popup(page, log, max_wait_s=5.0, context="Assessment Next")
         if dismissed:
             if isinstance(log, AutomationLogger):
                 log.success("Save confirmation popup dismissed — page proceeding.")
@@ -905,7 +753,7 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
             if not clicked:
                 return False
             # Give the server up to 8s to show the popup and navigate
-            await _wait_and_dismiss_modal_if_present(page, log, max_wait_seconds=8.0)
+            await dismiss_portal_popup(page, log, max_wait_s=8.0, context="Assessment Next Retry")
             if not await _document_upload_ready(page, timeout_ms=5000):
                 invalid = await _visible_invalid_required_fields(page)
                 message = "Claim Assessment did not navigate to Document Upload after clicking Next."

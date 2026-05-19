@@ -137,6 +137,7 @@ def _collect_remaining_files(data: ClaimData, used_files: Set[str]) -> List[str]
     _skip_files = {
         "all_pdf_text.txt", "extracted_documents_data.md",
         "re-inspection report format.pdf", "re-inspection report format.xlsx",
+        "claim_others_documents.pdf",
         "claim_related_document_merged.pdf",
     }
 
@@ -146,7 +147,10 @@ def _collect_remaining_files(data: ClaimData, used_files: Set[str]) -> List[str]
             continue
 
         # Skip system/generated files
-        if fname.lower() in _skip_files:
+        fname_lower = fname.lower()
+        if fname_lower in _skip_files:
+            continue
+        if fname_lower.startswith("claim_others_documents_"):
             continue
         if fname.startswith("~$"):
             continue
@@ -960,10 +964,10 @@ async def fill_document_upload_section(
                 log.info(f"Total pre-merge size: {total_mb:.1f}MB (limit: 15MB)")
 
             folder_path = _get_folder_path(data) or tempfile.gettempdir()
-            merged_pdf_path = os.path.join(folder_path, "claim_others_documents.pdf")
-            if os.path.exists(merged_pdf_path):
-                try: os.remove(merged_pdf_path)
-                except OSError: pass
+            import time
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            merged_pdf_path = os.path.join(folder_path, f"claim_others_documents_{timestamp}.pdf")
+
 
             if isinstance(log, AutomationLogger):
                 log.wait("Creating consolidated PDF...")
