@@ -73,19 +73,24 @@ jobs:
           python -m pip install --upgrade pip wheel
           python -m pip install -r requirements-build.txt
 
-      # ─── 4b. Create placeholder settings.json (gitignored) ───────────────
-      - name: Create CI settings.json
+      # ─── 4b. Create placeholder settings.json files (gitignored) ─────────
+      - name: Create CI settings.json files
         run: |
-          $settings = "app\config\settings.json"
-          $template = "app\config\settings.json.example"
-          if (-Not (Test-Path $settings)) {
-            if (Test-Path $template) {
-              Copy-Item $template $settings
-              Write-Host "Created $settings from template"
+          function Ensure-Settings($real, $example) {
+            if (-Not (Test-Path $real)) {
+              if (Test-Path $example) {
+                Copy-Item $example $real
+                Write-Host "Created $real from $example"
+              } else {
+                Write-Host "WARNING: No example found for $real — build may warn"
+              }
             } else {
-              Write-Host "WARNING: No settings template found — build may warn"
+              Write-Host "Found existing: $real"
             }
           }
+          Ensure-Settings "app\config\settings.json"                    "app\config\settings.json.example"
+          Ensure-Settings "app\portals\uiic\config\settings.json"       "app\portals\uiic\config\settings.json.example"
+          Ensure-Settings "app\portals\newindia\config\settings.json"   "app\portals\newindia\config\settings.json.example"
         shell: pwsh
 
       # ─── 5. Prepare Playwright Chromium ──────────────────────────────────

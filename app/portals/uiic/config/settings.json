@@ -1,7 +1,7 @@
 {
   "portal_url": "https://portal.uiic.in/surveyor/home.jsp",
-  "username": "2725756",
-  "password": "Soip@881",
+  "username": "",
+  "password": "",
   "claim_type": "Non Maruti",
   "browser_headless": false,
   "browser_slow_mo_ms": 400,

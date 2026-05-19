@@ -42,6 +42,8 @@ temp/
 
 # SECURITY: Never commit credentials or local overrides
 app/config/settings.json
+app/portals/uiic/config/settings.json
+app/portals/newindia/config/settings.json
 .env
 
 # User claim folders & uploaded documents
