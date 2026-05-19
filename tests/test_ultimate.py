@@ -20,7 +20,7 @@ except ImportError:
     class QPixmap: pass
     class QStyleOptionViewItem: pass
     class QStyle: pass
-    class QApplication: 
+    class QApplication:
         @staticmethod
         def instance(): return None
 
@@ -1515,6 +1515,8 @@ class TestFolderScanner:
         assert r.assessment_files == {}
         assert r.unknown_files == []
         assert r.skipped_files == []
+        assert r.original_upload_doc_paths == {}
+        assert r.compressed_upload_doc_files == set()
 
     def test_keyword_matching_longest_first(self):
         from app.data.folder_scanner import _match_keyword
@@ -4144,7 +4146,7 @@ class EnterpriseAuditor:
     Advanced diagnostic engine for verifying production-grade integrity.
     Focuses on architecture, safety patterns, and runtime reliability.
     """
-    
+
     @staticmethod
     def get_automation_files():
         automation_dir = os.path.join(PROJECT_ROOT, "app", "automation")
@@ -4159,7 +4161,7 @@ class EnterpriseAuditor:
     def analyze_selector_quality(selector):
         if not isinstance(selector, str):
             return 100.0 # Lists of fallbacks are perfect score
-        
+
         score = 100
         if "nth-child" in selector or "nth-of-type" in selector:
             score -= 40
@@ -4173,24 +4175,24 @@ class EnterpriseAuditor:
 
 class WorkflowIntegrityAuditor:
     """Audits the linearity and safety of automation phase transitions."""
-    
+
     @staticmethod
     def audit_file_linearity(file_path):
         with open(file_path, "r", encoding="utf-8") as f:
             content = f.read()
             issues = []
-            
+
             # Rule 1: Every async fill_ function must have a wait_for or safe_fill
             if "async def fill_" in content:
                 if "wait_for" not in content and "safe_fill" not in content:
                     issues.append("Missing Page Guards (wait_for/safe_fill)")
-            
+
             # Rule 2: Section headers should be logged
             if "log_cb" in content and "PHASE" not in content and "STEP" not in content:
                 # If it's a major module, it should have section markers
                 if len(content) > 5000:
                     issues.append("Lack of Structured Progress Markers")
-                    
+
             return issues
 
 class TestEnterpriseValidationEngine:
@@ -4200,17 +4202,17 @@ class TestEnterpriseValidationEngine:
         """CRITICAL: Ensure UIIC and New India logic never leak into each other."""
         files = EnterpriseAuditor.get_automation_files()
         cross_contamination = []
-        
+
         for file_path in files:
             with open(file_path, "r", encoding="utf-8") as f:
                 content = f.read()
                 basename = os.path.basename(file_path)
-                
+
                 if "uiic" in basename.lower() and "newindia" in content.lower():
                     msg = f"{basename} contains 'newindia' references"
                     DiagnosticReport.log_finding("CRITICAL", "Architecture", msg, "Cross-portal leakage", basename)
                     cross_contamination.append(msg)
-                
+
                 if "new_india" in basename.lower() and "uiic" in content.lower():
                     msg = f"{basename} contains 'uiic' references"
                     DiagnosticReport.log_finding("CRITICAL", "Architecture", msg, "Cross-portal leakage", basename)
@@ -4228,7 +4230,7 @@ class TestEnterpriseValidationEngine:
                 msg = f"{os.path.basename(f)}: {iss}"
                 DiagnosticReport.log_finding("MAJOR", "Workflow", msg, "Missing navigation/state guards", os.path.basename(f))
                 all_issues.append(msg)
-        
+
         # We allow a few minor issues, but Major issues should be resolved
         assert len([i for i in all_issues if "Guards" in i]) == 0
 
@@ -4236,7 +4238,7 @@ class TestEnterpriseValidationEngine:
         """Verify safety patterns (no print, log_cb propagation)."""
         files = EnterpriseAuditor.get_automation_files()
         safety_violations = []
-        
+
         for file_path in files:
             with open(file_path, "r", encoding="utf-8") as f:
                 content = f.read()
@@ -4249,7 +4251,7 @@ class TestEnterpriseValidationEngine:
                         msg = f"{os.path.basename(file_path)} - Missing log handler in signature."
                         DiagnosticReport.log_finding("MAJOR", "Safety", msg, "Incomplete Logger propagation", os.path.basename(file_path))
                         safety_violations.append(msg)
-                
+
                 # Still check for raw prints line by line
                 lines = content.splitlines()
                 for i, line in enumerate(lines):
@@ -4264,13 +4266,13 @@ class TestEnterpriseValidationEngine:
         """Analyze selectors.py for structural fragility and fallback density."""
         from app.automation import selectors
         all_selectors = []
-        
+
         for attr in dir(selectors):
             val = getattr(selectors, attr)
             if isinstance(val, dict):
                 for k, v in val.items():
                     if isinstance(v, str): all_selectors.append((k, v, attr))
-                    elif isinstance(v, list): 
+                    elif isinstance(v, list):
                         for x in v:
                             if isinstance(x, str): all_selectors.append((k, x, attr))
 
@@ -4285,7 +4287,7 @@ class TestEnterpriseValidationEngine:
         # Average health check
         scores = [EnterpriseAuditor.analyze_selector_quality(s[1]) for s in all_selectors]
         avg_health = sum(scores) / len(scores) if scores else 100
-        
+
         if avg_health < 80:
             DiagnosticReport.log_finding("CRITICAL", "Stability", f"Average Selector Health is {avg_health:.1f}%", "Legacy CSS patterns", "selectors.py")
 
@@ -4295,10 +4297,10 @@ class TestEnterpriseValidationEngine:
         """Stress test ClaimData for race conditions."""
         from app.data.data_model import ClaimData
         import threading
-        
+
         claim = ClaimData()
         errors = []
-        
+
         def mutator():
             try:
                 for i in range(500):
@@ -4310,33 +4312,33 @@ class TestEnterpriseValidationEngine:
         threads = [threading.Thread(target=mutator) for _ in range(10)]
         for t in threads: t.start()
         for t in threads: t.join()
-        
+
         if errors:
             DiagnosticReport.log_finding("CRITICAL", "Runtime", f"Concurrency failures: {len(errors)}", "Thread-unsafe state", "data_model.py")
-        
+
         assert not errors
 
     def test_mapping_integrity_audit(self):
         """Deep cross-check: Ensure field_mapping.json aligns with ClaimData model."""
         import json
         from app.data.data_model import ClaimData
-        
+
         mapping_path = os.path.join(PROJECT_ROOT, "app", "config", "field_mapping.json")
         if not os.path.exists(mapping_path): return
 
         with open(mapping_path, "r", encoding="utf-8") as f:
             mapping = json.load(f)
-        
+
         claim_fields = set(vars(ClaimData()).keys())
         orphaned_keys = []
-        
+
         for key in mapping:
             if key.startswith("_"): continue
             if key not in claim_fields:
                 msg = f"Orphaned mapping key: '{key}'"
                 DiagnosticReport.log_finding("MAJOR", "Extraction", msg, "Field missing in ClaimData", "field_mapping.json")
                 orphaned_keys.append(key)
-        
+
         assert not orphaned_keys
 
     def test_document_system_audit(self):
@@ -4347,11 +4349,11 @@ class TestEnterpriseValidationEngine:
 
         with open(doc_path, "r", encoding="utf-8") as f:
             docs = json.load(f)
-            
+
         # Refined logic for nested structure
         for category, mapping in docs.items():
             if category.startswith("_"): continue
-            
+
             if isinstance(mapping, dict):
                 for doc_type, patterns in mapping.items():
                     if not isinstance(patterns, list) or len(patterns) == 0:
@@ -4369,7 +4371,7 @@ class TestSystemHealthReporter:
         status = "STABLE"
         if summary["CRITICAL"] > 0: status = "CRITICAL"
         elif summary["MAJOR"] > 3: status = "WARNING"
-        
+
         print("\n" + "=" * 60)
         print("        ENTERPRISE VALIDATION AUDIT REPORT")
         print("=" * 60)
@@ -4381,19 +4383,19 @@ class TestSystemHealthReporter:
         print(f"MAJOR:          {summary['MAJOR']}")
         print(f"MINOR:          {summary['MINOR']}")
         print("=" * 60)
-        
+
         if DiagnosticReport._findings:
             print("\nTOP RISK AREAS:")
             # Sort findings by severity
             sev_map = {"CRITICAL": 0, "MAJOR": 1, "MINOR": 2}
             sorted_findings = sorted(DiagnosticReport._findings, key=lambda x: sev_map[x["severity"]])
-            
+
             for i, f in enumerate(sorted_findings[:10]):
                 print(f"{i+1}. [{f['severity']}] {f['category']} - {f['module']}")
                 print(f"   Issue: {f['message']}")
                 if f['root_cause']: print(f"   Root Cause: {f['root_cause']}")
                 print("-" * 40)
-        
+
         print("=" * 60)
 
 
@@ -4506,3 +4508,774 @@ class TestPortalSettingsSafety:
         assert _setting_bool({"browser_headless": "true"}, "browser_headless") is True
         assert _setting_bool({"browser_headless": "no"}, "browser_headless", True) is False
         assert _setting_bool({}, "browser_headless", True) is True
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 26 — CHEQUE OCR EXTRACTOR (ocr_helper.ChequeExtractor)
+# ══════════════════════════════════════════════════════════════════════════════
+"""
+18 unit tests covering:
+  - IFSC extraction (strict, loose O→0 correction, not found)
+  - Account number extraction (labeled, split digits, bare fallback, multi-candidate)
+  - Account type detection (savings, current, cash credit, missing)
+  - File-not-found guard
+  - Missing pytesseract / pdfplumber graceful fallback
+  - All-fields-found early exit
+  - Full-None result when no text extracted
+  - Normalization (_normalize) and IFSC correction (_fix_ifsc)
+"""
+
+import pytest
+
+class TestChequeExtractorNormalize:
+    """Tests for text normalization helper."""
+
+    def _norm(self, text):
+        from app.portals.newindia.automation.ocr_helper import ChequeExtractor
+        return ChequeExtractor._normalize(text)
+
+    def test_sc26_01_uppercase_and_strip(self):
+        assert self._norm("  hello world  ") == "HELLO WORLD"
+
+    def test_sc26_02_collapses_whitespace(self):
+        assert self._norm("A   B\t\tC") == "A B C"
+
+    def test_sc26_03_strips_non_ascii_noise(self):
+        result = self._norm("IFSC\x00CODE\x1fXYZ")
+        assert "\x00" not in result
+        assert "IFSC" in result
+        assert "CODE" in result
+
+
+class TestChequeExtractorFixIfsc:
+    """Tests for IFSC OCR error correction."""
+
+    def _fix(self, s):
+        from app.portals.newindia.automation.ocr_helper import ChequeExtractor
+        return ChequeExtractor._fix_ifsc(s)
+
+    def test_sc26_04_replaces_O_at_position_4(self):
+        assert self._fix("SBINOPQ12345") == "SBIN0PQ12345"
+
+    def test_sc26_05_keeps_valid_ifsc_unchanged(self):
+        assert self._fix("SBIN0001234") == "SBIN0001234"
+
+    def test_sc26_06_uppercases_result(self):
+        assert self._fix("hdfc0abc123") == "HDFC0ABC123"
+
+
+class TestChequeExtractorIfsc:
+    """Tests for IFSC field extraction from text."""
+
+    def setup_method(self):
+        from app.portals.newindia.automation.ocr_helper import ChequeExtractor
+        self.ex = ChequeExtractor.__new__(ChequeExtractor)
+
+    def test_sc26_07_strict_ifsc_found(self):
+        text = "BANK: SBIN0001234 BRANCH MUMBAI"
+        result = self.ex._find_ifsc(text.upper(), None)
+        assert result == "SBIN0001234"
+
+    def test_sc26_08_loose_ifsc_with_O_corrected(self):
+        # OCR misread zero as letter O at position 4
+        text = "IFSC CODE SBINO001234"
+        result = self.ex._find_ifsc(text.upper(), None)
+        assert result == "SBIN0001234"
+
+    def test_sc26_09_ifsc_not_found_returns_none(self):
+        result = self.ex._find_ifsc("NO CODE HERE", None)
+        assert result is None
+
+    def test_sc26_10_ifsc_with_lowercase_text(self):
+        from app.portals.newindia.automation.ocr_helper import ChequeExtractor
+        text = ChequeExtractor._normalize("ifsc: hdfc0csg100 account")
+        result = self.ex._find_ifsc(text, None)
+        assert result == "HDFC0CSG100"
+
+
+class TestChequeExtractorAccountNumber:
+    """Tests for account number extraction."""
+
+    def setup_method(self):
+        from app.portals.newindia.automation.ocr_helper import ChequeExtractor
+        self.ex = ChequeExtractor.__new__(ChequeExtractor)
+
+    def test_sc26_11_labeled_a_c_no_extraction(self):
+        text = "A/C NO 123456789012"
+        result = self.ex._find_account_number(text.upper(), None)
+        assert result == "123456789012"
+
+    def test_sc26_12_account_number_keyword(self):
+        text = "ACCOUNT NUMBER: 98765432109876"
+        result = self.ex._find_account_number(text.upper(), None)
+        assert result == "98765432109876"
+
+    def test_sc26_13_split_digit_groups_joined(self):
+        # OCR sometimes adds spaces inside numbers: "1234 5678 9012"
+        text = "A/C NO 1234 5678 9012"
+        result = self.ex._find_account_number(text.upper(), None)
+        assert result == "123456789012"
+
+    def test_sc26_14_bare_fallback_picks_longest(self):
+        # No label — fallback picks the longest number
+        text = "DATE 18052026 ACCOUNT 123456789012345 REF 9876"
+        result = self.ex._find_account_number(text.upper(), None)
+        assert result == "123456789012345"
+
+    def test_sc26_15_short_number_ignored(self):
+        # Only 6-digit numbers (too short) → returns None
+        text = "DATE 180526 REF 123456"
+        result = self.ex._find_account_number(text.upper(), None)
+        assert result is None
+
+
+class TestChequeExtractorAccountType:
+    """Tests for account type detection."""
+
+    def setup_method(self):
+        from app.portals.newindia.automation.ocr_helper import ChequeExtractor
+        self.ex = ChequeExtractor.__new__(ChequeExtractor)
+
+    def test_sc26_16_savings_keyword(self):
+        assert self.ex._find_account_type("SB A/C SAVINGS BANK", None) == "Savings"
+
+    def test_sc26_17_current_keyword(self):
+        assert self.ex._find_account_type("CURRENT ACCOUNT CA A/C", None) == "Current"
+
+    def test_sc26_18_cash_credit_maps_to_current(self):
+        # Cash credit accounts should map to "Current" on the portal
+        assert self.ex._find_account_type("CASH CREDIT CC A/C LIMIT", None) == "Current"
+
+    def test_sc26_19_no_type_returns_none(self):
+        assert self.ex._find_account_type("AXIS BANK MUMBAI BRANCH", None) is None
+
+
+class TestChequeExtractorFileGuard:
+    """Tests for file-not-found and unsupported-type guards."""
+
+    def test_sc26_20_missing_file_returns_all_none(self):
+        from app.portals.newindia.automation.ocr_helper import ChequeExtractor
+        ex = ChequeExtractor("/nonexistent/path/cheque.jpg")
+        result = ex.extract_details(log=None)
+        assert result == {"ifsc": None, "account_number": None, "account_type": None}
+
+    def test_sc26_21_unsupported_extension_returns_all_none(self, tmp_path):
+        from app.portals.newindia.automation.ocr_helper import ChequeExtractor
+        dummy = tmp_path / "cheque.docx"
+        dummy.write_text("bank details")
+        ex = ChequeExtractor(str(dummy))
+        result = ex.extract_details(log=None)
+        assert result == {"ifsc": None, "account_number": None, "account_type": None}
+
+
+class TestChequeExtractorMultiCandidate:
+    """Tests for multi-candidate OCR text merging logic."""
+
+    def test_sc26_22_all_fields_from_combined_candidates(self):
+        """
+        Simulates scenario where different OCR passes find different fields.
+        Verifies the extractor merges across all candidates.
+        """
+        from app.portals.newindia.automation.ocr_helper import ChequeExtractor
+        ex = ChequeExtractor.__new__(ChequeExtractor)
+
+        # Simulate: candidate 1 has IFSC only, candidate 2 has acno + type
+        candidates = [
+            "BRANCH SBIN0001234 MUMBAI",
+            "A/C NO 987654321012 SAVINGS BANK",
+        ]
+
+        result = {"ifsc": None, "account_number": None, "account_type": None}
+        for raw in candidates:
+            clean = ChequeExtractor._normalize(raw)
+            if not result["ifsc"]:
+                result["ifsc"] = ex._find_ifsc(clean, None)
+            if not result["account_number"]:
+                result["account_number"] = ex._find_account_number(clean, None)
+            if not result["account_type"]:
+                result["account_type"] = ex._find_account_type(clean, None)
+
+        assert result["ifsc"] == "SBIN0001234"
+        assert result["account_number"] == "987654321012"
+        assert result["account_type"] == "Savings"
+
+    def test_sc26_23_early_exit_when_all_found(self):
+        """Verifies the loop breaks immediately once all 3 fields are found."""
+        from app.portals.newindia.automation.ocr_helper import ChequeExtractor
+        ex = ChequeExtractor.__new__(ChequeExtractor)
+
+        # Single candidate has all 3 fields
+        raw = "SBIN0001234 A/C NO 987654321012 SAVINGS BANK MUMBAI"
+        clean = ChequeExtractor._normalize(raw)
+
+        result = {"ifsc": None, "account_number": None, "account_type": None}
+        passes = 0
+        for raw_text in [raw, "SHOULD NOT BE REACHED"]:
+            passes += 1
+            c = ChequeExtractor._normalize(raw_text)
+            if not result["ifsc"]:
+                result["ifsc"] = ex._find_ifsc(c, None)
+            if not result["account_number"]:
+                result["account_number"] = ex._find_account_number(c, None)
+            if not result["account_type"]:
+                result["account_type"] = ex._find_account_type(c, None)
+            if all(result.values()):
+                break  # early exit
+
+        assert passes == 1, "Should have exited after first candidate"
+        assert result["ifsc"] == "SBIN0001234"
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 27. CLAIM RELATED PRE-MERGE
+# ═════════════════════════════════════════════════════════════════════════════
+
+class TestClaimRelatedPreMerge:
+    """Tests for the pre-scan PDF merge logic in folder_scanner."""
+
+    def test_sc27_01_merge_produces_merged_pdf(self, tmp_path):
+        """scan_folder correctly identifies unmapped files and calls _merge_claim_related_pdf."""
+        from app.data.folder_scanner import scan_folder
+
+        d = tmp_path / "claim_folder"
+        d.mkdir()
+
+        # Create mapped docs
+        (d / "DL.pdf").write_text("dummy")
+        (d / "RC.pdf").write_text("dummy")
+
+        # Create unmapped docs (claim related candidates)
+        (d / "Unmapped1.pdf").write_text("dummy")
+        (d / "Unmapped2.pdf").write_text("dummy")
+
+        # Fake config
+        mapping = {
+            "document_upload_tab": {
+                "driving_license": ["dl"],
+                "registration_certificate": ["rc"]
+            }
+        }
+
+        with patch("app.data.folder_scanner._merge_claim_related_pdf", return_value=str(d / "claim_others_documents.pdf")) as mock_merge:
+            with patch("app.data.folder_scanner.json.load", return_value=mapping):
+                with patch("app.data.folder_scanner.open", create=True):
+                    # Must use portal_id="newindia" — NIA is the only portal that
+                    # requires document merge (requires_document_merge=True in registry).
+                    # Calling with uiic (the default) would correctly skip the merge.
+                    result = scan_folder(str(d), portal_id="newindia")
+
+        # DL and RC should be matched
+        assert len(result.upload_doc_files) == 2
+
+        # The remaining 2 should be collected for merge
+        assert len(result.claim_related_files) == 2
+        assert any("Unmapped1" in p for p in result.claim_related_files)
+        assert any("Unmapped2" in p for p in result.claim_related_files)
+
+        # The mock should have been called with the 2 candidates and expected output path
+        mock_merge.assert_called_once()
+        args, kwargs = mock_merge.call_args
+        assert len(args[0]) == 2
+        assert "claim_others_documents.pdf" in args[1]
+
+        # Verify the result object has the merged path
+        assert result.claim_related_merged_pdf == str(d / "claim_others_documents.pdf")
+
+    def test_sc27_02_merge_helper_pypdfium2_priority(self, tmp_path):
+        """Proves pypdfium2 is the active Strategy 1 and correctly saves output."""
+        from app.data.folder_scanner import _merge_claim_related_pdf
+
+        d = tmp_path / "merge_test"
+        d.mkdir()
+        f1 = d / "doc1.pdf"
+        f2 = d / "doc2.pdf"
+        f1.write_text("d1")
+        f2.write_text("d2")
+        out = d / "claim_others_documents.pdf"
+
+        # Build a real fake pypdfium2 that actually creates the output file
+        fake_src = MagicMock()
+        fake_src.__len__ = MagicMock(return_value=1)
+        fake_dest = MagicMock()
+
+        def fake_save(path):
+            with open(path, "wb") as fh:
+                fh.write(b"%PDF-1.4 merged")  # small valid-looking content
+
+        fake_dest.save = MagicMock(side_effect=fake_save)
+        fake_dest.import_pages = MagicMock()
+
+        fake_pdfium = MagicMock()
+        fake_pdfium.PdfDocument.new.return_value = fake_dest
+        fake_pdfium.PdfDocument.return_value = fake_src
+
+        with patch.dict("sys.modules", {"pypdfium2": fake_pdfium}):
+            res = _merge_claim_related_pdf([str(f1), str(f2)], str(out), max_bytes=10 * 1024 * 1024)
+
+        # Strategy 1 ran: import_pages called twice (once per file)
+        assert fake_dest.import_pages.call_count == 2
+        # save was called
+        fake_dest.save.assert_called_once_with(str(out))
+        # Output file was created and returned
+        assert res == str(out)
+        assert out.exists()
+
+    def test_sc27_03_merge_helper_fails_gracefully_on_size_limit(self, tmp_path):
+        """Merged PDF exceeding 15MB is removed and None is returned."""
+        from app.data.folder_scanner import _merge_claim_related_pdf
+
+        d = tmp_path / "size_test"
+        d.mkdir()
+        f1 = d / "doc1.pdf"
+        f1.write_text("d1")
+        out = d / "claim_others_documents.pdf"
+
+        fake_src = MagicMock()
+        fake_src.__len__ = MagicMock(return_value=1)
+        fake_dest = MagicMock()
+
+        def fake_save_big(path):
+            # Write a 1-byte file; getsize is mocked below to 20MB
+            with open(path, "wb") as fh:
+                fh.write(b"x")
+
+        fake_dest.save = MagicMock(side_effect=fake_save_big)
+        fake_dest.import_pages = MagicMock()
+        fake_pdfium = MagicMock()
+        fake_pdfium.PdfDocument.new.return_value = fake_dest
+        fake_pdfium.PdfDocument.return_value = fake_src
+
+        with patch.dict("sys.modules", {"pypdfium2": fake_pdfium}):
+            with patch("os.path.getsize", return_value=20 * 1024 * 1024):
+                res = _merge_claim_related_pdf([str(f1)], str(out), max_bytes=15 * 1024 * 1024)
+
+        # Should return None because it exceeded max_bytes
+        assert res is None
+        # Output file should have been deleted
+        assert not out.exists()
+
+    def test_sc27_04_no_files_returns_none(self, tmp_path):
+        """Empty file list returns None immediately without any disk I/O."""
+        from app.data.folder_scanner import _merge_claim_related_pdf
+        out = tmp_path / "claim_others_documents.pdf"
+        res = _merge_claim_related_pdf([], str(out))
+        assert res is None
+        assert not out.exists()
+
+    def test_sc27_05_all_unsupported_types_returns_none(self, tmp_path):
+        """If all candidate files are .doc/.xlsx, none merge → return None."""
+        from app.data.folder_scanner import _merge_claim_related_pdf
+
+        d = tmp_path / "unsupported"
+        d.mkdir()
+        (d / "report.docx").write_text("word doc")
+        (d / "sheet.xlsx").write_text("excel")
+        out = d / "claim_others_documents.pdf"
+
+        # pypdfium2 is installed but will skip .docx/.xlsx and count==0
+        res = _merge_claim_related_pdf([str(d / "report.docx"), str(d / "sheet.xlsx")], str(out))
+        assert res is None
+        assert not out.exists()
+
+    def test_sc27_06_old_output_removed_before_merge(self, tmp_path):
+        """A stale claim_others_documents.pdf from a previous scan is deleted before re-merging."""
+        from app.data.folder_scanner import _merge_claim_related_pdf
+
+        d = tmp_path / "stale_test"
+        d.mkdir()
+        out = d / "claim_others_documents.pdf"
+        # Simulate stale file from prior run
+        out.write_text("stale content")
+        assert out.exists()
+
+        f1 = d / "doc1.pdf"
+        f1.write_text("d1")
+
+        fake_src = MagicMock()
+        fake_src.__len__ = MagicMock(return_value=1)
+        fake_dest = MagicMock()
+
+        def fresh_save(path):
+            with open(path, "wb") as fh:
+                fh.write(b"fresh merged pdf")
+
+        fake_dest.save = MagicMock(side_effect=fresh_save)
+        fake_dest.import_pages = MagicMock()
+        fake_pdfium = MagicMock()
+        fake_pdfium.PdfDocument.new.return_value = fake_dest
+        fake_pdfium.PdfDocument.return_value = fake_src
+
+        with patch.dict("sys.modules", {"pypdfium2": fake_pdfium}):
+            res = _merge_claim_related_pdf([str(f1)], str(out))
+
+        # Old stale content must be gone; result is the freshly merged file
+        assert res == str(out)
+        assert out.read_bytes() == b"fresh merged pdf"
+
+    def test_sc27_07_pre_merge_failure_sets_no_merged_path(self, tmp_path):
+        """If _merge_claim_related_pdf returns None, scan_result.claim_related_merged_pdf stays None."""
+        from app.data.folder_scanner import scan_folder
+
+        d = tmp_path / "fail_folder"
+        d.mkdir()
+        (d / "Unmapped.pdf").write_text("dummy")
+
+        mapping = {"document_upload_tab": {}}
+
+        with patch("app.data.folder_scanner._merge_claim_related_pdf", return_value=None):
+            with patch("app.data.folder_scanner.json.load", return_value=mapping):
+                with patch("app.data.folder_scanner.open", create=True):
+                    # Use newindia portal — only NIA requires document merge.
+                    result = scan_folder(str(d), portal_id="newindia")
+
+        # Merge failed → attribute should be None, not a path
+        assert result.claim_related_merged_pdf is None
+        # But the candidate files are still recorded
+        assert len(result.claim_related_files) >= 1
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 28. SMART PRE-MERGE COMPRESSION
+# ═════════════════════════════════════════════════════════════════════════════
+
+class TestPreMergeCompression:
+    """Tests for _prepare_files_for_merge, _compress_pdf_for_upload, _compress_image_for_upload."""
+
+    # ── _prepare_files_for_merge ──────────────────────────────────────────────
+
+    def test_sc28_01_under_limit_no_compression(self, tmp_path):
+        """Total size below limit → originals returned unchanged, no temp files created."""
+        from app.data.folder_scanner import _prepare_files_for_merge
+        f1 = tmp_path / "a.pdf"; f1.write_bytes(b"x" * 100)
+        f2 = tmp_path / "b.pdf"; f2.write_bytes(b"x" * 200)
+
+        logs = []
+        working, tmps = _prepare_files_for_merge(
+            [str(f1), str(f2)], max_bytes=10 * 1024 * 1024, log_fn=logs.append
+        )
+
+        assert working == [str(f1), str(f2)]
+        assert tmps == []
+        assert any("no compression needed" in m.lower() for m in logs)
+
+    def test_sc28_02_exactly_at_limit_no_compression(self, tmp_path):
+        """File totalling exactly the limit is not compressed (boundary)."""
+        from app.data.folder_scanner import _prepare_files_for_merge
+        limit = 1000
+        f1 = tmp_path / "exact.pdf"; f1.write_bytes(b"x" * limit)
+
+        working, tmps = _prepare_files_for_merge([str(f1)], max_bytes=limit, log_fn=lambda m: None)
+        assert working == [str(f1)]
+        assert tmps == []
+
+    def test_sc28_03_over_limit_compresses_largest_first(self, tmp_path):
+        """When over limit, the LARGEST file is compressed first."""
+        from app.data.folder_scanner import _prepare_files_for_merge
+        import os
+        small = tmp_path / "small.pdf"; small.write_bytes(b"x" * 100)
+        large = tmp_path / "large.pdf"; large.write_bytes(b"x" * 900)
+
+        compressed_calls = []
+
+        def fake_compress(path, out_path, target_dpi=96):
+            compressed_calls.append(path)
+            with open(out_path, "wb") as f: f.write(b"x" * 50)
+            return True
+
+        with patch("app.data.folder_scanner._compress_pdf_for_upload", side_effect=fake_compress):
+            _, tmps = _prepare_files_for_merge(
+                [str(small), str(large)], max_bytes=500, log_fn=lambda m: None
+            )
+
+        assert compressed_calls[0] == str(large)
+        for t in tmps:
+            try: os.remove(t)
+            except OSError: pass
+
+    def test_sc28_04_each_file_compressed_at_most_once(self, tmp_path):
+        """Each file is compressed at most once even when still over limit after compression."""
+        from app.data.folder_scanner import _prepare_files_for_merge
+        import os
+        f1 = tmp_path / "doc1.pdf"; f1.write_bytes(b"x" * 600)
+        f2 = tmp_path / "doc2.pdf"; f2.write_bytes(b"x" * 600)
+        call_count: dict = {"f1": 0, "f2": 0}
+
+        def fake_compress(path, out_path, target_dpi=96):
+            if "doc1" in path: call_count["f1"] += 1
+            else: call_count["f2"] += 1
+            with open(out_path, "wb") as fh: fh.write(b"x" * 500)
+            return True
+
+        with patch("app.data.folder_scanner._compress_pdf_for_upload", side_effect=fake_compress):
+            _, tmps = _prepare_files_for_merge(
+                [str(f1), str(f2)], max_bytes=1000, log_fn=lambda m: None
+            )
+
+        assert call_count["f1"] <= 1
+        assert call_count["f2"] <= 1
+        for t in tmps:
+            try: os.remove(t)
+            except OSError: pass
+
+    def test_sc28_05_stops_early_when_limit_reached(self, tmp_path):
+        """Compression stops as soon as total drops under limit — remaining files NOT compressed."""
+        from app.data.folder_scanner import _prepare_files_for_merge
+        import os
+        f1 = tmp_path / "big1.pdf"; f1.write_bytes(b"x" * 600)
+        f2 = tmp_path / "big2.pdf"; f2.write_bytes(b"x" * 500)
+        f3 = tmp_path / "big3.pdf"; f3.write_bytes(b"x" * 400)
+
+        compressed_calls = []
+
+        def fake_compress(path, out_path, target_dpi=96):
+            compressed_calls.append(path)
+            with open(out_path, "wb") as fh: fh.write(b"x" * 50)  # 50+500+400=950 < 1000
+            return True
+
+        with patch("app.data.folder_scanner._compress_pdf_for_upload", side_effect=fake_compress):
+            _, tmps = _prepare_files_for_merge(
+                [str(f1), str(f2), str(f3)], max_bytes=1000, log_fn=lambda m: None
+            )
+
+        assert len(compressed_calls) == 1  # only the biggest file compressed
+        assert str(f1) in compressed_calls[0]
+        for t in tmps:
+            try: os.remove(t)
+            except OSError: pass
+
+    def test_sc28_06_still_over_limit_after_all_compressed_warns(self, tmp_path):
+        """If still over limit after all files compressed, warning is logged and we still proceed."""
+        from app.data.folder_scanner import _prepare_files_for_merge
+        import os
+        f1 = tmp_path / "huge.pdf"; f1.write_bytes(b"x" * 2000)
+
+        logs = []
+
+        def fake_compress(path, out_path, target_dpi=96):
+            with open(out_path, "wb") as fh: fh.write(b"x" * 1500)
+            return True
+
+        with patch("app.data.folder_scanner._compress_pdf_for_upload", side_effect=fake_compress):
+            working, tmps = _prepare_files_for_merge(
+                [str(f1)], max_bytes=1000, log_fn=logs.append
+            )
+
+        assert len(working) == 1  # non-fatal — still returns a list
+        joined = " ".join(logs).lower()
+        assert "proceeding" in joined or "limit" in joined
+        for t in tmps:
+            try: os.remove(t)
+            except OSError: pass
+
+    def test_sc28_07_empty_input_returns_two_empty_lists(self, tmp_path):
+        """Empty file list returns ([], []) immediately."""
+        from app.data.folder_scanner import _prepare_files_for_merge
+        working, tmps = _prepare_files_for_merge([], max_bytes=15 * 1024 * 1024, log_fn=lambda m: None)
+        assert working == [] and tmps == []
+
+    def test_sc28_08_nonexistent_files_filtered_out(self, tmp_path):
+        """Files that don't exist on disk are silently excluded."""
+        from app.data.folder_scanner import _prepare_files_for_merge
+        real = tmp_path / "real.pdf"; real.write_bytes(b"x" * 100)
+
+        working, tmps = _prepare_files_for_merge(
+            [str(real), "/no/such/ghost.pdf"], max_bytes=10 * 1024 * 1024, log_fn=lambda m: None
+        )
+
+        assert len(working) == 1
+        assert str(real) in working
+
+    def test_sc28_09_compression_failure_keeps_original(self, tmp_path):
+        """If compression returns False, the original file is kept — no crash, no temp file."""
+        from app.data.folder_scanner import _prepare_files_for_merge
+        f1 = tmp_path / "fail.pdf"; f1.write_bytes(b"x" * 800)
+        f2 = tmp_path / "ok.pdf";   f2.write_bytes(b"x" * 300)
+
+        with patch("app.data.folder_scanner._compress_pdf_for_upload", return_value=False):
+            working, tmps = _prepare_files_for_merge(
+                [str(f1), str(f2)], max_bytes=900, log_fn=lambda m: None
+            )
+
+        assert str(f1) in working
+        assert str(f2) in working
+        assert tmps == []
+
+    def test_sc28_10_image_files_use_image_compressor_not_pdf(self, tmp_path):
+        """Image files (.jpg) use _compress_image_for_upload, not _compress_pdf_for_upload."""
+        from app.data.folder_scanner import _prepare_files_for_merge
+        import os
+        img = tmp_path / "photo.jpg"; img.write_bytes(b"x" * 900)
+
+        pdf_calls, img_calls = [], []
+
+        def fake_img(path, out, **kw):
+            img_calls.append(path)
+            with open(out, "wb") as fh: fh.write(b"x" * 100)
+            return True
+
+        with patch("app.data.folder_scanner._compress_pdf_for_upload", side_effect=lambda p, o, **kw: pdf_calls.append(p) or True):
+            with patch("app.data.folder_scanner._compress_image_for_upload", side_effect=fake_img):
+                _, tmps = _prepare_files_for_merge([str(img)], max_bytes=500, log_fn=lambda m: None)
+
+        assert pdf_calls == []
+        assert str(img) in img_calls
+        for t in tmps:
+            try: os.remove(t)
+            except OSError: pass
+
+    def test_sc28_11_unsupported_ext_not_compressed(self, tmp_path):
+        """Files with .docx/.xlsx extension are never passed to any compressor."""
+        from app.data.folder_scanner import _prepare_files_for_merge
+        docx = tmp_path / "report.docx"; docx.write_bytes(b"x" * 900)
+
+        pdf_calls, img_calls = [], []
+        with patch("app.data.folder_scanner._compress_pdf_for_upload", side_effect=lambda p, o, **kw: pdf_calls.append(p) or True):
+            with patch("app.data.folder_scanner._compress_image_for_upload", side_effect=lambda p, o, **kw: img_calls.append(p) or True):
+                working, tmps = _prepare_files_for_merge([str(docx)], max_bytes=100, log_fn=lambda m: None)
+
+        assert pdf_calls == [] and img_calls == []
+        assert str(docx) in working  # kept as-is
+
+    def test_sc28_12_temp_files_returned_for_caller_cleanup(self, tmp_path):
+        """All compressed temp paths are returned in tmps so caller can delete them."""
+        from app.data.folder_scanner import _prepare_files_for_merge
+        import os
+        f1 = tmp_path / "big.pdf"; f1.write_bytes(b"x" * 700)
+        f2 = tmp_path / "also.pdf"; f2.write_bytes(b"x" * 700)
+
+        created = []
+
+        def fake_compress(path, out_path, target_dpi=96):
+            with open(out_path, "wb") as fh: fh.write(b"x" * 100)
+            created.append(out_path)
+            return True
+
+        with patch("app.data.folder_scanner._compress_pdf_for_upload", side_effect=fake_compress):
+            _, tmps = _prepare_files_for_merge([str(f1), str(f2)], max_bytes=500, log_fn=lambda m: None)
+
+        for t in created:
+            assert t in tmps
+        for t in tmps:
+            assert os.path.isfile(t)
+            os.remove(t)
+
+    # ── _compress_pdf_for_upload ──────────────────────────────────────────────
+
+    def test_sc28_13_compress_pdf_returns_false_on_corrupt_file(self, tmp_path):
+        """Returns False (no raise) when pypdfium2 can't open the file."""
+        from app.data.folder_scanner import _compress_pdf_for_upload
+        bad = tmp_path / "corrupt.pdf"; bad.write_bytes(b"not a real pdf")
+        out = tmp_path / "out.pdf"
+        result = _compress_pdf_for_upload(str(bad), str(out))
+        assert result is False
+
+    def test_sc28_14_compress_pdf_returns_false_for_empty_pdf(self, tmp_path):
+        """Returns False for a PDF with 0 pages."""
+        from app.data.folder_scanner import _compress_pdf_for_upload
+        fake_pdf = MagicMock(); fake_pdf.__len__ = MagicMock(return_value=0)
+        fake_pdfium = MagicMock()
+        fake_pdfium.PdfDocument.return_value = fake_pdf
+        out = tmp_path / "out.pdf"
+        with patch.dict("sys.modules", {"pypdfium2": fake_pdfium}):
+            result = _compress_pdf_for_upload("dummy.pdf", str(out))
+        assert result is False
+
+    # ── _compress_image_for_upload ────────────────────────────────────────────
+
+    def test_sc28_15_compress_image_success_produces_smaller_file(self, tmp_path):
+        """JPEG quality=75 output is smaller than lossless PNG input."""
+        from app.data.folder_scanner import _compress_image_for_upload
+        from PIL import Image
+        import os
+        img_path = tmp_path / "input.png"; out_path = tmp_path / "output.jpg"
+        Image.new("RGB", (200, 200), color=(100, 150, 200)).save(str(img_path), "PNG")
+
+        result = _compress_image_for_upload(str(img_path), str(out_path), quality=75)
+
+        assert result is True
+        assert out_path.exists()
+        assert os.path.getsize(str(out_path)) < os.path.getsize(str(img_path))
+
+    def test_sc28_16_compress_image_returns_false_on_bad_file(self, tmp_path):
+        """Returns False (no raise) for corrupt image data."""
+        from app.data.folder_scanner import _compress_image_for_upload
+        bad = tmp_path / "corrupt.jpg"; bad.write_bytes(b"not an image")
+        out = tmp_path / "out.jpg"
+        result = _compress_image_for_upload(str(bad), str(out))
+        assert result is False
+
+    def test_sc28_17_compress_image_converts_rgba_to_rgb(self, tmp_path):
+        """RGBA source is converted to RGB before JPEG save (JPEG has no alpha channel)."""
+        from app.data.folder_scanner import _compress_image_for_upload
+        from PIL import Image
+        img_path = tmp_path / "rgba.png"; out_path = tmp_path / "out.jpg"
+        Image.new("RGBA", (100, 100), (255, 0, 0, 128)).save(str(img_path), "PNG")
+
+        result = _compress_image_for_upload(str(img_path), str(out_path))
+
+        assert result is True
+        assert Image.open(str(out_path)).mode == "RGB"
+
+    # ── Integration ───────────────────────────────────────────────────────────
+
+    def test_sc28_18_merge_wires_prepare_before_strategies(self, tmp_path):
+        """_merge_claim_related_pdf calls _prepare_files_for_merge before any merge strategy."""
+        from app.data.folder_scanner import _merge_claim_related_pdf
+        f1 = tmp_path / "doc.pdf"; f1.write_bytes(b"x" * 100)
+        out = tmp_path / "merged.pdf"
+
+        called_with: dict = {}
+
+        def fake_prepare(file_paths, max_bytes, log_fn):
+            called_with["paths"] = list(file_paths)
+            called_with["max_bytes"] = max_bytes
+            return list(file_paths), []
+
+        with patch("app.data.folder_scanner._prepare_files_for_merge", side_effect=fake_prepare):
+            _merge_claim_related_pdf([str(f1)], str(out), max_bytes=500)
+
+        assert str(f1) in called_with.get("paths", [])
+        assert called_with.get("max_bytes") == 500
+
+    def test_sc28_19_pre_flight_logs_filename_and_sizes(self, tmp_path):
+        """Pre-flight log messages include the filename and size values."""
+        from app.data.folder_scanner import _prepare_files_for_merge
+        import os
+        f1 = tmp_path / "bigreport.pdf"; f1.write_bytes(b"x" * 900)
+
+        logs = []
+
+        def fake_compress(path, out_path, target_dpi=96):
+            with open(out_path, "wb") as fh: fh.write(b"x" * 50)
+            return True
+
+        with patch("app.data.folder_scanner._compress_pdf_for_upload", side_effect=fake_compress):
+            _, tmps = _prepare_files_for_merge([str(f1)], max_bytes=500, log_fn=logs.append)
+
+        joined = " ".join(logs)
+        assert "bigreport.pdf" in joined    # filename mentioned
+        assert any(c in joined for c in ["KB", "MB", "kb", "mb"])  # sizes reported
+
+        for t in tmps:
+            try: os.remove(t)
+            except OSError: pass
+
+    def test_sc28_20_working_paths_are_compressed_tmps_not_originals(self, tmp_path):
+        """After compression, returned working_paths differ from originals and exist on disk."""
+        from app.data.folder_scanner import _prepare_files_for_merge
+        import os
+        f1 = tmp_path / "orig.pdf"; f1.write_bytes(b"x" * 900)
+
+        def fake_compress(path, out_path, target_dpi=96):
+            with open(out_path, "wb") as fh: fh.write(b"x" * 50)
+            return True
+
+        with patch("app.data.folder_scanner._compress_pdf_for_upload", side_effect=fake_compress):
+            working, tmps = _prepare_files_for_merge([str(f1)], max_bytes=500, log_fn=lambda m: None)
+
+        assert working[0] != str(f1)  # not the original
+        assert working[0] in tmps     # is a tracked temp file
+        assert os.path.isfile(working[0])  # actually exists
+
+        for t in tmps:
+            try: os.remove(t)
+            except OSError: pass

@@ -292,43 +292,149 @@ async def fill_vehicle_photo_graph(
     chassis_file  = _find_file(claim_data, "Chassis Number Photograph",  ["chassis"])
     odometer_file = _find_file(claim_data, "Odometer Reading Photograph", ["odometer", "odo"])
 
-    # ROW 0 — Chassis
+    # ── ROW 0 — Chassis ──────────────────────────────────────────────────────
+    # Attach chassis file first, then odometer. Upload is clicked ONCE after
+    # both are attached. Each attachment is followed by an immediate popup check
+    # so pre-upload alerts (file-size, duplicate) are dismissed before the
+    # portal's Upload button is enabled.
     if isinstance(log, AutomationLogger):
-        log.info("Processing Row 0 (Chassis Photo)...")
+        log.info("Row 0: Setting type → Chassis Number Photograph")
         log.indent()
     else:
         log("Setting Row 0 → Chassis...")
-        
-    await select_dropdown_with_delay(page, 'select[name="docType0"]', _DOCTYPE_CHASSIS, "Row 0 Type", log, field_delay_ms)
+
+    await select_dropdown_with_delay(
+        page, 'select[name="docType0"]', _DOCTYPE_CHASSIS,
+        "Row 0 Type", log, field_delay_ms
+    )
+
+    chassis_attached = False
     if chassis_file:
-        await _attach_file(page, 0, chassis_file, log)
+        chassis_attached = await _attach_file(page, 0, chassis_file, log)
+        # Dismiss any immediate portal alert (file-size / duplicate)
+        try:
+            popup_info = await page.evaluate(_JS_DETECT_POPUP)
+            if popup_info.get("found"):
+                body = popup_info.get("body", "")[:80]
+                if isinstance(log, AutomationLogger):
+                    log.warning(f"Alert after chassis attach: {body}")
+                else:
+                    log(f"  ⚠️ Portal alert after chassis attach: {body}")
+                await page.evaluate(_JS_DISMISS_POPUP)
+                await asyncio.sleep(0.5)
+        except Exception:
+            pass
     else:
         if isinstance(log, AutomationLogger):
             log.warning("No Chassis photo found in source data.")
-            
-    if isinstance(log, AutomationLogger): log.outdent()
+        else:
+            log("  ⚠️ No Chassis file — row 0 will have empty file input.")
+
+    if isinstance(log, AutomationLogger):
+        log.outdent()
 
     if stop_cb(): return False
 
-    # ROW 1 — Odometer (optional)
+    # ── ROW 1 — Odometer (optional) ──────────────────────────────────────────
+    odometer_attached = False
     if odometer_file:
         if isinstance(log, AutomationLogger):
-            log.info("Processing Row 1 (Odometer Photo)...")
+            log.info("Row 1: Adding row for Odometer Reading Photograph")
             log.indent()
         else:
             log("Adding Row 1 for Odometer...")
-            
+
         before_count = await page.evaluate(_JS_ROW_COUNT)
         if await _click_plus_and_wait(page, log, before_count):
-            await select_dropdown_with_delay(page, 'select[name="docType1"]', _DOCTYPE_ODOMETER, "Row 1 Type", log, field_delay_ms)
-            await _attach_file(page, 1, odometer_file, log)
-        
-        if isinstance(log, AutomationLogger): log.outdent()
+            await select_dropdown_with_delay(
+                page, 'select[name="docType1"]', _DOCTYPE_ODOMETER,
+                "Row 1 Type", log, field_delay_ms
+            )
+            odometer_attached = await _attach_file(page, 1, odometer_file, log)
+            # Dismiss any immediate portal alert after odometer attachment
+            try:
+                popup_info = await page.evaluate(_JS_DETECT_POPUP)
+                if popup_info.get("found"):
+                    body = popup_info.get("body", "")[:80]
+                    if isinstance(log, AutomationLogger):
+                        log.warning(f"Alert after odometer attach: {body}")
+                    else:
+                        log(f"  ⚠️ Portal alert after odometer attach: {body}")
+                    await page.evaluate(_JS_DISMISS_POPUP)
+                    await asyncio.sleep(0.5)
+            except Exception:
+                pass
+
+        if isinstance(log, AutomationLogger):
+            log.outdent()
     else:
         if isinstance(log, AutomationLogger):
             log.info("No Odometer photo found; skipping Row 1.")
         else:
             log("  ℹ️ No Odometer file found — skipping Row 1.")
+
+    if stop_cb(): return False
+
+    # ── Click Upload ONCE — after both chassis & odometer are attached ────────
+    # A single Upload click submits all filled rows in one portal request.
+    if chassis_attached or odometer_attached:
+        attached_count = sum([chassis_attached, odometer_attached])
+        if isinstance(log, AutomationLogger):
+            log.wait(
+                f"Uploading {attached_count} attached document(s) — single Upload click..."
+            )
+        else:
+            log(f"Uploading {attached_count} attached document(s)...")
+
+        try:
+            # Give Angular a moment to register all file inputs
+            await asyncio.sleep(1.0)
+
+            upload_btn = page.locator(
+                'button[data-ng-click*="uploadFileNonTieUp_quickUpdate"]'
+            ).first
+            await upload_btn.wait_for(state="visible", timeout=5000)
+
+            # Poll up to 3s for Angular digest to enable the button
+            for _ in range(6):
+                if not await upload_btn.is_disabled():
+                    break
+                await asyncio.sleep(0.5)
+
+            if await upload_btn.is_disabled():
+                if isinstance(log, AutomationLogger):
+                    log.warning(
+                        "Upload button still disabled — files may already be "
+                        "uploaded or attachment failed."
+                    )
+                else:
+                    log("  ⚠️ Upload button is disabled.")
+            else:
+                await upload_btn.click()
+                if isinstance(log, AutomationLogger):
+                    log.success("Upload button clicked.")
+                else:
+                    log("  ✅ Upload button clicked.")
+
+                # Poll for the portal's confirmation / error modal.
+                # _handle_popup_after_next detects any visible modal
+                # (success banner, duplicate warning, size error) and
+                # dismisses it. Returns True whether or not a popup appeared.
+                await _handle_popup_after_next(page, log, max_wait_s=8.0)
+                await asyncio.sleep(1.0)
+
+        except Exception as e:
+            if isinstance(log, AutomationLogger):
+                log.error(f"Upload button error: {str(e)[:100]}")
+            else:
+                log(f"  ⚠️ Error clicking Upload button: {e}")
+    else:
+        if isinstance(log, AutomationLogger):
+            log.warning(
+                "No files were successfully attached — skipping Upload click."
+            )
+        else:
+            log("  ℹ️ No files attached — skipping upload.")
 
     if stop_cb(): return False
 
@@ -369,7 +475,7 @@ async def fill_vehicle_photo_graph(
             return False
 
     # ── Handle popup / modal that appears after Next ──────────────────────────
-    await _handle_popup_after_next(page, log, max_wait_s=10.0)
+    await _handle_popup_after_next(page, log, max_wait_s=5.0)
 
     # ── Wait for page to stabilise before handing off to Phase 5 ─────────────
     if isinstance(log, AutomationLogger):

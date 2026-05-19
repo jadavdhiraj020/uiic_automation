@@ -15,7 +15,41 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
         log.indent()
     else:
         log(f"Opening Registration Certificate Details section...")
+
+    try:
+        return await _fill_registration_cert_inner(page, data, log, stop_cb, field_delay_ms)
+    finally:
+        if isinstance(log, AutomationLogger):
+            log.outdent()
+
+
+async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_cb, field_delay_ms: int = 600) -> bool:
     
+    # 0. Reference No. (Optional) - Filled BEFORE expanding accordion because it is outside
+    try:
+        val = getattr(data, 'reference_no', '')
+        if val:
+            ref_sel = 'input[name="Reference No"]'
+            try:
+                await page.wait_for_selector(ref_sel, state="attached", timeout=2000)
+                sel_to_use = ref_sel
+            except Exception:
+                sel_to_use = 'input[data-ng-model="surveyorData.worklist.additionalDetails.refernceNo"]'
+            
+            await fill_input_with_delay(page, sel_to_use, val, "Reference No", log, field_delay_ms)
+        else:
+            if isinstance(log, AutomationLogger):
+                log.info("Reference No missing; skipping.")
+            else:
+                log(f"   ℹ️ Reference No missing from Excel, skipping (Optional).")
+    except Exception as e:
+        if isinstance(log, AutomationLogger):
+            log.error(f"Reference No field error: {str(e)[:100]}")
+        else:
+            log(f"   ⚠️ Error filling Reference No: {e}")
+
+    if stop_cb(): return False
+
     # Click to expand Registration Certificate Details accordion
     try:
         acc_heading = page.locator('a.accordion-toggle:has-text("Registration Certificate Details")').first
@@ -41,31 +75,6 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
             log.error(f"Expansion failed: {str(e)[:100]}")
         else:
             log(f"   ⚠️ Could not expand Registration Certificate Details: {e}")
-
-    if stop_cb(): return False
-
-    # 0. Reference No. (Optional)
-    try:
-        val = getattr(data, 'reference_no', '')
-        if val:
-            ref_sel = 'input[name="Reference No"]'
-            try:
-                await page.wait_for_selector(ref_sel, state="attached", timeout=2000)
-                sel_to_use = ref_sel
-            except Exception:
-                sel_to_use = 'input[data-ng-model="surveyorData.worklist.additionalDetails.refernceNo"]'
-            
-            await fill_input_with_delay(page, sel_to_use, val, "Reference No", log, field_delay_ms)
-        else:
-            if isinstance(log, AutomationLogger):
-                log.info("Reference No missing; skipping.")
-            else:
-                log(f"   ℹ️ Reference No missing from Excel, skipping (Optional).")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Reference No field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling Reference No: {e}")
 
     if stop_cb(): return False
 
@@ -462,7 +471,6 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
             log(f"   ⚠️ Error selecting Type Of Fuel: {e}")
 
     if isinstance(log, AutomationLogger):
-        log.outdent()
         log.success("Registration Certificate Details phase completed.")
     else:
         log(f" Phase 5 (Registration Certificate Details) completed successfully.")

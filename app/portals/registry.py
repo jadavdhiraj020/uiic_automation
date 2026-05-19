@@ -34,6 +34,24 @@ class PortalInfo:
     config_subdir: str          # Relative to app/portals/<id>/config/
     description: str = ""       # Short tooltip text
 
+    # ── Portal capability flags ──────────────────────────────────────────────
+    # These flags describe what the portal requires from shared services like
+    # folder_scanner.py. Add new flags here as portal-specific needs grow.
+    # The scanner/UI reads these flags and adjusts behaviour accordingly,
+    # keeping portal-specific logic OUT of shared, generic code.
+
+    requires_document_merge: bool = False
+    """
+    When True, the folder scanner will pre-merge all leftover (unmatched)
+    documents into a single 'claim_others_documents.pdf' during the scan
+    phase. This is required by portals (e.g. New India) that only accept
+    a single 'Claim Related' upload slot.
+
+    When False (default), no merge is performed and the pre-merged PDF is
+    never created, keeping the claim folder clean for portals (e.g. UIIC)
+    that handle individual document uploads directly.
+    """
+
     # ── derived paths ──
     def bundled_config_dir(self) -> str:
         """Read-only config shipped inside the app bundle."""
@@ -166,6 +184,7 @@ register_portal(PortalInfo(
     url="https://portal.uiic.in/surveyor/home.jsp",
     config_subdir="config",
     description="United India Insurance Company — Surveyor Portal",
+    requires_document_merge=False,  # UIIC accepts individual document slots
 ))
 
 register_portal(PortalInfo(
@@ -174,4 +193,5 @@ register_portal(PortalInfo(
     url="https://web.newindia.co.in/NIABancsPortal/IntermediaryLogin.html",
     config_subdir="config",
     description="New India Assurance Company — Intermediary Portal",
+    requires_document_merge=True,   # NIA has a single 'Claim Related' upload slot
 ))

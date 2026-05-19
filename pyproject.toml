@@ -18,6 +18,7 @@ dependencies = [
     "xlrd>=2.0.1",
     "openpyxl>=3.1.0",
     "pdfplumber>=0.11.9",
+    "pypdfium2>=5.0.0,<6.0.0",
     "pandas>=2.2.0",
     # CAPTCHA OCR Engine (PaddleOCR v2 stable branch)
     # CRITICAL: paddlepaddle must stay < 3.0.0

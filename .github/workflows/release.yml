@@ -149,7 +149,13 @@ jobs:
           Get-ChildItem "dist\${{ env.APP_NAME }}" | Select-Object Name, Length | Format-Table -AutoSize
         shell: pwsh
 
-      # ─── 10. Smoke-test the EXE (headless) ──────────────────────────────
+      # ─── 10. Verify packaged runtime resources ──────────────────────────
+      - name: Verify packaged runtime resources
+        run: |
+          python scripts\verify_packaged_runtime.py "dist\${{ env.APP_NAME }}"
+        shell: pwsh
+
+      # ─── 11. Smoke-test the EXE (headless) ──────────────────────────────
       - name: Smoke-test EXE (launch + exit)
         run: |
           Write-Host "Attempting headless smoke-test of the EXE..."
@@ -174,7 +180,7 @@ jobs:
         shell: pwsh
         continue-on-error: true   # GUI may fail without a display; treated as non-fatal
 
-      # ─── 11. Create ZIP archive ─────────────────────────────────────────
+      # ─── 12. Create ZIP archive ─────────────────────────────────────────
       - name: Package release ZIP
         run: |
           $source  = "dist\${{ env.APP_NAME }}"
@@ -190,7 +196,7 @@ jobs:
         id: zip
         shell: pwsh
 
-      # ─── 12. Create GitHub Release ──────────────────────────────────────
+      # ─── 13. Create GitHub Release ──────────────────────────────────────
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:

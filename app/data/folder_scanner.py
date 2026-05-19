@@ -21,8 +21,9 @@ import json
 import logging
 import ntpath
 import os
+import tempfile
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -95,9 +96,13 @@ class FolderScanResult:
         self.claim_doc_files: Dict[str, str] = {}
         self.assessment_files: Dict[str, str] = {}
         self.upload_doc_files: Dict[str, str] = {}  # For document upload section (DL, RC, Claim Form)
+        self.claim_related_files: List[str] = []    # Source files going into the merged PDF
+        self.claim_related_merged_pdf: Optional[str] = None  # Pre-merged claim_others_documents.pdf path
         self.unknown_files: List[str] = []
         self.skipped_files: List[Tuple[str, str]] = []
         self.expected_docs: List[str] = []
+        self.compressed_upload_doc_files: Set[str] = set()  # Keys compressed at scan time (e.g. 'driving_license')
+        self.original_upload_doc_paths: Dict[str, str] = {}  # key → original path before compression (excluded from claim_related)
 
     def summary_lines(self) -> List[str]:
         lines = []
@@ -109,6 +114,10 @@ class FolderScanResult:
             lines.append(f"[{key}] -> {Path(value).name}")
         for key, value in self.upload_doc_files.items():
             lines.append(f"[Upload:{key}] -> {Path(value).name}")
+        if self.claim_related_merged_pdf:
+            lines.append(f"[claim_related] -> {Path(self.claim_related_merged_pdf).name} (pre-merged)")
+        elif self.claim_related_files:
+            lines.append(f"[claim_related] -> {len(self.claim_related_files)} file(s) pending merge")
         for file_path in self.unknown_files:
             lines.append(f"Unknown: {Path(file_path).name}")
         for file_path, reason in self.skipped_files:
@@ -249,6 +258,7 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
 
     # ── Pre-scan: Duplicate 'vehicle' files into 4 copies (Front/Rear/Left/Right)
     import shutil
+    _vehicle_source_paths: Set[str] = set()  # Track original vehicle files to exclude from claim_related
     try:
         for fname in sorted(os.listdir(folder_path)):
             if fname in _SKIP_FILES or os.path.isdir(os.path.join(folder_path, fname)):
@@ -265,6 +275,7 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
                 )
                 if all_exist:
                     logger.info("All 4 vehicle_photo copies already exist — skipping duplication for %s", fname)
+                    _vehicle_source_paths.add(os.path.normpath(source_path))
                     continue
 
                 # Create 4 copies (Front, Rear, Left, Right)
@@ -278,6 +289,7 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
                         logger.info("Generated %s from %s", new_name, fname)
                     except Exception as e:
                         logger.error("Failed to copy %s to %s: %s", fname, new_name, e)
+                _vehicle_source_paths.add(os.path.normpath(source_path))
     except Exception as e:
         logger.error("Error during vehicle photo duplication: %s", e)
 
@@ -377,11 +389,11 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
             result.unknown_files.append(full_path)
             continue
 
-        # ── File size info (no skip — portal accepts >2MB with alert popup) ───
+        # ── File size info ────────────────────────────────────────────────────
         file_size = os.path.getsize(full_path)
         if file_size > MAX_FILE_BYTES:
             mb = file_size / (1024 * 1024)
-            logger.info("Large file (%.1fMB): %s — portal will show size alert", mb, fname)
+            logger.info("Large file (%.1fMB): %s — will compress if mapped as upload doc", mb, fname)
 
         # ── Normalise filename: lowercase, hyphens/spaces → underscores ──────
         fname_lower = fname.lower().replace("-", "_").replace(" ", "_")
@@ -456,10 +468,528 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
         except Exception as e:
             logger.error("Failed to copy invoice to %s: %s", cancel_check_name, e)
 
+    # ── Pre-compress mandatory upload files that exceed portal's 1.5 MB limit ─
+    # This runs BEFORE automation starts so the UI shows the final file size
+    # and the automation directly attaches the ready-to-use compressed file.
+    _MANDATORY_LIMIT_BYTES = 1536 * 1024  # 1.5 MB — NIA portal per-file limit
+    for _ukey, _upath in list(result.upload_doc_files.items()):
+        if not _upath or not os.path.isfile(_upath):
+            continue
+        _usz = os.path.getsize(_upath)
+        if _usz <= _MANDATORY_LIMIT_BYTES:
+            continue  # already within limit — skip
+        _ext = Path(_upath).suffix.lower()
+        _usz_kb = _usz / 1024
+        logger.info(
+            "Compressing upload doc [%s]: %s (%.0f KB > 1536 KB limit)",
+            _ukey, Path(_upath).name, _usz_kb
+        )
+        try:
+            _tmp = tempfile.NamedTemporaryFile(
+                suffix=_ext if _ext in (".jpg", ".jpeg", ".png", ".gif", ".bmp") else ".pdf",
+                delete=False,
+                prefix=f"_mand_{Path(_upath).stem}_",
+            )
+            _tmp.close()
+            _out_path = _tmp.name
+            if _ext == ".pdf":
+                _ok = _compress_pdf_for_upload(_upath, _out_path)
+            elif _ext in (".jpg", ".jpeg", ".png", ".gif", ".bmp"):
+                _ok = _compress_image_for_upload(_upath, _out_path)
+            else:
+                _ok = False
+            if _ok and os.path.isfile(_out_path):
+                _comp_kb = os.path.getsize(_out_path) / 1024
+                result.original_upload_doc_paths[_ukey] = _upath  # keep original so it's excluded from claim_related
+                result.upload_doc_files[_ukey] = _out_path
+                result.compressed_upload_doc_files.add(_ukey)
+                logger.info(
+                    "Compressed [%s]: %.0f KB → %.0f KB — ready for upload.",
+                    _ukey, _usz_kb, _comp_kb
+                )
+            else:
+                logger.warning(
+                    "Compression failed for [%s]: %s — will use original (portal alert will be handled).",
+                    _ukey, Path(_upath).name
+                )
+        except Exception as _ce:
+            logger.warning("Compression error for [%s]: %s", _ukey, _ce)
+
+    # ── Compute & pre-merge Claim Related Documents ───────────────────────────
+    # ── Step 1: Resolve portal merge capability flag ──────────────────────────
+    # Read the portal's feature flag from the registry instead of hardcoding
+    # portal names here. This keeps the scanner decoupled from portal business
+    # rules — adding a new portal only requires setting the flag in registry.py.
+    _portal_requires_merge = False
+    try:
+        from app.portals.registry import get_portal
+        _portal_info = get_portal(portal_id)
+        if _portal_info is not None:
+            _portal_requires_merge = _portal_info.requires_document_merge
+    except Exception:
+        pass  # Registry unavailable — safe default: no merge
+    logger.info(
+        "claim_related merge: portal='%s' requires_document_merge=%s",
+        portal_id, _portal_requires_merge,
+    )
+
+    _skip_fnames = {
+        "all_pdf_text.txt", "extracted_documents_data.md",
+        "re-inspection report format.pdf", "re-inspection report format.xlsx",
+        "claim_others_documents.pdf",       # skip our own output
+        "claim_related_document_merged.pdf",  # skip legacy name
+    }
+    _uploadable_exts = {
+        ".pdf", ".jpg", ".jpeg", ".png", ".gif", ".bmp",
+        ".doc", ".docx", ".xls", ".xlsx", ".txt",
+    }
+    _used_paths: Set[str] = set()
+    for _fp in (
+        list(result.claim_doc_files.values())
+        + list(result.assessment_files.values())
+        + list(result.upload_doc_files.values())
+        + list(result.original_upload_doc_paths.values())  # exclude pre-compression originals too
+    ):
+        if _fp:
+            _used_paths.add(os.path.normpath(_fp))
+    _used_paths.update(_vehicle_source_paths)  # exclude vehicle source (orig before duplication)
+
+    # ── Steps 2 & 3: Discover candidates + pre-merge (portal-gated) ──────────
+    # Both candidate discovery and the PDF merge are gated on the portal's
+    # requires_document_merge flag. If the portal doesn't need a merged PDF,
+    # we skip both steps entirely:
+    #   • No candidates collected  → claim_related_files stays empty
+    #   • No merge executed        → no temp files, no disk I/O
+    #   • No UI row rendered       → DocumentReviewPanel sees nothing to show
+    #
+    # This is the correct behaviour: collecting candidates and then silently
+    # discarding them would leave claim_related_files populated, causing the UI
+    # to render a misleading "PENDING" row even though no upload will happen.
+    if not _portal_requires_merge:
+        logger.info(
+            "claim_related: portal '%s' does not require document merge — "
+            "skipping candidate discovery and pre-merge.",
+            portal_id,
+        )
+    else:
+        # Discover unmatched files that didn't map to any known document slot
+        if folder_path and os.path.isdir(folder_path):
+            for _fname in sorted(os.listdir(folder_path)):
+                _full = os.path.join(folder_path, _fname)
+                if not os.path.isfile(_full):
+                    continue
+                if _fname.lower() in _skip_fnames:
+                    continue
+                if _fname.startswith("~$"):
+                    continue
+                if Path(_fname).suffix.lower() not in _uploadable_exts:
+                    continue
+
+                # Skip generated vehicle photo copies (4 identical large files)
+                import re
+                if re.match(r"^vehicle_photo_[1-4]\.(pdf|jpg|jpeg|png|bmp|gif)$", _fname.lower()):
+                    continue
+
+                if os.path.normpath(_full) not in _used_paths:
+                    result.claim_related_files.append(_full)
+                    logger.info("claim_related candidate: %s", _fname)
+
+        # Pre-merge now so UI can show the real filename and size
+        if result.claim_related_files and folder_path:
+            _out = os.path.join(folder_path, "claim_others_documents.pdf")
+            _mergeable_exts = {".pdf", ".jpg", ".jpeg", ".png", ".gif", ".bmp"}
+            _mergeable = [f for f in result.claim_related_files
+                          if Path(f).suffix.lower() in _mergeable_exts]
+            logger.info(
+                "claim_related: %d candidates, %d mergeable → %s",
+                len(result.claim_related_files),
+                len(_mergeable),
+                [Path(f).name for f in _mergeable],
+            )
+            if _mergeable:
+                merged = _merge_claim_related_pdf(_mergeable, _out)
+                if merged:
+                    result.claim_related_merged_pdf = merged
+                    if os.path.isfile(merged):
+                        logger.info("Pre-merged claim_related -> %s (%.1fMB)",
+                                    Path(merged).name,
+                                    os.path.getsize(merged) / (1024 * 1024))
+                    else:
+                        logger.warning("Pre-merge returned missing file path: %s", merged)
+                else:
+                    logger.warning("Pre-merge failed; merge will be retried at automation runtime.")
+            else:
+                logger.info("claim_related: no mergeable files (all are .doc/.xlsx/.txt) — skipping pre-merge.")
+        else:
+            logger.info("claim_related: no candidate files found or folder_path is None.")
+
     # ── Generate comprehensive scan summary log ──────────────────────────────
     _log_scan_summary(result, claim_map)
 
     return result
+
+
+def _compress_pdf_for_upload(pdf_path: str, output_path: str, target_dpi: int = 96) -> bool:
+    """
+    Re-render every page of a PDF at target_dpi using pypdfium2 + Pillow.
+    Scanned image-PDFs compress dramatically; text PDFs compress moderately.
+    Returns True on success, False on failure.
+    """
+    try:
+        import pypdfium2 as pdfium  # type: ignore
+        from PIL import Image  # type: ignore
+
+        src = pdfium.PdfDocument(pdf_path)
+        if len(src) == 0:
+            return False
+
+        scale = target_dpi / 72.0  # pypdfium2: scale=1.0 → 72 DPI
+        dest = pdfium.PdfDocument.new()
+        page_tmps: List[str] = []
+
+        try:
+            for i in range(len(src)):
+                page = src[i]
+                bitmap = page.render(scale=scale)
+                pil_img = bitmap.to_pil()
+                if pil_img.mode not in ("RGB",):
+                    pil_img = pil_img.convert("RGB")
+                # Pillow saves RGB PDFs with DCT (JPEG) compression internally
+                tf = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False, prefix=f"_cmp{i}_")
+                pil_img.save(tf.name, "PDF")
+                page_tmps.append(tf.name)
+                dest.import_pages(pdfium.PdfDocument(tf.name))
+
+            dest.save(output_path)
+            return True
+        finally:
+            for t in page_tmps:
+                try:
+                    os.remove(t)
+                except OSError:
+                    pass
+    except Exception as e:
+        logger.warning("_compress_pdf_for_upload failed for %s: %s", Path(pdf_path).name, e)
+        return False
+
+
+def _compress_image_for_upload(img_path: str, output_path: str, quality: int = 75) -> bool:
+    """Re-save an image as JPEG at the given quality to reduce file size."""
+    try:
+        from PIL import Image  # type: ignore
+        img = Image.open(img_path)
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+        img.save(output_path, "JPEG", quality=quality, optimize=True)
+        return True
+    except Exception as e:
+        logger.warning("_compress_image_for_upload failed for %s: %s", Path(img_path).name, e)
+        return False
+
+
+def _prepare_files_for_merge(
+    file_paths: List[str],
+    max_bytes: int,
+    log_fn,  # callable(str) -> None
+) -> "tuple[List[str], List[str]]":
+    """
+    Pre-flight size check with largest-first, single-pass-per-file compression.
+
+    Algorithm:
+      1. If sum(file sizes) <= max_bytes → return originals unchanged.
+      2. Sort files by size descending.
+      3. Compress the largest uncompressed file (PDF: 96 DPI re-render;
+         image: JPEG quality=75).  Each file is compressed at most once.
+      4. After each compression, recalculate total.  Stop as soon as total
+         drops below max_bytes — or when all files have been compressed once.
+      5. Warn if still over limit after exhausting all compressions.
+
+    Returns:
+        (working_paths, temp_files)
+        Caller MUST delete every path in temp_files when done.
+    """
+    _pdf_exts = {".pdf"}
+    _image_exts = {".jpg", ".jpeg", ".png", ".gif", ".bmp"}
+
+    valid = [f for f in file_paths if os.path.isfile(f)]
+    if not valid:
+        return [], []
+
+    orig_sizes = {f: os.path.getsize(f) for f in valid}
+    total = sum(orig_sizes.values())
+    limit_mb = max_bytes / (1024 * 1024)
+
+    log_fn(
+        f"[merge pre-flight] {len(valid)} files, "
+        f"total {total / (1024*1024):.1f}MB (limit: {limit_mb:.0f}MB)"
+    )
+
+    if total <= max_bytes:
+        log_fn("[merge pre-flight] Within limit — no compression needed.")
+        return list(valid), []
+
+    log_fn(
+        f"[merge pre-flight] Exceeds limit by "
+        f"{(total - max_bytes) / (1024*1024):.1f}MB — "
+        f"starting targeted compression (largest-first, one pass each)."
+    )
+
+    # working_map: original_path → current path (may be a compressed tmp)
+    working_map: Dict[str, str] = {f: f for f in valid}
+    temp_files: List[str] = []
+    compressed: Set[str] = set()  # originals already processed
+
+    # Sort originals largest-first; this order is fixed for the whole loop
+    sorted_by_size = sorted(valid, key=lambda f: orig_sizes[f], reverse=True)
+
+    for original in sorted_by_size:
+        # Recalculate current total using working paths
+        current_total = sum(
+            os.path.getsize(working_map[f])
+            for f in valid
+            if os.path.isfile(working_map[f])
+        )
+        if current_total <= max_bytes:
+            log_fn(
+                f"[merge pre-flight] Total now "
+                f"{current_total / (1024*1024):.1f}MB — within limit. Done."
+            )
+            break
+
+        if original in compressed:
+            continue  # already had one compression pass
+
+        ext = Path(original).suffix.lower()
+        fname = Path(original).name
+        orig_sz = orig_sizes[original]
+
+        out_tmp = tempfile.NamedTemporaryFile(
+            suffix=ext if ext in _image_exts else ".pdf",
+            delete=False,
+            prefix="_cmp_",
+        )
+        out_tmp.close()
+
+        success = False
+        if ext in _pdf_exts:
+            success = _compress_pdf_for_upload(original, out_tmp.name)
+        elif ext in _image_exts:
+            success = _compress_image_for_upload(original, out_tmp.name)
+
+        compressed.add(original)
+
+        if success and os.path.isfile(out_tmp.name):
+            new_sz = os.path.getsize(out_tmp.name)
+            savings_mb = (orig_sz - new_sz) / (1024 * 1024)
+            log_fn(
+                f"[merge pre-flight] Compressed {fname}: "
+                f"{orig_sz / 1024:.0f}KB → {new_sz / 1024:.0f}KB "
+                f"(saved {savings_mb:.2f}MB)"
+            )
+            working_map[original] = out_tmp.name
+            temp_files.append(out_tmp.name)
+        else:
+            log_fn(f"[merge pre-flight] Could not compress {fname} — keeping original.")
+            try:
+                os.remove(out_tmp.name)
+            except OSError:
+                pass
+
+    # Final report
+    final_total = sum(
+        os.path.getsize(working_map[f])
+        for f in valid
+        if os.path.isfile(working_map[f])
+    )
+    if final_total > max_bytes:
+        logger.warning(
+            "[merge pre-flight] After compressing all files, total is still %.1fMB "
+            "(limit %.0fMB). Proceeding — portal may reject if over limit.",
+            final_total / (1024 * 1024),
+            limit_mb,
+        )
+    else:
+        log_fn(
+            f"[merge pre-flight] Final total: "
+            f"{final_total / (1024*1024):.1f}MB — within limit."
+        )
+
+    working_paths = [working_map[f] for f in valid]
+    return working_paths, temp_files
+
+
+def _merge_claim_related_pdf(
+    file_paths: List[str],
+    output_path: str,
+    max_bytes: int = 15 * 1024 * 1024,  # 15 MB portal limit
+) -> Optional[str]:
+    """
+    Lightweight PDF merge used at scan time (no AutomationLogger dependency).
+    Pre-flight: sum sizes; compress largest-first until within 15 MB limit.
+    Priority: pypdfium2 full merge → PyPDF2 → Pillow copy.
+    Returns output_path on success, None on failure.
+    """
+    if not file_paths:
+        return None
+
+
+    _image_exts = {".jpg", ".jpeg", ".png", ".gif", ".bmp"}
+    _pdf_exts = {".pdf"}
+
+    # Remove previous output
+    if os.path.exists(output_path):
+        try:
+            os.remove(output_path)
+        except OSError:
+            pass
+
+    # ── Pre-flight: compress largest files first until total fits in 15 MB ────
+    file_paths, compression_tmps = _prepare_files_for_merge(
+        file_paths, max_bytes, log_fn=logger.info
+    )
+    if not file_paths:
+        return None
+
+    image_tmps: List[str] = []
+
+    # ── Strategy 1: pypdfium2 (Primary choice, actually installed) ───────────
+
+    try:
+        import pypdfium2 as pdfium
+        dest = pdfium.PdfDocument.new()
+        count = 0
+        for fp in file_paths:
+            ext = Path(fp).suffix.lower()
+            if ext in _pdf_exts:
+                try:
+                    src = pdfium.PdfDocument(fp)
+                    if len(src) > 0:
+                        dest.import_pages(src)
+                        count += 1
+                except Exception as e:
+                    logger.warning("claim_related merge: skipping unreadable PDF %s: %s", Path(fp).name, e)
+            elif ext in _image_exts:
+                try:
+                    from PIL import Image  # type: ignore
+                    img = Image.open(fp)
+                    if img.mode in ("RGBA", "P"):
+                        img = img.convert("RGB")
+                    tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False, prefix="_crd_img_")
+                    img.save(tmp.name, "PDF")
+                    image_tmps.append(tmp.name)
+                    src = pdfium.PdfDocument(tmp.name)
+                    dest.import_pages(src)
+                    count += 1
+                except Exception as e:
+                    logger.warning("claim_related merge: skipping image %s: %s", Path(fp).name, e)
+            else:
+                logger.info("claim_related merge: skipping non-mergeable %s", Path(fp).name)
+
+        if count == 0:
+            return None
+
+        dest.save(output_path)
+    except ImportError:
+        logger.info("pypdfium2 not available; using PyPDF2/Pillow fallback.")
+        # ── Strategy 2: PyPDF2 / Pillow ──────────────────────────────────────────
+        try:
+            from PyPDF2 import PdfMerger, PdfReader  # type: ignore
+            merger = PdfMerger()
+            count = 0
+            for fp in file_paths:
+                ext = Path(fp).suffix.lower()
+                if ext in _pdf_exts:
+                    try:
+                        r = PdfReader(fp)
+                        if r.pages:
+                            merger.append(fp)
+                            count += 1
+                    except Exception as e:
+                        logger.warning("claim_related merge: skipping unreadable PDF %s: %s", Path(fp).name, e)
+                elif ext in _image_exts:
+                    try:
+                        from PIL import Image  # type: ignore
+                        img = Image.open(fp)
+                        if img.mode in ("RGBA", "P"):
+                            img = img.convert("RGB")
+                        tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False, prefix="_crd_img_")
+                        img.save(tmp.name, "PDF")
+                        image_tmps.append(tmp.name)
+                        merger.append(tmp.name)
+                        count += 1
+                    except Exception as e:
+                        logger.warning("claim_related merge: skipping image %s: %s", Path(fp).name, e)
+                else:
+                    logger.info("claim_related merge: skipping non-mergeable %s", Path(fp).name)
+    
+            if count == 0:
+                merger.close()
+                return None
+    
+            merger.write(output_path)
+            merger.close()
+        except ImportError:
+            logger.info("PyPDF2 not available; using Pillow fallback for claim_related merge.")
+            # ── Strategy 3: Pillow images → single PDF ───────────────────────────
+            images = []
+            import shutil
+            pdf_files = [f for f in file_paths if Path(f).suffix.lower() in _pdf_exts]
+            img_files = [f for f in file_paths if Path(f).suffix.lower() in _image_exts]
+            if img_files and not pdf_files:
+                try:
+                    from PIL import Image  # type: ignore
+                    for ip in img_files:
+                        try:
+                            im = Image.open(ip)
+                            if im.mode in ("RGBA", "P"):
+                                im = im.convert("RGB")
+                            images.append(im)
+                        except Exception as e:
+                            logger.warning("claim_related merge: image open failed %s: %s", Path(ip).name, e)
+                    if not images:
+                        return None
+                    images[0].save(output_path, "PDF", save_all=True, append_images=images[1:])
+                except Exception as e:
+                    logger.error("claim_related merge Pillow fallback failed: %s", e)
+                    return None
+            elif pdf_files:
+                try:
+                    shutil.copy2(pdf_files[0], output_path)
+                    if len(pdf_files) > 1:
+                        logger.warning("claim_related merge: copied only first PDF (pypdfium2 needed for full merge).")
+                except Exception as e:
+                    logger.error("claim_related merge copy failed: %s", e)
+                    return None
+            else:
+                return None
+    finally:
+        for t in image_tmps + compression_tmps:
+            try:
+                os.remove(t)
+            except OSError:
+                pass
+
+    # Validate size
+    if not os.path.isfile(output_path):
+        return None
+    sz = os.path.getsize(output_path)
+    if sz > max_bytes:
+        logger.error(
+            "claim_related merge: merged PDF %.1fMB exceeds 15MB limit. File removed.",
+            sz / (1024 * 1024),
+        )
+        try:
+            os.remove(output_path)
+        except OSError:
+            pass
+        return None
+
+    logger.info(
+        "claim_related merge: %s created (%.1fMB)",
+        Path(output_path).name,
+        sz / (1024 * 1024),
+    )
+    return output_path
 
 
 

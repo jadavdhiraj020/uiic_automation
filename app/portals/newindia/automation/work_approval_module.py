@@ -12,38 +12,62 @@ from app.automation.automation_logger import AutomationLogger
 logger = logging.getLogger(__name__)
 
 def _find_approval_document(data: ClaimData, is_cashless: bool) -> str:
-    """Scans uploaded assessment and claim documents to find the approval document."""
-    keywords_non_cashless = ["non_cashless", "non-cashless", "noncashless", "non cashless", "non_caseless", "non-caseless"]
-    keywords_cashless = ["cashless", "caseless"]
-    
-    # Extract folder path from any known document
+    """Finds approval document using tracked scan dicts, then falls back to folder scan."""
+    from app.data.folder_scanner import get_doc_mapping_tuple
+    try:
+        raw_mapping = get_doc_mapping_tuple()
+        # raw_mapping[5] does not exist; load directly
+        from app.utils import load_doc_mapping
+        raw = load_doc_mapping()
+        work_approval_map = raw.get("work_approval_keywords", {})
+        keywords_non_cashless = work_approval_map.get("non_cashless", ["non_cashless", "non-cashless", "noncashless", "non cashless", "non_caseless", "non-caseless"])
+        keywords_cashless = work_approval_map.get("cashless", ["cashless", "caseless"])
+    except Exception:
+        keywords_non_cashless = ["non_cashless", "non-cashless", "noncashless", "non cashless", "non_caseless", "non-caseless"]
+        keywords_cashless = ["cashless", "caseless"]
+
+    # 1. Search tracked dicts first (respects compression — uses temp file paths)
+    all_tracked: dict = {}
+    all_tracked.update(getattr(data, 'claim_doc_files', {}) or {})
+    all_tracked.update(getattr(data, 'assessment_files', {}) or {})
+    all_tracked.update(getattr(data, 'upload_doc_files', {}) or {})
+
+    for doc_name, file_path in all_tracked.items():
+        if not file_path or not os.path.isfile(file_path):
+            continue
+        fname_lower = os.path.basename(file_path).lower()
+        if not is_cashless:
+            if any(k in fname_lower for k in keywords_non_cashless):
+                return file_path
+        else:
+            if any(k in fname_lower for k in keywords_cashless) and not any(k in fname_lower for k in keywords_non_cashless):
+                return file_path
+
+    # 2. Fallback: raw folder scan (finds files not mapped by scanner)
     folder_path = None
-    if data.claim_doc_files:
-        folder_path = os.path.dirname(next(iter(data.claim_doc_files.values())))
-    elif data.assessment_files:
-        folder_path = os.path.dirname(next(iter(data.assessment_files.values())))
-        
+    for d in (all_tracked,):
+        for fp in d.values():
+            if fp and os.path.isfile(fp):
+                folder_path = os.path.dirname(fp)
+                break
+        if folder_path:
+            break
+
     if not folder_path or not os.path.isdir(folder_path):
         return ""
-        
-    # Scan all files in the folder directly to avoid missing files skipped by the mapper
+
     try:
         all_files = [os.path.join(folder_path, f) for f in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, f))]
     except Exception as e:
         logger.error(f"Failed to read folder for approval documents: {e}")
         return ""
-        
-    if not is_cashless:
-        # Looking for Non-Cashless Document
-        for file_path in all_files:
-            fname_lower = os.path.basename(file_path).lower()
+
+    for file_path in all_files:
+        fname_lower = os.path.basename(file_path).lower()
+        if not is_cashless:
             if any(k in fname_lower for k in keywords_non_cashless):
                 return file_path
-    else:
-        # Looking for Cashless Document
-        for file_path in all_files:
-            fname_lower = os.path.basename(file_path).lower()
-            # Must contain cashless but NOT non-cashless
+        else:
             if any(k in fname_lower for k in keywords_cashless) and not any(k in fname_lower for k in keywords_non_cashless):
                 return file_path
     return ""
@@ -65,22 +89,43 @@ async def fill_work_approval_details(
         log("  📝 STEP 9/9 ─ Work Approval Details")
         log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
-    # 1. Expand the Work Approval Details accordion
+    try:
+        return await _fill_work_approval_inner(page, data, log, stop_cb, field_delay_ms)
+    finally:
+        if isinstance(log, AutomationLogger):
+            log.outdent()
+
+
+async def _fill_work_approval_inner(
+    page: Page,
+    data: ClaimData,
+    log,
+    stop_cb,
+    field_delay_ms: int = 500
+) -> bool:
+    if stop_cb(): return False
+
     if isinstance(log, AutomationLogger):
         log.info("Opening Work Approval Details section...")
     else:
         log("Opening Work Approval Details section...")
     try:
-        accordion_header = page.locator('a.accordion-toggle:has-text("Work Approval Details")')
+        accordion_header = page.locator('a.accordion-toggle:has-text("Work Approval Details")').first
         if await accordion_header.count() > 0:
-            is_expanded = await accordion_header.evaluate('el => el.parentElement.parentElement.classList.contains("collapsed") == false')
-            if not is_expanded:
+            # Check <a> tag class (NIA portal sets 'collapsed' on the <a>, not div.panel-heading)
+            acc_class = await accordion_header.get_attribute('class') or ''
+            if 'collapsed' in acc_class:
                 await accordion_header.click()
                 await asyncio.sleep(1.0)
                 if isinstance(log, AutomationLogger):
                     log.success("Accordion expanded.")
                 else:
                     log("  ✅ Expanded Work Approval Details.")
+            else:
+                if isinstance(log, AutomationLogger):
+                    log.info("Accordion already expanded.")
+                else:
+                    log("  ℹ️ Work Approval Details already expanded.")
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Expansion attempt failed: {str(e)[:100]}")
@@ -153,9 +198,14 @@ async def fill_work_approval_details(
 
     # 4. Work Approval Date
     try:
-        val = getattr(data, 'work_approval_date', '')
+        val = str(getattr(data, 'work_approval_date', '') or '').strip()
         if val:
             await fill_input_with_delay(page, 'input[name="Work Approval Date"]', val, "Approval Date", log, field_delay_ms)
+        else:
+            if isinstance(log, AutomationLogger):
+                log.warning("Work Approval Date missing; skipping.")
+            else:
+                log("  ⚠️ Work Approval Date missing from data; skipping.")
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Approval Date field error: {str(e)[:100]}")
@@ -166,17 +216,75 @@ async def fill_work_approval_details(
 
     # 5. Work Approval Time
     try:
-        val = getattr(data, 'work_approval_time', '')
+        val = str(getattr(data, 'work_approval_time', '') or '').strip()
         if val:
-            formatted_time = str(val).strip()
-            if len(formatted_time) >= 5 and ":" in formatted_time:
-                formatted_time = formatted_time[:5]
-            await fill_input_with_delay(page, 'input[name="Work Approval Time"]', formatted_time, "Approval Time", log, field_delay_ms)
+            # Normalise to HH:MM format
+            if len(val) >= 5 and ":" in val:
+                val = val[:5]
+            await fill_input_with_delay(page, 'input[name="Work Approval Time"]', val, "Approval Time", log, field_delay_ms)
+        else:
+            if isinstance(log, AutomationLogger):
+                log.warning("Work Approval Time missing; skipping.")
+            else:
+                log("  ⚠️ Work Approval Time missing from data; skipping.")
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Approval Time field error: {str(e)[:100]}")
         else:
             log(f"  ⚠️ Error filling Work Approval Time: {e}")
+
+    if stop_cb(): return False
+
+    # 5.1 Click Submit button for Work Approval
+    if doc_path and os.path.exists(doc_path):
+        if isinstance(log, AutomationLogger):
+            log.wait("Submitting Work Approval Document...")
+        else:
+            log("  ℹ️ Submitting Work Approval Document...")
+
+        try:
+            # Wait for Angular digest cycle to enable the Submit button
+            await asyncio.sleep(1.0)
+            
+            submit_btn = page.locator('button[data-ng-click*="submitDocs"][data-ng-click*="WORK APPROVAL"]').first
+            await submit_btn.wait_for(state="visible", timeout=5000)
+            
+            if await submit_btn.is_disabled():
+                # Wait one more second
+                await asyncio.sleep(1.0)
+                
+            if await submit_btn.is_disabled():
+                if isinstance(log, AutomationLogger):
+                    log.warning("Work Approval Submit button is disabled; might already be submitted or invalid.")
+                else:
+                    log("  ⚠️ Work Approval Submit button is disabled.")
+            else:
+                await submit_btn.click()
+                if isinstance(log, AutomationLogger):
+                    log.success("Work Approval submitted successfully.")
+                else:
+                    log("  ✅ Work Approval submitted.")
+                
+                # Handle the confirmation popup
+                try:
+                    popup_ok = page.locator('button[data-ng-click*="coverChangeObj.cancel"]')
+                    await popup_ok.wait_for(state="visible", timeout=6000)
+                    await popup_ok.click()
+                    if isinstance(log, AutomationLogger):
+                        log.success("Work Approval popup dismissed.")
+                    else:
+                        log("  ✅ Work Approval popup dismissed.")
+                    await asyncio.sleep(1.0)
+                except Exception as e:
+                    if isinstance(log, AutomationLogger):
+                        log.warning(f"Could not dismiss popup automatically: {str(e)[:100]}")
+                    else:
+                        log(f"  ⚠️ Could not dismiss popup: {e}")
+        except Exception as e:
+            if isinstance(log, AutomationLogger):
+                log.error(f"Work Approval submit button error: {str(e)[:100]}")
+            else:
+                log(f"  ⚠️ Error clicking Work Approval Submit button: {e}")
 
     if stop_cb(): return False
 
@@ -193,9 +301,14 @@ async def fill_work_approval_details(
 
     # 7. Cause and Nature of Accident
     try:
-        val = getattr(data, 'cause_nature_of_accident', '')
+        val = str(getattr(data, 'cause_nature_of_accident', '') or '').strip()
         if val:
             await fill_input_with_delay(page, 'textarea[name="Cause and Nature of Accident"]', val, "Nature of Accident", log, field_delay_ms)
+        else:
+            if isinstance(log, AutomationLogger):
+                log.warning("Cause and Nature of Accident missing; skipping.")
+            else:
+                log("  ⚠️ Cause and Nature of Accident missing from data; skipping.")
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Cause field error: {str(e)[:100]}")
@@ -227,7 +340,6 @@ async def fill_work_approval_details(
     if stop_cb(): return False
 
     if isinstance(log, AutomationLogger):
-        log.outdent()
         log.success("Work Approval Details phase completed.")
     elif log:
         log("Phase 8 (Work Approval Details) completed successfully.")

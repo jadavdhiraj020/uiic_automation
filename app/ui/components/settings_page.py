@@ -250,13 +250,27 @@ class SettingsPage(QWidget):
             lbl = "Claim Docs" if "claim_doc" in sk else "Assessment"
             for dt, kws in sec.items():
                 rows.append((lbl, dt, " | ".join(kws) if isinstance(kws, list) else str(kws)))
+        # Upload Docs section (DL, RC, Claim Form from document_upload_tab)
+        upload_tab = {k: v for k, v in dm.get("document_upload_tab", {}).items() if not k.startswith("_")}
+        for dt, kws in upload_tab.items():
+            rows.append(("Upload Docs", dt, " | ".join(kws) if isinstance(kws, list) else str(kws)))
+        # Claim Related Documents is auto-managed — not keyword-matched
+        rows.append(("Upload Docs", "claim_related", "(auto-merged from remaining files)"))
+
         self.doc_table.setRowCount(len(rows))
         for i, (sec, dt, kws) in enumerate(rows):
-            self.doc_table.setItem(i, 0, QTableWidgetItem(sec))
-            self.doc_table.item(i, 0).setFlags(Qt.ItemFlag.ItemIsEnabled)
-            self.doc_table.setItem(i, 1, QTableWidgetItem(dt))
-            self.doc_table.item(i, 1).setFlags(Qt.ItemFlag.ItemIsEnabled)
-            self.doc_table.setItem(i, 2, QTableWidgetItem(kws))
+            sec_item = QTableWidgetItem(sec)
+            sec_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            self.doc_table.setItem(i, 0, sec_item)
+            dt_item = QTableWidgetItem(dt)
+            dt_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            self.doc_table.setItem(i, 1, dt_item)
+            kw_item = QTableWidgetItem(kws)
+            # Make claim_related row read-only (it's auto-managed, not user-editable)
+            if dt == "claim_related":
+                kw_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                kw_item.setForeground(QColor("#94A3B8"))
+            self.doc_table.setItem(i, 2, kw_item)
         self._filter_doc_table(self.doc_search_input.text())
 
     def _filter_table(self, text):
@@ -335,16 +349,26 @@ class SettingsPage(QWidget):
 
             # Doc Mapping Save
             dm = load_doc_mapping()
-            cd, ad = {}, {}
+            cd, ad, ud = {}, {}, {}
             for r in range(self.doc_table.rowCount()):
                 sec = self.doc_table.item(r, 0).text()
                 dt = self.doc_table.item(r, 1).text()
-                kws = [k.strip() for k in self.doc_table.item(r, 2).text().split("|") if k.strip()]
-                if "Claim" in sec: cd[dt] = kws
-                else: ad[dt] = kws
-            # Preserve all other schema keys in dm, only overwrite the two tabs
+                kws_raw = self.doc_table.item(r, 2).text()
+                # Skip auto-managed rows (claim_related is not keyword-matched)
+                if kws_raw == "(auto-merged from remaining files)":
+                    continue
+                kws = [k.strip() for k in kws_raw.split("|") if k.strip()]
+                if sec == "Claim Docs":
+                    cd[dt] = kws
+                elif sec == "Assessment":
+                    ad[dt] = kws
+                elif sec == "Upload Docs":
+                    ud[dt] = kws
+            # Preserve all other schema keys; overwrite only the three tab dicts
             dm["claim_documents_tab"] = cd
             dm["claim_assessment_tab"] = ad
+            if ud:
+                dm["document_upload_tab"] = ud
             save_doc_mapping(dm)
 
             self.append_log("\u2705  Settings saved.")

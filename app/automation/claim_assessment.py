@@ -26,6 +26,15 @@ ASSESSMENT_UPLOAD_LABELS = {
 }
 
 
+def _settings_int(settings, key: str, default: int) -> int:
+    """Read integer settings safely when UI persistence stores values as strings."""
+    value = (settings or {}).get(key, default)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 async def _click_declaration_radio(page, log) -> None:
     """
     Click the Yes radio for Declaration (ynPerused).
@@ -103,8 +112,8 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
     Find the file input associated with the given upload label and upload.
     """
     cfg = settings or {}
-    upload_wait_s = cfg.get("upload_wait_ms", 3000) / 1000.0
-    timeout_ms = cfg.get("timeout_ms", 4000)
+    upload_wait_s = _settings_int(cfg, "upload_wait_ms", 3000) / 1000.0
+    timeout_ms = _settings_int(cfg, "timeout_ms", 4000)
 
     fname = os.path.basename(file_path)
     if not os.path.isfile(file_path):

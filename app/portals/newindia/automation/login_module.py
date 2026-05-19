@@ -5,31 +5,120 @@ from app.automation.automation_logger import AutomationLogger, _ts
 
 logger = logging.getLogger(__name__)
 
-SEL_USERNAME = "input#userName"
-SEL_PASSWORD = "input#password"
+SEL_USERNAME  = "input#userName"
+SEL_PASSWORD  = "input#password"
 SEL_LOGIN_BTN = "button.ncr_lp-btn"
 
+# reCAPTCHA v2 selectors (from DOM analysis)
+_CAPTCHA_IFRAME_SEL = 'iframe[src*="recaptcha/api2/anchor"]'
+_CAPTCHA_ANCHOR_SEL = '#recaptcha-anchor'
+_CAPTCHA_SOLVED_SEL = '#recaptcha-anchor[aria-checked="true"]'
 
-async def _wait_for_manual_login(page, log, stop_cb: Callable[[], bool], timeout_seconds: int = 30) -> bool:
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CAPTCHA AUTO-SOLVE
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _try_auto_solve_captcha(page, log) -> bool:
     """
-    Waits for the user to manually solve the CAPTCHA and log in.
-    Success is detected when the login URL changes.
+    Click the reCAPTCHA checkbox and check if Google auto-approves it.
+    Returns True if CAPTCHA is solved (aria-checked="true" detected).
+    Returns False if an image challenge appears or any error occurs.
     """
-    if isinstance(log, AutomationLogger):
-        log.wait(f"manual CAPTCHA + login (up to {timeout_seconds}s)")
-    else:
-        log(f"⏳ Waiting for manual CAPTCHA + login (up to {timeout_seconds}s)...")
-    
-    poll_interval = 3.0
+    try:
+        # Wait for reCAPTCHA iframe to load
+        await page.wait_for_selector(_CAPTCHA_IFRAME_SEL, state="attached", timeout=5000)
+
+        captcha_frame = page.frame_locator(_CAPTCHA_IFRAME_SEL)
+        anchor = captcha_frame.locator(_CAPTCHA_ANCHOR_SEL)
+        await anchor.wait_for(state="visible", timeout=4000)
+        await anchor.click()
+
+        if isinstance(log, AutomationLogger):
+            log.info("reCAPTCHA checkbox clicked — waiting for Google evaluation (4s)...")
+        else:
+            log(f"[{_ts()}]   ℹ️ reCAPTCHA clicked — evaluating...")
+
+        # Poll up to 4s for aria-checked="true"
+        for _ in range(8):
+            await asyncio.sleep(0.5)
+            try:
+                if await captcha_frame.locator(_CAPTCHA_SOLVED_SEL).count() > 0:
+                    if isinstance(log, AutomationLogger):
+                        log.success("reCAPTCHA auto-solved ✅")
+                    else:
+                        log(f"[{_ts()}]   ✅ reCAPTCHA auto-solved.")
+                    return True
+            except Exception:
+                pass
+
+        if isinstance(log, AutomationLogger):
+            log.warning("reCAPTCHA image challenge appeared — manual solve required.")
+        else:
+            log(f"[{_ts()}]   ⚠️ reCAPTCHA image challenge — manual solve required.")
+        return False
+
+    except Exception as exc:
+        if isinstance(log, AutomationLogger):
+            log.warning(f"reCAPTCHA auto-click error ({str(exc)[:80]}) — manual solve required.")
+        else:
+            log(f"[{_ts()}]   ⚠️ reCAPTCHA auto-click error — manual solve required.")
+        return False
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LOGIN BUTTON CLICK (after CAPTCHA solved)
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _wait_for_login_btn_enabled_and_click(page, log) -> bool:
+    """
+    After CAPTCHA is auto-solved, Angular removes 'disabled' from the Login
+    button. Poll up to 3s for it to become enabled, then click it.
+    """
+    try:
+        login_btn = page.locator(SEL_LOGIN_BTN)
+        await login_btn.wait_for(state="visible", timeout=3000)
+
+        # Poll up to 3s for Angular to enable the button
+        for _ in range(6):
+            if not await login_btn.is_disabled():
+                await login_btn.click()
+                if isinstance(log, AutomationLogger):
+                    log.info("Login button clicked automatically.")
+                else:
+                    log(f"[{_ts()}]   ℹ️ Login button clicked automatically.")
+                return True
+            await asyncio.sleep(0.5)
+
+        if isinstance(log, AutomationLogger):
+            log.warning("Login button still disabled after CAPTCHA solve — please click manually.")
+        else:
+            log(f"[{_ts()}]   ⚠️ Login button still disabled — please click manually.")
+        return False
+
+    except Exception as exc:
+        if isinstance(log, AutomationLogger):
+            log.warning(f"Login button click error: {str(exc)[:80]}")
+        return False
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# URL CHANGE DETECTION (login success)
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _wait_for_url_change(page, log, stop_cb: Callable[[], bool],
+                                timeout_seconds: int = 30) -> bool:
+    """
+    Poll for URL to move away from IntermediaryLogin.html.
+    Works for both auto-login (short timeout) and manual login (30s timeout).
+    """
+    poll_interval = 1.0
     iterations = int(timeout_seconds / poll_interval)
 
     for _ in range(iterations):
         if stop_cb(): return False
-
         try:
-            # If the URL changes away from IntermediaryLogin.html, login likely succeeded
-            current_url = page.url
-            if "IntermediaryLogin.html" not in current_url:
+            if "IntermediaryLogin.html" not in page.url:
                 if isinstance(log, AutomationLogger):
                     log.success("Login detected (URL changed).")
                 else:
@@ -37,37 +126,45 @@ async def _wait_for_manual_login(page, log, stop_cb: Callable[[], bool], timeout
                 return True
         except Exception:
             pass
-
         await asyncio.sleep(poll_interval)
 
-    if isinstance(log, AutomationLogger):
-        log.error(f"Login timed out ({timeout_seconds}s).")
-    else:
-        log(f"❌ Login wait timed out after {timeout_seconds}s. URL never changed.")
     return False
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MAIN LOGIN FUNCTION
+# ══════════════════════════════════════════════════════════════════════════════
 
 async def do_login(
     page,
     settings: dict,
-    log = print,
+    log=print,
     stop_cb: Callable[[], bool] = lambda: False,
 ) -> bool:
     """
-    Navigate to the New India portal, auto-fill credentials, and wait for manual login.
-    Returns True on successful login detection, False otherwise.
+    Full login flow:
+
+    AUTO path (CAPTCHA solved by bot):
+      Fill credentials → click reCAPTCHA checkbox → wait for Google approval
+      → wait for Login button to become enabled → click Login → detect URL change
+
+    MANUAL fallback (image challenge or auto-click failed):
+      Fill credentials → wait 30s for user to solve CAPTCHA + click Login
+      → detect URL change
+
+    Returns True on successful login, False otherwise.
     """
     portal_url = settings["portal_url"]
-    username = settings["username"]
-    password = settings["password"]
-    
+    username   = settings["username"]
+    password   = settings["password"]
+
     if isinstance(log, AutomationLogger):
         log.info("Opening New India login page...")
         log.indent()
     else:
         log("🌐 Opening New India login page...")
 
-    # 1. Open Login Page
+    # ── 1. Open Login Page ────────────────────────────────────────────────────
     try:
         await page.goto(portal_url, wait_until="domcontentloaded", timeout=30000)
         await page.locator(SEL_USERNAME).wait_for(state="visible", timeout=12000)
@@ -85,25 +182,23 @@ async def do_login(
 
     if stop_cb(): return False
 
-    # 2. Auto-fill Username & Password
+    # ── 2. Auto-fill Username & Password ─────────────────────────────────────
     if isinstance(log, AutomationLogger):
         log.info("Filling credentials...")
     else:
         log("✍️  Filling username/password...")
-        
+
     try:
-        # Fill username
         await page.locator(SEL_USERNAME).fill("")
         await asyncio.sleep(0.3)
         await page.locator(SEL_USERNAME).fill(username)
         await asyncio.sleep(0.4)
 
-        # Fill password
         await page.locator(SEL_PASSWORD).fill("")
         await asyncio.sleep(0.25)
         await page.locator(SEL_PASSWORD).fill(password)
         await asyncio.sleep(0.4)
-        
+
         if isinstance(log, AutomationLogger):
             log.success("Credentials populated.")
         else:
@@ -118,18 +213,57 @@ async def do_login(
 
     if stop_cb(): return False
 
-    # 3. Wait for Manual Login
-    success = await _wait_for_manual_login(page, log, stop_cb, timeout_seconds=30)
-    
-    # Wait an extra 3 seconds after successful login to let the session stabilize
+    # ── 3. Try reCAPTCHA Auto-Solve ───────────────────────────────────────────
+    captcha_auto_solved = await _try_auto_solve_captcha(page, log)
+
+    if stop_cb(): return False
+
+    if captcha_auto_solved:
+        # CAPTCHA solved by bot — wait for Login button to enable, then click
+        clicked = await _wait_for_login_btn_enabled_and_click(page, log)
+        if clicked:
+            # Wait up to 15s for navigation (fast path — everything is automated)
+            if isinstance(log, AutomationLogger):
+                log.wait("login (up to 15s)...")
+            success = await _wait_for_url_change(page, log, stop_cb, timeout_seconds=15)
+            if success:
+                if isinstance(log, AutomationLogger):
+                    log.wait("session stabilization (3s)")
+                await asyncio.sleep(3)
+                if isinstance(log, AutomationLogger):
+                    log.outdent()
+                return True
+            # URL didn't change in 15s — fall through to manual wait
+            if isinstance(log, AutomationLogger):
+                log.warning("Auto-login did not navigate in 15s — switching to manual wait.")
+
+    # ── 4. Manual Fallback ────────────────────────────────────────────────────
+    # Reaches here if:
+    #   a) reCAPTCHA auto-solve failed (image challenge appeared), OR
+    #   b) Login button click failed, OR
+    #   c) URL didn't change after auto-click
+    # User must solve CAPTCHA (if not already done) and click Login manually.
+    #
+    # If the auto-path already consumed its 15s window without success, deduct
+    # those seconds from the manual timeout so the total never exceeds 30s.
+    _manual_timeout = 30 if not captcha_auto_solved else max(15, 30 - 15)
+
+    if isinstance(log, AutomationLogger):
+        log.wait(f"manual CAPTCHA + login (up to {_manual_timeout}s)...")
+    else:
+        log(f"⏳ Waiting for manual CAPTCHA + login (up to {_manual_timeout}s)...")
+
+    success = await _wait_for_url_change(page, log, stop_cb, timeout_seconds=_manual_timeout)
+
+
     if success:
         if isinstance(log, AutomationLogger):
             log.wait("session stabilization (3s)")
         else:
-            log("⏳ Waiting 3s for post-login scripts to finish...")
+            log("⏳ Waiting 3s for post-login scripts...")
         await asyncio.sleep(3)
-        
+
     if isinstance(log, AutomationLogger):
         log.outdent()
-        
+
     return success

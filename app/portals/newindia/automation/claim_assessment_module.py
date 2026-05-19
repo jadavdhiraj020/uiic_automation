@@ -1,4 +1,5 @@
 import asyncio
+import re
 from playwright.async_api import Page
 from app.data.data_model import ClaimData
 from app.portals.newindia.automation.ui_utils import (
@@ -8,14 +9,293 @@ from app.portals.newindia.automation.ui_utils import (
 )
 from app.automation.automation_logger import AutomationLogger
 
+# Detect any visible modal/popup overlay and return info about it
+_JS_DETECT_POPUP = r"""
+() => {
+    const modal = document.querySelector('.modal.in, .modal[style*="display: block"], .modal[style*="display:block"]');
+    if (modal) return { found: true, type: 'modal' };
+    const swal = document.querySelector('.swal2-container, .sweet-overlay');
+    if (swal) return { found: true, type: 'swal' };
+    const ngd = document.querySelector('.ngdialog.ngdialog-open');
+    if (ngd) return { found: true, type: 'ngdialog' };
+    return { found: false };
+}
+"""
+
+_JS_DISMISS_POPUP = r"""
+() => {
+    const cancelBtn = document.querySelector('button[data-ng-click*="coverChangeObj.cancel"], button[ng-click*="coverChangeObj.cancel"]');
+    if (cancelBtn && cancelBtn.offsetParent !== null) { cancelBtn.click(); return { ok: true, via: 'coverCancel' }; }
+
+    const selectors = [
+        '.modal.in button[data-ng-click*="ok"]', '.modal.in button[ng-click*="ok"]',
+        '.modal.in button[data-ng-click*="confirm"]', '.modal.in button[ng-click*="confirm"]',
+        '.modal.in button[data-ng-click*="close"]', '.modal.in button[ng-click*="close"]',
+        '.modal-content button:has-text("OK")', '.modal-content button:has-text("Yes")',
+        '.modal.in .modal-footer button:last-child',
+        '.modal[style*="display: block"] .modal-footer button:last-child',
+        '.modal[style*="display:block"] .modal-footer button:last-child',
+        'button.confirm', 'button.swal2-confirm'
+    ];
+    for (const sel of selectors) {
+        try {
+            // Support :has-text via a basic text search if querySelector fails (since standard JS doesn't support :has-text)
+            if (sel.includes(':has-text')) {
+                const textMatch = sel.match(/:has-text\("([^"]+)"\)/)[1].toLowerCase();
+                const btns = document.querySelectorAll(sel.split(':')[0]);
+                for (const b of btns) {
+                    if (b.innerText.toLowerCase().includes(textMatch) && b.offsetParent !== null) {
+                        b.click(); return { ok: true, via: sel };
+                    }
+                }
+            } else {
+                const btn = document.querySelector(sel);
+                if (btn && btn.offsetParent !== null) { btn.click(); return { ok: true, via: sel }; }
+            }
+        } catch(e) {}
+    }
+
+    const closeX = document.querySelector('.modal.in .close, .modal.in button.close');
+    if (closeX && closeX.offsetParent !== null) { closeX.click(); return { ok: true, via: 'closeX' }; }
+
+    // Last resort generic OK buttons
+    const allBtns = document.querySelectorAll('.modal-content button, .modal-footer button, .modal button');
+    for (const b of allBtns) {
+        const text = b.innerText.trim().toLowerCase();
+        if ((text === 'ok' || text === 'yes' || text === 'close') && b.offsetParent !== null) {
+            b.click(); return { ok: true, via: 'generic-text-match' };
+        }
+    }
+
+    return { ok: false, err: 'no dismissible button found' };
+}
+"""
+
+async def _dismiss_modal_if_present(page: Page, log) -> bool:
+    try:
+        popup_info = await page.evaluate(_JS_DETECT_POPUP)
+        if popup_info.get("found"):
+            if isinstance(log, AutomationLogger):
+                log.info("Dismissing popup modal...")
+            else:
+                log("   ℹ️ Dismissing popup modal...")
+            
+            res = await page.evaluate(_JS_DISMISS_POPUP)
+            if res.get("ok"):
+                await asyncio.sleep(1.0)
+                return True
+            else:
+                # If JS failed to find it, fallback to Playwright locator
+                ok_btn = page.locator('.modal-content button, .modal-footer button, .modal button').filter(has_text=re.compile(r"^(OK|Yes|Close|Submit)$", re.IGNORECASE)).first
+                if await ok_btn.is_visible():
+                    await ok_btn.click()
+                    await asyncio.sleep(1.0)
+                    return True
+    except Exception:
+        pass
+    return False
+
+async def _wait_and_dismiss_modal_if_present(page: Page, log, max_wait_seconds: float = 15.0) -> bool:
+    """
+    Polls for modal confirmation or alert popups periodically for up to max_wait_seconds,
+    dismissing them as soon as they appear.
+    """
+    poll_interval = 0.5
+    steps = int(max_wait_seconds / poll_interval)
+    for _ in range(steps):
+        dismissed = await _dismiss_modal_if_present(page, log)
+        if dismissed:
+            return True
+        await asyncio.sleep(poll_interval)
+    return False
+
+
+async def _visible_invalid_required_fields(page: Page, limit: int = 8) -> list[str]:
+    """Return visible Angular required fields that may block Claim Assessment save."""
+    try:
+        return await page.evaluate(
+            """
+            (limit) => Array.from(document.querySelectorAll(
+                '.ng-invalid-required[name], [required].ng-invalid[name]'
+            ))
+            .filter((el) => {
+                const style = window.getComputedStyle(el);
+                return style.display !== 'none'
+                    && style.visibility !== 'hidden'
+                    && el.getClientRects().length > 0;
+            })
+            .map((el) => el.getAttribute('name') || el.id || el.getAttribute('data-ng-model') || el.tagName)
+            .filter(Boolean)
+            .slice(0, limit)
+            """,
+            limit,
+        )
+    except Exception:
+        return []
+
+
+async def _document_upload_ready(page: Page, timeout_ms: int = 5000) -> bool:
+    """
+    Detect whether the portal has reached the Document Upload tab.
+
+    Uses a tiered selector list: fast checks first (elements that appear as
+    soon as the tab loads, before accordions are expanded), then progressively
+    deeper ones. Each selector gets at most `timeout_ms` on the first try;
+    subsequent selectors use a much shorter 800ms to fail-fast.
+    """
+    # Tier 1: Elements visible immediately when the Document Upload tab loads
+    # (these exist in the DOM and are visible WITHOUT needing accordion expansion)
+    fast_selectors = [
+        'button[data-ng-click*="uploadFileNonTieUp"]',  # Upload button (always rendered)
+        'span.fa-plus-circle[data-ng-click*="addRow"]',  # + Add Row button
+        'ng-form[name="mandatoryDocForm"]',              # mandatory form wrapper
+    ]
+    # Tier 2: Deeper elements that may need accordion to be open
+    deep_selectors = [
+        'select[id^="docType"]',
+        'input[type="file"][id^="chooseFile"]',
+        'input[type="file"][id^="mandatoryFiles"]',
+    ]
+
+    first = True
+    for selector in fast_selectors + deep_selectors:
+        try:
+            await page.wait_for_selector(
+                selector,
+                state="attached",  # 'attached' is faster than 'visible' for hidden accordions
+                timeout=timeout_ms if first else 800,
+            )
+            return True
+        except Exception:
+            pass
+        first = False
+    return False
+
+
+async def _click_claim_assessment_next(page: Page, log) -> bool:
+    """
+    Click the visible Claim Assessment Next button.
+
+    The portal may keep duplicate tab DOM in memory, so first-match selectors and
+    document.querySelector can target a hidden button. This helper explicitly
+    chooses a visible, enabled docUploadCall button before falling back to DOM JS.
+    """
+    selector = (
+        'button[data-ng-click="surveyorWorklistSurvey.docUploadCall()"], '
+        'button[ng-click="surveyorWorklistSurvey.docUploadCall()"], '
+        'button[data-ng-click*="docUploadCall"], '
+        'button[ng-click*="docUploadCall"]'
+    )
+
+    candidates = page.locator(selector).filter(has_text=re.compile(r"\bNext\b", re.IGNORECASE))
+    count = await candidates.count()
+    if count == 0:
+        candidates = page.locator(selector)
+        count = await candidates.count()
+
+    last_error = None
+    for idx in range(count):
+        btn = candidates.nth(idx)
+        try:
+            if not await btn.is_visible():
+                continue
+            await btn.scroll_into_view_if_needed()
+            await asyncio.sleep(0.5)
+            for _ in range(20):
+                if not await btn.is_disabled():
+                    break
+                await asyncio.sleep(0.25)
+            if await btn.is_disabled():
+                invalid = await _visible_invalid_required_fields(page)
+                if isinstance(log, AutomationLogger):
+                    log.warning(
+                        "Visible Claim Assessment Next button is disabled."
+                        + (f" Blocking required fields: {', '.join(invalid)}" if invalid else "")
+                    )
+                else:
+                    log(
+                        "   ⚠️ Visible Next button disabled."
+                        + (f" Blocking fields: {', '.join(invalid)}" if invalid else "")
+                    )
+                continue
+
+            try:
+                await btn.click(timeout=5000)
+            except Exception as click_error:
+                last_error = click_error
+                await btn.click(timeout=5000, force=True)
+            return True
+        except Exception as exc:
+            last_error = exc
+
+    # DOM fallback: only click a visible enabled button, not querySelector's first match.
+    try:
+        result = await page.evaluate(
+            """
+            () => {
+                const buttons = Array.from(document.querySelectorAll(
+                    'button[data-ng-click*="docUploadCall"], button[ng-click*="docUploadCall"]'
+                ));
+                const target = buttons.find((btn) => {
+                    const style = window.getComputedStyle(btn);
+                    const text = (btn.textContent || '').toLowerCase();
+                    return text.includes('next')
+                        && !btn.disabled
+                        && style.display !== 'none'
+                        && style.visibility !== 'hidden'
+                        && btn.getClientRects().length > 0;
+                });
+                if (!target) {
+                    return { ok: false, reason: 'no visible enabled docUploadCall button' };
+                }
+                target.scrollIntoView({ block: 'center', inline: 'center' });
+                target.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, view: window }));
+                target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+                target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+                target.click();
+                return { ok: true, text: target.textContent.trim() };
+            }
+            """
+        )
+        if result.get("ok"):
+            return True
+        if isinstance(log, AutomationLogger):
+            log.warning(f"JS Next fallback did not find clickable button: {result.get('reason')}")
+        else:
+            log(f"   ⚠️ JS Next fallback did not find clickable button: {result.get('reason')}")
+    except Exception as exc:
+        last_error = exc
+
+    if isinstance(log, AutomationLogger):
+        log.error(f"Could not click visible Claim Assessment Next button: {str(last_error)[:140]}")
+    else:
+        log(f"   ❌ Could not click visible Claim Assessment Next button: {last_error}")
+    return False
+
 async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_cb, field_delay_ms: int = 600) -> bool:
     if stop_cb(): return False
 
-    if isinstance(log, AutomationLogger):
+    _using_structured_log = isinstance(log, AutomationLogger)
+    if _using_structured_log:
         log.info("Starting Claim Assessment Details phase...")
         log.indent()
     else:
         log(f"Opening Claim Assessment Details section...")
+
+    # try/finally guarantees log.outdent() always fires (prevents indentation drift
+    # if any stop_cb() or navigation failure causes an early return)
+    _result = False
+    try:
+        _result = await _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_delay_ms)
+    finally:
+        if _using_structured_log:
+            log.outdent()  # outdent Section (whichever was open)
+            log.outdent()  # outdent main module
+    return _result
+
+
+async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_delay_ms):
+    """Inner body of fill_claim_assessment_details — called via try/finally wrapper."""
 
     # 0. Handle Alert Popup (if any)
     try:
@@ -82,8 +362,9 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_c
 
     # 3. Vendor/Tax Invoice Date
     try:
-        val = getattr(data, 'vendor_invoice_date', '')
+        val = getattr(data, 'vendor_invoice_date', '') or ''
         if val:
+            val = str(val).strip()
             sel = 'input[data-ng-model*="vendorTaxInvoiceDate"]'
             await fill_input_with_delay(page, sel, val, "Invoice Date", log, field_delay_ms)
         else:
@@ -101,8 +382,9 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_c
 
     # 4. Vendor/Tax Invoice Number
     try:
-        val = getattr(data, 'vendor_invoice_number', '')
+        val = getattr(data, 'vendor_invoice_number', '') or ''
         if val:
+            val = str(val).strip()
             sel = 'input[data-ng-model*="vendorTaxInvoiceNumber"]'
             await fill_input_with_delay(page, sel, val, "Invoice Number", log, field_delay_ms)
         else:
@@ -141,7 +423,7 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_c
 
     if stop_cb(): return False
 
-    # Field 2: Attach Assessment Excel (file only — user clicks Upload/Validate manually)
+    # Field 2: Attach Assessment Excel
     assessment_path = data.assessment_files.get("assessment_excel", "")
     if assessment_path:
         await upload_file_via_input(
@@ -151,10 +433,27 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_c
             label="Assessment Excel",
             log=log,
         )
-        if isinstance(log, AutomationLogger):
-            log.info("[Primary Assessment] File attached. User must Upload → Validate.")
-        else:
-            log(f"   ℹ️ [Primary Assessment] File attached. Click Upload → Validate manually.")
+        try:
+            upload_btn = page.locator('button[data-ng-click*="readExcel(invoiceIndex)"], button[name="uploadSupAss0"]').first
+            await upload_btn.wait_for(state="visible", timeout=5000)
+            if isinstance(log, AutomationLogger):
+                log.info("Clicking Primary Assessment Excel Upload button...")
+            else:
+                log("   ℹ️ Clicking Primary Assessment Excel Upload button...")
+            await upload_btn.click()
+            # Wait for upload modal to appear and dismiss it (wait up to 2.0 seconds)
+            await _wait_and_dismiss_modal_if_present(page, log, max_wait_seconds=2.0)
+            await asyncio.sleep(0.5)
+            
+            if isinstance(log, AutomationLogger):
+                log.success("Primary Assessment Excel Uploaded successfully.")
+            else:
+                log("   ✅ Primary Assessment Excel Uploaded successfully.")
+        except Exception as ue:
+            if isinstance(log, AutomationLogger):
+                log.error(f"Primary Assessment Excel upload failed: {str(ue)[:100]}")
+            else:
+                log(f"   ⚠️ Primary Assessment Excel upload failed: {str(ue)[:100]}")
     else:
         if isinstance(log, AutomationLogger):
             log.warning("No Primary Assessment Excel found.")
@@ -175,7 +474,7 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_c
 
     if stop_cb(): return False
 
-    # Field 4: Attach Garage Bill (Invoice — file only, user clicks Populate Data manually)
+    # Field 4: Attach Garage Bill (Invoice)
     invoice_path = data.assessment_files.get("invoice", "")
     if invoice_path:
         await upload_file_via_input(
@@ -185,10 +484,34 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_c
             label="Garage Bill PDF",
             log=log,
         )
-        if isinstance(log, AutomationLogger):
-            log.info("[Garage Bill] File attached. User must Populate Data.")
-        else:
-            log(f"   ℹ️ [Garage Bill] File attached. Click Populate Data manually.")
+        try:
+            pop_btn = page.locator("button[data-ng-click*=\"uploadToOcr\"][data-ng-click*=\"'P'\"]").first
+            await pop_btn.wait_for(state="visible", timeout=5000)
+            
+            # Wait for button to be enabled (Angular digest cycles)
+            for _ in range(12):
+                if not await pop_btn.is_disabled():
+                    break
+                await asyncio.sleep(0.5)
+                
+            if isinstance(log, AutomationLogger):
+                log.info("Clicking Populate Data button for Garage Bill...")
+            else:
+                log("   ℹ️ Clicking Populate Data button for Garage Bill...")
+            await pop_btn.click()
+            # Wait for OCR populate modal to appear and dismiss it (handles variable 5 to 15+ seconds wait time)
+            await _wait_and_dismiss_modal_if_present(page, log, max_wait_seconds=25.0)
+            await asyncio.sleep(1.0)
+            
+            if isinstance(log, AutomationLogger):
+                log.success("Garage Bill OCR Data Populated successfully.")
+            else:
+                log("   ✅ Garage Bill OCR Data Populated successfully.")
+        except Exception as pe:
+            if isinstance(log, AutomationLogger):
+                log.error(f"Garage Bill OCR populate failed: {str(pe)[:100]}")
+            else:
+                log(f"   ⚠️ Garage Bill OCR populate failed: {str(pe)[:100]}")
     else:
         if isinstance(log, AutomationLogger):
             log.warning("No Garage Bill PDF found.")
@@ -228,7 +551,7 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_c
     if stop_cb(): return False
 
     if supp_value == "Yes":
-        # Attach Supplementary Estimate Excel (file only — user clicks Upload/Validate manually)
+        # Attach Supplementary Estimate Excel
         estimate_path = data.assessment_files.get("estimate_excel", "")
         if estimate_path:
             await upload_file_via_input(
@@ -238,10 +561,27 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_c
                 label="Supp Estimate Excel",
                 log=log,
             )
-            if isinstance(log, AutomationLogger):
-                log.info("[Supp Excel] Attached. User must Upload → Validate.")
-            else:
-                log(f"   ℹ️ [Supplementary Excel] File attached. Click Upload → Validate manually.")
+            try:
+                upload_btn = page.locator('button[data-ng-click*="readExcelSup(invoiceIndex)"]').first
+                await upload_btn.wait_for(state="visible", timeout=5000)
+                if isinstance(log, AutomationLogger):
+                    log.info("Clicking Supp Assessment Excel Upload button...")
+                else:
+                    log("   ℹ️ Clicking Supp Assessment Excel Upload button...")
+                await upload_btn.click()
+                # Wait for upload modal to appear and dismiss it (wait up to 2.0 seconds)
+                await _wait_and_dismiss_modal_if_present(page, log, max_wait_seconds=2.0)
+                await asyncio.sleep(0.5)
+                
+                if isinstance(log, AutomationLogger):
+                    log.success("Supp Assessment Excel Uploaded successfully.")
+                else:
+                    log("   ✅ Supp Assessment Excel Uploaded successfully.")
+            except Exception as ue:
+                if isinstance(log, AutomationLogger):
+                    log.error(f"Supp Assessment Excel upload failed: {str(ue)[:100]}")
+                else:
+                    log(f"   ⚠️ Supp Assessment Excel upload failed: {str(ue)[:100]}")
         else:
             if isinstance(log, AutomationLogger):
                 log.warning("Estimate Excel missing for supplementary phase.")
@@ -250,10 +590,9 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_c
 
         if stop_cb(): return False
 
-        # Attach Supplementary Garage Bill (file only — user clicks Populate Data manually)
+        # Attach Supplementary Garage Bill
         estimate_inv_path = data.assessment_files.get("estimate_invoice", "")
         if estimate_inv_path:
-            # Select Garage Bill in supplementary OCR dropdown
             sel = 'select#sDocTypeOCR'
             await select_dropdown_with_delay(page, sel, "Garage Bill", "Supp Bill Type", log, field_delay_ms)
 
@@ -264,10 +603,34 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_c
                 label="Supp Garage Bill",
                 log=log,
             )
-            if isinstance(log, AutomationLogger):
-                log.info("[Supp Bill] Attached. User must Populate Data.")
-            else:
-                log(f"   ℹ️ [Supp Garage Bill] File attached. Click Populate Data manually.")
+            try:
+                pop_btn = page.locator("button[data-ng-click*=\"uploadToOcr\"][data-ng-click*=\"'S'\"]").first
+                await pop_btn.wait_for(state="visible", timeout=5000)
+                
+                # Wait for button to be enabled (Angular digest cycles)
+                for _ in range(12):
+                    if not await pop_btn.is_disabled():
+                        break
+                    await asyncio.sleep(0.5)
+                    
+                if isinstance(log, AutomationLogger):
+                    log.info("Clicking Populate Data button for Supp Garage Bill...")
+                else:
+                    log("   ℹ️ Clicking Populate Data button for Supp Garage Bill...")
+                await pop_btn.click()
+                # Wait for OCR populate modal to appear and dismiss it (handles variable 5 to 15+ seconds wait time)
+                await _wait_and_dismiss_modal_if_present(page, log, max_wait_seconds=25.0)
+                await asyncio.sleep(1.0)
+                
+                if isinstance(log, AutomationLogger):
+                    log.success("Supp Garage Bill OCR Data Populated successfully.")
+                else:
+                    log("   ✅ Supp Garage Bill OCR Data Populated successfully.")
+            except Exception as pe:
+                if isinstance(log, AutomationLogger):
+                    log.error(f"Supp Garage Bill OCR populate failed: {str(pe)[:100]}")
+                else:
+                    log(f"   ⚠️ Supp Garage Bill OCR populate failed: {str(pe)[:100]}")
         else:
             if isinstance(log, AutomationLogger):
                 log.info("No supplementary invoice found; skipping (Optional).")
@@ -303,16 +666,16 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_c
 
     # Painting Work Details — Dropdown from ClaimData
     try:
-        raw_val = getattr(data, 'painting_work_details', '')
+        raw_val = str(getattr(data, 'painting_work_details', '') or '').strip()
         if raw_val:
             # Normalize: map Excel values to dropdown values
-            normalized = raw_val.strip().lower()
+            normalized = raw_val.lower()
             if "break" in normalized or "labor" in normalized or "labour" in normalized:
                 dropdown_val = "Break-up"
             elif "consol" in normalized:
                 dropdown_val = "Consolidated"
             else:
-                dropdown_val = raw_val.strip()
+                dropdown_val = raw_val
 
             sel = 'select[name*="Painting work details"]'
             await select_dropdown_with_delay(page, sel, dropdown_val, "Painting Work Details", log, field_delay_ms)
@@ -340,10 +703,10 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_c
 
     # Net Salvage — Optional
     try:
-        val = getattr(data, 'net_salvage', '0')
-        if val and val.strip() and val.strip() != "0":
+        val = str(getattr(data, 'net_salvage', '') or '').strip()
+        if val and val != "0":
             sel = 'input#netSlavage'
-            await fill_input_with_delay(page, sel, val.strip(), "Net Salvage", log, field_delay_ms)
+            await fill_input_with_delay(page, sel, val, "Net Salvage", log, field_delay_ms)
         else:
             if isinstance(log, AutomationLogger):
                 log.info("Net Salvage is 0 or empty; skipping.")
@@ -377,10 +740,10 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_c
 
     # Less Any Other Deductions — Optional
     try:
-        val = getattr(data, 'less_other_deductions', '0')
-        if val and val.strip() and val.strip() != "0":
+        val = str(getattr(data, 'less_other_deductions', '') or '').strip()
+        if val and val != "0":
             sel = 'input#lessOtherDeductions'
-            await fill_input_with_delay(page, sel, val.strip(), "Other Deductions", log, field_delay_ms)
+            await fill_input_with_delay(page, sel, val, "Other Deductions", log, field_delay_ms)
         else:
             if isinstance(log, AutomationLogger):
                 log.info("Other Deductions is 0 or empty; skipping.")
@@ -402,11 +765,10 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_c
 
     # Towing Charges — Optional
     try:
-        val = getattr(data, 'towing_additional_charges', '0')
-        towing_val = val if val and val.strip() and val.strip() != "0" else "0"
-        if towing_val != "0":
+        val = str(getattr(data, 'towing_additional_charges', '') or '').strip()
+        if val and val != "0":
             sel = 'input#towingCharges'
-            await fill_input_with_delay(page, sel, towing_val.strip(), "Towing Charges", log, field_delay_ms)
+            await fill_input_with_delay(page, sel, val, "Towing Charges", log, field_delay_ms)
         else:
             if isinstance(log, AutomationLogger):
                 log.info("Towing Charges is 0 or empty; skipping.")
@@ -422,10 +784,10 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_c
 
     # Additional Towing Charges — Optional (separate field)
     try:
-        val = getattr(data, 'additional_towing_charges', '0')
-        if val and val.strip() and val.strip() != "0":
+        val = str(getattr(data, 'additional_towing_charges', '') or '').strip()
+        if val and val != "0":
             sel = 'input#additionalTowingCharges'
-            await fill_input_with_delay(page, sel, val.strip(), "Addl Towing", log, field_delay_ms)
+            await fill_input_with_delay(page, sel, val, "Addl Towing", log, field_delay_ms)
         else:
             if isinstance(log, AutomationLogger):
                 log.info("Additional Towing is 0 or empty; skipping.")
@@ -470,8 +832,8 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_c
     for attr_name, selector, label in addon_fields:
         if stop_cb(): return False
         try:
-            val = getattr(data, attr_name, '0')
-            if val and val.strip() and val.strip() != "0":
+            val = str(getattr(data, attr_name, '') or '').strip()
+            if val and val != "0":
                 try:
                     el = page.locator(selector).first
                     is_visible = await el.is_visible()
@@ -499,32 +861,74 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_c
                 log(f"   ⚠️ Error filling {label}: {e}")
 
     # ═══════════════════════════════════════════════════════════════════════════
-    # STEP: Click "Next" button to proceed to next page
+    # STEP: Click "Next" button → dismiss the success popup → wait for page load
     # ═══════════════════════════════════════════════════════════════════════════
     if stop_cb(): return False
-    
+
     if isinstance(log, AutomationLogger):
-        log.wait("Proceeding to final submission page...")
+        log.wait("Clicking 'Next' to save and proceed...")
     else:
         log(f" ── Clicking Next button ──")
     try:
-        next_btn = page.locator('button.success-blue:has-text("Next")').first
-        await next_btn.wait_for(state="visible", timeout=5000)
-        await next_btn.click()
+        clicked = await _click_claim_assessment_next(page, log)
+        if not clicked:
+            return False
+
         if isinstance(log, AutomationLogger):
-            log.success("Navigation to final page successful.")
+            log.info("'Next' clicked — waiting for confirmation popup...")
         else:
-            log(f"   ✅ Clicked 'Next' button — proceeding to next page.")
-        await page.wait_for_timeout(2000)  # Allow page transition
+            log(f"   ℹ️ Clicked 'Next' button — waiting for save confirmation popup...")
+
+        # ── The portal shows "Claim job details updated successfully" popup ──
+        # We MUST dismiss it (click OK) before the page transitions.
+        # The popup may take 1–8 seconds to appear depending on server response.
+        dismissed = await _wait_and_dismiss_modal_if_present(page, log, max_wait_seconds=5.0)
+        if dismissed:
+            if isinstance(log, AutomationLogger):
+                log.success("Save confirmation popup dismissed — page proceeding.")
+            else:
+                log(f"   ✅ Confirmation popup dismissed successfully.")
+        else:
+            # No popup appeared — portal may have navigated directly
+            if isinstance(log, AutomationLogger):
+                log.warning("No confirmation popup detected after 'Next' — continuing anyway.")
+            else:
+                log(f"   ⚠️ No popup appeared after 'Next' click (may have navigated directly).")
+
+        if not await _document_upload_ready(page, timeout_ms=5000):
+            if isinstance(log, AutomationLogger):
+                log.warning("Document Upload tab not visible after Next; retrying Next once.")
+            else:
+                log("   ⚠️ Document Upload tab not visible after Next; retrying once.")
+
+            clicked = await _click_claim_assessment_next(page, log)
+            if not clicked:
+                return False
+            # Give the server up to 8s to show the popup and navigate
+            await _wait_and_dismiss_modal_if_present(page, log, max_wait_seconds=8.0)
+            if not await _document_upload_ready(page, timeout_ms=5000):
+                invalid = await _visible_invalid_required_fields(page)
+                message = "Claim Assessment did not navigate to Document Upload after clicking Next."
+                if invalid:
+                    message += f" Visible required fields still invalid: {', '.join(invalid)}"
+                if isinstance(log, AutomationLogger):
+                    log.error(message)
+                else:
+                    log(f"   ❌ {message}")
+                return False
+
+        # Short settle — page has navigated, Angular needs ~300ms to stabilise
+        await page.wait_for_timeout(300)
+
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Navigation error: {str(e)[:100]}")
         else:
             log(f"   ⚠️ Could not click Next button: {e}")
+        return False
+
 
     if isinstance(log, AutomationLogger):
-        log.outdent() # outdent Section 5
-        log.outdent() # outdent main module
         log.success("Claim Assessment Details phase completed.")
     else:
         log("")

@@ -514,20 +514,10 @@ class DataReviewPanel(QWidget):
 
         all_fields = claim.all_fields_for_preview()
         self._rows = list(all_fields)
-        row_by_label = {label: (label, value, is_critical, source) for label, value, is_critical, source in self._rows}
-        used = set()
-        for group in self._metadata.field_groups:
-            rows = []
-            for label in group.labels:
-                if label in row_by_label:
-                    rows.append(row_by_label[label])
-                    used.add(label)
-            if rows:
-                self._add_group(group.label, rows)
 
-        remaining = [row for row in self._rows if row[0] not in used]
-        if remaining:
-            self._add_group("Other Extracted Fields", remaining)
+        # Flatten ALL rows into one single table (no categories)
+        if self._rows:
+            self._add_flat_table(self._rows)
 
         self.lay.addStretch()
         self._filter_tables(self.preview_search_input.text())
@@ -555,17 +545,11 @@ class DataReviewPanel(QWidget):
             if widget:
                 widget.deleteLater()
 
-    def _add_group(self, title, rows):
-        filled = sum(1 for _, value, _, _ in rows if value and str(value).strip() not in ("", "—"))
-        missing_critical = sum(1 for _, value, critical, _ in rows if critical and not (value and str(value).strip() not in ("", "—")))
-        subtitle = f"{filled}/{len(rows)} ready"
-        if missing_critical:
-            subtitle += f"  |  {missing_critical} critical missing"
-
+    def _add_flat_table(self, rows):
+        """Render all extracted fields in a single flat table — no category grouping."""
         table = self._build_table(rows)
-        group_card = _card(table, title, subtitle)
-        self._tables.append((group_card, table, title, rows))
-        self.lay.addWidget(group_card)
+        self._tables.append((table, table, "all", rows))
+        self.lay.addWidget(table)
 
     def _build_table(self, rows):
         table = QTableWidget(0, 4)
@@ -599,24 +583,22 @@ class DataReviewPanel(QWidget):
 
     def _filter_tables(self, text):
         text = (text or "").strip().lower()
-        any_group_visible = False
-        for group_card, table, title, _rows in self._tables:
+        any_visible = False
+        for _, table, _title, _rows in self._tables:
             visible = 0
-            title_matches = bool(text) and text in title.lower()
             for row in range(table.rowCount()):
                 values = []
                 for col in range(table.columnCount()):
                     item = table.item(row, col)
                     if item:
                         values.append(item.text().lower())
-                hidden = bool(text) and not title_matches and text not in " ".join(values)
+                hidden = bool(text) and text not in " ".join(values)
                 table.setRowHidden(row, hidden)
                 if not hidden:
                     visible += 1
-            group_visible = visible > 0 or not text
-            group_card.setVisible(group_visible)
-            any_group_visible = any_group_visible or group_visible
-        self.no_results_card.setVisible(bool(text) and not any_group_visible)
+            table.setVisible(visible > 0 or not text)
+            any_visible = any_visible or (visible > 0 or not text)
+        self.no_results_card.setVisible(bool(text) and not any_visible)
 
 
 class DocumentReviewPanel(QWidget):
@@ -667,32 +649,59 @@ class DocumentReviewPanel(QWidget):
 
         claim_docs = getattr(scan_result, "claim_doc_files", {}) or {}
         assessment = getattr(scan_result, "assessment_files", {}) or {}
-        unknown = getattr(scan_result, "unknown_files", []) or []
-        skipped = getattr(scan_result, "skipped_files", []) or []
+        upload_docs = getattr(scan_result, "upload_doc_files", {}) or {}
+        claim_related = getattr(scan_result, "claim_related_files", []) or []
+        claim_related_pdf = getattr(scan_result, "claim_related_merged_pdf", None)
         expected = getattr(scan_result, "expected_docs", []) or []
+        compressed_keys = getattr(scan_result, "compressed_upload_doc_files", set()) or set()
         missing = [doc for doc in expected if doc not in claim_docs]
+
+        # Friendly display names for upload doc keys
+        _UPLOAD_LABELS = {
+            "driving_license":          "Driving License",
+            "registration_certificate": "Registration Certificate",
+            "claim_form":               "Claim Form",
+        }
 
         stats = QWidget()
         grid = QGridLayout(stats)
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(12)
+        # Stat cards: Matched (claim+assessment+upload+claim_related), Missing mandatory
+        claim_related_count = 1 if claim_related_pdf else 0
         for i, (value, label, color) in enumerate(
             [
-                (len(claim_docs) + len(assessment), "Matched", "#10B981"),
+                (len(claim_docs) + len(assessment) + len(upload_docs) + claim_related_count, "Matched", "#10B981"),
                 (len(missing), "Missing", "#EF4444"),
-                (len(unknown), "Unknown", "#F59E0B"),
-                (len(skipped), "Skipped", "#64748B"),
             ]
         ):
             card, val = _stat_card(str(value), label, color)
             grid.addWidget(card, 0, i)
         self.lay.addWidget(stats)
 
-        self._add_doc_group("Matched Claim Documents", [(k, v, "claim_doc_files", "OK") for k, v in claim_docs.items()])
-        self._add_doc_group("Matched Assessment Files", [(k, v, "assessment_files", "OK") for k, v in assessment.items()])
-        self._add_doc_group("Missing Expected Documents", [(m, "", "expected_docs", "MISSING") for m in missing])
-        self._add_doc_group("Unknown Files", [(Path(p).name, p, "unknown_files", "UNKNOWN") for p in unknown])
-        self._add_doc_group("Skipped Files", [(Path(p).name, reason, "skipped_files", "SKIPPED") for p, reason in skipped])
+        # Table: claim docs + assessment + upload docs + claim_related row + missing
+        mapped_rows = []
+        for k, v in claim_docs.items():
+            mapped_rows.append((k, v, "claim_doc_files", "OK", False))
+        for k, v in assessment.items():
+            mapped_rows.append((k, v, "assessment_files", "OK", False))
+        for k, v in upload_docs.items():
+            friendly = _UPLOAD_LABELS.get(k, k.replace("_", " ").title())
+            was_compressed = k in compressed_keys
+            mapped_rows.append((friendly, v, "upload_doc_files", "OK", was_compressed))
+        # Claim Related Documents — use pre-merged PDF path if available
+        if claim_related_pdf:
+            n = len(claim_related)
+            label = f"Claim Related Documents ({n} file(s) merged)"
+            mapped_rows.append((label, claim_related_pdf, "claim_related", "OK", False))
+        elif claim_related:  # Files found but merge failed
+            mapped_rows.append(("Claim Related Documents", "", "claim_related", "PENDING", False))
+        for m in missing:
+            mapped_rows.append((m, "", "expected_docs", "MISSING", False))
+
+        if mapped_rows:
+            self._add_flat_doc_table(mapped_rows)
+
         self.lay.addStretch()
         self._filter_documents(self.doc_search_input.text())
 
@@ -704,58 +713,63 @@ class DocumentReviewPanel(QWidget):
             if widget:
                 widget.deleteLater()
 
-    def _add_doc_group(self, title, rows):
-        table = QTableWidget(0, 5)
+    def _add_flat_doc_table(self, rows):
+        """Render all documents in a single flat table — 4 columns, no category headers."""
+        table = QTableWidget(0, 4)
         table.setAlternatingRowColors(True)
-        table.setHorizontalHeaderLabels(["STATUS", "PORTAL / TYPE", "FILENAME", "DETAIL", "BUCKET"])
+        table.setHorizontalHeaderLabels(["STATUS", "PORTAL / TYPE", "FILENAME", "DETAIL"])
         table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         table.verticalHeader().setVisible(False)
         table.verticalHeader().setDefaultSectionSize(42)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         table.setWordWrap(False)
-        table.setMinimumHeight(min(320, max(96, 48 + len(rows) * 38)))
+        table.setMinimumHeight(min(480, max(96, 48 + len(rows) * 38)))
         table.setRowCount(len(rows))
-        for i, (doc_type, value, bucket, status) in enumerate(rows):
+        for i, row_data in enumerate(rows):
+            # Support both old 4-tuple and new 5-tuple (with compressed flag)
+            if len(row_data) == 5:
+                doc_type, value, bucket, status, was_compressed = row_data
+            else:
+                doc_type, value, bucket, status = row_data
+                was_compressed = False
             filename = Path(value).name if value and os.path.exists(str(value)) else ("—" if not value else str(value))
             detail = ""
             if value and os.path.exists(str(value)):
-                detail = f"{os.path.getsize(value) / (1024 * 1024):.1f} MB"
+                size_mb = os.path.getsize(value) / (1024 * 1024)
+                detail = f"{size_mb:.1f} MB"
+                if was_compressed:
+                    detail += " ⚡ compressed"
             elif bucket == "skipped_files":
                 detail = str(value)
             table.setItem(i, 0, QTableWidgetItem(status))
             table.setItem(i, 1, QTableWidgetItem(str(doc_type)))
             table.setItem(i, 2, QTableWidgetItem(filename))
             table.setItem(i, 3, QTableWidgetItem(detail or "—"))
-            table.setItem(i, 4, QTableWidgetItem(bucket))
-        group_card = _card(table, title, f"{len(rows)} item(s)")
-        self._doc_tables.append((group_card, table, title))
-        self.lay.addWidget(group_card)
+        self._doc_tables.append((table, table, "all"))
+        self.lay.addWidget(table)
 
     def _filter_documents(self, text):
         text = (text or "").strip().lower()
-        any_group_visible = False
-        for group_card, table, title in self._doc_tables:
+        any_visible = False
+        for _, table, _title in self._doc_tables:
             visible = 0
-            title_matches = bool(text) and text in title.lower()
             for row in range(table.rowCount()):
                 values = []
                 for col in range(table.columnCount()):
                     item = table.item(row, col)
                     if item:
                         values.append(item.text().lower())
-                hidden = bool(text) and not title_matches and text not in " ".join(values)
+                hidden = bool(text) and text not in " ".join(values)
                 table.setRowHidden(row, hidden)
                 if not hidden:
                     visible += 1
-            group_visible = visible > 0 or not text
-            group_card.setVisible(group_visible)
-            any_group_visible = any_group_visible or group_visible
-        self.no_results_card.setVisible(bool(text) and not any_group_visible)
+            table.setVisible(visible > 0 or not text)
+            any_visible = any_visible or (visible > 0 or not text)
+        self.no_results_card.setVisible(bool(text) and not any_visible)
 
 
 class WorkspacePage(QWidget):
@@ -875,15 +889,18 @@ class WorkspacePage(QWidget):
         if scan_result:
             claim_docs = getattr(scan_result, "claim_doc_files", {}) or {}
             assessment = getattr(scan_result, "assessment_files", {}) or {}
+            upload_docs = getattr(scan_result, "upload_doc_files", {}) or {}
             unknown = getattr(scan_result, "unknown_files", []) or []
-            total_docs = len(claim_docs) + len(assessment)
+            total_docs = len(claim_docs) + len(assessment) + len(upload_docs)
             parts = [
                 f"Claim docs: {len(claim_docs)}" if claim_docs else "",
                 f"Assessment: {len(assessment)}" if assessment else "",
+                f"Upload docs: {len(upload_docs)}" if upload_docs else "",
                 f"Unknown: {len(unknown)}" if unknown else "",
             ]
             self.doc_status_label.setText("  |  ".join([p for p in parts if p]) or "No documents detected.")
         self.stat_docs.setText(str(total_docs) if scan_result else "—")
+
 
         self.rail.set_stage_state(0, "done")
         self.rail.set_stage_state(1, "warning" if missing_critical else "done")

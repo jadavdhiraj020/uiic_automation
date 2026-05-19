@@ -14,14 +14,16 @@ Handles:
   5. Skip "Reminder to Insured" section
 
 IMPORTANT:
-  - Files are only ATTACHED (via Browse button), NOT submitted.
-  - The user will manually click Upload on the live website.
+  - Files are attached through the portal Browse controls.
+  - The portal Upload button is clicked after attachments are ready.
+  - Final claim review/submission remains manual.
   - PDF merge respects 15MB max size limit.
 """
 
 import asyncio
 import logging
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set
@@ -34,11 +36,17 @@ from app.portals.newindia.automation.ui_utils import (
     upload_file_via_input,
 )
 from app.automation.automation_logger import AutomationLogger, _ts
+from app.data.folder_scanner import (
+    _prepare_files_for_merge,
+    _compress_pdf_for_upload,
+    _compress_image_for_upload,
+)
 
 logger = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-MAX_MERGED_PDF_BYTES = 15 * 1024 * 1024  # 15 MB portal limit
+MAX_MERGED_PDF_BYTES = 15 * 1024 * 1024   # 15 MB portal limit (merged PDF)
+MAX_MANDATORY_FILE_BYTES = 1536 * 1024    # 1.5 MB portal limit per individual file
 
 # Maps our internal keys → portal dropdown option values
 _UPLOAD_DOC_TYPE_MAP = {
@@ -93,9 +101,16 @@ def _get_used_files(data: ClaimData, uploaded_keys: Set[str]) -> Set[str]:
         if fpath and os.path.isfile(fpath):
             used.add(os.path.normpath(fpath))
 
-    # Files already uploaded in this module
+    # Files already uploaded in this module (temp compressed paths)
     for key in uploaded_keys:
         fpath = data.upload_doc_files.get(key, "")
+        if fpath and os.path.isfile(fpath):
+            used.add(os.path.normpath(fpath))
+
+    # Also exclude original pre-compression paths (scan-time compressed files are in temp dir;
+    # the originals remain in the folder and must not end up in claim_related)
+    orig_paths: Dict[str, str] = getattr(data, "original_upload_doc_paths", {}) or {}
+    for fpath in orig_paths.values():
         if fpath and os.path.isfile(fpath):
             used.add(os.path.normpath(fpath))
 
@@ -114,10 +129,9 @@ def _collect_remaining_files(data: ClaimData, used_files: Set[str]) -> List[str]
     if not folder_path or not os.path.isdir(folder_path):
         return remaining
 
-    # Allowed file extensions for upload
+    # Only PDF and image files can be merged into a PDF — skip .doc/.xlsx/.txt
     _uploadable_exts = {
         ".pdf", ".jpg", ".jpeg", ".png", ".gif", ".bmp",
-        ".doc", ".docx", ".xls", ".xlsx", ".txt",
     }
     _skip_files = {
         "all_pdf_text.txt", "extracted_documents_data.md",
@@ -175,9 +189,10 @@ def merge_files_to_pdf(
     Returns the output path if successful and within size limit, None otherwise.
 
     Strategy (in priority order):
-      1. Try PyPDF2 (best: merges PDF pages + image-converted pages)
-      2. Fallback: Pillow-only (images → PDF pages, copy single PDFs)
-      3. Other file types (doc, xls, xlsx) → skip with warning
+      1. Try pypdfium2 (best available runtime merger)
+      2. Fallback: PyPDF2
+      3. Fallback: Pillow-only for image-heavy sets
+      4. Other file types (doc, xls, xlsx) → skip with warning
     """
     if not file_paths:
         if isinstance(log, AutomationLogger):
@@ -186,28 +201,160 @@ def merge_files_to_pdf(
             log(f"   ℹ️ No remaining files to merge.")
         return None
 
-    _log = log or (lambda msg: None)
+    def _log(msg: str) -> None:
+        if not log:
+            return
+        if isinstance(log, AutomationLogger):
+            clean_msg = re.sub(r"^\[\d{2}:\d{2}:\d{2}\]\s*", "", msg)
+            if "❌" in clean_msg or "error" in clean_msg.lower():
+                log.error(clean_msg)
+            elif "⚠️" in clean_msg or "warning" in clean_msg.lower() or "skipped" in clean_msg.lower():
+                log.warning(clean_msg)
+            elif "✅" in clean_msg or "success" in clean_msg.lower() or "created" in clean_msg.lower():
+                log.success(clean_msg)
+            else:
+                log.info(clean_msg)
+        else:
+            log(msg)
+
     _image_exts = {".jpg", ".jpeg", ".png", ".gif", ".bmp"}
     _pdf_exts = {".pdf"}
-    _skip_exts = {".doc", ".docx", ".xls", ".xlsx", ".txt"}
 
-    # ── Strategy 1: PyPDF2 (full merge) ───────────────────────────────────────
+    # ── Pre-flight: compress largest files first until total fits in limit ────
+    compression_tmps: List[str] = []
+    file_paths, compression_tmps = _prepare_files_for_merge(
+        file_paths, max_bytes, log_fn=_log
+    )
+    if not file_paths:
+        if isinstance(log, AutomationLogger):
+            log.warning("No valid files to merge after pre-flight.")
+        return None
+
+    # ── Strategy 1: pypdfium2 (Primary choice, actually installed) ───────────
+    try:
+        import pypdfium2 as pdfium
+        try:
+            return _merge_with_pypdfium2(
+                file_paths, output_path, max_bytes, _log, _image_exts, _pdf_exts, pdfium
+            )
+        finally:
+            for t in compression_tmps:
+                try: os.remove(t)
+                except OSError: pass
+    except ImportError:
+        if isinstance(log, AutomationLogger):
+            log.info("pypdfium2 not available. Trying PyPDF2...")
+        else:
+            _log(f"   ℹ️ pypdfium2 not available. Trying PyPDF2...")
+
+    # ── Strategy 2: PyPDF2 (Legacy choice) ───────────────────────────────────
     try:
         from PyPDF2 import PdfMerger, PdfReader
-        return _merge_with_pypdf2(
-            file_paths, output_path, max_bytes, _log,
-            _image_exts, _pdf_exts, PdfMerger, PdfReader
-        )
+        try:
+            return _merge_with_pypdf2(
+                file_paths, output_path, max_bytes, _log,
+                _image_exts, _pdf_exts, PdfMerger, PdfReader
+            )
+        finally:
+            for t in compression_tmps:
+                try: os.remove(t)
+                except OSError: pass
     except ImportError:
         if isinstance(log, AutomationLogger):
             log.info("PyPDF2 not available. Using Pillow fallback for merge.")
         else:
             _log(f"   ℹ️ PyPDF2 not available. Using Pillow fallback for merge.")
 
-    # ── Strategy 2: Pillow-only fallback ──────────────────────────────────────
-    return _merge_with_pillow_fallback(
-        file_paths, output_path, max_bytes, _log, _image_exts, _pdf_exts
-    )
+    # ── Strategy 3: Pillow-only fallback ──────────────────────────────────────
+    try:
+        return _merge_with_pillow_fallback(
+            file_paths, output_path, max_bytes, _log, _image_exts, _pdf_exts
+        )
+    finally:
+        for t in compression_tmps:
+            try: os.remove(t)
+            except OSError: pass
+
+
+def _merge_with_pypdfium2(
+    file_paths, output_path, max_bytes, _log,
+    _image_exts, _pdf_exts, pdfium
+):
+    """Full PDF merge using pypdfium2 + Pillow for images."""
+    dest = pdfium.PdfDocument.new()
+    image_pdfs: List[str] = []
+    merged_count = 0
+    skipped_files: List[str] = []
+
+    try:
+        for fpath in file_paths:
+            ext = Path(fpath).suffix.lower()
+            fname = Path(fpath).name
+
+            if ext in _pdf_exts:
+                try:
+                    src = pdfium.PdfDocument(fpath)
+                    if len(src) > 0:
+                        dest.import_pages(src)
+                        merged_count += 1
+                        _log(f"✅ Merged: {fname}")
+                except Exception as e:
+                    _log(f"   ⚠️ Could not read {fname}, skipping: {e}")
+                    skipped_files.append(fname)
+
+            elif ext in _image_exts:
+                try:
+                    img = _convert_image_to_pdf_page(fpath)
+                    tmp_pdf = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False, prefix="_upld_img_")
+                    tmp_pdf_path = tmp_pdf.name
+                    tmp_pdf.close()
+                    img.save(tmp_pdf_path, "PDF")
+                    image_pdfs.append(tmp_pdf_path)
+
+                    src = pdfium.PdfDocument(tmp_pdf_path)
+                    dest.import_pages(src)
+                    merged_count += 1
+                    _log(f"✅ Converted & merged: {fname}")
+                except Exception as e:
+                    _log(f"   ⚠️ Could not convert {fname}, skipping: {e}")
+                    skipped_files.append(fname)
+            else:
+                _log(f"   ℹ️ Skipping non-mergeable file: {fname}")
+                skipped_files.append(fname)
+
+        if merged_count == 0:
+            _log(f"   ⚠️ No files were successfully merged.")
+            return None
+
+        dest.save(output_path)
+        
+    except Exception as e:
+        _log(f"   ❌ Merge error with pypdfium2: {e}")
+        return None
+    finally:
+        for tpath in image_pdfs:
+            try:
+                os.remove(tpath)
+            except OSError:
+                pass
+
+    if not os.path.isfile(output_path):
+        _log(f"   ❌ Merged PDF was not created.")
+        return None
+
+    # Validate size
+    actual_bytes = os.path.getsize(output_path)
+    if actual_bytes > max_bytes:
+        mb = actual_bytes / (1024 * 1024)
+        max_mb = max_bytes / (1024 * 1024)
+        _log(f"   ❌ Merged PDF too large ({mb:.1f}MB). Limit is {max_mb:.1f}MB.")
+        try:
+            os.remove(output_path)
+        except OSError:
+            pass
+        return None
+
+    return output_path
 
 
 def _merge_with_pypdf2(
@@ -393,6 +540,318 @@ def _validate_merged_pdf(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# MODAL DISMISSAL HELPERS
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _dismiss_doc_portal_alert(page: Page, log, max_wait_s: float = 4.0) -> Optional[str]:
+    """
+    After attaching a file or clicking Upload, the NIA portal may show an alert
+    popup for two reasons:
+      1. "File size should be less than or equal to 1536 KB"  → file too large
+      2. "Duplicate Document Name. Please select another document" → already uploaded
+
+    Both popups use the SAME DOM structure — a button with
+        data-ng-click="coverChangeObj.cancel('OK')"
+    inside a .modal div.
+
+    This helper polls for that button, clicks it, and returns a string tag:
+      'size_error'      — file size popup dismissed
+      'duplicate_error' — duplicate name popup dismissed
+      'other'           — some other popup dismissed
+      None              — no popup appeared within max_wait_s
+    """
+    poll_interval = 0.3
+    elapsed = 0.0
+
+    while elapsed < max_wait_s:
+        await asyncio.sleep(poll_interval)
+        elapsed += poll_interval
+
+        try:
+            cancel_btn = page.locator(
+                'button[data-ng-click*="coverChangeObj.cancel"], '
+                'button[ng-click*="coverChangeObj.cancel"]'
+            ).first
+
+            if not await cancel_btn.is_visible():
+                continue
+
+            # Try to read the popup message for diagnostic logging
+            popup_text = ""
+            try:
+                msg_el = page.locator(
+                    '[data-ng-bind-html*="content"], .modal-body p'
+                ).first
+                popup_text = (await msg_el.inner_text()).strip().lower()
+            except Exception:
+                pass
+
+            await cancel_btn.click()
+            await asyncio.sleep(0.4)  # let Angular close the modal
+
+            if "1536" in popup_text or "size" in popup_text:
+                tag = "size_error"
+            elif "duplicate" in popup_text:
+                tag = "duplicate_error"
+            else:
+                tag = "other"
+
+            if isinstance(log, AutomationLogger):
+                log.warning(f"Portal alert dismissed [{tag}]: {popup_text[:120]}")
+            else:
+                log(f"[{_ts()}]     ⚠️ Portal alert dismissed [{tag}]: {popup_text[:120]}")
+
+            return tag
+
+        except Exception:
+            pass
+
+    return None  # no popup — normal path
+
+
+async def _dismiss_upload_modal(page: Page, log, max_wait_s: float = 10.0) -> bool:
+    """
+    Polls for and dismisses the upload success/alert modal that appears after
+    clicking the Upload button (e.g. 'Document uploaded successfully').
+    Returns True as soon as a modal is dismissed, False if none appeared.
+    """
+    poll_interval = 0.3
+    elapsed = 0.0
+
+    while elapsed < max_wait_s:
+        await asyncio.sleep(poll_interval)
+        elapsed += poll_interval
+
+        try:
+            # Priority 1: Angular coverChangeObj cancel/ok button (NIA portal specific)
+            cancel_btn = page.locator(
+                'button[data-ng-click*="coverChangeObj.cancel"], '
+                'button[ng-click*="coverChangeObj.cancel"]'
+            ).first
+            if await cancel_btn.is_visible():
+                await cancel_btn.click()
+                if isinstance(log, AutomationLogger):
+                    log.success("Upload modal dismissed.")
+                else:
+                    log(f"[{_ts()}]     ✅ Upload modal dismissed (cancel button).")
+                return True  # ← exit immediately, don't keep polling
+
+            # Priority 2: Generic OK button in any modal
+            ok_btn = page.locator(
+                '.modal.in button:has-text("OK"), '
+                '.modal[style*="display: block"] button:has-text("OK"), '
+                '.modal-content button:has-text("OK")'
+            ).first
+            if await ok_btn.is_visible():
+                await ok_btn.click()
+                if isinstance(log, AutomationLogger):
+                    log.success("Upload modal dismissed via OK.")
+                else:
+                    log(f"[{_ts()}]     ✅ Upload modal dismissed (OK button).")
+                return True  # ← exit immediately
+
+        except Exception:
+            pass
+
+    if isinstance(log, AutomationLogger):
+        log.info("No upload confirmation modal appeared; continuing.")
+    else:
+        log(f"[{_ts()}]     ℹ️ No upload modal detected within timeout.")
+    return False
+
+
+def _compress_mandatory_file_if_needed(
+    file_path: str,
+    label: str,
+    log,
+    limit_bytes: int = MAX_MANDATORY_FILE_BYTES,
+) -> str:
+    """
+    Check if a mandatory document (DL, RC, Claim Form) exceeds the portal's
+    per-file 1.5MB limit.  If it does, attempt to compress it into a temporary
+    file and return the compressed path.  If compression fails or the file is
+    already within limit, return the original path.
+
+    The caller is responsible for nothing — temp files are cleaned up
+    automatically when the process exits, as they use tempfile with delete=False
+    but are written to the OS temp dir (short-lived).
+    """
+    if not file_path or not os.path.isfile(file_path):
+        return file_path
+
+    file_size = os.path.getsize(file_path)
+    if file_size <= limit_bytes:
+        return file_path  # already within limit — no compression needed
+
+    ext = Path(file_path).suffix.lower()
+    size_kb = file_size / 1024
+    limit_kb = limit_bytes / 1024
+
+    if isinstance(log, AutomationLogger):
+        log.warning(
+            f"{label}: file is {size_kb:.0f} KB > {limit_kb:.0f} KB limit — compressing..."
+        )
+    else:
+        log(
+            f"[{_ts()}]     ⚠️ {label}: {size_kb:.0f} KB > {limit_kb:.0f} KB limit — compressing..."
+        )
+
+    try:
+        suffix = ext if ext in (".jpg", ".jpeg", ".png", ".gif", ".bmp") else ".pdf"
+        tmp = tempfile.NamedTemporaryFile(
+            suffix=suffix, delete=False, prefix=f"_mand_{Path(file_path).stem}_"
+        )
+        tmp.close()
+        out_path = tmp.name
+
+        if ext == ".pdf":
+            ok = _compress_pdf_for_upload(file_path, out_path)
+        elif ext in (".jpg", ".jpeg", ".png", ".gif", ".bmp"):
+            ok = _compress_image_for_upload(file_path, out_path)
+        else:
+            ok = False  # unsupported format — use original
+
+        if ok and os.path.isfile(out_path):
+            compressed_size = os.path.getsize(out_path)
+            compressed_kb = compressed_size / 1024
+            if compressed_size <= limit_bytes:
+                if isinstance(log, AutomationLogger):
+                    log.success(
+                        f"{label}: compressed to {compressed_kb:.0f} KB — within {limit_kb:.0f} KB limit."
+                    )
+                else:
+                    log(
+                        f"[{_ts()}]     ✅ {label}: compressed to {compressed_kb:.0f} KB."
+                    )
+                return out_path
+            else:
+                # Compression helped but still over limit — warn and use original
+                if isinstance(log, AutomationLogger):
+                    log.warning(
+                        f"{label}: still {compressed_kb:.0f} KB after compression — "
+                        "portal size alert may appear; will be dismissed automatically."
+                    )
+                else:
+                    log(
+                        f"[{_ts()}]     ⚠️ {label}: still {compressed_kb:.0f} KB after compression. "
+                        "Portal size alert will be dismissed."
+                    )
+                return out_path  # use compressed (smaller) even if still over
+        else:
+            if isinstance(log, AutomationLogger):
+                log.warning(f"{label}: compression failed — using original file.")
+            else:
+                log(f"[{_ts()}]     ⚠️ {label}: compression failed — using original.")
+            return file_path
+
+    except Exception as exc:
+        if isinstance(log, AutomationLogger):
+            log.warning(f"{label}: compression error ({exc}) — using original file.")
+        else:
+            log(f"[{_ts()}]     ⚠️ {label}: compression error — using original.")
+        return file_path
+
+
+_UPLOAD_NEW_DOCUMENTS_RE = re.compile(r"^\s*Upload New Documents\s*$", re.IGNORECASE)
+
+
+def _upload_new_documents_container(page: Page):
+    return page.locator(".accordion-surv").filter(
+        has=page.locator("a.accordion-toggle").filter(has_text=_UPLOAD_NEW_DOCUMENTS_RE)
+    ).first
+
+
+async def _dismiss_initial_document_upload_popup(page: Page, log) -> bool:
+    """
+    Quick check for any Claim Assessment save popup still visible after handoff.
+    Uses a short 1.5s window — if the popup is already gone (99% of cases)
+    this returns almost instantly instead of waiting the full timeout.
+    """
+    result = await _dismiss_doc_portal_alert(page, log, max_wait_s=1.5)
+    return result is not None
+
+
+async def _is_upload_new_documents_open(page: Page) -> bool:
+    """Return True only when the Upload New Documents accordion content is visible."""
+    container = _upload_new_documents_container(page)
+    try:
+        await container.wait_for(state="attached", timeout=4000)
+    except Exception:
+        return False
+
+    for selector in (
+        'ng-form[name="mandatoryDocForm"]',
+        'select#docType0',
+        'input#mandatoryFiles0',
+    ):
+        try:
+            if await container.locator(selector).first.is_visible():
+                return True
+        except Exception:
+            pass
+
+    try:
+        collapsed_heading = container.locator("div.panel-heading.collapsed").first
+        if await collapsed_heading.is_visible():
+            return False
+    except Exception:
+        pass
+
+    try:
+        panel_body = container.locator("div.panel-collapse.in, div.panel-collapse[style*='height: auto']").first
+        return await panel_body.is_visible()
+    except Exception:
+        return False
+
+
+async def _open_upload_new_documents_section(page: Page, log) -> bool:
+    """Open Upload New Documents exactly once if collapsed, then verify its form."""
+    container = _upload_new_documents_container(page)
+    try:
+        await container.wait_for(state="visible", timeout=8000)
+    except Exception as exc:
+        if isinstance(log, AutomationLogger):
+            log.error(f"Upload New Documents accordion not found: {str(exc)[:120]}")
+        else:
+            log(f"[{_ts()}]   ❌ Upload New Documents accordion not found: {exc}")
+        return False
+
+    if await _is_upload_new_documents_open(page):
+        if isinstance(log, AutomationLogger):
+            log.info("'Upload New Documents' accordion already open.")
+        else:
+            log(f"[{_ts()}]   ℹ️ 'Upload New Documents' accordion already open.")
+        return True
+
+    heading = container.locator("a.accordion-toggle").filter(has_text=_UPLOAD_NEW_DOCUMENTS_RE).first
+    for attempt in range(2):
+        try:
+            await heading.scroll_into_view_if_needed()
+            await asyncio.sleep(0.2)
+            if await _is_upload_new_documents_open(page):
+                return True
+            await heading.click()
+            await asyncio.sleep(1.0)
+            if await _is_upload_new_documents_open(page):
+                if isinstance(log, AutomationLogger):
+                    log.success("'Upload New Documents' accordion opened.")
+                else:
+                    log(f"[{_ts()}]   ✅ Opened 'Upload New Documents' accordion.")
+                return True
+        except Exception as exc:
+            if isinstance(log, AutomationLogger):
+                log.warning(f"Accordion open attempt {attempt + 1} failed: {str(exc)[:100]}")
+            else:
+                log(f"[{_ts()}]   ⚠️ Accordion open attempt {attempt + 1} failed: {exc}")
+
+    if isinstance(log, AutomationLogger):
+        log.error("Mandatory document form not visible after opening Upload New Documents.")
+    else:
+        log(f"[{_ts()}]   ❌ Mandatory document form not visible after opening Upload New Documents.")
+    return False
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # MAIN UPLOAD FUNCTION
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -413,6 +872,9 @@ async def fill_document_upload_section(
         log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         log("  📝 Phase 9: Document Upload Section")
         log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+    await _dismiss_initial_document_upload_popup(page, log)
+    if stop_cb(): return False
 
     # ══════════════════════════════════════════════════════════════════════════
     # SECTION 1 — UPLOADED DOCUMENTS (SKIP — Informational only)
@@ -437,42 +899,13 @@ async def fill_document_upload_section(
         log("")
         log(f"[{_ts()}]   ── Section 2: Upload New Documents ──")
 
-    # 2a. Open the "Upload New Documents" accordion
-    try:
-        accordion_link = page.locator('a.accordion-toggle:has(span:text("Upload New Documents"))').first
-        is_collapsed = await page.locator(
-            'div.accordion-surv:has(a.accordion-toggle span:text("Upload New Documents")) '
-            'div.panel-heading.collapsed'
-        ).first.is_visible()
-
-        if is_collapsed:
-            await accordion_link.click()
-            await asyncio.sleep(1.5)
-            if isinstance(log, AutomationLogger):
-                log.success("Accordion expanded.")
-            else:
-                log(f"[{_ts()}]   ✅ Opened 'Upload New Documents' accordion.")
-        else:
-            if isinstance(log, AutomationLogger):
-                log.info("Accordion already open.")
-            else:
-                log(f"[{_ts()}]   ℹ️ 'Upload New Documents' accordion already open.")
-    except Exception as e:
+    if not await _open_upload_new_documents_section(page, log):
         if isinstance(log, AutomationLogger):
-            log.warning(f"Accordion interaction warning: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Could not open accordion (may already be open): {e}")
+            log.outdent()
+            log.outdent()
+        return False
 
     if stop_cb(): return False
-
-    # Wait for the mandatory document form to be visible
-    try:
-        await page.wait_for_selector('ng-form[name="mandatoryDocForm"]', state="visible", timeout=5000)
-    except Exception:
-        if isinstance(log, AutomationLogger):
-            log.warning("Mandatory document form not visible; attempting to proceed.")
-        else:
-            log(f"[{_ts()}]   ⚠️ Mandatory document form not visible. Attempting to proceed...")
 
     # ── Track which files have been uploaded in this section ──────────────────
     uploaded_keys: Set[str] = set()
@@ -544,6 +977,8 @@ async def fill_document_upload_section(
             continue
 
         # Step 2: Attach file via Browse input for this row
+        # Note: file_path already points to compressed version if it was over
+        # 1.5 MB (compression happens at scan time in folder_scanner.py)
         file_input_sel = f'input#mandatoryFiles{current_row}'
         try:
             success = await upload_file_via_input(
@@ -562,9 +997,20 @@ async def fill_document_upload_section(
             if isinstance(log, AutomationLogger):
                 log.error(f"Attachment error: {str(e)[:100]}")
 
+        # Step 4: Dismiss any portal alert that appeared after attaching
+        # (file size alert — in case compression was insufficient)
+        alert_tag = await _dismiss_doc_portal_alert(page, log, max_wait_s=3.0)
+        if alert_tag == "size_error":
+            # File is truly too large and portal rejected it — log and skip
+            if isinstance(log, AutomationLogger):
+                log.warning(
+                    f"{label}: portal rejected file as too large — row will be empty. "
+                    "Check file size manually."
+                )
+
         if isinstance(log, AutomationLogger):
             log.outdent()
-        
+
         current_row += 1
         await asyncio.sleep(0.8)
 
@@ -578,131 +1024,200 @@ async def fill_document_upload_section(
         log("")
         log(f"[{_ts()}]   📎 Preparing: Claim Related Documents (merged PDF)")
 
-    # Collect used files
-    used_files = _get_used_files(data, uploaded_keys)
-    if isinstance(log, AutomationLogger):
-        log.info(f"Context: {len(used_files)} files already used.")
-    else:
-        log(f"[{_ts()}]     📊 Already used/uploaded: {len(used_files)} files")
+    # Use scan-time pre-merged PDF if available (zero extra disk I/O at runtime)
+    scan_result = getattr(data, "_scan_result", None)
+    precomputed_pdf = getattr(scan_result, "claim_related_merged_pdf", None) if scan_result else None
+    precomputed = getattr(scan_result, "claim_related_files", None) if scan_result else None
 
-    # Collect remaining files from folder
-    remaining_files = _collect_remaining_files(data, used_files)
-    if isinstance(log, AutomationLogger):
-        log.info(f"Unmatched files found: {len(remaining_files)}")
-    else:
-        log(f"[{_ts()}]     📊 Remaining unmatched files: {len(remaining_files)}")
-
-    if remaining_files:
+    if precomputed_pdf and os.path.isfile(precomputed_pdf):
+        # Happy path: pre-merged PDF ready from scan phase
+        merged_path = precomputed_pdf
+        n = len(precomputed) if precomputed else "?"
         if isinstance(log, AutomationLogger):
-            for rf in remaining_files:
-                log.info(f"Merging: {Path(rf).name}")
+            log.success(f"Using pre-merged PDF: {Path(merged_path).name} ({n} source file(s))")
         else:
-            for rf in remaining_files:
-                log(f"[{_ts()}]       • {Path(rf).name}")
-
-        # Determine output path for merged PDF
-        folder_path = _get_folder_path(data) or tempfile.gettempdir()
-        merged_pdf_path = os.path.join(folder_path, "CLAIM_RELATED_DOCUMENT_merged.pdf")
-
-        # Remove old merged file if exists
-        if os.path.exists(merged_pdf_path):
-            try: os.remove(merged_pdf_path)
-            except OSError: pass
-
-        # Merge files
+            log(f"[{_ts()}]     ✅ Using pre-merged: {Path(merged_path).name} ({n} source file(s))")
+    else:
+        # Fallback: re-compute remaining files and merge at runtime
         if isinstance(log, AutomationLogger):
-            log.wait("Creating consolidated PDF...")
+            log.info("Pre-merged PDF not available; falling back to runtime merge.")
         else:
-            log(f"[{_ts()}]     🔄 Merging remaining files into single PDF...")
-        
-        merged_path = merge_files_to_pdf(
-            file_paths=remaining_files,
-            output_path=merged_pdf_path,
-            max_bytes=MAX_MERGED_PDF_BYTES,
-            log=log,
-        )
+            log(f"[{_ts()}]     ℹ️ No pre-merged PDF found; running runtime merge.")
 
-        if merged_path:
-            # Add a new row if we already used row(s) for other docs
-            if current_row > 0:
-                try:
-                    add_btn = page.locator('span.fa-plus-circle[data-ng-click="surveyorWorklistSurvey.addRow(\'man\')"]').first
-                    if not await add_btn.is_visible():
-                        add_btn = page.locator('ng-form[name="mandatoryDocForm"] span.fa-plus-circle').first
-                    await add_btn.click()
-                    await asyncio.sleep(1.0)
-                    if isinstance(log, AutomationLogger):
-                        log.success("New row added for merged document.")
-                    else:
-                        log(f"[{_ts()}]     ✅ Added new row (row {current_row}) for Claim Related Documents")
-                except Exception as e:
-                    if isinstance(log, AutomationLogger):
-                        log.warning(f"Row addition failed: {str(e)[:100]}")
-                    else:
-                        log(f"[{_ts()}]     ⚠️ Could not add new row: {e}")
-
-            # Select "Claim Related Documents" in dropdown
-            dropdown_sel = f'select#docType{current_row}'
-            try:
-                await select_dropdown_with_delay(
-                    page, dropdown_sel, "Claim Related Documents",
-                    f"Row {current_row} Type", log, field_delay_ms
-                )
-                await asyncio.sleep(0.5)
-            except Exception as e:
-                if isinstance(log, AutomationLogger):
-                    log.error(f"Dropdown selection failed: {str(e)[:100]}")
-                else:
-                    log(f"[{_ts()}]     ⚠️ Could not select dropdown for Claim Related Documents: {e}")
-
-            # Attach merged PDF
-            file_input_sel = f'input#mandatoryFiles{current_row}'
-            try:
-                success = await upload_file_via_input(
-                    page,
-                    file_input_selector=file_input_sel,
-                    file_path=merged_path,
-                    label=f"Row {current_row} Merged File",
-                    log=log,
-                )
-                if success:
-                    mb = os.path.getsize(merged_path) / (1024 * 1024)
-                    if not isinstance(log, AutomationLogger):
-                        log(f"[{_ts()}]     ✅ Merged PDF attached ({mb:.1f}MB)")
-                else:
-                    if isinstance(log, AutomationLogger):
-                        log.error("Merged PDF attachment failed.")
-                    else:
-                        log(f"[{_ts()}]     ⚠️ Merged PDF attachment failed.")
-            except Exception as e:
-                if isinstance(log, AutomationLogger):
-                    log.error(f"Attachment error: {str(e)[:100]}")
-                else:
-                    log(f"[{_ts()}]     ⚠️ Error attaching merged PDF: {e}")
-
-            current_row += 1
-        else:
+        if precomputed is not None:
+            remaining_files = [f for f in precomputed if os.path.isfile(f)]
             if isinstance(log, AutomationLogger):
-                log.error("PDF merge failed; no output generated.")
+                log.info(f"Using pre-scanned claim_related_files: {len(remaining_files)} file(s).")
             else:
-                log(f"[{_ts()}]     ⚠️ PDF merge produced no output. Claim Related Documents not attached.")
+                log(f"[{_ts()}]     📊 Pre-scanned remaining files: {len(remaining_files)}")
+        else:
+            used_files = _get_used_files(data, uploaded_keys)
+            remaining_files = _collect_remaining_files(data, used_files)
+
+        if isinstance(log, AutomationLogger):
+            log.info(f"Files to merge: {len(remaining_files)}")
+        else:
+            log(f"[{_ts()}]     📊 Remaining unmatched files: {len(remaining_files)}")
+
+        # Log each file with size
+        total_bytes = 0
+        valid_files = []
+        for rf in remaining_files:
+            if not os.path.isfile(rf):
+                if isinstance(log, AutomationLogger):
+                    log.warning(f"File missing at runtime, skipping: {Path(rf).name}")
+                continue
+            sz = os.path.getsize(rf)
+            total_bytes += sz
+            valid_files.append(rf)
+            if isinstance(log, AutomationLogger):
+                log.info(f"Will merge: {Path(rf).name} ({sz / 1024:.0f} KB)")
+            else:
+                log(f"[{_ts()}]       • {Path(rf).name} ({sz / 1024:.0f} KB)")
+
+        if not valid_files:
+            if isinstance(log, AutomationLogger):
+                log.warning("No valid remaining files. Skipping Claim Related Documents.")
+            else:
+                log(f"[{_ts()}]     ⚠️ No valid files to merge. Skipping Claim Related Documents.")
+            merged_path = None
+        else:
+            total_mb = total_bytes / (1024 * 1024)
+            if isinstance(log, AutomationLogger):
+                log.info(f"Total pre-merge size: {total_mb:.1f}MB (limit: 15MB)")
+
+            folder_path = _get_folder_path(data) or tempfile.gettempdir()
+            merged_pdf_path = os.path.join(folder_path, "claim_others_documents.pdf")
+            if os.path.exists(merged_pdf_path):
+                try: os.remove(merged_pdf_path)
+                except OSError: pass
+
+            if isinstance(log, AutomationLogger):
+                log.wait("Creating consolidated PDF...")
+            else:
+                log(f"[{_ts()}]     🔄 Merging remaining files into single PDF...")
+
+            merged_path = merge_files_to_pdf(
+                file_paths=valid_files,
+                output_path=merged_pdf_path,
+                max_bytes=MAX_MERGED_PDF_BYTES,
+                log=log,
+            )
+
+    if merged_path:
+        # Add a new row if we already used row(s) for other docs
+        if current_row > 0:
+            try:
+                add_btn = page.locator('span.fa-plus-circle[data-ng-click="surveyorWorklistSurvey.addRow(\'man\')"]').first
+                if not await add_btn.is_visible():
+                    add_btn = page.locator('ng-form[name="mandatoryDocForm"] span.fa-plus-circle').first
+                await add_btn.click()
+                await asyncio.sleep(1.0)
+                if isinstance(log, AutomationLogger):
+                    log.success("New row added for merged document.")
+                else:
+                    log(f"[{_ts()}]     ✅ Added new row (row {current_row}) for Claim Related Documents")
+            except Exception as e:
+                if isinstance(log, AutomationLogger):
+                    log.warning(f"Row addition failed: {str(e)[:100]}")
+                else:
+                    log(f"[{_ts()}]     ⚠️ Could not add new row: {e}")
+
+        # Select "Claim Related Documents" in dropdown
+        dropdown_sel = f'select#docType{current_row}'
+        try:
+            await select_dropdown_with_delay(
+                page, dropdown_sel, "Claim Related Documents",
+                f"Row {current_row} Type", log, field_delay_ms
+            )
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            if isinstance(log, AutomationLogger):
+                log.error(f"Dropdown selection failed: {str(e)[:100]}")
+            else:
+                log(f"[{_ts()}]     ⚠️ Could not select dropdown for Claim Related Documents: {e}")
+
+        # Attach merged PDF
+        file_input_sel = f'input#mandatoryFiles{current_row}'
+        try:
+            success = await upload_file_via_input(
+                page,
+                file_input_selector=file_input_sel,
+                file_path=merged_path,
+                label=f"Row {current_row} Merged File",
+                log=log,
+            )
+            if success:
+                mb = os.path.getsize(merged_path) / (1024 * 1024)
+                if not isinstance(log, AutomationLogger):
+                    log(f"[{_ts()}]     ✅ Merged PDF attached ({mb:.1f}MB)")
+            else:
+                if isinstance(log, AutomationLogger):
+                    log.error("Merged PDF attachment failed.")
+                else:
+                    log(f"[{_ts()}]     ⚠️ Merged PDF attachment failed.")
+        except Exception as e:
+            if isinstance(log, AutomationLogger):
+                log.error(f"Attachment error: {str(e)[:100]}")
+            else:
+                log(f"[{_ts()}]     ⚠️ Error attaching merged PDF: {e}")
+
+        current_row += 1
     else:
         if isinstance(log, AutomationLogger):
-            log.info("No remaining files to merge.")
+            log.warning("No merged PDF available. Claim Related Documents not attached.")
         else:
-            log(f"[{_ts()}]     ℹ️ No remaining files to merge. Skipping Claim Related Documents.")
+            log(f"[{_ts()}]     ⚠️ No merged PDF. Claim Related Documents not attached.")
 
     if isinstance(log, AutomationLogger):
         log.outdent()
 
-    # ── Summary: prompt user to click Upload ──────────────────────────────────
+    # ── Automatically click the Upload button ───────────────────────────────
     if current_row > 0:
         if isinstance(log, AutomationLogger):
-            log.success(f"All {current_row} documents attached. USER ACTION: Click 'Upload' on portal.")
+            log.info(f"All {current_row} documents attached. Clicking Upload button...")
         else:
             log("")
-            log(f"[{_ts()}]   📋 All {current_row} document(s) attached in mandatory rows.")
-            log(f"[{_ts()}]   ℹ️ Click the 'Upload' button on the website to save all documents.")
+            log(f"[{_ts()}]   📋 All {current_row} document(s) attached. Clicking Upload...")
+
+        try:
+            upload_btn = page.locator('button[data-ng-click="uploadFileNonTieUp(\'mandatory\')"]').first
+            await upload_btn.wait_for(state="visible", timeout=8000)
+
+            # Wait up to 5s for Angular to enable the button after file attachment
+            for _ in range(10):
+                if not await upload_btn.is_disabled():
+                    break
+                await asyncio.sleep(0.5)
+
+            if await upload_btn.is_disabled():
+                if isinstance(log, AutomationLogger):
+                    log.warning("Upload button still disabled; files may not be attached correctly.")
+                else:
+                    log(f"[{_ts()}]   ⚠️ Upload button is still disabled. Skipping upload click.")
+            else:
+                await upload_btn.click()
+                if isinstance(log, AutomationLogger):
+                    log.success("Upload button clicked.")
+                    log.wait("Waiting for upload confirmation...")
+                else:
+                    log(f"[{_ts()}]   ✅ Upload button clicked.")
+
+                # Dismiss success/confirmation modal (portal shows one after upload).
+                # Also handles "Duplicate Document Name" popup if the same file was
+                # previously uploaded in a prior run — both use the same DOM button.
+                # _dismiss_upload_modal returns immediately on first dismissed popup.
+                await _dismiss_upload_modal(page, log, max_wait_s=10.0)
+                # Catch any secondary alert (e.g. second duplicate popup) that may
+                # appear after the first one is dismissed. Short window (1.5s) —
+                # secondary popups appear within 0.5s or not at all.
+                await _dismiss_doc_portal_alert(page, log, max_wait_s=1.5)
+
+        except Exception as e:
+            if isinstance(log, AutomationLogger):
+                log.error(f"Upload button error: {str(e)[:100]}")
+            else:
+                log(f"[{_ts()}]   ⚠️ Error clicking Upload button: {e}")
 
     if stop_cb(): return False
 

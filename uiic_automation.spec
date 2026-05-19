@@ -40,7 +40,7 @@ warnings.filterwarnings(
 
 def first_existing(*paths: Path) -> Path | None:
     for path in paths:
-        if path and path.exists():
+        if path and path.exists() and (not path.is_dir() or any(path.iterdir())):
             return path
     return None
 
@@ -126,6 +126,9 @@ hiddenimports: list[str] = []
 
 # Application resources.
 add_directory(datas, PROJECT_ROOT / "app" / "config", "app/config")
+for portal_config in sorted((PROJECT_ROOT / "app" / "portals").glob("*/config")):
+    portal_id = portal_config.parent.name
+    add_directory(datas, portal_config, f"app/portals/{portal_id}/config")
 if (PROJECT_ROOT / "app" / "ui" / "styles.qss").exists():
     datas.append((str(PROJECT_ROOT / "app" / "ui" / "styles.qss"), "app/ui"))
 if (PROJECT_ROOT / "assets" / "icon.ico").exists():
@@ -176,6 +179,7 @@ for package_name in (
     "shapely",
     "playwright",
     "pdfplumber",
+    "pypdfium2",
     "pandas",
     "openpyxl",
     "docx",
@@ -199,6 +203,7 @@ hiddenimports.extend(
         "openpyxl",
         "xlrd",
         "pdfplumber",
+        "pypdfium2",
         "numpy",
         "PIL",
         "cv2",

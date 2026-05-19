@@ -128,5 +128,10 @@
       "re_inspection",
       "reinspection"
     ]
+  },
+  "work_approval_keywords": {
+    "_comment": "Keywords used to find cashless/non-cashless approval documents by filename.",
+    "non_cashless": ["non_cashless", "non-cashless", "noncashless", "non cashless", "non_caseless", "non-caseless"],
+    "cashless": ["cashless", "caseless"]
   }
 }
