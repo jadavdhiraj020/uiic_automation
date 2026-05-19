@@ -7,6 +7,7 @@ from app.portals.newindia.automation.ui_utils import (
     fill_input_with_delay,
     select_dropdown_with_delay
 )
+from app.portals.newindia.automation.popup_service import dismiss_portal_popup
 from app.automation.automation_logger import AutomationLogger
 
 logger = logging.getLogger(__name__)
@@ -266,20 +267,8 @@ async def _fill_work_approval_inner(
                     log("  ✅ Work Approval submitted.")
                 
                 # Handle the confirmation popup
-                try:
-                    popup_ok = page.locator('button[data-ng-click*="coverChangeObj.cancel"]')
-                    await popup_ok.wait_for(state="visible", timeout=6000)
-                    await popup_ok.click()
-                    if isinstance(log, AutomationLogger):
-                        log.success("Work Approval popup dismissed.")
-                    else:
-                        log("  ✅ Work Approval popup dismissed.")
-                    await asyncio.sleep(1.0)
-                except Exception as e:
-                    if isinstance(log, AutomationLogger):
-                        log.warning(f"Could not dismiss popup automatically: {str(e)[:100]}")
-                    else:
-                        log(f"  ⚠️ Could not dismiss popup: {e}")
+                await dismiss_portal_popup(page, log, max_wait_s=6.0)
+                await asyncio.sleep(1.0)
         except Exception as e:
             if isinstance(log, AutomationLogger):
                 log.error(f"Work Approval submit button error: {str(e)[:100]}")

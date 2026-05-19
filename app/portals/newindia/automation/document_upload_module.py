@@ -41,6 +41,7 @@ from app.data.folder_scanner import (
     _compress_pdf_for_upload,
     _compress_image_for_upload,
 )
+from app.portals.newindia.automation.popup_service import dismiss_portal_popup
 
 logger = logging.getLogger(__name__)
 
@@ -539,125 +540,7 @@ def _validate_merged_pdf(
     return output_path
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# MODAL DISMISSAL HELPERS
-# ══════════════════════════════════════════════════════════════════════════════
 
-async def _dismiss_doc_portal_alert(page: Page, log, max_wait_s: float = 4.0) -> Optional[str]:
-    """
-    After attaching a file or clicking Upload, the NIA portal may show an alert
-    popup for two reasons:
-      1. "File size should be less than or equal to 1536 KB"  → file too large
-      2. "Duplicate Document Name. Please select another document" → already uploaded
-
-    Both popups use the SAME DOM structure — a button with
-        data-ng-click="coverChangeObj.cancel('OK')"
-    inside a .modal div.
-
-    This helper polls for that button, clicks it, and returns a string tag:
-      'size_error'      — file size popup dismissed
-      'duplicate_error' — duplicate name popup dismissed
-      'other'           — some other popup dismissed
-      None              — no popup appeared within max_wait_s
-    """
-    poll_interval = 0.3
-    elapsed = 0.0
-
-    while elapsed < max_wait_s:
-        await asyncio.sleep(poll_interval)
-        elapsed += poll_interval
-
-        try:
-            cancel_btn = page.locator(
-                'button[data-ng-click*="coverChangeObj.cancel"], '
-                'button[ng-click*="coverChangeObj.cancel"]'
-            ).first
-
-            if not await cancel_btn.is_visible():
-                continue
-
-            # Try to read the popup message for diagnostic logging
-            popup_text = ""
-            try:
-                msg_el = page.locator(
-                    '[data-ng-bind-html*="content"], .modal-body p'
-                ).first
-                popup_text = (await msg_el.inner_text()).strip().lower()
-            except Exception:
-                pass
-
-            await cancel_btn.click()
-            await asyncio.sleep(0.4)  # let Angular close the modal
-
-            if "1536" in popup_text or "size" in popup_text:
-                tag = "size_error"
-            elif "duplicate" in popup_text:
-                tag = "duplicate_error"
-            else:
-                tag = "other"
-
-            if isinstance(log, AutomationLogger):
-                log.warning(f"Portal alert dismissed [{tag}]: {popup_text[:120]}")
-            else:
-                log(f"[{_ts()}]     ⚠️ Portal alert dismissed [{tag}]: {popup_text[:120]}")
-
-            return tag
-
-        except Exception:
-            pass
-
-    return None  # no popup — normal path
-
-
-async def _dismiss_upload_modal(page: Page, log, max_wait_s: float = 10.0) -> bool:
-    """
-    Polls for and dismisses the upload success/alert modal that appears after
-    clicking the Upload button (e.g. 'Document uploaded successfully').
-    Returns True as soon as a modal is dismissed, False if none appeared.
-    """
-    poll_interval = 0.3
-    elapsed = 0.0
-
-    while elapsed < max_wait_s:
-        await asyncio.sleep(poll_interval)
-        elapsed += poll_interval
-
-        try:
-            # Priority 1: Angular coverChangeObj cancel/ok button (NIA portal specific)
-            cancel_btn = page.locator(
-                'button[data-ng-click*="coverChangeObj.cancel"], '
-                'button[ng-click*="coverChangeObj.cancel"]'
-            ).first
-            if await cancel_btn.is_visible():
-                await cancel_btn.click()
-                if isinstance(log, AutomationLogger):
-                    log.success("Upload modal dismissed.")
-                else:
-                    log(f"[{_ts()}]     ✅ Upload modal dismissed (cancel button).")
-                return True  # ← exit immediately, don't keep polling
-
-            # Priority 2: Generic OK button in any modal
-            ok_btn = page.locator(
-                '.modal.in button:has-text("OK"), '
-                '.modal[style*="display: block"] button:has-text("OK"), '
-                '.modal-content button:has-text("OK")'
-            ).first
-            if await ok_btn.is_visible():
-                await ok_btn.click()
-                if isinstance(log, AutomationLogger):
-                    log.success("Upload modal dismissed via OK.")
-                else:
-                    log(f"[{_ts()}]     ✅ Upload modal dismissed (OK button).")
-                return True  # ← exit immediately
-
-        except Exception:
-            pass
-
-    if isinstance(log, AutomationLogger):
-        log.info("No upload confirmation modal appeared; continuing.")
-    else:
-        log(f"[{_ts()}]     ℹ️ No upload modal detected within timeout.")
-    return False
 
 
 def _compress_mandatory_file_if_needed(
@@ -759,16 +642,6 @@ def _upload_new_documents_container(page: Page):
     return page.locator(".accordion-surv").filter(
         has=page.locator("a.accordion-toggle").filter(has_text=_UPLOAD_NEW_DOCUMENTS_RE)
     ).first
-
-
-async def _dismiss_initial_document_upload_popup(page: Page, log) -> bool:
-    """
-    Quick check for any Claim Assessment save popup still visible after handoff.
-    Uses a short 1.5s window — if the popup is already gone (99% of cases)
-    this returns almost instantly instead of waiting the full timeout.
-    """
-    result = await _dismiss_doc_portal_alert(page, log, max_wait_s=1.5)
-    return result is not None
 
 
 async def _is_upload_new_documents_open(page: Page) -> bool:
@@ -873,7 +746,7 @@ async def fill_document_upload_section(
         log("  📝 Phase 9: Document Upload Section")
         log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
-    await _dismiss_initial_document_upload_popup(page, log)
+    await dismiss_portal_popup(page, log, max_wait_s=1.5)
     if stop_cb(): return False
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -999,7 +872,7 @@ async def fill_document_upload_section(
 
         # Step 4: Dismiss any portal alert that appeared after attaching
         # (file size alert — in case compression was insufficient)
-        alert_tag = await _dismiss_doc_portal_alert(page, log, max_wait_s=3.0)
+        alert_tag = await dismiss_portal_popup(page, log, classify=True, max_wait_s=3.0)
         if alert_tag == "size_error":
             # File is truly too large and portal rejected it — log and skip
             if isinstance(log, AutomationLogger):
@@ -1206,12 +1079,12 @@ async def fill_document_upload_section(
                 # Dismiss success/confirmation modal (portal shows one after upload).
                 # Also handles "Duplicate Document Name" popup if the same file was
                 # previously uploaded in a prior run — both use the same DOM button.
-                # _dismiss_upload_modal returns immediately on first dismissed popup.
-                await _dismiss_upload_modal(page, log, max_wait_s=10.0)
+                # dismiss_portal_popup returns immediately on first dismissed popup.
+                await dismiss_portal_popup(page, log, max_wait_s=10.0)
                 # Catch any secondary alert (e.g. second duplicate popup) that may
                 # appear after the first one is dismissed. Short window (1.5s) —
                 # secondary popups appear within 0.5s or not at all.
-                await _dismiss_doc_portal_alert(page, log, max_wait_s=1.5)
+                await dismiss_portal_popup(page, log, classify=True, max_wait_s=1.5)
 
         except Exception as e:
             if isinstance(log, AutomationLogger):
