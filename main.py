@@ -4,6 +4,7 @@ main.py - Application entry point.
 Works both from source and from the PyInstaller onedir bundle.
 """
 
+import hashlib
 import logging
 import os
 import sys
@@ -51,7 +52,17 @@ def main() -> None:
     qss_path = resource_path("app", "ui", "styles.qss")
     if os.path.exists(qss_path):
         with open(qss_path, "r", encoding="utf-8") as handle:
-            app.setStyleSheet(handle.read())
+            qss = handle.read()
+            app.setStyleSheet(qss)
+        qss_hash = hashlib.sha256(qss.encode("utf-8")).hexdigest()[:12]
+        logger.info(
+            "Loaded stylesheet: %s (%s bytes, sha256=%s)",
+            qss_path,
+            len(qss.encode("utf-8")),
+            qss_hash,
+        )
+    else:
+        logger.warning("Stylesheet not found: %s", qss_path)
 
     icon_path = resource_path("assets", "icon.ico")
     if os.path.exists(icon_path):

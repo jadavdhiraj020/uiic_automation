@@ -59,6 +59,7 @@ from app.utils import (
     resource_path,
     load_settings,
     settings_paths,
+    doc_mapping_paths,
     user_data_dir,
     ensure_dir,
 )
@@ -166,6 +167,7 @@ class MainWindow(QMainWindow):
         self.workspace_page.stop_clicked.connect(self._stop_automation)
         self.workspace_page.export_log_clicked.connect(self._export_log)
         self.settings_page = SettingsPage(append_log_cb=self._append_log)
+        self.settings_page.set_portal(get_active_portal_id() or "uiic")
 
         self.stack.addWidget(self.workspace_page)  # 0
         self.stack.addWidget(self.settings_page)  # 1
@@ -310,7 +312,7 @@ class MainWindow(QMainWindow):
         self.workspace_page.set_portal(portal_id)
 
         # Reload settings page to show portal-specific settings
-        self.settings_page._load_data()
+        self.settings_page.set_portal(portal_id)
 
         # Clear any previously loaded claim data (it may not apply to the new portal)
         self._claim = None
@@ -363,7 +365,7 @@ class MainWindow(QMainWindow):
 
         portal = get_active_portal()
         portal_id = get_active_portal_id() or "uiic"
-        config_dir = portal.bundled_config_dir() if portal else CONFIG_DIR
+        config_dir = os.path.dirname(doc_mapping_paths(portal_id=portal_id)["default"]) if portal else CONFIG_DIR
         service = ClaimFolderService(config_dir=config_dir, portal_id=portal_id)
         result = service.process_folder(folder)
 

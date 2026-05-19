@@ -29,8 +29,15 @@ class SettingsPage(QWidget):
     def __init__(self, parent=None, append_log_cb=None):
         super().__init__(parent)
         self.append_log = append_log_cb or (lambda x: None)
+        self._portal_id = "uiic"
         self._create_icons()
         self._setup_ui()
+        self._load_data()
+
+    def set_portal(self, portal_id):
+        if not portal_id or portal_id == self._portal_id:
+            return
+        self._portal_id = portal_id
         self._load_data()
 
     def _create_icons(self):
@@ -189,7 +196,7 @@ class SettingsPage(QWidget):
         l.addStretch(); s.setWidget(w); return s
 
     def _load_data(self):
-        s = load_settings()
+        s = load_settings(portal_id=self._portal_id)
         self.inp_username.setText(s.get("username", ""))
         self.inp_password.setText(s.get("password", ""))
         self.inp_url.setText(s.get("portal_url", ""))
@@ -206,7 +213,7 @@ class SettingsPage(QWidget):
         self.inp_pdf_date.setText(" | ".join(s.get("pdf_invoice_date_labels", [])))
 
         # Field Mapping
-        m = load_field_mapping()
+        m = load_field_mapping(portal_id=self._portal_id)
         entries = [(k, v) for k, v in m.items() if not k.startswith("_")]
         self.mapping_table.setRowCount(len(entries))
         for i, (fn, cfg) in enumerate(entries):
@@ -243,7 +250,7 @@ class SettingsPage(QWidget):
         self._filter_table(self.search_input.text())
 
         # Doc Mapping
-        dm = load_doc_mapping()
+        dm = load_doc_mapping(portal_id=self._portal_id)
         rows = []
         for sk in ("claim_documents_tab", "claim_assessment_tab"):
             sec = dm.get(sk, {})
@@ -300,7 +307,7 @@ class SettingsPage(QWidget):
 
     def _save_all(self):
         try:
-            current_settings = load_settings()
+            current_settings = load_settings(portal_id=self._portal_id)
             def _int_from_input(widget, label, default):
                 raw = widget.text().strip()
                 if not raw:
@@ -325,10 +332,10 @@ class SettingsPage(QWidget):
                 "pdf_invoice_no_labels": [l.strip() for l in self.inp_pdf_inv.text().split("|") if l.strip()],
                 "pdf_invoice_date_labels": [l.strip() for l in self.inp_pdf_date.text().split("|") if l.strip()],
             })
-            save_settings(current_settings)
+            save_settings(current_settings, portal_id=self._portal_id)
 
             # Field Mapping Save
-            m = load_field_mapping()
+            m = load_field_mapping(portal_id=self._portal_id)
             nm = {k: v for k, v in m.items() if k.startswith("_")}
             for r in range(self.mapping_table.rowCount()):
                 fn = self.mapping_table.item(r, 0).text()
@@ -345,10 +352,10 @@ class SettingsPage(QWidget):
                 labels = [l.strip() for l in lt.split("|") if l.strip()]
                 nm[fn] = {**old, "sheet": sh, "search_labels": labels, "col_offset": co}
                 if "search_label" in nm[fn]: del nm[fn]["search_label"]
-            save_field_mapping(nm)
+            save_field_mapping(nm, portal_id=self._portal_id)
 
             # Doc Mapping Save
-            dm = load_doc_mapping()
+            dm = load_doc_mapping(portal_id=self._portal_id)
             cd, ad, ud = {}, {}, {}
             for r in range(self.doc_table.rowCount()):
                 sec = self.doc_table.item(r, 0).text()
@@ -369,7 +376,7 @@ class SettingsPage(QWidget):
             dm["claim_assessment_tab"] = ad
             if ud:
                 dm["document_upload_tab"] = ud
-            save_doc_mapping(dm)
+            save_doc_mapping(dm, portal_id=self._portal_id)
 
             self.append_log("\u2705  Settings saved.")
             QMessageBox.information(self, "Success", "All settings saved.")
@@ -378,9 +385,9 @@ class SettingsPage(QWidget):
 
     def _reset_defaults(self):
         if QMessageBox.question(self, "Reset", "Reset all to defaults?") == QMessageBox.StandardButton.Yes:
-            reset_field_mapping(); reset_doc_mapping()
+            reset_field_mapping(portal_id=self._portal_id); reset_doc_mapping(portal_id=self._portal_id)
             # Reset user settings by removing file
-            sp = settings_paths()
+            sp = settings_paths(portal_id=self._portal_id)
             if os.path.exists(sp["user"]): os.remove(sp["user"])
             self._load_data()
             self.append_log("\u2139  Settings reset.")

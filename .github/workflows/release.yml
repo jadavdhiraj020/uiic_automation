@@ -133,6 +133,7 @@ jobs:
           $env:PADDLEOCR_HOME            = "${{ github.workspace }}\build_assets\paddleocr"
           $env:PYTHONWARNINGS             = "ignore:The numpy.array_api submodule is still experimental.:UserWarning,ignore:invalid escape sequence.*:SyntaxWarning"
 
+          Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
           python -m PyInstaller --noconfirm --clean uiic_automation.spec
         shell: pwsh
 

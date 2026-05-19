@@ -15,7 +15,7 @@ Backward Compatibility:
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 from app.utils import resource_path, user_data_dir
@@ -107,6 +107,37 @@ def get_active_portal_id() -> Optional[str]:
 # Config path helpers  (portal-aware equivalents of utils.py functions)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _legacy_config_paths(filename: str) -> dict:
+    return {
+        "default": resource_path("app", "config", filename),
+        "user": os.path.join(user_data_dir("config"), filename),
+    }
+
+
+def _portal_config_paths(info: PortalInfo, filename: str) -> dict:
+    """Resolve config paths while preserving UIIC's stable legacy runtime."""
+    portal_paths = {
+        "default": os.path.join(info.bundled_config_dir(), filename),
+        "user": os.path.join(info.user_config_dir(), filename),
+    }
+
+    if info.portal_id != "uiic":
+        return portal_paths
+
+    legacy_paths = _legacy_config_paths(filename)
+    return {
+        "default": (
+            portal_paths["default"]
+            if os.path.exists(portal_paths["default"])
+            else legacy_paths["default"]
+        ),
+        "user": (
+            portal_paths["user"]
+            if os.path.exists(portal_paths["user"])
+            else legacy_paths["user"]
+        ),
+    }
+
 def portal_settings_paths(portal_id: Optional[str] = None) -> dict:
     """
     Return ``{"default": ..., "user": ...}`` settings paths for a portal.
@@ -119,19 +150,13 @@ def portal_settings_paths(portal_id: Optional[str] = None) -> dict:
 
     if portal_id is None:
         # No portal selected → original behavior
-        return {
-            "default": resource_path("app", "config", "settings.json"),
-            "user":    os.path.join(user_data_dir("config"), "settings.json"),
-        }
+        return _legacy_config_paths("settings.json")
 
     info = _PORTALS.get(portal_id)
     if info is None:
         raise ValueError(f"Unknown portal: {portal_id!r}")
 
-    return {
-        "default": os.path.join(info.bundled_config_dir(), "settings.json"),
-        "user":    os.path.join(info.user_config_dir(), "settings.json"),
-    }
+    return _portal_config_paths(info, "settings.json")
 
 
 def portal_field_mapping_paths(portal_id: Optional[str] = None) -> dict:
@@ -139,19 +164,13 @@ def portal_field_mapping_paths(portal_id: Optional[str] = None) -> dict:
         portal_id = _active_portal_id
 
     if portal_id is None:
-        return {
-            "default": resource_path("app", "config", "field_mapping.json"),
-            "user":    os.path.join(user_data_dir("config"), "field_mapping.json"),
-        }
+        return _legacy_config_paths("field_mapping.json")
 
     info = _PORTALS.get(portal_id)
     if info is None:
         raise ValueError(f"Unknown portal: {portal_id!r}")
 
-    return {
-        "default": os.path.join(info.bundled_config_dir(), "field_mapping.json"),
-        "user":    os.path.join(info.user_config_dir(), "field_mapping.json"),
-    }
+    return _portal_config_paths(info, "field_mapping.json")
 
 
 def portal_doc_mapping_paths(portal_id: Optional[str] = None) -> dict:
@@ -159,19 +178,13 @@ def portal_doc_mapping_paths(portal_id: Optional[str] = None) -> dict:
         portal_id = _active_portal_id
 
     if portal_id is None:
-        return {
-            "default": resource_path("app", "config", "doc_mapping.json"),
-            "user":    os.path.join(user_data_dir("config"), "doc_mapping.json"),
-        }
+        return _legacy_config_paths("doc_mapping.json")
 
     info = _PORTALS.get(portal_id)
     if info is None:
         raise ValueError(f"Unknown portal: {portal_id!r}")
 
-    return {
-        "default": os.path.join(info.bundled_config_dir(), "doc_mapping.json"),
-        "user":    os.path.join(info.user_config_dir(), "doc_mapping.json"),
-    }
+    return _portal_config_paths(info, "doc_mapping.json")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -17,6 +17,7 @@ from pathlib import Path
 APP_NAME = "UIIC_Surveyor_Automation"
 REQUIRED_JSON = ("settings.json", "field_mapping.json", "doc_mapping.json")
 REQUIRED_PORTALS = ("uiic", "newindia")
+MIN_QSS_BYTES = 1024
 
 # Specific PaddleOCR model subdirectory names (relative to .paddleocr root).
 # These are the directories that must be present for CAPTCHA OCR to work in
@@ -39,6 +40,17 @@ def _resource_root(dist_dir: Path) -> Path:
 def _require_file(path: Path, errors: list[str]) -> None:
     if not path.is_file():
         errors.append(f"missing file: {path}")
+
+
+def _require_nonempty_file(path: Path, errors: list[str], *, min_bytes: int = 1) -> bool:
+    if not path.is_file():
+        errors.append(f"missing file: {path}")
+        return False
+    size = path.stat().st_size
+    if size < min_bytes:
+        errors.append(f"file too small: {path} ({size} bytes, expected >= {min_bytes})")
+        return False
+    return True
 
 
 def _require_dir(path: Path, errors: list[str]) -> None:
@@ -67,26 +79,20 @@ def verify(dist_dir: Path) -> list[str]:
     # ── Legacy shared config JSONs ────────────────────────────────────────────
     for name in REQUIRED_JSON:
         path = root / "app" / "config" / name
-        ok = path.is_file()
+        ok = _require_nonempty_file(path, errors)
         checks.append((f"shared config: {name}", ok))
-        if not ok:
-            errors.append(f"missing file: {path}")
 
     # ── Portal-specific config JSONs (UIIC + New India) ───────────────────────
     for portal_id in REQUIRED_PORTALS:
         for name in REQUIRED_JSON:
             path = root / "app" / "portals" / portal_id / "config" / name
-            ok = path.is_file()
+            ok = _require_nonempty_file(path, errors)
             checks.append((f"{portal_id} config: {name}", ok))
-            if not ok:
-                errors.append(f"missing file: {path}")
 
     # ── UI stylesheet ─────────────────────────────────────────────────────────
     qss = root / "app" / "ui" / "styles.qss"
-    ok = qss.is_file()
-    checks.append(("UI: styles.qss", ok))
-    if not ok:
-        errors.append(f"missing file: {qss}")
+    ok = _require_nonempty_file(qss, errors, min_bytes=MIN_QSS_BYTES)
+    checks.append((f"UI: styles.qss >= {MIN_QSS_BYTES} bytes", ok))
 
     # ── App icon (optional warning only) ─────────────────────────────────────
     icon = root / "assets" / "icon.ico"
@@ -128,7 +134,45 @@ def verify(dist_dir: Path) -> list[str]:
                     f"  (CAPTCHA OCR will fail at runtime without this)"
                 )
 
+    # ── Python package structure — catches missing __init__.py bugs ───────────
+    # In PyInstaller onedir mode, pure-Python packages from the app source are
+    # compiled into the PYZ archive (not as visible directories). However, when
+    # collect_submodules() picks them up, PyInstaller records them.  The most
+    # reliable CI-time check is to inspect the Analysis object output — but since
+    # we run this AFTER the build, we check the _internal tree for package
+    # namespace markers OR verify the EXE itself can import key modules.
+    #
+    # Practical approach: verify that the dist directory structure is consistent
+    # by checking for the presence of known non-Python bundled directories.
+    # For Python modules, we check that critical source dirs weren't silently
+    # excluded by confirming collect_submodules would have found them (via
+    # presence of __init__.py in the SOURCE — not in dist, since pyc files
+    # are archived). We surface a WARNING if the source package marker is absent.
+    _REQUIRED_APP_PACKAGES = [
+        # (source-relative path, human label)
+        ("app/portals/newindia/automation/__init__.py",
+         "app.portals.newindia.automation package marker"),
+        ("app/portals/newindia/__init__.py",
+         "app.portals.newindia package marker"),
+        ("app/ui/components/__init__.py",
+         "app.ui.components package marker"),
+    ]
+    # The source tree is the CWD when this script runs in CI (repo root).
+    import pathlib as _pathlib
+    _source_root = _pathlib.Path(__file__).parent.parent  # repo root
+    for rel_path, label in _REQUIRED_APP_PACKAGES:
+        src = _source_root / rel_path
+        if not src.is_file():
+            errors.append(
+                f"Source package marker missing: {rel_path}\n"
+                f"  → '{label}' has no __init__.py — "
+                f"PyInstaller will NOT bundle this package and its modules "
+                f"will raise ModuleNotFoundError at runtime."
+            )
+        checks.append((f"source pkg: {rel_path}", src.is_file()))
+
     return errors, checks
+
 
 
 def main() -> int:
@@ -166,5 +210,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
 

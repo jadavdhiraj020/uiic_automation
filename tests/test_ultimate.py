@@ -5042,6 +5042,7 @@ class TestPreMergeCompression:
             try: os.remove(t)
             except OSError: pass
 
+
     def test_sc28_04_each_file_compressed_at_most_once(self, tmp_path):
         """Each file is compressed at most once even when still over limit after compression."""
         from app.data.folder_scanner import _prepare_files_for_merge
@@ -5330,3 +5331,115 @@ class TestPreMergeCompression:
         for t in tmps:
             try: os.remove(t)
             except OSError: pass
+
+
+class TestPackagedPortalResourceResolution:
+    def _paths_for(self, tmp_path):
+        bundled_root = tmp_path / "bundle"
+        appdata_root = tmp_path / "appdata"
+
+        def fake_resource_path(*parts):
+            return str(bundled_root.joinpath(*parts))
+
+        def fake_user_data_dir(*parts):
+            return str(appdata_root.joinpath(*parts))
+
+        return bundled_root, appdata_root, fake_resource_path, fake_user_data_dir
+
+    def test_uiic_uses_legacy_defaults_when_portal_bundle_missing(self, tmp_path):
+        from app.portals.registry import portal_settings_paths
+
+        bundled_root, appdata_root, fake_resource_path, fake_user_data_dir = self._paths_for(tmp_path)
+        legacy_default = bundled_root / "app" / "config" / "settings.json"
+        legacy_user = appdata_root / "config" / "settings.json"
+        legacy_default.parent.mkdir(parents=True)
+        legacy_user.parent.mkdir(parents=True)
+        legacy_default.write_text("{}", encoding="utf-8")
+        legacy_user.write_text("{}", encoding="utf-8")
+
+        with patch("app.portals.registry.resource_path", side_effect=fake_resource_path), \
+             patch("app.portals.registry.user_data_dir", side_effect=fake_user_data_dir):
+            paths = portal_settings_paths("uiic")
+
+        assert paths["default"] == str(legacy_default)
+        assert paths["user"] == str(legacy_user)
+
+    def test_uiic_prefers_portal_specific_files_when_present(self, tmp_path):
+        from app.portals.registry import portal_doc_mapping_paths
+
+        bundled_root, appdata_root, fake_resource_path, fake_user_data_dir = self._paths_for(tmp_path)
+        portal_default = bundled_root / "app" / "portals" / "uiic" / "config" / "doc_mapping.json"
+        portal_user = appdata_root / "portals" / "uiic" / "config" / "doc_mapping.json"
+        portal_default.parent.mkdir(parents=True)
+        portal_user.parent.mkdir(parents=True)
+        portal_default.write_text("{}", encoding="utf-8")
+        portal_user.write_text("{}", encoding="utf-8")
+
+        with patch("app.portals.registry.resource_path", side_effect=fake_resource_path), \
+             patch("app.portals.registry.user_data_dir", side_effect=fake_user_data_dir):
+            paths = portal_doc_mapping_paths("uiic")
+
+        assert paths["default"] == str(portal_default)
+        assert paths["user"] == str(portal_user)
+
+    def test_newindia_never_falls_back_to_legacy_uiic_config(self, tmp_path):
+        from app.portals.registry import portal_field_mapping_paths
+
+        bundled_root, appdata_root, fake_resource_path, fake_user_data_dir = self._paths_for(tmp_path)
+        legacy_default = bundled_root / "app" / "config" / "field_mapping.json"
+        legacy_user = appdata_root / "config" / "field_mapping.json"
+        legacy_default.parent.mkdir(parents=True)
+        legacy_user.parent.mkdir(parents=True)
+        legacy_default.write_text("{}", encoding="utf-8")
+        legacy_user.write_text("{}", encoding="utf-8")
+
+        with patch("app.portals.registry.resource_path", side_effect=fake_resource_path), \
+             patch("app.portals.registry.user_data_dir", side_effect=fake_user_data_dir):
+            paths = portal_field_mapping_paths("newindia")
+
+        assert paths["default"] == str(bundled_root / "app" / "portals" / "newindia" / "config" / "field_mapping.json")
+        assert paths["user"] == str(appdata_root / "portals" / "newindia" / "config" / "field_mapping.json")
+        assert paths["default"] != str(legacy_default)
+        assert paths["user"] != str(legacy_user)
+
+    @pytest.mark.skipif(not _HAS_PYQT, reason="PyQt6 is not available")
+    def test_settings_page_uses_explicit_selected_portal(self):
+        from PyQt6.QtWidgets import QMessageBox
+        from app.ui.components.settings_page import SettingsPage
+
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        QApplication.instance() or QApplication([])
+        settings = {
+            "username": "",
+            "password": "",
+            "portal_url": "",
+            "pdf_invoice_no_labels": [],
+            "pdf_invoice_date_labels": [],
+        }
+
+        with patch("app.ui.components.settings_page.load_settings", return_value=dict(settings)) as load_settings_mock, \
+             patch("app.ui.components.settings_page.load_field_mapping", return_value={}) as load_fields_mock, \
+             patch("app.ui.components.settings_page.load_doc_mapping", return_value={}) as load_docs_mock, \
+             patch("app.ui.components.settings_page.save_settings") as save_settings_mock, \
+             patch("app.ui.components.settings_page.save_field_mapping") as save_fields_mock, \
+             patch("app.ui.components.settings_page.save_doc_mapping") as save_docs_mock, \
+             patch("app.ui.components.settings_page.reset_field_mapping") as reset_fields_mock, \
+             patch("app.ui.components.settings_page.reset_doc_mapping") as reset_docs_mock, \
+             patch("app.ui.components.settings_page.settings_paths", return_value={"user": ""}), \
+             patch.object(QMessageBox, "information"), \
+             patch.object(QMessageBox, "critical"), \
+             patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
+            page = SettingsPage()
+            page.set_portal("newindia")
+            page._save_all()
+            page._reset_defaults()
+
+        assert load_settings_mock.call_args.kwargs["portal_id"] == "newindia"
+        assert load_fields_mock.call_args.kwargs["portal_id"] == "newindia"
+        assert load_docs_mock.call_args.kwargs["portal_id"] == "newindia"
+        assert save_settings_mock.call_args.kwargs["portal_id"] == "newindia"
+        assert save_fields_mock.call_args.kwargs["portal_id"] == "newindia"
+        assert save_docs_mock.call_args.kwargs["portal_id"] == "newindia"
+        assert reset_fields_mock.call_args.kwargs["portal_id"] == "newindia"
+        assert reset_docs_mock.call_args.kwargs["portal_id"] == "newindia"
+        page.deleteLater()
