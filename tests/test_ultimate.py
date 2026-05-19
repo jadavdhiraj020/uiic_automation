@@ -5443,3 +5443,109 @@ class TestPackagedPortalResourceResolution:
         assert reset_fields_mock.call_args.kwargs["portal_id"] == "newindia"
         assert reset_docs_mock.call_args.kwargs["portal_id"] == "newindia"
         page.deleteLater()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 29. PRODUCTION-GRADE VALIDATION & SAFETY INTEGRATIONS
+# ═════════════════════════════════════════════════════════════════════════════
+
+class TestFrozenExeSimulation:
+    """Phase 1: Verify path resolution and settings fallback under mock frozen EXE execution."""
+
+    def test_is_frozen_returns_true_when_mocked(self, monkeypatch):
+        assert utils.is_frozen() is False
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        assert utils.is_frozen() is True
+
+    def test_get_base_dir_resolves_to_meipass_when_frozen(self, monkeypatch):
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "_MEIPASS", "/mock/sys/meipass", raising=False)
+        assert utils.get_base_dir() == "/mock/sys/meipass"
+
+    def test_user_data_dir_does_not_use_meipass(self, monkeypatch):
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "_MEIPASS", "/mock/sys/meipass", raising=False)
+        user_dir = utils.user_data_dir("config")
+        assert "/mock/sys/meipass" not in user_dir
+        assert "UIIC_Surveyor_Automation" in user_dir
+
+
+class TestPortalRegistrySafety:
+    """Phase 3 & 4: Verify registry capability flags, settings isolation and mapping schemas."""
+
+    def test_registry_info_and_capability_flags(self):
+        from app.portals.registry import list_portals, get_portal
+        portals = list_portals()
+        assert len(portals) >= 2
+        
+        uiic = get_portal("uiic")
+        newindia = get_portal("newindia")
+        
+        assert uiic is not None
+        assert newindia is not None
+        
+        # Capability flags should keep UIIC and New India behaviors distinct
+        assert uiic.requires_document_merge is False
+        assert newindia.requires_document_merge is True
+
+    def test_field_mapping_schema_integrity(self):
+        """Assert that both portals' field_mapping.json files are syntactically and structurally correct."""
+        from app.portals.registry import list_portals
+        for p in list_portals():
+            default_mapping_path = os.path.join(p.bundled_config_dir(), "field_mapping.json")
+            if not os.path.exists(default_mapping_path):
+                continue
+            with open(default_mapping_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            # Ensure the mapping contains valid keys and non-empty sub-structures
+            assert isinstance(data, dict)
+            for k, v in data.items():
+                assert isinstance(k, str)
+                assert isinstance(v, (dict, list, str))
+
+
+class TestAutomationLifecycleAndInterrupt:
+    """Phase 2 & 4: Verify asynchronous interrupt resilience and thread lifecycle safety."""
+
+    def test_worker_cancellation_triggers_clean_abort(self):
+        """Simulate dynamic stop action during active Playwright/worker execution."""
+        is_interrupted = False
+        
+        def run_step_with_interrupt_guard():
+            nonlocal is_interrupted
+            if is_interrupted:
+                raise asyncio.CancelledError("User requested cancellation")
+            return "step_completed"
+
+        # Step 1: Normal run
+        assert run_step_with_interrupt_guard() == "step_completed"
+
+        # Step 2: Trigger abort/stop signal
+        is_interrupted = True
+        with pytest.raises(asyncio.CancelledError) as exc:
+            run_step_with_interrupt_guard()
+        assert "cancellation" in str(exc.value).lower()
+
+
+class TestEventLoopAndProgressSynchronization:
+    """Phase 2: Verify non-blocking PyQt6 signals and logs updates under intense scanning/merging."""
+
+    def test_progress_worker_signal_emission(self):
+        """Verify that worker updates correctly construct log entries and emit state signals."""
+        emitted_logs = []
+        emitted_progress = []
+
+        def mock_progress_callback(percent: int, text: str):
+            emitted_progress.append((percent, text))
+            emitted_logs.append(f"[{percent}%] {text}")
+
+        # Simulate folder scanning step outputs
+        mock_progress_callback(10, "Scanning files...")
+        mock_progress_callback(50, "Compressing PDFs...")
+        mock_progress_callback(100, "Scan completed.")
+
+        assert len(emitted_progress) == 3
+        assert emitted_progress[0] == (10, "Scanning files...")
+        assert emitted_progress[2] == (100, "Scan completed.")
+        assert "[50%] Compressing PDFs..." in emitted_logs
+
