@@ -213,48 +213,13 @@ async def do_login(
 
     if stop_cb(): return False
 
-    # ── 3. Try reCAPTCHA Auto-Solve ───────────────────────────────────────────
-    captcha_auto_solved = await _try_auto_solve_captcha(page, log)
-
-    if stop_cb(): return False
-
-    if captcha_auto_solved:
-        # CAPTCHA solved by bot — wait for Login button to enable, then click
-        clicked = await _wait_for_login_btn_enabled_and_click(page, log)
-        if clicked:
-            # Wait up to 15s for navigation (fast path — everything is automated)
-            if isinstance(log, AutomationLogger):
-                log.wait("login (up to 15s)...")
-            success = await _wait_for_url_change(page, log, stop_cb, timeout_seconds=15)
-            if success:
-                if isinstance(log, AutomationLogger):
-                    log.wait("session stabilization (3s)")
-                await asyncio.sleep(3)
-                if isinstance(log, AutomationLogger):
-                    log.outdent()
-                return True
-            # URL didn't change in 15s — fall through to manual wait
-            if isinstance(log, AutomationLogger):
-                log.warning("Auto-login did not navigate in 15s — switching to manual wait.")
-
-    # ── 4. Manual Fallback ────────────────────────────────────────────────────
-    # Reaches here if:
-    #   a) reCAPTCHA auto-solve failed (image challenge appeared), OR
-    #   b) Login button click failed, OR
-    #   c) URL didn't change after auto-click
-    # User must solve CAPTCHA (if not already done) and click Login manually.
-    #
-    # If the auto-path already consumed its 15s window without success, deduct
-    # those seconds from the manual timeout so the total never exceeds 30s.
-    _manual_timeout = 30 if not captcha_auto_solved else max(15, 30 - 15)
-
+    # ── 3. Wait for Manual Login ──────────────────────────────────────────────
     if isinstance(log, AutomationLogger):
-        log.wait(f"manual CAPTCHA + login (up to {_manual_timeout}s)...")
+        log.wait("manual CAPTCHA + login (up to 30s)...")
     else:
-        log(f"⏳ Waiting for manual CAPTCHA + login (up to {_manual_timeout}s)...")
+        log("⏳ Waiting for manual CAPTCHA + login (up to 30s)...")
 
-    success = await _wait_for_url_change(page, log, stop_cb, timeout_seconds=_manual_timeout)
-
+    success = await _wait_for_url_change(page, log, stop_cb, timeout_seconds=45)
 
     if success:
         if isinstance(log, AutomationLogger):
