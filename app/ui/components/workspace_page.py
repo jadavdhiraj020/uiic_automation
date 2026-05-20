@@ -439,16 +439,8 @@ class DataReviewPanel(QWidget):
         self._tables = []
         self._metadata = get_portal_ui_metadata("uiic")
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.inner = QWidget()
-        self.inner.setObjectName("workspaceScrollInner")
-        self.lay = QVBoxLayout(self.inner)
+        self.setObjectName("workspaceScrollInner")
+        self.lay = QVBoxLayout(self)
         self.lay.setContentsMargins(32, 28, 32, 28)
         self.lay.setSpacing(16)
 
@@ -475,8 +467,6 @@ class DataReviewPanel(QWidget):
         self.no_results_card.setVisible(False)
         self.lay.addWidget(self.no_results_card)
         self.lay.addStretch()
-        scroll.setWidget(self.inner)
-        root.addWidget(scroll)
 
     def reset(self):
         self.update_data(None, None)
@@ -549,7 +539,7 @@ class DataReviewPanel(QWidget):
         """Render all extracted fields in a single flat table — no category grouping."""
         table = self._build_table(rows)
         self._tables.append((table, table, "all", rows))
-        self.lay.addWidget(table)
+        self.lay.addWidget(table, 1)
 
     def _build_table(self, rows):
         table = QTableWidget(0, 4)
@@ -564,8 +554,8 @@ class DataReviewPanel(QWidget):
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         table.setWordWrap(False)
-        table.setMinimumHeight(min(380, max(120, 48 + len(rows) * 42)))
         table.setRowCount(len(rows))
+        table.setMinimumHeight(550)
         for i, (label, value, is_critical, source) in enumerate(rows):
             has_val = bool(value and str(value).strip() not in ("", "—"))
             table.setItem(i, 0, QTableWidgetItem(label))
@@ -604,14 +594,8 @@ class DataReviewPanel(QWidget):
 class DocumentReviewPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.inner = QWidget()
-        self.lay = QVBoxLayout(self.inner)
-        self.inner.setObjectName("workspaceScrollInner")
+        self.setObjectName("workspaceScrollInner")
+        self.lay = QVBoxLayout(self)
         self.lay.setContentsMargins(32, 28, 32, 28)
         self.lay.setSpacing(16)
         self.header = QLabel("Document Review")
@@ -632,8 +616,6 @@ class DocumentReviewPanel(QWidget):
         self.lay.addWidget(self.no_results_card)
         self._doc_tables = []
         self.lay.addStretch()
-        scroll.setWidget(self.inner)
-        root.addWidget(scroll)
 
     def reset(self):
         self.update_data(None)
@@ -727,8 +709,8 @@ class DocumentReviewPanel(QWidget):
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         table.setWordWrap(False)
-        table.setMinimumHeight(min(480, max(96, 48 + len(rows) * 38)))
         table.setRowCount(len(rows))
+        table.setMinimumHeight(550)
         for i, row_data in enumerate(rows):
             # Support both old 4-tuple and new 5-tuple (with compressed flag)
             if len(row_data) == 5:
@@ -750,7 +732,7 @@ class DocumentReviewPanel(QWidget):
             table.setItem(i, 2, QTableWidgetItem(filename))
             table.setItem(i, 3, QTableWidgetItem(detail or "—"))
         self._doc_tables.append((table, table, "all"))
-        self.lay.addWidget(table)
+        self.lay.addWidget(table, 1)
 
     def _filter_documents(self, text):
         text = (text or "").strip().lower()
