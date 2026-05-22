@@ -133,6 +133,9 @@ class SettingsPage(QWidget):
         l.addWidget(_f("Field Wait (ms)"))
         self.inp_field_wait = QLineEdit(); self.inp_field_wait.setObjectName("settingsInput"); self.inp_field_wait.setMinimumHeight(40); l.addWidget(self.inp_field_wait)
 
+        l.addWidget(_f("Manual Login Timeout (s)"))
+        self.inp_manual_login_timeout = QLineEdit(); self.inp_manual_login_timeout.setObjectName("settingsInput"); self.inp_manual_login_timeout.setMinimumHeight(40); l.addWidget(self.inp_manual_login_timeout)
+
         l.addStretch(); s.setWidget(w); return s
 
     def _toggle_pwd(self, ch):
@@ -208,6 +211,7 @@ class SettingsPage(QWidget):
         self.inp_captcha.setText(str(s.get("captcha_max_retries", 2)))
         self.inp_upload_wait.setText(str(s.get("upload_wait_ms", 3000)))
         self.inp_field_wait.setText(str(s.get("field_wait_ms", 600)))
+        self.inp_manual_login_timeout.setText(str(s.get("manual_login_timeout_s", 45)))
         
         self.inp_pdf_inv.setText(" | ".join(s.get("pdf_invoice_no_labels", [])))
         self.inp_pdf_date.setText(" | ".join(s.get("pdf_invoice_date_labels", [])))
@@ -329,6 +333,7 @@ class SettingsPage(QWidget):
                 "captcha_max_retries": _int_from_input(self.inp_captcha, "Captcha Max Retries", 2),
                 "upload_wait_ms": _int_from_input(self.inp_upload_wait, "Upload Wait (ms)", 3000),
                 "field_wait_ms": _int_from_input(self.inp_field_wait, "Field Wait (ms)", 600),
+                "manual_login_timeout_s": _int_from_input(self.inp_manual_login_timeout, "Manual Login Timeout (s)", 45),
                 "pdf_invoice_no_labels": [l.strip() for l in self.inp_pdf_inv.text().split("|") if l.strip()],
                 "pdf_invoice_date_labels": [l.strip() for l in self.inp_pdf_date.text().split("|") if l.strip()],
             })

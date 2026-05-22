@@ -76,10 +76,27 @@ class ClaimFolderService:
 
             # SSOT is now fully isolated and calculated directly within excel_reader.py
 
+            # ── Auto-generate primary assessment Excel if not provided by user ──
+            if self.portal_id == "newindia" and "assessment_excel" not in claim.assessment_files:
+                if scan_result.excel_path:
+                    try:
+                        from app.data.assessment_generator import generate_primary_assessment
+                        generated_path = generate_primary_assessment(
+                            scan_result.excel_path,
+                            os.path.dirname(scan_result.excel_path),
+                        )
+                        if generated_path:
+                            claim.assessment_files["assessment_excel"] = generated_path
+                            logs.append(f"🔧 Auto-generated: {Path(generated_path).name} from {Path(scan_result.excel_path).name}")
+                        else:
+                            logs.append("⚠️  Auto-generation skipped: no parts/labour data found in main Excel")
+                    except Exception as gen_exc:
+                        logs.append(f"⚠️  Auto-generation of assessment Excel failed: {gen_exc}")
+
             self._extract_pdf_invoice_data(scan_result, claim, logs)
 
             # ── Run Cheque OCR during folder load if bank details are missing in Excel ──
-            if not claim.ifsc_code or not claim.account_number:
+            if not getattr(claim, "ifsc_code", None) or not getattr(claim, "account_number", None):
                 cheque_path = ""
                 all_docs = {**claim.claim_doc_files, **(claim.upload_doc_files or {})}
                 for doc_name, file_path in all_docs.items():
@@ -99,22 +116,28 @@ class ClaimFolderService:
                         
                         cheque_details = extractor.extract_details(
                             log=ocr_log_fn,
-                            excel_ifsc=claim.ifsc_code or "",
-                            excel_account=claim.account_number or "",
+                            excel_ifsc=getattr(claim, "ifsc_code", None) or "",
+                            excel_account=getattr(claim, "account_number", None) or "",
                         )
                         
                         if cheque_details.get("ifsc"):
                             claim.ifsc_code = cheque_details["ifsc"]
-                            claim._excel_coords["ifsc_code"] = "Cheque OCR"
-                            claim._excel_logs.append(f"  📊 ifsc_code: '{claim.ifsc_code}' (Source: Cheque OCR)")
+                            if hasattr(claim, "_excel_coords"):
+                                claim._excel_coords["ifsc_code"] = "Cheque OCR"
+                            if hasattr(claim, "_excel_logs"):
+                                claim._excel_logs.append(f"  📊 ifsc_code: '{claim.ifsc_code}' (Source: Cheque OCR)")
                         if cheque_details.get("account_number"):
                             claim.account_number = cheque_details["account_number"]
-                            claim._excel_coords["account_number"] = "Cheque OCR"
-                            claim._excel_logs.append(f"  📊 account_number: '{claim.account_number}' (Source: Cheque OCR)")
+                            if hasattr(claim, "_excel_coords"):
+                                claim._excel_coords["account_number"] = "Cheque OCR"
+                            if hasattr(claim, "_excel_logs"):
+                                claim._excel_logs.append(f"  📊 account_number: '{claim.account_number}' (Source: Cheque OCR)")
                         if cheque_details.get("account_type"):
                             claim.account_type = cheque_details["account_type"]
-                            claim._excel_coords["account_type"] = "Cheque OCR"
-                            claim._excel_logs.append(f"  📊 account_type: '{claim.account_type}' (Source: Cheque OCR)")
+                            if hasattr(claim, "_excel_coords"):
+                                claim._excel_coords["account_type"] = "Cheque OCR"
+                            if hasattr(claim, "_excel_logs"):
+                                claim._excel_logs.append(f"  📊 account_type: '{claim.account_type}' (Source: Cheque OCR)")
                             
                         logs.extend(ocr_logs)
                     except Exception as ocr_exc:

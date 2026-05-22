@@ -91,6 +91,8 @@ class MainWindow(QMainWindow):
         self._claim = None
         self._scan_result = None
         self._log_file = None
+        self._scan_thread = None
+        self._scan_worker = None
 
         self._open_log_file()
         self._create_icons()
@@ -361,17 +363,43 @@ class MainWindow(QMainWindow):
             self._scan_folder(folder)
 
     def _scan_folder(self, folder):
-        from app.ui.services.claim_folder_service import ClaimFolderService
+        from app.ui.worker import FolderScanWorker
 
         portal = get_active_portal()
         portal_id = get_active_portal_id() or "uiic"
         config_dir = os.path.dirname(doc_mapping_paths(portal_id=portal_id)["default"]) if portal else CONFIG_DIR
-        service = ClaimFolderService(config_dir=config_dir, portal_id=portal_id)
-        result = service.process_folder(folder)
 
+        # Update status to running scan
+        self._set_status("running", "Scanning...")
+        self.workspace_page.doc_status_label.setText("📁 Indexing and extracting documents via OCR... Please wait.")
+        self._append_log(f"📁 Starting background scan for: {folder}")
+
+        # Disable buttons to prevent concurrent triggers
+        self.workspace_page.btn_start.setEnabled(False)
+        btn_browse = self.workspace_page.findChild(QPushButton, "btnBrowse")
+        if btn_browse:
+            btn_browse.setEnabled(False)
+
+        # Initialize thread and worker
+        self._scan_thread = QThread()
+        self._scan_worker = FolderScanWorker(folder, config_dir, portal_id)
+        self._scan_worker.moveToThread(self._scan_thread)
+
+        # Connect signals
+        self._scan_thread.started.connect(self._scan_worker.run)
+        self._scan_worker.done_signal.connect(self._on_scan_completed)
+        self._scan_worker.done_signal.connect(self._scan_thread.quit)
+        self._scan_thread.finished.connect(self._on_scan_thread_finished)
+
+        # Start background scan thread
+        self._scan_thread.start()
+
+    def _on_scan_completed(self, result):
+        # Log all lines produced by the scanner service
         for line in result.log_lines:
             self._append_log(line)
 
+        # Process success/failure
         if result.success:
             self._claim = result.claim
             self._scan_result = result.scan_result
@@ -385,6 +413,18 @@ class MainWindow(QMainWindow):
             )
             self.workspace_page.set_scan_failed()
             self._set_status("error", "Scan Failed")
+
+        # Re-enable buttons
+        self.workspace_page.btn_start.setEnabled(True)
+        btn_browse = self.workspace_page.findChild(QPushButton, "btnBrowse")
+        if btn_browse:
+            btn_browse.setEnabled(True)
+
+    def _on_scan_thread_finished(self):
+        # Safely clean up thread and worker references
+        self._scan_worker = None
+        self._scan_thread = None
+
 
     def _start_automation(self):
         if not self._claim:
@@ -494,6 +534,12 @@ class MainWindow(QMainWindow):
             if not self._thread.wait(5000):  # up to 5s graceful wait
                 self._thread.terminate()     # force-kill if still running
                 self._thread.wait(2000)
+
+        # ── Gracefully stop folder scanning thread before closing ───────────────
+        if hasattr(self, "_scan_thread") and self._scan_thread and self._scan_thread.isRunning():
+            self._scan_thread.quit()
+            self._scan_thread.wait(2000)
+
         if self._log_file:
             try:
                 self._log_file.close()

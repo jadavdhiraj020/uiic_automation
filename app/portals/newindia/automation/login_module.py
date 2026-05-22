@@ -219,7 +219,8 @@ async def do_login(
     else:
         log("⏳ Waiting for manual CAPTCHA + login (up to 30s)...")
 
-    success = await _wait_for_url_change(page, log, stop_cb, timeout_seconds=45)
+    manual_login_timeout = settings.get("manual_login_timeout_s", 45)
+    success = await _wait_for_url_change(page, log, stop_cb, timeout_seconds=manual_login_timeout)
 
     if success:
         if isinstance(log, AutomationLogger):

@@ -19,6 +19,7 @@ import sys
 import logging
 import tempfile
 import traceback
+import threading
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 
@@ -101,6 +102,7 @@ _KNOWN_BANK_PREFIXES = {
 
 _doc_ocr = None
 _doc_ocr_error = None
+_doc_ocr_lock = threading.Lock()
 
 
 def _get_doc_ocr():
@@ -116,49 +118,51 @@ def _get_doc_ocr():
     if _doc_ocr is not None:
         return _doc_ocr
 
-    try:
-        logger.info("[OCR] Initializing PaddleOCR for document OCR...")
+    with _doc_ocr_lock:
+        if _doc_ocr is None:
+            try:
+                logger.info("[OCR] Initializing PaddleOCR for document OCR...")
 
-        # Handle EXE mode (PyInstaller)
-        if getattr(sys, "frozen", False):
-            base = sys._MEIPASS
-            paddle_libs = os.path.join(base, 'paddle', 'libs')
-            if os.path.isdir(paddle_libs):
-                os.environ['PATH'] = paddle_libs + os.pathsep + os.environ.get('PATH', '')
-                try:
-                    os.add_dll_directory(paddle_libs)
-                except (OSError, AttributeError):
-                    pass
-                try:
-                    os.add_dll_directory(base)
-                except (OSError, AttributeError):
-                    pass
+                # Handle EXE mode (PyInstaller)
+                if getattr(sys, "frozen", False):
+                    base = sys._MEIPASS
+                    paddle_libs = os.path.join(base, 'paddle', 'libs')
+                    if os.path.isdir(paddle_libs):
+                        os.environ['PATH'] = paddle_libs + os.pathsep + os.environ.get('PATH', '')
+                        try:
+                            os.add_dll_directory(paddle_libs)
+                        except (OSError, AttributeError):
+                            pass
+                        try:
+                            os.add_dll_directory(base)
+                        except (OSError, AttributeError):
+                            pass
 
-        from paddleocr import PaddleOCR
+                from paddleocr import PaddleOCR
 
-        kwargs = dict(use_angle_cls=True, lang='en', show_log=False)
+                kwargs = dict(use_angle_cls=True, lang='en', show_log=False)
 
-        # Use bundled models if available (PyInstaller EXE)
-        if getattr(sys, "frozen", False):
-            model_root = os.path.join(sys._MEIPASS, ".paddleocr", "whl")
-            det_dir = os.path.join(model_root, "det", "en", "en_PP-OCRv3_det_infer")
-            rec_dir = os.path.join(model_root, "rec", "en", "en_PP-OCRv4_rec_infer")
-            cls_dir = os.path.join(model_root, "cls", "ch_ppocr_mobile_v2.0_cls_infer")
-            if os.path.isdir(det_dir):
-                kwargs["det_model_dir"] = det_dir
-            if os.path.isdir(rec_dir):
-                kwargs["rec_model_dir"] = rec_dir
-            if os.path.isdir(cls_dir):
-                kwargs["cls_model_dir"] = cls_dir
+                # Use bundled models if available (PyInstaller EXE)
+                if getattr(sys, "frozen", False):
+                    model_root = os.path.join(sys._MEIPASS, ".paddleocr", "whl")
+                    det_dir = os.path.join(model_root, "det", "en", "en_PP-OCRv3_det_infer")
+                    rec_dir = os.path.join(model_root, "rec", "en", "en_PP-OCRv4_rec_infer")
+                    cls_dir = os.path.join(model_root, "cls", "ch_ppocr_mobile_v2.0_cls_infer")
+                    if os.path.isdir(det_dir):
+                        kwargs["det_model_dir"] = det_dir
+                    if os.path.isdir(rec_dir):
+                        kwargs["rec_model_dir"] = rec_dir
+                    if os.path.isdir(cls_dir):
+                        kwargs["cls_model_dir"] = cls_dir
 
-        _doc_ocr = PaddleOCR(**kwargs)
-        logger.info("[OCR] PaddleOCR (document mode) initialized successfully.")
+                _doc_ocr = PaddleOCR(**kwargs)
+                logger.info("[OCR] PaddleOCR (document mode) initialized successfully.")
 
-    except Exception as exc:
-        _doc_ocr_error = f"{type(exc).__name__}: {exc}"
-        logger.error(f"[OCR] PaddleOCR document-OCR init FAILED: {exc}")
-        logger.error(traceback.format_exc())
-        raise
+            except Exception as exc:
+                _doc_ocr_error = f"{type(exc).__name__}: {exc}"
+                logger.error(f"[OCR] PaddleOCR document-OCR init FAILED: {exc}")
+                logger.error(traceback.format_exc())
+                raise
 
     return _doc_ocr
 
@@ -233,9 +237,9 @@ class ChequeExtractor:
 
         # --- Step 1: Extract text blocks with spatial info ---
         if ext == ".pdf":
-            candidates = self._extract_pdf(log)
+            candidates = self._extract_pdf(log, excel_ifsc, excel_account)
         elif ext in self.SUPPORTED_IMAGE_EXTS:
-            candidates = self._extract_image(self.doc_path, log)
+            candidates = self._extract_image(self.doc_path, log, excel_ifsc, excel_account)
         else:
             self._log(log, "warning", f"Unsupported file type '{ext}'; skipping OCR.")
             return result
@@ -279,7 +283,7 @@ class ChequeExtractor:
     # PDF extraction
     # ══════════════════════════════════════════════════════════════════════════
 
-    def _extract_pdf(self, log) -> List[str]:
+    def _extract_pdf(self, log, excel_ifsc: str = "", excel_account: str = "") -> List[str]:
         """Try pdfplumber text; if empty (scanned), render pages and OCR."""
         texts: List[str] = []
         try:
@@ -297,12 +301,12 @@ class ChequeExtractor:
                     for i, page in enumerate(pdf.pages):
                         try:
                             pil_img = page.to_image(resolution=300).original
-                            texts.extend(self._ocr_pil(pil_img, log))
+                            texts.extend(self._ocr_pil(pil_img, log, excel_ifsc, excel_account))
                         except Exception as e:
                             self._log(log, "warning", f"Page {i} OCR failed: {str(e)[:80]}")
         except ImportError:
             self._log(log, "warning", "pdfplumber not installed; attempting image OCR directly on PDF.")
-            texts.extend(self._extract_image(self.doc_path, log))
+            texts.extend(self._extract_image(self.doc_path, log, excel_ifsc, excel_account))
         except Exception as e:
             self._log(log, "error", f"PDF extraction error: {str(e)[:100]}")
         return texts
@@ -311,12 +315,12 @@ class ChequeExtractor:
     # Image extraction with OpenCV preprocessing
     # ══════════════════════════════════════════════════════════════════════════
 
-    def _extract_image(self, path: str, log) -> List[str]:
+    def _extract_image(self, path: str, log, excel_ifsc: str = "", excel_account: str = "") -> List[str]:
         """Load an image file and run preprocessed OCR."""
         try:
             from PIL import Image
             img = Image.open(path)
-            return self._ocr_pil(img, log)
+            return self._ocr_pil(img, log, excel_ifsc, excel_account)
         except ImportError:
             self._log(log, "warning", "Pillow not installed; cannot process image.")
             return []
@@ -431,7 +435,7 @@ class ChequeExtractor:
         except Exception:
             return image  # Silently return original on any error
 
-    def _ocr_pil(self, pil_image, log) -> List[str]:
+    def _ocr_pil(self, pil_image, log, excel_ifsc: str = "", excel_account: str = "") -> List[str]:
         """
         Preprocess PIL image then OCR with PaddleOCR.
         Returns list of concatenated text strings (one per variant).
@@ -459,6 +463,11 @@ class ChequeExtractor:
                                   f"Variant {var_idx + 1}: {len(blocks)} blocks, "
                                   f"{len(full_text)} chars, "
                                   f"avg confidence {sum(b.confidence for b in blocks)/len(blocks):.2f}")
+                        
+                        # Early termination check
+                        if self._is_extraction_complete(blocks, full_text, excel_ifsc, excel_account, log):
+                            self._log(log, "success", f"⚡ Early termination: valid IFSC and Account Number extracted from variant {var_idx + 1}.")
+                            break
             except Exception as e:
                 self._log(log, "warning", f"OCR variant {var_idx + 1} failed: {str(e)[:80]}")
 
@@ -471,6 +480,20 @@ class ChequeExtractor:
 
         self._log(log, "info", f"OCR produced {len(results)} text candidates from image.")
         return results
+
+    def _is_extraction_complete(self, blocks: List[OCRTextBlock], full_text: str, excel_ifsc: str, excel_account: str, log) -> bool:
+        """Check if both IFSC and Account Number can be successfully extracted from the given blocks/text."""
+        ifsc = self._find_ifsc_scored(blocks, excel_ifsc, log)
+        if not ifsc:
+            clean = self._normalize(full_text)
+            ifsc = self._find_ifsc(clean, log)
+            
+        acno = self._find_account_number_scored(blocks, excel_account, log)
+        if not acno:
+            clean = self._normalize(full_text)
+            acno = self._find_account_number(clean, log)
+            
+        return bool(ifsc and acno)
 
     def _run_paddleocr(self, pil_image, log) -> List[OCRTextBlock]:
         """Run PaddleOCR on a PIL image and return structured text blocks."""

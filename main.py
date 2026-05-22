@@ -71,6 +71,9 @@ def main() -> None:
     from app.ui.main_window import MainWindow
 
     window = MainWindow()
+
+
+
     window.showMaximized()
     sys.exit(app.exec())
 

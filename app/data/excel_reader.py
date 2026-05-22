@@ -150,6 +150,13 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
         for c_idx, cell in enumerate(row):
             cell_str = " ".join(str(cell).strip().lower().split())  # collapse \n, \t, multi-space
             if cell_str and label_lower in cell_str:
+                # Prevent matching "time of survey" on a combined date cell like "Date and Time of Survey"
+                if "date" in cell_str and "date" not in label_lower:
+                    continue
+                # Prevent matching "time of survey" on a combined person cell like "Person Present at the Time of Survey"
+                if "person" in cell_str and "person" not in label_lower:
+                    continue
+
                 # Word-boundary check: prevent "TOTAL" matching "SUBTOTAL"
                 idx = cell_str.find(label_lower)
                 before_ok = (idx == 0) or not cell_str[idx - 1].isalnum()

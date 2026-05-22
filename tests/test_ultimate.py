@@ -6006,4 +6006,50 @@ class TestWorkApprovalInvoice:
         assert found == str(bill_file)
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# 42. NEW INDIA MOBILE AND SURVEY TIME CLEANING TESTS
+# ═════════════════════════════════════════════════════════════════════════════
+
+class TestNewIndiaMobileAndTimeCleaning:
+    def test_clean_mobile_10_permutations(self):
+        from app.data.data_model import _clean_mobile_10
+        assert _clean_mobile_10("098761-35253") == "9876135253"
+        assert _clean_mobile_10("9876543210") == "9876543210"
+        assert _clean_mobile_10("9876543210.0") == "9876543210"
+        assert _clean_mobile_10("+91 98765 43210") == "9876543210"
+        assert _clean_mobile_10("1234567890") == "1234567890"  # doesn't start with 5-9 but returns last 10 digits as fallback
+        assert _clean_mobile_10("09876543210") == "9876543210"
+        assert _clean_mobile_10("98765-43210") == "9876543210"
+
+    def test_normalise_time_permutations(self):
+        from app.data.data_model import _normalise_time
+        assert _normalise_time("10:00 AM") == "10:00"
+        assert _normalise_time("10.00 AM") == "10:00"
+        assert _normalise_time("02:30 PM") == "14:30"
+        assert _normalise_time("2 pm") == "14:00"
+        assert _normalise_time("14:30") == "14:30"
+        assert _normalise_time("10.30") == "10:30"
+
+    def test_calculate_derived_fields_cleans_newindia(self):
+        from app.data.data_model import ClaimData
+        c = ClaimData(portal_id="newindia")
+        c.mobile_no = "098761-35253"
+        c.time_of_survey = "10:00 AM"
+        
+        c.calculate_derived_fields()
+        assert c.mobile_no == "9876135253"
+        assert c.time_of_survey == "10:00"
+
+    def test_calculate_derived_fields_falls_back_to_hh_mm(self):
+        from app.data.data_model import ClaimData
+        c = ClaimData(portal_id="newindia")
+        c.mobile_no = "098761-35253"
+        c.time_of_survey = ""
+        c.time_hh = "10"
+        c.time_mm = "00"
+        
+        c.calculate_derived_fields()
+        assert c.time_of_survey == "10:00"
+
+
 

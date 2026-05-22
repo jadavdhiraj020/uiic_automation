@@ -51,9 +51,54 @@ async def _ensure_yes(page: Page, name: str, label: str,
             log(f"   ⚠️  [{label}] error: {e}")
 
 
+def _clean_mobile_10(raw: str) -> str:
+    """Clean mobile number to exactly 10 digits starting with 5, 6, 7, 8, or 9 for Website 2.
+    Strips trailing .0 (Excel float format) and non-digits.
+    Ensures it finds the correct 10-digit window matching valid Indian mobile prefixes.
+    """
+    s = str(raw).strip()
+    if re.match(r'^\d+\.0$', s):
+        s = s[:-2]
+    digits = re.sub(r"[^\d]", "", s)
+    
+    if len(digits) >= 10:
+        # Check if the last 10 digits start with 5, 6, 7, 8, or 9
+        last_10 = digits[-10:]
+        if last_10[0] in "56789":
+            return last_10
+        # If not, look for the first 10-digit match in the sequence starting with 5, 6, 7, 8, or 9
+        match = re.search(r"[56789]\d{9}", digits)
+        if match:
+            return match.group(0)
+            
+    return digits[-10:] if len(digits) >= 10 else digits
+
+
 def _normalise_time(raw: str) -> str:
-    m = re.match(r"(\d{1,2})[:\.\s](\d{2})", str(raw).strip())
-    return f"{int(m.group(1)):02d}:{m.group(2)}" if m else str(raw)[:5]
+    """Normalize time to HH:MM (24-hour format) for Website 2."""
+    s = str(raw).strip()
+    # Check for AM/PM format first
+    time_match = re.search(r"(\d{1,2})[.:\s]?(\d{2})?\s*([aA]\.?[mM]\.?|[pP]\.?[mM]\.?)", s)
+    if time_match:
+        h = int(time_match.group(1))
+        m = time_match.group(2) or "00"
+        ampm = time_match.group(3).replace(".", "").lower()
+        if ampm == "pm" and h < 12:
+            h += 12
+        elif ampm == "am" and h == 12:
+            h = 0
+        return f"{h:02d}:{int(m):02d}"
+    
+    # Check for direct HH:MM 24-hour format
+    m24 = re.search(r"\b([01]?\d|2[0-3])[.:\s]([0-5]\d)\b", s)
+    if m24:
+        return f"{int(m24.group(1)):02d}:{int(m24.group(2)):02d}"
+        
+    # Fallback to standard regex match or first 5 chars
+    m = re.match(r"(\d{1,2})[:\.\s](\d{2})", s)
+    if m:
+        return f"{int(m.group(1)):02d}:{m.group(2)}"
+    return s[:5]
 
 
 # ── Public entry point ────────────────────────────────────────────────────────
@@ -204,7 +249,8 @@ async def fill_quick_update_details(
     if stop_cb(): return False
 
     # ── 12. Mobile No ────────────────────────────────────────────────────────
-    mobile = re.sub(r"\D", "", str(getattr(claim_data, "mobile_no", "")))[:10]
+    raw_mobile = getattr(claim_data, "mobile_no", "")
+    mobile = _clean_mobile_10(raw_mobile) if raw_mobile else ""
     if mobile:
         if isinstance(log, AutomationLogger):
             log.info(f"Filling Mobile No: {mobile}")
