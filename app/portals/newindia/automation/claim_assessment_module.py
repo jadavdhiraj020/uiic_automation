@@ -340,61 +340,61 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
 
     if stop_cb(): return False
 
-    # Field 3: Garage Bill dropdown → ALWAYS "Garage Bill"
-    try:
-        sel = 'select#pDocTypeOCR'
-        await select_dropdown_with_delay(page, sel, "Garage Bill", "Bill Type Dropdown", log, field_delay_ms)
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Bill Type dropdown error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error selecting Garage Bill: {e}")
-
-    if stop_cb(): return False
-
-    # Field 4: Attach Garage Bill (Invoice)
-    invoice_path = data.assessment_files.get("invoice", "")
-    if invoice_path:
-        await upload_file_via_input(
-            page,
-            file_input_selector='input#priOcr',
-            file_path=invoice_path,
-            label="Garage Bill PDF",
-            log=log,
-        )
-        try:
-            pop_btn = page.locator("button[data-ng-click*=\"uploadToOcr\"][data-ng-click*=\"'P'\"]").first
-            await pop_btn.wait_for(state="visible", timeout=5000)
-            
-            # Wait for button to be enabled (Angular digest cycles)
-            for _ in range(12):
-                if not await pop_btn.is_disabled():
-                    break
-                await asyncio.sleep(0.5)
-                
-            if isinstance(log, AutomationLogger):
-                log.info("Clicking Populate Data button for Garage Bill...")
-            else:
-                log("   ℹ️ Clicking Populate Data button for Garage Bill...")
-            await pop_btn.click()
-            # Wait for OCR populate modal to appear and dismiss it (handles variable 5 to 15+ seconds wait time)
-            await dismiss_portal_popup(page, log, max_wait_s=25.0, context="Primary OCR")
-            await asyncio.sleep(1.0)
-            
-            if isinstance(log, AutomationLogger):
-                log.success("Garage Bill OCR Data Populated successfully.")
-            else:
-                log("   ✅ Garage Bill OCR Data Populated successfully.")
-        except Exception as pe:
-            if isinstance(log, AutomationLogger):
-                log.error(f"Garage Bill OCR populate failed: {str(pe)[:100]}")
-            else:
-                log(f"   ⚠️ Garage Bill OCR populate failed: {str(pe)[:100]}")
-    else:
-        if isinstance(log, AutomationLogger):
-            log.warning("No Garage Bill PDF found.")
-        else:
-            log(f"   ⚠️ No invoice file found in folder (expected: invoice.pdf / final_invoice.pdf).")
+    # Field 3: Garage Bill dropdown → ALWAYS "Garage Bill" (COMMENTED OUT BY USER REQUEST)
+    # try:
+    #     sel = 'select#pDocTypeOCR'
+    #     await select_dropdown_with_delay(page, sel, "Garage Bill", "Bill Type Dropdown", log, field_delay_ms)
+    # except Exception as e:
+    #     if isinstance(log, AutomationLogger):
+    #         log.error(f"Bill Type dropdown error: {str(e)[:100]}")
+    #     else:
+    #         log(f"   ⚠️ Error selecting Garage Bill: {e}")
+    # 
+    # if stop_cb(): return False
+    # 
+    # # Field 4: Attach Garage Bill (Invoice)
+    # invoice_path = data.assessment_files.get("invoice", "")
+    # if invoice_path:
+    #     await upload_file_via_input(
+    #         page,
+    #         file_input_selector='input#priOcr',
+    #         file_path=invoice_path,
+    #         label="Garage Bill PDF",
+    #         log=log,
+    #     )
+    #     try:
+    #         pop_btn = page.locator("button[data-ng-click*=\"uploadToOcr\"][data-ng-click*=\"'P'\"]").first
+    #         await pop_btn.wait_for(state="visible", timeout=5000)
+    #         
+    #         # Wait for button to be enabled (Angular digest cycles)
+    #         for _ in range(12):
+    #             if not await pop_btn.is_disabled():
+    #                 break
+    #             await asyncio.sleep(0.5)
+    #             
+    #         if isinstance(log, AutomationLogger):
+    #             log.info("Clicking Populate Data button for Garage Bill...")
+    #         else:
+    #             log("   ℹ️ Clicking Populate Data button for Garage Bill...")
+    #         await pop_btn.click()
+    #         # Wait for OCR populate modal to appear and dismiss it (handles variable 5 to 15+ seconds wait time)
+    #         await dismiss_portal_popup(page, log, max_wait_s=25.0, context="Primary OCR")
+    #         await asyncio.sleep(1.0)
+    #         
+    #         if isinstance(log, AutomationLogger):
+    #             log.success("Garage Bill OCR Data Populated successfully.")
+    #         else:
+    #             log("   ✅ Garage Bill OCR Data Populated successfully.")
+    #     except Exception as pe:
+    #         if isinstance(log, AutomationLogger):
+    #             log.error(f"Garage Bill OCR populate failed: {str(pe)[:100]}")
+    #         else:
+    #             log(f"   ⚠️ Garage Bill OCR populate failed: {str(pe)[:100]}")
+    # else:
+    #     if isinstance(log, AutomationLogger):
+    #         log.warning("No Garage Bill PDF found.")
+    #     else:
+    #         log(f"   ⚠️ No invoice file found in folder (expected: invoice.pdf / final_invoice.pdf).")
 
     if stop_cb(): return False
 
@@ -461,29 +461,29 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
 
         if stop_cb(): return False
 
-        # Attach Supplementary Garage Bill
-        estimate_inv_path = data.assessment_files.get("estimate_invoice", "")
-        if estimate_inv_path:
-            sel = 'select#sDocTypeOCR'
-            await select_dropdown_with_delay(page, sel, "Garage Bill", "Supp Bill Type", log, field_delay_ms)
-
-            await upload_file_via_input(
-                page,
-                file_input_selector='input#supOcr',
-                file_path=estimate_inv_path,
-                label="Supp Garage Bill",
-                log=log,
-            )
-            await dismiss_portal_popup(page, log, max_wait_s=2.0, context="Supp Garage Bill Attach")
-            if isinstance(log, AutomationLogger):
-                log.info("Supplementary Garage Bill attached; skipping Populate Data by design.")
-            else:
-                log("   ℹ️ Supplementary Garage Bill attached; skipping Populate Data.")
-        else:
-            if isinstance(log, AutomationLogger):
-                log.info("No supplementary invoice found; skipping (Optional).")
-            else:
-                log(f"   ℹ️ No estimate invoice file found (optional). Skipping.")
+        # Attach Supplementary Garage Bill (COMMENTED OUT BY USER REQUEST)
+        # estimate_inv_path = data.assessment_files.get("estimate_invoice", "")
+        # if estimate_inv_path:
+        #     sel = 'select#sDocTypeOCR'
+        #     await select_dropdown_with_delay(page, sel, "Garage Bill", "Supp Bill Type", log, field_delay_ms)
+        # 
+        #     await upload_file_via_input(
+        #         page,
+        #         file_input_selector='input#supOcr',
+        #         file_path=estimate_inv_path,
+        #         label="Supp Garage Bill",
+        #         log=log,
+        #     )
+        #     await dismiss_portal_popup(page, log, max_wait_s=2.0, context="Supp Garage Bill Attach")
+        #     if isinstance(log, AutomationLogger):
+        #         log.info("Supplementary Garage Bill attached; skipping Populate Data by design.")
+        #     else:
+        #         log("   ℹ️ Supplementary Garage Bill attached; skipping Populate Data.")
+        # else:
+        #     if isinstance(log, AutomationLogger):
+        #         log.info("No supplementary invoice found; skipping (Optional).")
+        #     else:
+        #         log(f"   ℹ️ No estimate invoice file found (optional). Skipping.")
     else:
         if isinstance(log, AutomationLogger):
             log.info("Supplementary estimate skipped.")

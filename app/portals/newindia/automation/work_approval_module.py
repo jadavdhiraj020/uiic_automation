@@ -12,20 +12,14 @@ from app.automation.automation_logger import AutomationLogger
 
 logger = logging.getLogger(__name__)
 
-def _find_approval_document(data: ClaimData, is_cashless: bool) -> str:
-    """Finds approval document using tracked scan dicts, then falls back to folder scan."""
-    from app.data.folder_scanner import get_doc_mapping_tuple
+def _find_final_invoice_document(data: ClaimData) -> str:
+    """Finds final invoice document using tracked scan dicts, then falls back to folder scan."""
     try:
-        raw_mapping = get_doc_mapping_tuple()
-        # raw_mapping[5] does not exist; load directly
         from app.utils import load_doc_mapping
         raw = load_doc_mapping()
-        work_approval_map = raw.get("work_approval_keywords", {})
-        keywords_non_cashless = work_approval_map.get("non_cashless", ["non_cashless", "non-cashless", "noncashless", "non cashless", "non_caseless", "non-caseless"])
-        keywords_cashless = work_approval_map.get("cashless", ["cashless", "caseless"])
+        invoice_map = raw.get("claim_assessment_tab", {}).get("invoice", ["final_invoice", "invoice"])
     except Exception:
-        keywords_non_cashless = ["non_cashless", "non-cashless", "noncashless", "non cashless", "non_caseless", "non-caseless"]
-        keywords_cashless = ["cashless", "caseless"]
+        invoice_map = ["final_invoice", "invoice"]
 
     # 1. Search tracked dicts first (respects compression — uses temp file paths)
     all_tracked: dict = {}
@@ -33,16 +27,17 @@ def _find_approval_document(data: ClaimData, is_cashless: bool) -> str:
     all_tracked.update(getattr(data, 'assessment_files', {}) or {})
     all_tracked.update(getattr(data, 'upload_doc_files', {}) or {})
 
+    # Check for direct mapping 'invoice' or 'final_invoice' in assessment_files
+    invoice_path = (getattr(data, 'assessment_files', {}) or {}).get("invoice", "")
+    if invoice_path and os.path.isfile(invoice_path):
+        return invoice_path
+
     for doc_name, file_path in all_tracked.items():
         if not file_path or not os.path.isfile(file_path):
             continue
         fname_lower = os.path.basename(file_path).lower()
-        if not is_cashless:
-            if any(k in fname_lower for k in keywords_non_cashless):
-                return file_path
-        else:
-            if any(k in fname_lower for k in keywords_cashless) and not any(k in fname_lower for k in keywords_non_cashless):
-                return file_path
+        if any(k in fname_lower for k in invoice_map):
+            return file_path
 
     # 2. Fallback: raw folder scan (finds files not mapped by scanner)
     folder_path = None
@@ -60,17 +55,21 @@ def _find_approval_document(data: ClaimData, is_cashless: bool) -> str:
     try:
         all_files = [os.path.join(folder_path, f) for f in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, f))]
     except Exception as e:
-        logger.error(f"Failed to read folder for approval documents: {e}")
+        logger.error(f"Failed to read folder for final invoice documents: {e}")
         return ""
 
     for file_path in all_files:
         fname_lower = os.path.basename(file_path).lower()
-        if not is_cashless:
-            if any(k in fname_lower for k in keywords_non_cashless):
-                return file_path
-        else:
-            if any(k in fname_lower for k in keywords_cashless) and not any(k in fname_lower for k in keywords_non_cashless):
-                return file_path
+        if any(k in fname_lower for k in invoice_map):
+            return file_path
+
+    # Secondary fallback for invoice keywords
+    secondary_keywords = ["garage_bill", "garage bill", "garagebill", "bill"]
+    for file_path in all_files:
+        fname_lower = os.path.basename(file_path).lower()
+        if any(k in fname_lower for k in secondary_keywords):
+            return file_path
+
     return ""
 
 async def fill_work_approval_details(
@@ -158,19 +157,19 @@ async def _fill_work_approval_inner(
 
     # 3. Upload Document
     if isinstance(log, AutomationLogger):
-        log.info("Searching for approval document...")
+        log.info("Searching for Final Invoice...")
     else:
-        log("  ℹ️ Searching for approval document...")
-    doc_path = _find_approval_document(data, is_cashless)
+        log("  ℹ️ Searching for Final Invoice...")
+    doc_path = _find_final_invoice_document(data)
     
     if doc_path and os.path.exists(doc_path):
         try:
             file_input = page.locator('input[id="workApprovalFile"][type="file"]')
             await file_input.set_input_files(doc_path)
             if isinstance(log, AutomationLogger):
-                log.upload_attached("Approval Document", os.path.basename(doc_path))
+                log.upload_attached("Final Invoice", os.path.basename(doc_path))
             else:
-                log(f"  ✅ Uploaded Approval Document: {os.path.basename(doc_path)}")
+                log(f"  ✅ Uploaded Final Invoice: {os.path.basename(doc_path)}")
             await asyncio.sleep(1.0)
             
             uploaded_name = await page.locator('input[name="Work Approval Document"]').input_value()
@@ -186,14 +185,14 @@ async def _fill_work_approval_inner(
                     log("  ⚠️ Document upload input remained empty after upload attempt.")
         except Exception as e:
             if isinstance(log, AutomationLogger):
-                log.upload_failed("Approval Document", str(e)[:100])
+                log.upload_failed("Final Invoice", str(e)[:100])
             else:
-                log(f"  ⚠️ Error uploading Approval Document: {e}")
+                log(f"  ⚠️ Error uploading Final Invoice: {e}")
     else:
         if isinstance(log, AutomationLogger):
-            log.warning(f"No matching {'Cashless' if is_cashless else 'Non-Cashless'} document found; skipping.")
+            log.warning("No Final Invoice found; skipping.")
         else:
-            log(f"  ⚠️ No matching {'Cashless' if is_cashless else 'Non-Cashless'} document found. Skipping upload.")
+            log("  ⚠️ No Final Invoice found. Skipping upload.")
 
     if stop_cb(): return False
 
@@ -236,12 +235,12 @@ async def _fill_work_approval_inner(
 
     if stop_cb(): return False
 
-    # 5.1 Click Submit button for Work Approval
+    # 5.1 Click Submit button for Work Approval (now Final Invoice)
     if doc_path and os.path.exists(doc_path):
         if isinstance(log, AutomationLogger):
-            log.wait("Submitting Work Approval Document...")
+            log.wait("Submitting Final Invoice (Work Approval Document)...")
         else:
-            log("  ℹ️ Submitting Work Approval Document...")
+            log("  ℹ️ Submitting Final Invoice (Work Approval Document)...")
 
         try:
             # Wait for Angular digest cycle to enable the Submit button
@@ -256,15 +255,15 @@ async def _fill_work_approval_inner(
                 
             if await submit_btn.is_disabled():
                 if isinstance(log, AutomationLogger):
-                    log.warning("Work Approval Submit button is disabled; might already be submitted or invalid.")
+                    log.warning("Work Approval Submit button (for Final Invoice) is disabled; might already be submitted or invalid.")
                 else:
-                    log("  ⚠️ Work Approval Submit button is disabled.")
+                    log("  ⚠️ Work Approval Submit button (for Final Invoice) is disabled.")
             else:
                 await submit_btn.click()
                 if isinstance(log, AutomationLogger):
-                    log.success("Work Approval submitted successfully.")
+                    log.success("Final Invoice (Work Approval) submitted successfully.")
                 else:
-                    log("  ✅ Work Approval submitted.")
+                    log("  ✅ Final Invoice (Work Approval) submitted.")
                 
                 # Handle the confirmation popup
                 await dismiss_portal_popup(page, log, max_wait_s=6.0)

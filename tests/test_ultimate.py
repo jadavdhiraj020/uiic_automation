@@ -5939,3 +5939,71 @@ class TestChequeExtractorRealDiagnostic:
         assert "account_type" in result
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# 32. WORK APPROVAL FINAL INVOICE DETECTION
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+class TestWorkApprovalInvoice:
+    """Verify final invoice document discovery algorithm."""
+
+    def test_find_final_invoice_document_direct_mapping(self, tmp_path):
+        from app.portals.newindia.automation.work_approval_module import _find_final_invoice_document
+        invoice_file = tmp_path / "final_invoice_123.pdf"
+        invoice_file.write_text("pdf-content")
+        
+        data = ClaimData()
+        data.assessment_files = {
+            "invoice": str(invoice_file)
+        }
+        
+        found = _find_final_invoice_document(data)
+        assert found == str(invoice_file)
+
+    def test_find_final_invoice_document_by_filename_keywords(self, tmp_path):
+        from app.portals.newindia.automation.work_approval_module import _find_final_invoice_document
+        invoice_file = tmp_path / "invoice_garage_123.pdf"
+        invoice_file.write_text("pdf-content")
+        
+        data = ClaimData()
+        data.claim_doc_files = {
+            "Random Doc": str(invoice_file)
+        }
+        
+        found = _find_final_invoice_document(data)
+        assert found == str(invoice_file)
+
+    def test_find_final_invoice_document_folder_scan_fallback(self, tmp_path):
+        from app.portals.newindia.automation.work_approval_module import _find_final_invoice_document
+        invoice_file = tmp_path / "invoice_garage_123.pdf"
+        invoice_file.write_text("pdf-content")
+        
+        other_file = tmp_path / "pan.pdf"
+        other_file.write_text("pan-content")
+        
+        data = ClaimData()
+        data.claim_doc_files = {
+            "PAN Card": str(other_file)
+        }
+        
+        found = _find_final_invoice_document(data)
+        assert found == str(invoice_file)
+
+    def test_find_final_invoice_document_secondary_keywords_fallback(self, tmp_path):
+        from app.portals.newindia.automation.work_approval_module import _find_final_invoice_document
+        bill_file = tmp_path / "my_garage_bill.pdf"
+        bill_file.write_text("pdf-content")
+        
+        other_file = tmp_path / "pan.pdf"
+        other_file.write_text("pan-content")
+        
+        data = ClaimData()
+        data.claim_doc_files = {
+            "PAN Card": str(other_file)
+        }
+        
+        found = _find_final_invoice_document(data)
+        assert found == str(bill_file)
+
+
+
