@@ -45,14 +45,8 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
 
     # 1. FIR Number
     try:
-        val = data.fir_number
-        if val:
-            await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.firNo"]', val, "FIR Number", log, field_delay_ms)
-        else:
-            if isinstance(log, AutomationLogger):
-                log.info("FIR Number missing; skipping (Optional).")
-            else:
-                log(f"   ⏭️ [FIR Number] — Optional, not in Excel. Skipping.")
+        val = data.fir_number or "NA"
+        await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.firNo"]', val, "FIR Number", log, field_delay_ms)
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"FIR Number field error: {str(e)[:100]}")
@@ -81,14 +75,8 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
 
     # 3. Police Station Name
     try:
-        val = data.police_station_name
-        if val:
-            await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.policeStation"]', val, "Station Name", log, field_delay_ms)
-        else:
-            if isinstance(log, AutomationLogger):
-                log.info("Police Station missing; skipping (Optional).")
-            else:
-                log(f"   ⏭️ [Police Station] — Optional, not in Excel. Skipping.")
+        val = data.police_station_name or "NA"
+        await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.policeStation"]', val, "Station Name", log, field_delay_ms)
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Police Station field error: {str(e)[:100]}")
@@ -99,14 +87,8 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
 
     # 4. Charged U/S Motor Vehicle act
     try:
-        val = data.charged_us_motor_vehicle_act
-        if val:
-            await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.chargedUSMotorVehAct"]', val, "Charged U/S MV Act", log, field_delay_ms)
-        else:
-            if isinstance(log, AutomationLogger):
-                log.info("Charged U/S MV Act missing; skipping (Optional).")
-            else:
-                log(f"   ⏭️ [Charged U/S MV Act] — Optional, not in Excel. Skipping.")
+        val = data.charged_us_motor_vehicle_act or "NA"
+        await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.chargedUSMotorVehAct"]', val, "Charged U/S MV Act", log, field_delay_ms)
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"MV Act field error: {str(e)[:100]}")
@@ -117,14 +99,8 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
 
     # 5. Charged U/S IPC
     try:
-        val = data.charged_us_ipc
-        if val:
-            await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.chargedUSIPC"]', val, "Charged U/S IPC", log, field_delay_ms)
-        else:
-            if isinstance(log, AutomationLogger):
-                log.info("Charged U/S IPC missing; skipping (Optional).")
-            else:
-                log(f"   ⏭️ [Charged U/S IPC] — Optional, not in Excel. Skipping.")
+        val = data.charged_us_ipc or "NA"
+        await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.chargedUSIPC"]', val, "Charged U/S IPC", log, field_delay_ms)
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"IPC field error: {str(e)[:100]}")

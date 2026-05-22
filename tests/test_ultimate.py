@@ -4775,9 +4775,196 @@ class TestChequeExtractorMultiCandidate:
         assert passes == 1, "Should have exited after first candidate"
         assert result["ifsc"] == "SBIN0001234"
 
+
+class TestChequeExtractorOCRConfusions:
+    """Tests for expanded OCR confusion correction in IFSC detection."""
+
+    def _fix(self, text):
+        from app.portals.newindia.automation.ocr_helper import ChequeExtractor
+        return ChequeExtractor._fix_ocr_confusions(text)
+
+    def test_sc26_24_O_to_0_at_position_4(self):
+        result = self._fix("SBINO001234")
+        assert "SBIN0001234" in result
+
+    def test_sc26_25_I_to_1_in_suffix(self):
+        result = self._fix("SBIN00012I4")
+        assert "SBIN0001214" in result
+
+    def test_sc26_26_multiple_confusions(self):
+        """O at position 4 AND I in suffix."""
+        result = self._fix("HDFCO0I2345")
+        assert "HDFC0012345" in result
+
+    def test_sc26_27_no_false_correction_on_alpha(self):
+        """Should NOT change valid alpha chars in the bank code (first 4 chars)."""
+        result = self._fix("IBKL0123456")
+        assert "IBKL0123456" in result
+
+
+class TestChequeExtractorKnownBankPrefix:
+    """Tests for known bank prefix validation."""
+
+    def test_sc26_28_sbin_is_known(self):
+        from app.portals.newindia.automation.ocr_helper import _KNOWN_BANK_PREFIXES
+        assert "SBIN" in _KNOWN_BANK_PREFIXES
+
+    def test_sc26_29_hdfc_is_known(self):
+        from app.portals.newindia.automation.ocr_helper import _KNOWN_BANK_PREFIXES
+        assert "HDFC" in _KNOWN_BANK_PREFIXES
+
+    def test_sc26_30_icic_is_known(self):
+        from app.portals.newindia.automation.ocr_helper import _KNOWN_BANK_PREFIXES
+        assert "ICIC" in _KNOWN_BANK_PREFIXES
+
+    def test_sc26_31_garbage_prefix_not_known(self):
+        from app.portals.newindia.automation.ocr_helper import _KNOWN_BANK_PREFIXES
+        assert "ZZZZ" not in _KNOWN_BANK_PREFIXES
+
+
+class TestChequeExtractorScoredIFSC:
+    """Tests for scored IFSC extraction with spatial awareness."""
+
+    def setup_method(self):
+        from app.portals.newindia.automation.ocr_helper import ChequeExtractor, OCRTextBlock
+        self.ChequeExtractor = ChequeExtractor
+        self.OCRTextBlock = OCRTextBlock
+        self.ex = ChequeExtractor.__new__(ChequeExtractor)
+        self.ex._image_height = 1000
+
+    def test_sc26_32_prefers_known_bank_prefix(self):
+        """When two IFSC candidates exist, prefer the one with a known bank prefix."""
+        blocks = [
+            self.OCRTextBlock(text="SBIN0001234", confidence=0.9, bbox=[[0,100],[200,100],[200,120],[0,120]]),
+            self.OCRTextBlock(text="ZZZZ0999888", confidence=0.95, bbox=[[0,200],[200,200],[200,220],[0,220]]),
+        ]
+        result = self.ex._find_ifsc_scored(blocks, "", None)
+        assert result == "SBIN0001234"
+
+    def test_sc26_33_prefers_ifsc_near_keyword(self):
+        """IFSC near 'IFSC CODE' keyword should score higher."""
+        blocks = [
+            self.OCRTextBlock(text="IFSC CODE", confidence=0.9, bbox=[[0,100],[150,100],[150,120],[0,120]]),
+            self.OCRTextBlock(text="HDFC0001234", confidence=0.85, bbox=[[160,100],[300,100],[300,120],[160,120]]),
+            self.OCRTextBlock(text="BARB0XYZABC", confidence=0.9, bbox=[[0,500],[200,500],[200,520],[0,520]]),
+        ]
+        result = self.ex._find_ifsc_scored(blocks, "", None)
+        assert result == "HDFC0001234"
+
+    def test_sc26_34_excel_cross_validation_boost(self):
+        """IFSC matching Excel prefix should score higher."""
+        blocks = [
+            self.OCRTextBlock(text="HDFC0001234", confidence=0.85, bbox=[[0,100],[200,100],[200,120],[0,120]]),
+            self.OCRTextBlock(text="SBIN0999888", confidence=0.9, bbox=[[0,200],[200,200],[200,220],[0,220]]),
+        ]
+        result = self.ex._find_ifsc_scored(blocks, "HDFC0001234", None)
+        assert result == "HDFC0001234"
+
+
+class TestChequeExtractorScoredAccount:
+    """Tests for scored account number extraction with MICR filtering."""
+
+    def setup_method(self):
+        from app.portals.newindia.automation.ocr_helper import ChequeExtractor, OCRTextBlock
+        self.ChequeExtractor = ChequeExtractor
+        self.OCRTextBlock = OCRTextBlock
+        self.ex = ChequeExtractor.__new__(ChequeExtractor)
+        self.ex._image_height = 1000
+
+    def test_sc26_35_micr_zone_excluded(self):
+        """Numbers in the bottom 15% of the image (MICR band) should be rejected."""
+        blocks = [
+            # Account number in main body
+            self.OCRTextBlock(text="A/C NO 123456789012", confidence=0.9,
+                              bbox=[[0,300],[300,300],[300,320],[0,320]]),
+            # MICR number at bottom (y > 850 for 1000px image)
+            self.OCRTextBlock(text="987654321", confidence=0.95,
+                              bbox=[[0,900],[200,900],[200,920],[0,920]]),
+        ]
+        result = self.ex._find_account_number_scored(blocks, "", None)
+        assert result == "123456789012"
+
+    def test_sc26_36_labeled_match_preferred(self):
+        """Labeled 'A/C NO' match should score higher than bare number."""
+        blocks = [
+            self.OCRTextBlock(text="A/C NO 111222333444", confidence=0.85,
+                              bbox=[[0,200],[300,200],[300,220],[0,220]]),
+            self.OCRTextBlock(text="999888777666555", confidence=0.9,
+                              bbox=[[0,400],[300,400],[300,420],[0,420]]),
+        ]
+        result = self.ex._find_account_number_scored(blocks, "", None)
+        assert result == "111222333444"
+
+    def test_sc26_37_repetitive_digits_penalized(self):
+        """All-same-digit numbers should be penalized."""
+        blocks = [
+            self.OCRTextBlock(text="000000000", confidence=0.95,
+                              bbox=[[0,200],[200,200],[200,220],[0,220]]),
+            self.OCRTextBlock(text="123456789012", confidence=0.8,
+                              bbox=[[0,300],[300,300],[300,320],[0,320]]),
+        ]
+        result = self.ex._find_account_number_scored(blocks, "", None)
+        assert result == "123456789012"
+
+    def test_sc26_38_near_account_keyword_boosted(self):
+        """Number near 'Account' keyword block should score higher."""
+        blocks = [
+            self.OCRTextBlock(text="Account Number", confidence=0.9,
+                              bbox=[[0,200],[200,200],[200,220],[0,220]]),
+            self.OCRTextBlock(text="555666777888", confidence=0.85,
+                              bbox=[[210,200],[400,200],[400,220],[210,220]]),
+            self.OCRTextBlock(text="999111222333", confidence=0.9,
+                              bbox=[[0,600],[200,600],[200,620],[0,620]]),
+        ]
+        result = self.ex._find_account_number_scored(blocks, "", None)
+        assert result == "555666777888"
+
+
+class TestChequeExtractorBackwardCompat:
+    """Ensure backward compatibility with original flat-text extraction API."""
+
+    def setup_method(self):
+        from app.portals.newindia.automation.ocr_helper import ChequeExtractor
+        self.ex = ChequeExtractor.__new__(ChequeExtractor)
+        self.ex._image_height = 0
+
+    def test_sc26_39_flat_ifsc_still_works(self):
+        text = "BANK: SBIN0001234 BRANCH MUMBAI"
+        result = self.ex._find_ifsc(text.upper(), None)
+        assert result == "SBIN0001234"
+
+    def test_sc26_40_flat_account_still_works(self):
+        text = "A/C NO 123456789012"
+        result = self.ex._find_account_number(text.upper(), None)
+        assert result == "123456789012"
+
+    def test_sc26_41_flat_account_type_still_works(self):
+        assert self.ex._find_account_type("SB A/C SAVINGS BANK", None) == "Savings"
+        assert self.ex._find_account_type("CURRENT ACCOUNT CA A/C", None) == "Current"
+
+    def test_sc26_42_extract_details_accepts_new_params(self):
+        """Verify extract_details accepts excel_ifsc and excel_account without error."""
+        from app.portals.newindia.automation.ocr_helper import ChequeExtractor
+        ex = ChequeExtractor("/nonexistent/path/cheque.jpg")
+        result = ex.extract_details(log=None, excel_ifsc="SBIN0001234", excel_account="123456789")
+        assert result == {"ifsc": None, "account_number": None, "account_type": None}
+
+    def test_sc26_43_normalize_unchanged(self):
+        """Verify _normalize behavior is unchanged."""
+        from app.portals.newindia.automation.ocr_helper import ChequeExtractor
+        assert ChequeExtractor._normalize("  hello world  ") == "HELLO WORLD"
+
+    def test_sc26_44_fix_ifsc_unchanged(self):
+        """Verify _fix_ifsc behavior is unchanged."""
+        from app.portals.newindia.automation.ocr_helper import ChequeExtractor
+        assert ChequeExtractor._fix_ifsc("SBINOPQ12345") == "SBIN0PQ12345"
+        assert ChequeExtractor._fix_ifsc("SBIN0001234") == "SBIN0001234"
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # 27. CLAIM RELATED PRE-MERGE
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestClaimRelatedPreMerge:
     """Tests for the pre-scan PDF merge logic in folder_scanner."""
@@ -5548,4 +5735,207 @@ class TestEventLoopAndProgressSynchronization:
         assert emitted_progress[0] == (10, "Scanning files...")
         assert emitted_progress[2] == (100, "Scan completed.")
         assert "[50%] Compressing PDFs..." in emitted_logs
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 30. DYNAMIC DERIVED FIELDS — Vehicle Type and Driver Age
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+class TestDerivedFields:
+    """Verify dynamic calculations for vehicle type and driver age."""
+
+    @pytest.fixture(autouse=True)
+    def setup_claim(self):
+        self.claim = ClaimData(portal_id="newindia")
+
+    def test_vehicle_type_goods_carrying(self):
+        # Condition: Weight > 3000 KG
+        test_cases = [
+            ("4500 KG", "Goods Carrying (A)"),
+            ("3200 kg", "Goods Carrying (A)"),
+            ("3001 Kilograms", "Goods Carrying (A)"),
+            (" 4000  kg ", "Goods Carrying (A)"),
+        ]
+        for weight, expected in test_cases:
+            self.claim.registered_laden_weight = weight
+            self.claim.calculate_derived_fields()
+            assert self.claim.type_of_vehicle == expected
+
+    def test_vehicle_type_passenger_carrying(self):
+        # Condition: Weight <= 3000 KG
+        test_cases = [
+            ("3000 KG", "Passenger Carrying (C)"),
+            ("2999 kg", "Passenger Carrying (C)"),
+            ("1800 kilograms", "Passenger Carrying (C)"),
+            ("500", "Passenger Carrying (C)"),
+        ]
+        for weight, expected in test_cases:
+            self.claim.registered_laden_weight = weight
+            self.claim.calculate_derived_fields()
+            assert self.claim.type_of_vehicle == expected
+
+    def test_vehicle_type_empty_and_invalid(self):
+        # Test empty/invalid weights are handled safely and don't overwrite/crash
+        self.claim.type_of_vehicle = "Existing Vehicle Type"
+        self.claim.registered_laden_weight = ""
+        self.claim.calculate_derived_fields()
+        assert self.claim.type_of_vehicle == "Existing Vehicle Type"
+
+        self.claim.registered_laden_weight = "Not A Numeric Weight"
+        self.claim.calculate_derived_fields()
+        assert self.claim.type_of_vehicle == "Existing Vehicle Type"
+
+    def test_driver_age_birthday_passed(self):
+        from datetime import date
+        with patch('app.data.data_model.date') as mock_date:
+            # Mock today as 22-05-2026
+            mock_date.today.return_value = date(2026, 5, 22)
+
+            # DOB: 10-05-2000 -> Birthday passed on 10-05-2026
+            # Age should be 2026 - 2000 = 26
+            self.claim.dob_of_driver = "10-05-2000"
+            self.claim.calculate_derived_fields()
+            assert self.claim.age_of_driver == "26"
+
+            # Test slash separator: 10/05/2000
+            self.claim.dob_of_driver = "10/05/2000"
+            self.claim.calculate_derived_fields()
+            assert self.claim.age_of_driver == "26"
+
+            # Test ISO format: 2000-05-10
+            self.claim.dob_of_driver = "2000-05-10"
+            self.claim.calculate_derived_fields()
+            assert self.claim.age_of_driver == "26"
+
+    def test_driver_age_birthday_not_passed(self):
+        from datetime import date
+        with patch('app.data.data_model.date') as mock_date:
+            # Mock today as 22-05-2026
+            mock_date.today.return_value = date(2026, 5, 22)
+
+            # DOB: 30-12-2000 -> Birthday not yet passed (December 30)
+            # Age should be 2026 - 2000 - 1 = 25
+            self.claim.dob_of_driver = "30-12-2000"
+            self.claim.calculate_derived_fields()
+            assert self.claim.age_of_driver == "25"
+
+            # DOB on the next day: 23-05-2000 -> Birthday not yet passed (May 23)
+            # Age should be 25
+            self.claim.dob_of_driver = "23-05-2000"
+            self.claim.calculate_derived_fields()
+            assert self.claim.age_of_driver == "25"
+
+            # DOB on exact same day: 22-05-2000 -> Birthday has passed today
+            # Age should be 26
+            self.claim.dob_of_driver = "22-05-2000"
+            self.claim.calculate_derived_fields()
+            assert self.claim.age_of_driver == "26"
+
+    def test_driver_age_empty_and_invalid(self):
+        # Test empty/invalid DOBs are handled safely without crashing
+        self.claim.age_of_driver = "30"
+        self.claim.dob_of_driver = ""
+        self.claim.calculate_derived_fields()
+        assert self.claim.age_of_driver == "30"
+
+        self.claim.dob_of_driver = "invalid-date-string"
+        self.claim.calculate_derived_fields()
+        assert self.claim.age_of_driver == "30"
+
+    def test_fir_optional_fields_fallback(self):
+        # 1. Verify that validation passes without fir_number
+        self.claim.claim_no = "12345"
+        self.claim.registered_owner_name = "John Doe"
+        self.claim.vehicle_registration_number = "MH-02-1234"
+        self.claim.date_of_registration = "10-05-2020"
+        self.claim.engine_no = "ENG123"
+        self.claim.chassis_no = "CHA123"
+        self.claim.vehicle_make = "Maruti"
+        self.claim.type_of_body = "Hatchback"
+        self.claim.class_of_vehicle = "Car"
+        self.claim.rto_name = "Mumbai"
+        self.claim.odometer_reading = "5000"
+        self.claim.vehicle_color = "Red"
+        self.claim.registered_laden_weight = "2000"
+        self.claim.type_of_fuel = "Petrol"
+        self.claim.cause_nature_of_accident = "Hit a wall"
+        self.claim.driver_name = "John Doe"
+        self.claim.dob_of_driver = "10-05-2000"
+        self.claim.driver_license_number = "DL123"
+        self.claim.driver_license_issue_date = "10-05-2018"
+        self.claim.driver_license_expiry_date = "10-05-2028"
+        self.claim.ifsc_code = "IFSC123"
+        self.claim.account_number = "123456789"
+        self.claim.vendor_invoice_date = "10-05-2026"
+        self.claim.vendor_invoice_number = "INV123"
+        self.claim.primary_assessment = "1000"
+
+        # Missing fir_number (but let's say it's empty)
+        self.claim.fir_number = ""
+        # Let's say other 3 optional FIR fields are also empty
+        self.claim.police_station_name = ""
+        self.claim.charged_us_motor_vehicle_act = ""
+        self.claim.charged_us_ipc = ""
+
+        # Validate returns errors and warnings
+        errors, warnings = self.claim.validate()
+        
+        # fir_number is optional, so it shouldn't produce a critical error!
+        assert not any("FIR Number" in e for e in errors), f"Expected no FIR Number error, got: {errors}"
+        
+        # It should appear in warnings because it's missing (before fallback is populated)
+        assert any("FIR Number" in w for w in warnings), f"Expected FIR Number warning, got: {warnings}"
+
+        # 2. Verify preview list maps FIR Number to is_critical = False
+        preview_fields = self.claim.all_fields_for_preview()
+        fir_preview = next((f for f in preview_fields if f[0] == "FIR Number"), None)
+        assert fir_preview is not None
+        assert fir_preview[1] == ""  # current value is empty
+        assert fir_preview[2] is False  # is_critical should be False!
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 31. CHEQUE EXTRACTOR REAL DIAGNOSTIC
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+class TestChequeExtractorRealDiagnostic:
+    """Verify ChequeExtractor OCR against a real cheque image in the AAA folder."""
+
+    def test_sc26_real_cheque_diagnostic(self):
+        import os
+        from app.portals.newindia.automation.ocr_helper import ChequeExtractor
+
+        # Locate the real cheque in AAA folder
+        cheque_path = os.path.join(PROJECT_ROOT, "AAA", "cancel_check.jpeg")
+        if not os.path.exists(cheque_path):
+            pytest.skip("AAA/cancel_check.jpeg not present, skipping real-cheque OCR test")
+
+        extractor = ChequeExtractor(cheque_path)
+        
+        # Capture OCR log output for debugging
+        ocr_logs = []
+        def custom_logger(msg):
+            clean_msg = msg.encode('ascii', errors='ignore').decode('ascii')
+            ocr_logs.append(clean_msg.strip())
+
+        result = extractor.extract_details(
+            log=custom_logger,
+            excel_ifsc="HDFC0000001",
+            excel_account="123456789012345"
+        )
+        
+        # Print diagnostic logs so they appear in pytest verbose output
+        print("\n--- Diagnostic Logs ---")
+        for line in ocr_logs:
+            print(f"  {line}")
+        print("-----------------------")
+
+        # Verify results
+        assert result is not None
+        assert "ifsc" in result
+        assert "account_number" in result
+        assert "account_type" in result
+
 

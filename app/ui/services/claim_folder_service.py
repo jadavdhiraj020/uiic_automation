@@ -78,6 +78,48 @@ class ClaimFolderService:
 
             self._extract_pdf_invoice_data(scan_result, claim, logs)
 
+            # ── Run Cheque OCR during folder load if bank details are missing in Excel ──
+            if not claim.ifsc_code or not claim.account_number:
+                cheque_path = ""
+                all_docs = {**claim.claim_doc_files, **(claim.upload_doc_files or {})}
+                for doc_name, file_path in all_docs.items():
+                    if "cheque" in doc_name.lower() or "check" in doc_name.lower():
+                        cheque_path = file_path
+                        break
+                
+                if cheque_path:
+                    logs.append(f"🔍 Cheque document detected: {Path(cheque_path).name}. Extracting bank details via OCR...")
+                    try:
+                        from app.portals.newindia.automation.ocr_helper import ChequeExtractor
+                        extractor = ChequeExtractor(cheque_path)
+                        ocr_logs = []
+                        def ocr_log_fn(msg):
+                            clean_msg = msg.encode('ascii', errors='ignore').decode('ascii')
+                            ocr_logs.append(f"  • {clean_msg.strip()}")
+                        
+                        cheque_details = extractor.extract_details(
+                            log=ocr_log_fn,
+                            excel_ifsc=claim.ifsc_code or "",
+                            excel_account=claim.account_number or "",
+                        )
+                        
+                        if cheque_details.get("ifsc"):
+                            claim.ifsc_code = cheque_details["ifsc"]
+                            claim._excel_coords["ifsc_code"] = "Cheque OCR"
+                            claim._excel_logs.append(f"  📊 ifsc_code: '{claim.ifsc_code}' (Source: Cheque OCR)")
+                        if cheque_details.get("account_number"):
+                            claim.account_number = cheque_details["account_number"]
+                            claim._excel_coords["account_number"] = "Cheque OCR"
+                            claim._excel_logs.append(f"  📊 account_number: '{claim.account_number}' (Source: Cheque OCR)")
+                        if cheque_details.get("account_type"):
+                            claim.account_type = cheque_details["account_type"]
+                            claim._excel_coords["account_type"] = "Cheque OCR"
+                            claim._excel_logs.append(f"  📊 account_type: '{claim.account_type}' (Source: Cheque OCR)")
+                            
+                        logs.extend(ocr_logs)
+                    except Exception as ocr_exc:
+                        logs.append(f"  ⚠️ Cheque OCR failed: {ocr_exc}")
+
             if hasattr(claim, "_excel_logs") and claim._excel_logs:
                 logs.append("📌 Excel Data Sources Map:")
                 logs.extend(claim._excel_logs)

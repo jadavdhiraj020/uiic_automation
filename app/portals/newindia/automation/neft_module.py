@@ -65,37 +65,56 @@ async def _fill_neft_details_inner(page: Page, data: ClaimData, log, stop_cb, fi
         log(f"Scanning uploaded documents for cheque...")
     cheque_path = _find_cheque_document(data)
     
+    ifsc = data.ifsc_code
+    acc_no = data.account_number
+    acc_type = data.account_type
+
     if cheque_path:
-        if isinstance(log, AutomationLogger):
-            log.success("Cheque document detected.")
-            import os
-            log.extraction(f"Starting Cheque OCR: {os.path.basename(cheque_path)}")
-        else:
-            log(f"   ✅ Cheque document detected.")
-            log(f"   ℹ️ Extracting details from cheque...")
-        
-        from app.portals.newindia.automation.ocr_helper import ChequeExtractor
-        extractor = ChequeExtractor(cheque_path)
-        cheque_details = extractor.extract_details(log=log)
-        
-        ifsc = cheque_details.get("ifsc") or data.ifsc_code
-        acc_no = cheque_details.get("account_number") or data.account_number
-        acc_type = cheque_details.get("account_type") or data.account_type
-        
-        if isinstance(log, AutomationLogger):
-            log.success("Cheque OCR completed successfully.")
-            log.extracted("IFSC", ifsc)
-            log.extracted("Account", acc_no)
-            if not cheque_details.get("ifsc"):
-                log.warning("IFSC not found in cheque; using Excel fallback.")
-            if not cheque_details.get("account_number"):
-                log.warning("Account Number not found in cheque; using Excel fallback.")
-        else:
-            if not cheque_details.get("ifsc"):
-                log(f"   ⚠️ IFSC not found in cheque. Falling back to Excel.")
-            if not cheque_details.get("account_number"):
-                log(f"   ⚠️ Account Number not found in cheque. Falling back to Excel.")
+        # Run OCR only if fields are missing in data (e.g. if extraction failed or excel was empty)
+        if not ifsc or not acc_no:
+            if isinstance(log, AutomationLogger):
+                log.success("Cheque document detected. Running OCR for missing bank details...")
+                import os
+                log.extraction(f"Starting Cheque OCR: {os.path.basename(cheque_path)}")
+            else:
+                log(f"   ✅ Cheque document detected. Running OCR for missing bank details...")
+                log(f"   ℹ️ Extracting details from cheque...")
             
+            from app.portals.newindia.automation.ocr_helper import ChequeExtractor
+            extractor = ChequeExtractor(cheque_path)
+            cheque_details = extractor.extract_details(
+                log=log,
+                excel_ifsc=data.ifsc_code or "",
+                excel_account=data.account_number or "",
+            )
+            
+            if not ifsc:
+                ifsc = cheque_details.get("ifsc")
+            if not acc_no:
+                acc_no = cheque_details.get("account_number")
+            if not acc_type:
+                acc_type = cheque_details.get("account_type")
+            
+            if isinstance(log, AutomationLogger):
+                log.success("Cheque OCR completed successfully.")
+                log.extracted("IFSC", ifsc)
+                log.extracted("Account", acc_no)
+                if not cheque_details.get("ifsc"):
+                    log.warning("IFSC not found in cheque; using Excel fallback.")
+                if not cheque_details.get("account_number"):
+                    log.warning("Account Number not found in cheque; using Excel fallback.")
+            else:
+                if not cheque_details.get("ifsc"):
+                    log(f"   ⚠️ IFSC not found in cheque. Falling back to Excel.")
+                if not cheque_details.get("account_number"):
+                    log(f"   ⚠️ Account Number not found in cheque. Falling back to Excel.")
+        else:
+            if isinstance(log, AutomationLogger):
+                log.success("Cheque document detected. Using pre-extracted and reviewed bank details.")
+                log.extracted("IFSC", ifsc)
+                log.extracted("Account", acc_no)
+            else:
+                log(f"   ✅ Cheque document detected. Using pre-extracted bank details: IFSC={ifsc}, Acc={acc_no}")
     else:
         if isinstance(log, AutomationLogger):
             log.warning("Cheque document NOT detected; strictly using Excel data.")

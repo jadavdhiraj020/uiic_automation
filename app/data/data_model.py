@@ -15,6 +15,7 @@ MULTI-PORTAL SUPPORT (2026-05-09):
   - New India fields are additive (new attributes with empty defaults).
 """
 import logging
+from datetime import date
 import re
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
@@ -129,7 +130,6 @@ class ClaimData:
     chassis_no: str = ""
     physically_verified: str = ""
     vehicle_make: str = ""
-    vehicle_model: str = ""
     type_of_body: str = ""
     class_of_vehicle: str = ""
     pre_accident_condition: str = ""
@@ -142,6 +142,7 @@ class ClaimData:
     vehicle_details_matching_policy: str = ""
     vehicle_details_mismatch_remarks: str = ""  # Optional
     reference_no: str = ""  # Optional, under Registration Cert Details
+    registered_laden_weight: str = ""  # Weight from Excel (in KG)
 
     # ── Accident Details ──────────────────────────────────────────────────────
     cause_nature_of_accident: str = ""
@@ -182,9 +183,6 @@ class ClaimData:
     # ── Bank Details ──────────────────────────────────────────────────────────
     bank_payment_to: str = ""
     ifsc_code: str = ""
-    bank_name: str = ""
-    bank_branch_name: str = ""
-    bank_address: str = ""
     account_number: str = ""
     account_type: str = ""
     party_payment_method: str = ""
@@ -246,6 +244,58 @@ class ClaimData:
             self._excel_logs.append(f"  📊 total_claimed_amount: '{self.total_claimed_amount}' (Source: Calculated)")
         except Exception as exc:
             logger.warning("Failed to calculate total_claimed_amount: %s", exc)
+
+        portal_id = _get_active_portal_id(self.portal_id)
+        if portal_id == "newindia":
+            # 3. Calculate Type of Vehicle based on Registered Laden Weight
+            weight_str = self.registered_laden_weight or ""
+            # Clean string: strip spaces, remove case-insensitive "kg", "kilogram", "kilograms"
+            cleaned = re.sub(r'(?i)\bkg\b|\bkilograms?\b|\s', '', weight_str).strip()
+            # Find any integer number in the cleaned string
+            match = re.search(r'\d+', cleaned)
+            if match:
+                try:
+                    weight_val = int(match.group(0))
+                    if weight_val > 3000:
+                        self.type_of_vehicle = "Goods Carrying (A)"
+                    else:
+                        self.type_of_vehicle = "Passenger Carrying (C)"
+                    self._excel_coords["type_of_vehicle"] = "Derived from Registered Laden Weight"
+                    self._excel_logs.append(f"  📊 type_of_vehicle: '{self.type_of_vehicle}' (Derived from Registered Laden Weight '{weight_str}')")
+                except Exception as exc:
+                    logger.warning("Failed to parse weight value %r: %s", weight_str, exc)
+            else:
+                if weight_str:
+                    logger.warning("No numeric digits found in Registered Laden Weight: %r", weight_str)
+
+            # 4. Calculate Age of Driver based on dob_of_driver
+            if self.dob_of_driver:
+                try:
+                    dob_str = str(self.dob_of_driver).strip()
+                    if dob_str:
+                        # Find all groups of digits
+                        parts = re.findall(r'\d+', dob_str)
+                        if len(parts) >= 3:
+                            if len(parts[0]) == 4:
+                                birth_year = int(parts[0])
+                                birth_month = int(parts[1])
+                                birth_day = int(parts[2])
+                            else:
+                                birth_day = int(parts[0])
+                                birth_month = int(parts[1])
+                                birth_year = int(parts[2])
+                            
+                            today = date.today()
+                            
+                            age = today.year - birth_year
+                            if (today.month, today.day) < (birth_month, birth_day):
+                                age -= 1
+                                
+                            self.age_of_driver = str(age)
+                            self._excel_coords["age_of_driver"] = "Calculated from Driver DOB"
+                            self._excel_logs.append(f"  📊 age_of_driver: '{self.age_of_driver}' (Derived from DOB '{dob_str}')")
+                except Exception as exc:
+                    logger.warning("Failed to calculate age_of_driver from DOB %s: %s", self.dob_of_driver, exc)
 
     def validate(self) -> Tuple[List[str], List[str]]:
         """
@@ -313,12 +363,12 @@ class ClaimData:
             ("engine_no",                      "Engine No"),
             ("chassis_no",                     "Chassis No"),
             ("vehicle_make",                   "Vehicle Make"),
-            ("vehicle_model",                  "Model"),
             ("type_of_body",                   "Type of Body"),
             ("class_of_vehicle",               "Class of Vehicle"),
             ("rto_name",                       "RTO Name"),
             ("odometer_reading",               "Odometer Reading"),
             ("vehicle_color",                  "Vehicle Color"),
+            ("registered_laden_weight",        "Registered Laden Weight"),
             ("type_of_vehicle",                "Type of Vehicle"),
             ("type_of_fuel",                   "Type of Fuel"),
             ("cause_nature_of_accident",       "Cause/Nature of Accident"),
@@ -328,10 +378,7 @@ class ClaimData:
             ("driver_license_number",          "Driver License Number"),
             ("driver_license_issue_date",      "Driver License Issue Date"),
             ("driver_license_expiry_date",     "Driver License Expiry Date"),
-            ("fir_number",                     "FIR Number"),
-            ("fir_date",                       "FIR Date"),
             ("ifsc_code",                      "IFSC Code"),
-            ("bank_name",                      "Bank Name"),
             ("account_number",                 "Account Number"),
             ("vendor_invoice_date",            "Vendor/Tax Invoice Date"),
             ("vendor_invoice_number",          "Vendor/Tax Invoice Number"),
@@ -355,6 +402,8 @@ class ClaimData:
             ("tax_paid_upto",                    "Tax Paid Upto"),
             ("transfer_date",                    "Transfer Date"),
             ("badge_number",                     "Badge Number"),
+            ("fir_number",                       "FIR Number"),
+            ("fir_date",                         "FIR Date"),
             ("police_station_name",              "Police Station Name"),
             ("name_of_informant",                "Name of Informant"),
             ("net_salvage",                      "Net Salvage"),
@@ -471,7 +520,6 @@ class ClaimData:
             ("Chassis No",            self.chassis_no,               True,  _src("chassis_no")),
             ("Physically Verified",   self.physically_verified,      True,  _src("physically_verified")),
             ("Vehicle Make",          self.vehicle_make,             True,  _src("vehicle_make")),
-            ("Model",                 self.vehicle_model,            True,  _src("vehicle_model")),
             ("Type of Body",          self.type_of_body,             True,  _src("type_of_body")),
             ("Class of Vehicle",      self.class_of_vehicle,         True,  _src("class_of_vehicle")),
             ("Pre-Accident Cond.",    self.pre_accident_condition,   True,  _src("pre_accident_condition")),
@@ -479,6 +527,7 @@ class ClaimData:
             ("Odometer Reading",      self.odometer_reading,         True,  _src("odometer_reading")),
             ("Vehicle Color",         self.vehicle_color,            True,  _src("vehicle_color")),
             ("Color Type",            self.vehicle_color_type,       True,  _src("vehicle_color_type")),
+            ("Laden Weight",          self.registered_laden_weight,  True,  _src("registered_laden_weight")),
             ("Type of Vehicle",       self.type_of_vehicle,          True,  _src("type_of_vehicle")),
             ("Type of Fuel",          self.type_of_fuel,             True,  _src("type_of_fuel")),
             ("Details Match Policy",  self.vehicle_details_matching_policy, True, _src("vehicle_details_matching_policy")),
@@ -508,8 +557,8 @@ class ClaimData:
             ("Charged IPC",           self.charged_us_ipc,           False, _src("charged_us_ipc")),
 
             # ── FIR Details ─────────────────────────────────
-            ("FIR Number",            self.fir_number,               True,  _src("fir_number")),
-            ("FIR Date",              self.fir_date,                 True,  _src("fir_date")),
+            ("FIR Number",            self.fir_number,               False, _src("fir_number")),
+            ("FIR Date",              self.fir_date,                 False, _src("fir_date")),
             ("Police Station",        self.police_station_name,      False, _src("police_station_name")),
             ("Informant Name",        self.name_of_informant,        False, _src("name_of_informant")),
             ("Sections of Law",       self.sections_of_law,          False, _src("sections_of_law")),
@@ -519,11 +568,9 @@ class ClaimData:
             ("Any TP Claim?",         self.is_there_any_tp_claim,    True,  _src("is_there_any_tp_claim")),
 
             # ── Bank Details ────────────────────────────────
-            ("Payment To",            self.bank_payment_to or "Unknown",          True,  _src("bank_payment_to")),
+            ("Payment To",            self.bank_payment_to or "Unknown",          True,  _src("bank_payment_to")),
+
             ("IFSC Code",             self.ifsc_code,                True,  _src("ifsc_code")),
-            ("Bank Name",             self.bank_name,                True,  _src("bank_name")),
-            ("Branch Name",           self.bank_branch_name,         True,  _src("bank_branch_name")),
-            ("Bank Address",          self.bank_address,             True,  _src("bank_address")),
             ("Account Number",        self.account_number,           True,  _src("account_number")),
             ("Account Type",          self.account_type,             True,  _src("account_type")),
             ("Payment Method",        self.party_payment_method,     True,  _src("party_payment_method")),

@@ -62,14 +62,6 @@
     "allow_text_values": true,
     "_mandatory": true
   },
-  "vehicle_model": {
-    "sheet": "ALL",
-    "search_labels": ["Model", "Vehicle Model", "Model of Vehicle"],
-    "row_offset": 0,
-    "col_offset": 1,
-    "allow_text_values": true,
-    "_mandatory": true
-  },
   "type_of_body": {
     "sheet": "ALL",
     "search_labels": ["Type of Body", "Body Type"],
@@ -133,7 +125,7 @@
     "row_offset": 0,
     "col_offset": 1,
     "allow_text_values": true,
-    "_mandatory": true
+    "_mandatory": false
   },
   "type_of_fuel": {
     "sheet": "ALL",
@@ -150,6 +142,14 @@
     "col_offset": 1,
     "allow_text_values": true,
     "_mandatory": false
+  },
+  "registered_laden_weight": {
+    "sheet": "ALL",
+    "search_labels": ["Registered Laden Weight", "Laden Weight", "Laden Weight (KG)", "Weight (KG)", "REGISTERED LADEN WEIGHT"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": true
   },
   "vehicle_details_matching_policy": {
     "sheet": "ALL",
@@ -244,7 +244,8 @@
     "search_labels": ["Age of Driver", "Driver Age"],
     "row_offset": 0,
     "col_offset": 1,
-    "_mandatory": true
+    "allow_text_values": true,
+    "_mandatory": false
   },
   "is_license_valid": {
     "sheet": "ALL",
@@ -297,6 +298,7 @@
     "row_offset": 0,
     "col_offset": 1,
     "allow_text_values": true,
+    "fallback_value": "NA",
     "_mandatory": false
   },
   "charged_us_ipc": {
@@ -305,6 +307,7 @@
     "row_offset": 0,
     "col_offset": 1,
     "allow_text_values": true,
+    "fallback_value": "NA",
     "_mandatory": false
   },
   "fir_number": {
@@ -312,14 +315,16 @@
     "search_labels": ["FIR Number", "FIR No", "F.I.R. No"],
     "row_offset": 0,
     "col_offset": 1,
-    "_mandatory": true
+    "allow_text_values": true,
+    "fallback_value": "NA",
+    "_mandatory": false
   },
   "fir_date": {
     "sheet": "ALL",
     "search_labels": ["FIR Date", "Date of FIR", "F.I.R. Date"],
     "row_offset": 0,
     "col_offset": 1,
-    "_mandatory": true
+    "_mandatory": false
   },
   "police_station_name": {
     "sheet": "ALL",
@@ -327,6 +332,7 @@
     "row_offset": 0,
     "col_offset": 1,
     "allow_text_values": true,
+    "fallback_value": "NA",
     "_mandatory": false
   },
   "name_of_informant": {
@@ -385,30 +391,6 @@
     "search_labels": ["IFSC Code", "IFSC", "IFS Code"],
     "row_offset": 0,
     "col_offset": 1,
-    "_mandatory": true
-  },
-  "bank_name": {
-    "sheet": "ALL",
-    "search_labels": ["Bank Name", "Name of Bank"],
-    "row_offset": 0,
-    "col_offset": 1,
-    "allow_text_values": true,
-    "_mandatory": true
-  },
-  "bank_branch_name": {
-    "sheet": "ALL",
-    "search_labels": ["Bank Branch Name", "Branch Name", "Branch"],
-    "row_offset": 0,
-    "col_offset": 1,
-    "allow_text_values": true,
-    "_mandatory": true
-  },
-  "bank_address": {
-    "sheet": "ALL",
-    "search_labels": ["Bank Address", "Branch Address"],
-    "row_offset": 0,
-    "col_offset": 1,
-    "allow_text_values": true,
     "_mandatory": true
   },
   "account_number": {

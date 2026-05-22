@@ -137,7 +137,6 @@ _NEWINDIA_METADATA = PortalUiMetadata(
                 "Chassis No",
                 "Physically Verified",
                 "Vehicle Make",
-                "Model",
                 "Type of Body",
                 "Class of Vehicle",
                 "Pre-Accident Cond.",
@@ -191,9 +190,6 @@ _NEWINDIA_METADATA = PortalUiMetadata(
             [
                 "Payment To",
                 "IFSC Code",
-                "Bank Name",
-                "Branch Name",
-                "Bank Address",
                 "Account Number",
                 "Account Type",
                 "Payment Method",
