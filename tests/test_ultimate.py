@@ -6052,4 +6052,456 @@ class TestNewIndiaMobileAndTimeCleaning:
         assert c.time_of_survey == "10:00"
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# 43. ORIENTAL INSURANCE COMPANY (OIC) PORTAL TESTS
+# ═════════════════════════════════════════════════════════════════════════════
+
+class TestOicLogin:
+    def _create_dummy_image_bytes(self) -> bytes:
+        import numpy as np
+        import cv2
+        # Create a simple 10x10 black square image in memory
+        img = np.zeros((10, 10, 3), dtype=np.uint8)
+        _, buf = cv2.imencode(".png", img)
+        return buf.tobytes()
+
+    @pytest.mark.asyncio
+    async def test_dismiss_portal_popup_found(self):
+        from unittest.mock import AsyncMock, MagicMock
+        from app.portals.oic.automation.popup_service import dismiss_portal_popup
+        
+        mock_page = MagicMock()
+        mock_page.evaluate = AsyncMock(side_effect=[
+            {"found": True, "type": "swal", "body": "Incorrect Captcha Error"}, # detect
+            {"ok": True, "via": "button.confirm"}, # dismiss
+            {"found": False} # verify closed
+        ])
+        
+        log = MagicMock()
+        res = await dismiss_portal_popup(mock_page, log, max_wait_s=1.0, verify_closed=True)
+        assert res is True
+        assert mock_page.evaluate.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_dismiss_portal_popup_absent(self):
+        from unittest.mock import AsyncMock, MagicMock
+        from app.portals.oic.automation.popup_service import dismiss_portal_popup
+        
+        mock_page = MagicMock()
+        mock_page.evaluate = AsyncMock(return_value={"found": False})
+        
+        log = MagicMock()
+        res = await dismiss_portal_popup(mock_page, log, max_wait_s=0.5)
+        assert res is False
+
+    def test_get_variants(self):
+        from app.portals.oic.automation.login_module import get_variants
+        dummy_bytes = self._create_dummy_image_bytes()
+        variants = get_variants(dummy_bytes)
+        assert len(variants) > 0
+        assert isinstance(variants[0], tuple)
+        assert len(variants[0]) == 2
+        assert isinstance(variants[0][0], str)
+        assert isinstance(variants[0][1], bytes)
+
+    @pytest.mark.asyncio
+    async def test_captcha_best_of_n_scoring(self, monkeypatch):
+        from app.portals.oic.automation.login_module import _solve_captcha_best_of_n
+        from unittest.mock import MagicMock
+        dummy_bytes = self._create_dummy_image_bytes()
+        
+        variant_responses = [
+            "ABCD",    # gray
+            "ABCD",    # otsu
+            "ABCD",    # fixed
+            "ABCDE",   # adaptive
+            "ABCDE",   # clahe
+            "ABCDEF",  # morphology
+        ]
+        response_iter = iter(variant_responses)
+        
+        def mock_solve(bytes_val):
+            try:
+                return next(response_iter)
+            except StopIteration:
+                return "ABCDE"
+
+        monkeypatch.setattr(
+            "app.automation.captcha_solver.solve_captcha_from_bytes",
+            mock_solve
+        )
+        
+        log = MagicMock()
+        result = _solve_captcha_best_of_n(dummy_bytes, log)
+        assert result == "ABCDE"
+
+    @pytest.mark.asyncio
+    async def test_do_login_success(self, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock
+        from app.portals.oic.automation.login_module import do_login
+        
+        mock_page = MagicMock()
+        mock_page.url = "https://orientalinsurance.org.in/dashboard"
+        mock_page.goto = AsyncMock()
+        mock_page.wait_for_selector = AsyncMock()
+        mock_page.evaluate = AsyncMock(return_value="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=")
+        
+        mock_locator = MagicMock()
+        mock_locator.first = mock_locator
+        mock_locator.is_visible = AsyncMock(return_value=True)
+        mock_locator.click = AsyncMock()
+        mock_locator.type = AsyncMock()
+        mock_locator.fill = AsyncMock()
+        mock_locator.screenshot = AsyncMock(return_value=b"screenshot_bytes")
+        mock_page.locator = MagicMock(return_value=mock_locator)
+
+        monkeypatch.setattr(
+            "app.portals.oic.automation.popup_service.dismiss_portal_popup",
+            AsyncMock(return_value=False)
+        )
+        monkeypatch.setattr(
+            "app.portals.oic.automation.login_module._solve_captcha_best_of_n",
+            lambda img, log: "XY12Z"
+        )
+        monkeypatch.setattr(
+            "app.portals.oic.automation.login_module._is_logged_in",
+            AsyncMock(return_value=True)
+        )
+
+        settings = {
+            "portal_url": "https://orientalinsurance.org.in/",
+            "username": "OIC_USER",
+            "password": "OIC_PASSWORD",
+            "captcha_max_retries": 2
+        }
+        log = MagicMock()
+        result = await do_login(mock_page, settings, log)
+        assert result is True
+        mock_page.goto.assert_called_once_with(
+            "https://orientalinsurance.org.in/",
+            wait_until="domcontentloaded",
+            timeout=30000
+        )
+
+    @pytest.mark.asyncio
+    async def test_do_login_captcha_failure(self, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock
+        from app.portals.oic.automation.login_module import do_login
+        
+        mock_page = MagicMock()
+        mock_page.url = "https://orientalinsurance.org.in/login"
+        mock_page.goto = AsyncMock()
+        mock_page.wait_for_selector = AsyncMock()
+        mock_page.evaluate = AsyncMock(return_value=None)
+        
+        mock_locator = MagicMock()
+        mock_locator.first = mock_locator
+        mock_locator.is_visible = AsyncMock(side_effect=[True, False, False, False, False])
+        mock_locator.screenshot = AsyncMock(return_value=b"screenshot_bytes")
+        mock_page.locator = MagicMock(return_value=mock_locator)
+
+        monkeypatch.setattr(
+            "app.portals.oic.automation.popup_service.dismiss_portal_popup",
+            AsyncMock(return_value=False)
+        )
+        monkeypatch.setattr(
+            "app.portals.oic.automation.login_module._solve_captcha_best_of_n",
+            lambda img, log: ""
+        )
+        monkeypatch.setattr(
+            "app.portals.oic.automation.login_module._is_logged_in",
+            AsyncMock(return_value=False)
+        )
+
+        settings = {
+            "portal_url": "https://orientalinsurance.org.in/",
+            "username": "OIC_USER",
+            "password": "OIC_PASSWORD",
+            "captcha_max_retries": 2
+        }
+        log = MagicMock()
+        result = await do_login(mock_page, settings, log)
+        assert result is False
+
+
+class TestOicNavigation:
+    @pytest.mark.asyncio
+    async def test_oic_navigation_success(self, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock
+        from app.portals.oic.automation.navigation_module import navigate_to_claim
+        
+        mock_page = MagicMock()
+        mock_page.url = "https://orientalinsurance.org.in/dashboard"
+        mock_page.wait_for_url = AsyncMock()
+
+        monkeypatch.setattr(
+            "app.portals.oic.automation.popup_service.dismiss_portal_popup",
+            AsyncMock(return_value=True)
+        )
+
+        mock_element = MagicMock()
+        mock_element.first = mock_element
+        mock_element.is_visible = AsyncMock(return_value=True)
+        mock_element.click = AsyncMock()
+        mock_page.locator = MagicMock(return_value=mock_element)
+
+        settings = {}
+        log = MagicMock()
+        result = await navigate_to_claim(
+            page=mock_page,
+            claim_no="OIC-998877",
+            settings=settings,
+            log=log
+        )
+        assert result == mock_page
+        assert mock_element.click.call_count == 3
+        assert mock_page.locator.call_count >= 3
+
+    @pytest.mark.asyncio
+    async def test_oic_navigation_resilient_fallbacks(self, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock
+        from app.portals.oic.automation.navigation_module import navigate_to_claim
+        
+        mock_page = MagicMock()
+        mock_page.url = "https://orientalinsurance.org.in/dashboard"
+        mock_page.wait_for_url = AsyncMock()
+
+        monkeypatch.setattr(
+            "app.portals.oic.automation.popup_service.dismiss_portal_popup",
+            AsyncMock(return_value=True)
+        )
+
+        visibility_sequence = [
+            False, False, False, True, # Others tab selectors
+            False, True,             # Motor selectors
+            False, False, True,       # Generate selectors
+        ]
+        vis_iter = iter(visibility_sequence)
+        
+        async def mock_is_visible(timeout=0):
+            try:
+                return next(vis_iter)
+            except StopIteration:
+                return True
+
+        mock_element = MagicMock()
+        mock_element.first = mock_element
+        mock_element.is_visible = mock_is_visible
+        mock_element.click = AsyncMock()
+        mock_page.locator = MagicMock(return_value=mock_element)
+
+        settings = {}
+        log = MagicMock()
+        result = await navigate_to_claim(
+            page=mock_page,
+            claim_no="OIC-998877",
+            settings=settings,
+            log=log
+        )
+        assert result == mock_page
+        assert mock_element.click.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_oic_navigation_stop_callback(self, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock
+        from app.portals.oic.automation.navigation_module import navigate_to_claim
+        
+        mock_page = MagicMock()
+        mock_page.url = "https://orientalinsurance.org.in/dashboard"
+        mock_page.wait_for_url = AsyncMock()
+
+        monkeypatch.setattr(
+            "app.portals.oic.automation.popup_service.dismiss_portal_popup",
+            AsyncMock(return_value=True)
+        )
+
+        stop_cb = lambda: True
+        log = MagicMock()
+        result = await navigate_to_claim(
+            page=mock_page,
+            claim_no="OIC-998877",
+            settings={},
+            log=log,
+            stop_cb=stop_cb
+        )
+        assert result is None
+
+
+class TestOicAutomationModules:
+    @pytest.mark.asyncio
+    async def test_oic_claim_assessment_success(self):
+        from unittest.mock import MagicMock
+        from app.portals.oic.automation.claim_assessment_module import fill_claim_assessment_details
+        
+        mock_page = MagicMock()
+        mock_claim = MagicMock()
+        mock_claim.claim_no = "OIC-123456"
+        mock_log = MagicMock()
+        
+        res = await fill_claim_assessment_details(
+            page=mock_page,
+            claim=mock_claim,
+            log=mock_log,
+            stop_cb=lambda: False
+        )
+        assert res is True
+
+    @pytest.mark.asyncio
+    async def test_oic_claim_assessment_stop(self):
+        from unittest.mock import MagicMock
+        from app.portals.oic.automation.claim_assessment_module import fill_claim_assessment_details
+        
+        mock_page = MagicMock()
+        mock_claim = MagicMock()
+        mock_claim.claim_no = "OIC-123456"
+        mock_log = MagicMock()
+        
+        res = await fill_claim_assessment_details(
+            page=mock_page,
+            claim=mock_claim,
+            log=mock_log,
+            stop_cb=lambda: True
+        )
+        assert res is False
+
+    @pytest.mark.asyncio
+    async def test_oic_document_upload_success(self):
+        from unittest.mock import MagicMock
+        from app.portals.oic.automation.document_upload_module import fill_document_upload_section
+        
+        mock_page = MagicMock()
+        mock_claim = MagicMock()
+        mock_claim.claim_no = "OIC-123456"
+        mock_log = MagicMock()
+        
+        res = await fill_document_upload_section(
+            page=mock_page,
+            claim=mock_claim,
+            log=mock_log,
+            stop_cb=lambda: False
+        )
+        assert res is True
+
+    @pytest.mark.asyncio
+    async def test_oic_document_upload_stop(self):
+        from unittest.mock import MagicMock
+        from app.portals.oic.automation.document_upload_module import fill_document_upload_section
+        
+        mock_page = MagicMock()
+        mock_claim = MagicMock()
+        mock_claim.claim_no = "OIC-123456"
+        mock_log = MagicMock()
+        
+        res = await fill_document_upload_section(
+            page=mock_page,
+            claim=mock_claim,
+            log=mock_log,
+            stop_cb=lambda: True
+        )
+        assert res is False
+
+
+class TestOicHardening:
+    @pytest.mark.asyncio
+    async def test_capture_error_screenshot(self):
+        from unittest.mock import AsyncMock, MagicMock
+        from app.portals.oic.automation.ui_utils import capture_error_screenshot
+        mock_page = MagicMock()
+        mock_page.screenshot = AsyncMock()
+        mock_log = MagicMock()
+        
+        filepath = await capture_error_screenshot(mock_page, "test_failure_context", mock_log)
+        assert mock_page.screenshot.called is True
+        assert filepath is not None
+        assert "oic_error_test_failure_context" in filepath
+        assert filepath.endswith(".png")
+
+    @pytest.mark.asyncio
+    async def test_manual_login_fallback_success(self, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock
+        from app.portals.oic.automation.login_module import _run_manual_login_fallback
+        mock_page = MagicMock()
+        mock_page.screenshot = AsyncMock()
+        mock_log = MagicMock()
+        
+        is_logged_in_mock = AsyncMock(side_effect=[False, True])
+        monkeypatch.setattr(
+            "app.portals.oic.automation.login_module._is_logged_in",
+            is_logged_in_mock
+        )
+        
+        res = await _run_manual_login_fallback(mock_page, timeout_s=3.0, log=mock_log, stop_cb=lambda: False)
+        assert res is True
+        assert is_logged_in_mock.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_manual_login_fallback_timeout(self, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock
+        from app.portals.oic.automation.login_module import _run_manual_login_fallback
+        mock_page = MagicMock()
+        mock_page.screenshot = AsyncMock()
+        mock_log = MagicMock()
+        
+        is_logged_in_mock = AsyncMock(return_value=False)
+        monkeypatch.setattr(
+            "app.portals.oic.automation.login_module._is_logged_in",
+            is_logged_in_mock
+        )
+        
+        res = await _run_manual_login_fallback(mock_page, timeout_s=2.0, log=mock_log, stop_cb=lambda: False)
+        assert res is False
+        assert is_logged_in_mock.call_count >= 2
+
+    @pytest.mark.asyncio
+    async def test_oic_validation_success(self):
+        """Verify that OIC validation succeeds (no errors) when both claim_no and invoice are present."""
+        from app.data.data_model import ClaimData
+        claim = ClaimData()
+        claim.portal_id = "oic"
+        claim.claim_no = "OIC-12345"
+        claim.assessment_files = {
+            "invoice": "path/to/invoice.pdf"
+        }
+        
+        errors, warnings = claim.validate()
+        assert len(errors) == 0
+
+    @pytest.mark.asyncio
+    async def test_oic_validation_failure(self):
+        """Verify that OIC validation populates blocking errors when claim_no or invoice are missing."""
+        from app.data.data_model import ClaimData
+        claim = ClaimData()
+        claim.portal_id = "oic"
+        claim.claim_no = ""
+        claim.assessment_files = {} # Missing invoice
+        
+        errors, warnings = claim.validate()
+        assert "Claim Number is missing" in errors
+        assert "Invoice File is missing" in errors
+
+    @pytest.mark.asyncio
+    async def test_oic_engine_no_early_abort(self):
+        """Verify that engine does not perform a pre-run hard abort when invoice is missing, letting browser launch."""
+        from unittest.mock import MagicMock, patch
+        from app.automation.engine import AutomationEngine
+        from app.data.data_model import ClaimData
+        
+        engine = AutomationEngine(portal_id="oic", log_cb=MagicMock(), step_cb=MagicMock())
+        claim = ClaimData()
+        claim.claim_no = "OIC-12345"
+        claim.assessment_files = {} # Missing invoice
+        
+        with patch("app.automation.engine.async_playwright") as mock_pw:
+            mock_pw.return_value.__aenter__.side_effect = Exception("Playwright bypassed")
+            with pytest.raises(Exception, match="Playwright bypassed"):
+                await engine.run_automation(claim, settings={
+                    "field_wait_ms": 250,
+                    "portal_url": "https://orientalinsurance.org.in/",
+                    "username": "test_username",
+                    "password": "test_password"
+                })
+
+
+
+
 

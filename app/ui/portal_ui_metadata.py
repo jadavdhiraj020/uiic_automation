@@ -236,11 +236,42 @@ _NEWINDIA_METADATA = PortalUiMetadata(
 )
 
 
+_OIC_METADATA = PortalUiMetadata(
+    portal_id="oic",
+    phases=[
+        WorkflowPhase("login", "Login"),
+        WorkflowPhase("navigate", "Navigate to Claim"),
+        WorkflowPhase("claim_assessment", "Claim Assessment"),
+        WorkflowPhase("document_upload", "Document Upload"),
+        WorkflowPhase("complete", "Complete"),
+    ],
+    field_groups=[
+        FieldGroup(
+            "claim_details",
+            "Claim Details",
+            [
+                "Claim No",
+            ],
+        ),
+        FieldGroup(
+            "invoice_details",
+            "Invoice Details",
+            [
+                "Workshop Inv No",
+                "Workshop Inv Date",
+            ],
+        ),
+    ],
+)
+
+
 _METADATA: Dict[str, PortalUiMetadata] = {
     _UIIC_METADATA.portal_id: _UIIC_METADATA,
     _NEWINDIA_METADATA.portal_id: _NEWINDIA_METADATA,
+    _OIC_METADATA.portal_id: _OIC_METADATA,
 }
 
 
 def get_portal_ui_metadata(portal_id: str | None) -> PortalUiMetadata:
     return _METADATA.get(portal_id or "uiic", _UIIC_METADATA)
+

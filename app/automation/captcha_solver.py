@@ -106,7 +106,9 @@ def _extract_text(img_bytes: bytes) -> str:
         with os.fdopen(tmp_fd, "wb") as f:
             f.write(img_bytes)
 
-        result = _get_ocr().ocr(tmp_path, cls=False)
+        ocr_engine = _get_ocr()
+        with _ocr_lock:
+            result = ocr_engine.ocr(tmp_path, cls=False)
 
         if not result or result[0] is None:
             logger.warning("PaddleOCR returned no result")

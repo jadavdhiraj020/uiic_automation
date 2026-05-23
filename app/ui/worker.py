@@ -52,12 +52,17 @@ class FolderScanWorker(QObject):
         self.folder = folder
         self.config_dir = config_dir
         self.portal_id = portal_id
+        self._stop_requested = False
+
+    def request_stop(self):
+        """Cooperative cancel signal called from UI thread."""
+        self._stop_requested = True
 
     def run(self):
         from app.ui.services.claim_folder_service import ClaimFolderService
         try:
             service = ClaimFolderService(config_dir=self.config_dir, portal_id=self.portal_id)
-            result = service.process_folder(self.folder)
+            result = service.process_folder(self.folder, stop_cb=lambda: self._stop_requested)
             self.done_signal.emit(result)
         except Exception as e:
             from app.ui.services.claim_folder_service import ClaimFolderProcessResult

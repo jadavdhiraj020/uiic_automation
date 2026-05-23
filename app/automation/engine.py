@@ -112,8 +112,8 @@ async def _get_active_page(
         log = log_cb if log_cb is not None else print
     if captured_pages is None:
         captured_pages = []
-    if portal_id == "newindia":
-        # New India usually doesn't open a new tab immediately after login.
+    if portal_id in ("newindia", "oic"):
+        # New India & OIC usually don't open a new tab immediately after login.
         # We just return the last active page in the context.
         await asyncio.sleep(1.0)
         return context.pages[-1] if context.pages else None
@@ -274,8 +274,12 @@ class AutomationEngine:
                 "Driver Details", "FIR Details", "NEFT Details", "Work Approval",
                 "Claim Assessment", "Document Upload"
             ]
+        elif self.portal_id == "oic":
+            steps = ["Login", "Navigate", "Claim Assessment", "Document Upload"]
         else:
             steps = ["Login", "Navigate", "Interim Report", "Claim Documents", "Claim Assessment"]
+
+        # No pre-run validation hard abort for OIC. Errors will be shown in the UI but the engine will proceed and launch the browser.
 
         field_delay = _setting_int(settings, "field_wait_ms", "field_delay_ms", 400)
         
@@ -350,6 +354,8 @@ class AutomationEngine:
 
                 if self.portal_id == "newindia":
                     from app.portals.newindia.automation.login_module import do_login
+                elif self.portal_id == "oic":
+                    from app.portals.oic.automation.login_module import do_login
                 else:
                     from app.automation.login_module import do_login
 
@@ -385,6 +391,9 @@ class AutomationEngine:
 
                 if self.portal_id == "newindia":
                     from app.portals.newindia.automation.navigation_module import navigate_to_claim
+                    claim_page = await navigate_to_claim(page, claim.claim_no, settings=settings, log=self.log, stop_cb=self._check_stop)
+                elif self.portal_id == "oic":
+                    from app.portals.oic.automation.navigation_module import navigate_to_claim
                     claim_page = await navigate_to_claim(page, claim.claim_no, settings=settings, log=self.log, stop_cb=self._check_stop)
                 else:
                     from app.automation.navigation_module import navigate_to_claim
@@ -474,6 +483,28 @@ class AutomationEngine:
                     self.log.section_done("Total New India Workflow", show_duration=True)
                     await self._wait_for_manual_review(browser)
                     return AutomationRunResult(True, "New India phases complete.")
+
+                # --- OIC PORTAL PHASES ---
+                if self.portal_id == "oic":
+                    from app.portals.oic.automation.claim_assessment_module import fill_claim_assessment_details
+                    from app.portals.oic.automation.document_upload_module import fill_document_upload_section
+
+                    # Phase 3: Claim Assessment
+                    self.step_cb(2, steps[2])
+                    self.log.phase_banner(3, total_steps, "Claim Assessment")
+                    if not await fill_claim_assessment_details(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
+                        return AutomationRunResult(False, "Phase 3 failed.")
+
+                    # Phase 4: Document Upload
+                    self.step_cb(3, steps[3])
+                    self.log.phase_banner(4, total_steps, "Document Upload")
+                    if not await fill_document_upload_section(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
+                        return AutomationRunResult(False, "Phase 4 failed.")
+
+                    t_total = time.time() - t_start
+                    self.log.section_done("Total Oriental Insurance Workflow", show_duration=True)
+                    await self._wait_for_manual_review(browser)
+                    return AutomationRunResult(True, "Oriental Insurance phases complete.")
 
                 # --- UIIC PORTAL PHASES ---
                 self.step_cb(2, steps[2])

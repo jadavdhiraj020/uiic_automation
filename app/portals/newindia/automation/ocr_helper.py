@@ -213,7 +213,7 @@ class ChequeExtractor:
 
     # ── Public entry point ────────────────────────────────────────────────────
 
-    def extract_details(self, log=None, excel_ifsc: str = "", excel_account: str = "") -> Dict[str, Optional[str]]:
+    def extract_details(self, log=None, excel_ifsc: str = "", excel_account: str = "", stop_cb: Optional[callable] = None) -> Dict[str, Optional[str]]:
         """
         Extract IFSC, account_number, and account_type from the cheque file.
         Returns dict with None for any field that could not be extracted.
@@ -222,6 +222,7 @@ class ChequeExtractor:
             log: AutomationLogger or callable for UI logging
             excel_ifsc: IFSC from Excel for cross-validation (optional)
             excel_account: Account number from Excel for cross-validation (optional)
+            stop_cb: Cooperative cancel callback from worker thread
         """
         result: Dict[str, Optional[str]] = {
             "ifsc": None, "account_number": None, "account_type": None
@@ -235,13 +236,21 @@ class ChequeExtractor:
         fname = os.path.basename(self.doc_path)
         self._log(log, "info", f"Starting cheque OCR: {fname}")
 
+        if stop_cb and stop_cb():
+            self._log(log, "warning", "Cheque OCR cancelled by user.")
+            return result
+
         # --- Step 1: Extract text blocks with spatial info ---
         if ext == ".pdf":
-            candidates = self._extract_pdf(log, excel_ifsc, excel_account)
+            candidates = self._extract_pdf(log, excel_ifsc, excel_account, stop_cb)
         elif ext in self.SUPPORTED_IMAGE_EXTS:
-            candidates = self._extract_image(self.doc_path, log, excel_ifsc, excel_account)
+            candidates = self._extract_image(self.doc_path, log, excel_ifsc, excel_account, stop_cb)
         else:
             self._log(log, "warning", f"Unsupported file type '{ext}'; skipping OCR.")
+            return result
+
+        if stop_cb and stop_cb():
+            self._log(log, "warning", "Cheque OCR cancelled by user.")
             return result
 
         if not candidates:
@@ -259,6 +268,9 @@ class ChequeExtractor:
 
         # Fallback: parse flat text candidates for any remaining missing fields
         for i, raw in enumerate(candidates):
+            if stop_cb and stop_cb():
+                self._log(log, "warning", "Cheque OCR cancelled by user.")
+                break
             clean = self._normalize(raw)
             if not result["ifsc"]:
                 result["ifsc"] = self._find_ifsc(clean, log)
@@ -283,14 +295,18 @@ class ChequeExtractor:
     # PDF extraction
     # ══════════════════════════════════════════════════════════════════════════
 
-    def _extract_pdf(self, log, excel_ifsc: str = "", excel_account: str = "") -> List[str]:
+    def _extract_pdf(self, log, excel_ifsc: str = "", excel_account: str = "", stop_cb: Optional[callable] = None) -> List[str]:
         """Try pdfplumber text; if empty (scanned), render pages and OCR."""
         texts: List[str] = []
         try:
             import pdfplumber
+            if stop_cb and stop_cb():
+                return texts
             with pdfplumber.open(self.doc_path) as pdf:
                 full = ""
                 for page in pdf.pages:
+                    if stop_cb and stop_cb():
+                        return texts
                     t = page.extract_text() or ""
                     full += t + "\n"
                 if full.strip():
@@ -299,28 +315,42 @@ class ChequeExtractor:
                 else:
                     self._log(log, "info", "pdfplumber returned no text (scanned PDF); trying image OCR on pages.")
                     for i, page in enumerate(pdf.pages):
+                        if stop_cb and stop_cb():
+                            return texts
                         try:
                             pil_img = page.to_image(resolution=300).original
-                            texts.extend(self._ocr_pil(pil_img, log, excel_ifsc, excel_account))
+                            texts.extend(self._ocr_pil(pil_img, log, excel_ifsc, excel_account, stop_cb))
                         except Exception as e:
-                            self._log(log, "warning", f"Page {i} OCR failed: {str(e)[:80]}")
+                            exc_name = type(e).__name__
+                            if "PDFInfoNotInstalledError" in exc_name or "pdfinfo" in str(e).lower():
+                                self._log(log, "warning", "Poppler system binary is missing. PDF page rendering is not available.")
+                                self._log(log, "warning", "👉 Solution: Install Poppler (e.g. via Scoop: 'scoop install poppler') and add to PATH.")
+                            else:
+                                self._log(log, "warning", f"Page {i} OCR failed: {str(e)[:80]}")
         except ImportError:
             self._log(log, "warning", "pdfplumber not installed; attempting image OCR directly on PDF.")
-            texts.extend(self._extract_image(self.doc_path, log, excel_ifsc, excel_account))
+            texts.extend(self._extract_image(self.doc_path, log, excel_ifsc, excel_account, stop_cb))
         except Exception as e:
-            self._log(log, "error", f"PDF extraction error: {str(e)[:100]}")
+            exc_name = type(e).__name__
+            if "PDFInfoNotInstalledError" in exc_name or "pdfinfo" in str(e).lower():
+                self._log(log, "warning", "Poppler system binary is missing. PDF page rendering is not available.")
+                self._log(log, "warning", "👉 Solution: Install Poppler (e.g. via Scoop: 'scoop install poppler') and add to PATH.")
+            else:
+                self._log(log, "error", f"PDF extraction error: {str(e)[:100]}")
         return texts
 
     # ══════════════════════════════════════════════════════════════════════════
     # Image extraction with OpenCV preprocessing
     # ══════════════════════════════════════════════════════════════════════════
 
-    def _extract_image(self, path: str, log, excel_ifsc: str = "", excel_account: str = "") -> List[str]:
+    def _extract_image(self, path: str, log, excel_ifsc: str = "", excel_account: str = "", stop_cb: Optional[callable] = None) -> List[str]:
         """Load an image file and run preprocessed OCR."""
         try:
             from PIL import Image
+            if stop_cb and stop_cb():
+                return []
             img = Image.open(path)
-            return self._ocr_pil(img, log, excel_ifsc, excel_account)
+            return self._ocr_pil(img, log, excel_ifsc, excel_account, stop_cb)
         except ImportError:
             self._log(log, "warning", "Pillow not installed; cannot process image.")
             return []
@@ -328,11 +358,13 @@ class ChequeExtractor:
             self._log(log, "error", f"Image load error: {str(e)[:100]}")
             return []
 
-    def _preprocess_opencv(self, pil_image, log) -> list:
+    def _preprocess_opencv(self, pil_image, log, stop_cb: Optional[callable] = None) -> list:
         """
         Advanced OpenCV preprocessing pipeline.
         Returns a list of PIL Image variants to OCR.
         """
+        if stop_cb and stop_cb():
+            return [pil_image]
         try:
             import cv2
             import numpy as np
@@ -435,7 +467,7 @@ class ChequeExtractor:
         except Exception:
             return image  # Silently return original on any error
 
-    def _ocr_pil(self, pil_image, log, excel_ifsc: str = "", excel_account: str = "") -> List[str]:
+    def _ocr_pil(self, pil_image, log, excel_ifsc: str = "", excel_account: str = "", stop_cb: Optional[callable] = None) -> List[str]:
         """
         Preprocess PIL image then OCR with PaddleOCR.
         Returns list of concatenated text strings (one per variant).
@@ -445,11 +477,14 @@ class ChequeExtractor:
         results: List[str] = []
 
         # Get preprocessed variants
-        variants = self._preprocess_opencv(pil_image, log)
+        variants = self._preprocess_opencv(pil_image, log, stop_cb)
 
         for var_idx, variant_img in enumerate(variants):
+            if stop_cb and stop_cb():
+                self._log(log, "warning", "Cheque OCR cancelled by user.")
+                break
             try:
-                blocks = self._run_paddleocr(variant_img, log)
+                blocks = self._run_paddleocr(variant_img, log, stop_cb)
                 if blocks:
                     # Merge structured blocks (prefer first variant's blocks)
                     if not self._last_structured_blocks:
@@ -495,27 +530,36 @@ class ChequeExtractor:
             
         return bool(ifsc and acno)
 
-    def _run_paddleocr(self, pil_image, log) -> List[OCRTextBlock]:
+    def _run_paddleocr(self, pil_image, log, stop_cb: Optional[callable] = None) -> List[OCRTextBlock]:
         """Run PaddleOCR on a PIL image and return structured text blocks."""
         blocks: List[OCRTextBlock] = []
+        if stop_cb and stop_cb():
+            return blocks
 
         try:
             ocr_engine = _get_doc_ocr()
         except Exception as e:
             self._log(log, "error", f"PaddleOCR not available: {str(e)[:100]}")
             # Fallback to pytesseract if available (backward compat)
-            return self._run_tesseract_fallback(pil_image, log)
+            return self._run_tesseract_fallback(pil_image, log, stop_cb)
 
         # Save PIL image to temp file (PaddleOCR needs a file path)
         tmp_fd, tmp_path = tempfile.mkstemp(suffix=".png")
         try:
+            if stop_cb and stop_cb():
+                return blocks
             pil_image.save(tmp_path)
-            result = ocr_engine.ocr(tmp_path, cls=True)
+            with _doc_ocr_lock:
+                if stop_cb and stop_cb():
+                    return blocks
+                result = ocr_engine.ocr(tmp_path, cls=True)
 
             if not result or result[0] is None:
                 return blocks
 
             for line in result[0]:
+                if stop_cb and stop_cb():
+                    return blocks
                 bbox = line[0]           # [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
                 text = line[1][0]        # recognized text
                 confidence = line[1][1]  # confidence score (0.0–1.0)
@@ -541,7 +585,7 @@ class ChequeExtractor:
 
         return blocks
 
-    def _run_tesseract_fallback(self, pil_image, log) -> List[OCRTextBlock]:
+    def _run_tesseract_fallback(self, pil_image, log, stop_cb: Optional[callable] = None) -> List[OCRTextBlock]:
         """Last-resort fallback to pytesseract if PaddleOCR is unavailable."""
         try:
             import pytesseract
@@ -552,6 +596,8 @@ class ChequeExtractor:
 
         blocks: List[OCRTextBlock] = []
         try:
+            if stop_cb and stop_cb():
+                return blocks
             # Simple grayscale + sharpen
             img = pil_image.convert("L")
             sharpened = img.filter(ImageFilter.SHARPEN)
@@ -559,7 +605,11 @@ class ChequeExtractor:
             binary = sharpened.point(lambda x: 255 if x > threshold else 0, "L")
 
             for cfg in ["--psm 6 --oem 3", "--psm 3 --oem 3"]:
+                if stop_cb and stop_cb():
+                    break
                 for variant in [binary, sharpened]:
+                    if stop_cb and stop_cb():
+                        break
                     try:
                         text = pytesseract.image_to_string(variant, config=cfg, lang="eng")
                         if text and len(text.strip()) > 10:
@@ -568,7 +618,12 @@ class ChequeExtractor:
                                 confidence=0.5,  # Unknown confidence for tesseract
                                 bbox=[[0, 0], [0, 0], [0, 0], [0, 0]],
                             ))
-                    except Exception:
+                    except Exception as e:
+                        exc_name = type(e).__name__
+                        if "TesseractNotFoundError" in exc_name or "tesseract is not installed" in str(e).lower():
+                            self._log(log, "warning", "Tesseract binary is not installed or not in PATH. OCR fallback skipped.")
+                            self._log(log, "warning", "👉 Solution: Install Tesseract-OCR (https://github.com/UB-Mannheim/tesseract/wiki) and add to PATH.")
+                            return blocks
                         pass
 
             self._log(log, "info", f"Tesseract fallback: {len(blocks)} text blocks.")

@@ -373,8 +373,29 @@ class ClaimData:
 
         if portal_id == "newindia":
             return self._validate_newindia()
+        elif portal_id == "oic":
+            return self._validate_oic()
         else:
             return self._validate_uiic()
+
+    def _validate_oic(self) -> Tuple[List[str], List[str]]:
+        """OIC validation — claim_no and invoice are required."""
+        errors, warnings = [], []
+        if not self.claim_no or self.claim_no.strip() == "":
+            errors.append("Claim Number is missing")
+            
+        # Invoice file check — required for assessment
+        invoice_file = self.assessment_files.get("invoice", "")
+        if not invoice_file or invoice_file.strip() == "":
+            errors.append("Invoice File is missing")
+            
+        if not self.workshop_invoice_no:
+            warnings.append("Workshop Invoice No not found in PDF")
+        if not self.workshop_invoice_date:
+            warnings.append("Workshop Invoice Date not found in PDF")
+        if not self.claim_doc_files:
+            warnings.append("No claim documents found in folder")
+        return errors, warnings
 
     def _validate_uiic(self) -> Tuple[List[str], List[str]]:
         """Original UIIC validation — completely unchanged."""
@@ -495,6 +516,11 @@ class ClaimData:
                 f"Vehicle: {self.vehicle_registration_number or '—'} | "
                 f"Assessment: ₹{self.primary_assessment or '—'}"
             )
+        elif portal_id == "oic":
+            return (
+                f"Claim: {self.claim_no or 'N/A'} | "
+                f"Invoice: {self.workshop_invoice_no or '—'}"
+            )
         return (
             f"Claim: {self.claim_no or 'N/A'} | "
             f"Survey: {self.date_of_survey or '—'} | "
@@ -513,8 +539,21 @@ class ClaimData:
 
         if portal_id == "newindia":
             return self._preview_newindia()
+        elif portal_id == "oic":
+            return self._preview_oic()
         else:
             return self._preview_uiic()
+
+    def _preview_oic(self) -> List[Tuple[str, str, bool, str]]:
+        """OIC preview — only Claim No, Workshop Inv No, Workshop Inv Date."""
+        def _src(key: str) -> str:
+            return self._excel_coords.get(key, "")
+
+        return [
+            ("Claim No",              self.claim_no,              True,  _src("claim_no")),
+            ("Workshop Inv No",       self.workshop_invoice_no,   False, _src("workshop_invoice_no") or _src("vendor_invoice_number")),
+            ("Workshop Inv Date",     self.workshop_invoice_date, False, _src("workshop_invoice_date") or _src("vendor_invoice_date")),
+        ]
 
     def _preview_uiic(self) -> List[Tuple[str, str, bool, str]]:
         """Original UIIC preview — completely unchanged."""

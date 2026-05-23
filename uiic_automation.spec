@@ -129,7 +129,7 @@ add_directory(datas, PROJECT_ROOT / "app" / "config", "app/config")
 for portal_config in sorted((PROJECT_ROOT / "app" / "portals").glob("*/config")):
     portal_id = portal_config.parent.name
     add_directory(datas, portal_config, f"app/portals/{portal_id}/config")
-for required_portal in ("uiic", "newindia"):
+for required_portal in ("uiic", "newindia", "oic"):
     required_config = PROJECT_ROOT / "app" / "portals" / required_portal / "config"
     if not required_config.is_dir():
         raise FileNotFoundError(f"Required portal config directory missing: {required_config}")
@@ -262,6 +262,17 @@ hiddenimports.extend(
         "app.portals.newindia.automation.popup_service",
         "app.portals.newindia.automation.ui_utils",
         "app.portals.newindia.automation.ocr_helper",
+        # ── Oriental Insurance Company portal — automation package ───────────
+        # engine.py imports these lazily inside if-blocks; static analysis
+        # cannot find them. List explicitly so they are always compiled in.
+        "app.portals.oic.automation",
+        "app.portals.oic.automation.login_module",
+        "app.portals.oic.automation.navigation_module",
+        "app.portals.oic.automation.claim_assessment_module",
+        "app.portals.oic.automation.document_upload_module",
+        "app.portals.oic.automation.popup_service",
+        "app.portals.oic.automation.ui_utils",
+        "app.portals.oic.automation.workflow_module",
         # ── UI service layer (lazy-imported inside main_window event handlers)
         "app.ui.services",
         # ── Automation service layer (if it contains dynamically loaded code)

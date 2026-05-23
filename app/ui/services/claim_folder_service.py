@@ -23,13 +23,20 @@ class ClaimFolderService:
         self.config_dir = config_dir
         self.portal_id = portal_id or "uiic"
 
-    def process_folder(self, folder: str) -> ClaimFolderProcessResult:
+    def process_folder(self, folder: str, stop_cb: Optional[callable] = None) -> ClaimFolderProcessResult:
         from app.data.excel_reader import extract_claim_data
         from app.data.folder_scanner import scan_folder
 
         logs: List[str] = [f"📁 Scanning folder: {folder}"]
         try:
+            if stop_cb and stop_cb():
+                return ClaimFolderProcessResult(False, None, None, ["⚠️ Scan cancelled."], "Cancelled")
+
             scan_result = scan_folder(folder, portal_id=self.portal_id)
+            
+            if stop_cb and stop_cb():
+                return ClaimFolderProcessResult(False, scan_result, None, ["⚠️ Scan cancelled."], "Cancelled")
+
             claim_docs = scan_result.claim_doc_files
             assess_docs = scan_result.assessment_files
 
@@ -68,6 +75,9 @@ class ClaimFolderService:
                 logs.append("⚠️  No Excel file found in folder!")
                 return ClaimFolderProcessResult(False, scan_result, None, logs, error="No Excel file found")
 
+            if stop_cb and stop_cb():
+                return ClaimFolderProcessResult(False, scan_result, None, ["⚠️ Scan cancelled."], "Cancelled")
+
             logs.append(f"📊 Excel: {Path(scan_result.excel_path).name}")
             claim = extract_claim_data(scan_result.excel_path, portal_id=self.portal_id)
             claim.claim_doc_files = scan_result.claim_doc_files
@@ -93,7 +103,10 @@ class ClaimFolderService:
                     except Exception as gen_exc:
                         logs.append(f"⚠️  Auto-generation of assessment Excel failed: {gen_exc}")
 
-            self._extract_pdf_invoice_data(scan_result, claim, logs)
+            if stop_cb and stop_cb():
+                return ClaimFolderProcessResult(False, scan_result, claim, ["⚠️ Scan cancelled."], "Cancelled")
+
+            self._extract_pdf_invoice_data(scan_result, claim, logs, stop_cb=stop_cb)
 
             # ── Run Cheque OCR during folder load if bank details are missing in Excel ──
             if not getattr(claim, "ifsc_code", None) or not getattr(claim, "account_number", None):
@@ -105,50 +118,51 @@ class ClaimFolderService:
                         break
                 
                 if cheque_path:
-                    logs.append(f"🔍 Cheque document detected: {Path(cheque_path).name}. Extracting bank details via OCR...")
-                    try:
-                        from app.portals.newindia.automation.ocr_helper import ChequeExtractor
-                        extractor = ChequeExtractor(cheque_path)
-                        ocr_logs = []
-                        def ocr_log_fn(msg):
-                            clean_msg = msg.encode('ascii', errors='ignore').decode('ascii')
-                            ocr_logs.append(f"  • {clean_msg.strip()}")
-                        
-                        cheque_details = extractor.extract_details(
-                            log=ocr_log_fn,
-                            excel_ifsc=getattr(claim, "ifsc_code", None) or "",
-                            excel_account=getattr(claim, "account_number", None) or "",
-                        )
-                        
-                        if cheque_details.get("ifsc"):
-                            claim.ifsc_code = cheque_details["ifsc"]
-                            if hasattr(claim, "_excel_coords"):
-                                claim._excel_coords["ifsc_code"] = "Cheque OCR"
-                            if hasattr(claim, "_excel_logs"):
-                                claim._excel_logs.append(f"  📊 ifsc_code: '{claim.ifsc_code}' (Source: Cheque OCR)")
-                        if cheque_details.get("account_number"):
-                            claim.account_number = cheque_details["account_number"]
-                            if hasattr(claim, "_excel_coords"):
-                                claim._excel_coords["account_number"] = "Cheque OCR"
-                            if hasattr(claim, "_excel_logs"):
-                                claim._excel_logs.append(f"  📊 account_number: '{claim.account_number}' (Source: Cheque OCR)")
-                        if cheque_details.get("account_type"):
-                            claim.account_type = cheque_details["account_type"]
-                            if hasattr(claim, "_excel_coords"):
-                                claim._excel_coords["account_type"] = "Cheque OCR"
-                            if hasattr(claim, "_excel_logs"):
-                                claim._excel_logs.append(f"  📊 account_type: '{claim.account_type}' (Source: Cheque OCR)")
+                    if stop_cb and stop_cb():
+                        logs.append("⚠️ Scan cancelled before cheque OCR.")
+                    else:
+                        logs.append(f"🔍 Cheque document detected: {Path(cheque_path).name}. Extracting bank details via OCR...")
+                        try:
+                            from app.portals.newindia.automation.ocr_helper import ChequeExtractor
+                            extractor = ChequeExtractor(cheque_path)
+                            ocr_logs = []
+                            def ocr_log_fn(msg):
+                                clean_msg = msg.encode('ascii', errors='ignore').decode('ascii')
+                                ocr_logs.append(f"  • {clean_msg.strip()}")
                             
-                        logs.extend(ocr_logs)
-                    except Exception as ocr_exc:
-                        logs.append(f"  ⚠️ Cheque OCR failed: {ocr_exc}")
+                            cheque_details = extractor.extract_details(
+                                log=ocr_log_fn,
+                                excel_ifsc=getattr(claim, "ifsc_code", None) or "",
+                                excel_account=getattr(claim, "account_number", None) or "",
+                                stop_cb=stop_cb,
+                            )
+                            
+                            if cheque_details.get("ifsc"):
+                                claim.ifsc_code = cheque_details["ifsc"]
+                                if hasattr(claim, "_excel_coords"):
+                                    claim._excel_coords["ifsc_code"] = "Cheque OCR"
+                                if hasattr(claim, "_excel_logs"):
+                                    claim._excel_logs.append(f"  📊 ifsc_code: '{claim.ifsc_code}' (Source: Cheque OCR)")
+                            if cheque_details.get("account_number"):
+                                claim.account_number = cheque_details["account_number"]
+                                if hasattr(claim, "_excel_coords"):
+                                    claim._excel_coords["account_number"] = "Cheque OCR"
+                                if hasattr(claim, "_excel_logs"):
+                                    claim._excel_logs.append(f"  📊 account_number: '{claim.account_number}' (Source: Cheque OCR)")
+                            if cheque_details.get("account_type"):
+                                claim.account_type = cheque_details["account_type"]
+                                if hasattr(claim, "_excel_coords"):
+                                    claim._excel_coords["account_type"] = "Cheque OCR"
+                                if hasattr(claim, "_excel_logs"):
+                                    claim._excel_logs.append(f"  📊 account_type: '{claim.account_type}' (Source: Cheque OCR)")
+                                
+                            logs.extend(ocr_logs)
+                        except Exception as ocr_exc:
+                            logs.append(f"  ⚠️ Cheque OCR failed: {ocr_exc}")
 
             if hasattr(claim, "_excel_logs") and claim._excel_logs:
                 logs.append("📌 Excel Data Sources Map:")
                 logs.extend(claim._excel_logs)
-
-            if not claim.claim_no:
-                logs.append("⚠️  Claim No not found in Excel.")
 
             return ClaimFolderProcessResult(True, scan_result, claim, logs)
         except Exception as exc:
@@ -199,7 +213,7 @@ class ClaimFolderService:
             return None
         return val
 
-    def _extract_pdf_invoice_data(self, scan_result, claim, logs: List[str]) -> None:
+    def _extract_pdf_invoice_data(self, scan_result, claim, logs: List[str], stop_cb: Optional[callable] = None) -> None:
         invoice_pdf = scan_result.assessment_files.get("invoice")
         if not invoice_pdf or not os.path.exists(invoice_pdf):
             return
@@ -227,15 +241,21 @@ class ClaimFolderService:
                 all_text = ""
                 all_lines: List[str] = []
                 for page in pdf.pages:
+                    if stop_cb and stop_cb():
+                        logs.append("⚠️ PDF text extraction cancelled by user.")
+                        return
                     page_text = page.extract_text() or ""
                     if page_text:
                         all_text += page_text + "\n"
                         all_lines.extend(page_text.splitlines())
 
                 if not all_text.strip():
+                    if stop_cb and stop_cb():
+                        logs.append("⚠️ PDF text extraction cancelled by user.")
+                        return
                     # PDF has no extractable text (scanned images)
                     logs.append("  ⚠️ PDF has no extractable text (scanned image?), trying OCR...")
-                    ext_inv, ext_date = self._ocr_extract_invoice(invoice_pdf, inv_labels, date_labels, logs)
+                    ext_inv, ext_date = self._ocr_extract_invoice(invoice_pdf, inv_labels, date_labels, logs, stop_cb=stop_cb)
                 else:
                     # ── Strategy 1: Label-based inline extraction ────────
                     ext_inv = self._find_invoice_no(all_text, all_lines, inv_labels)
@@ -365,12 +385,15 @@ class ClaimFolderService:
 
     def _ocr_extract_invoice(self, pdf_path: str, inv_labels: List[str],
                              date_labels: List[str],
-                             logs: List[str]) -> tuple:
+                             logs: List[str],
+                             stop_cb: Optional[callable] = None) -> tuple:
         """
         OCR fallback for scanned PDFs with no extractable text.
         Uses pdf2image + pytesseract if available, otherwise skips.
         """
         try:
+            if stop_cb and stop_cb():
+                return None, None
             from pdf2image import convert_from_path
             import pytesseract
         except ImportError:
@@ -378,9 +401,14 @@ class ClaimFolderService:
             return None, None
 
         try:
+            if stop_cb and stop_cb():
+                return None, None
             images = convert_from_path(pdf_path, dpi=200, first_page=1, last_page=3)
             all_text = ""
             for img in images:
+                if stop_cb and stop_cb():
+                    logs.append("⚠️ PDF OCR cancelled by user.")
+                    return None, None
                 all_text += pytesseract.image_to_string(img) + "\n"
 
             if not all_text.strip():
@@ -393,5 +421,13 @@ class ClaimFolderService:
             ext_date = self._find_invoice_date(all_text, all_lines, date_labels)
             return ext_inv, ext_date
         except Exception as exc:
-            logs.append(f"  ⚠️ OCR extraction failed: {exc}")
+            exc_name = type(exc).__name__
+            if "PDFInfoNotInstalledError" in exc_name or "pdfinfo" in str(exc).lower():
+                logs.append("  ⚠️ OCR failed: 'poppler' system binary is missing or not in PATH.")
+                logs.append("     👉 Solution: Install Poppler (e.g., via Scoop: 'scoop install poppler' or manual download) and add it to PATH.")
+            elif "TesseractNotFoundError" in exc_name or "tesseract is not installed" in str(exc).lower():
+                logs.append("  ⚠️ OCR failed: 'Tesseract-OCR' system binary is missing or not in PATH.")
+                logs.append("     👉 Solution: Install Tesseract-OCR (https://github.com/UB-Mannheim/tesseract/wiki) and add it to PATH.")
+            else:
+                logs.append(f"  ⚠️ OCR extraction failed: {exc}")
             return None, None

@@ -91,6 +91,7 @@ jobs:
           Ensure-Settings "app\config\settings.json"                    "app\config\settings.json.example"
           Ensure-Settings "app\portals\uiic\config\settings.json"       "app\portals\uiic\config\settings.json.example"
           Ensure-Settings "app\portals\newindia\config\settings.json"   "app\portals\newindia\config\settings.json.example"
+          Ensure-Settings "app\portals\oic\config\settings.json"        "app\portals\oic\config\settings.json.example"
         shell: pwsh
 
       # ─── 5. Prepare Playwright Chromium ──────────────────────────────────

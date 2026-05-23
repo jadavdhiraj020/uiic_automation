@@ -152,6 +152,8 @@ def _extract_sheet_for_reinspection(full_path: str, folder_path: str, sheet_inde
 
         excel = None
         wb = None
+        ws = None
+        temp_wb = None
         try:
             excel = win32com.client.DispatchEx("Excel.Application")
             excel.Visible = False
@@ -168,6 +170,17 @@ def _extract_sheet_for_reinspection(full_path: str, folder_path: str, sheet_inde
                     # 0 = xlTypePDF
                     ws.ExportAsFixedFormat(0, os.path.abspath(pdf_path))
                     logger.info(f"✅ Generated {pdf_path} via win32com worksheet export")
+                    
+                    if wb:
+                        wb.Close(SaveChanges=False)
+                        wb = None
+                    ws = None
+                    if excel:
+                        excel.Quit()
+                        excel = None
+                    import gc
+                    gc.collect()
+                    pythoncom.CoUninitialize()
                     return pdf_path
                 except Exception as e:
                     logger.warning(f"PDF strategy 1 failed (worksheet export): {e}")
@@ -181,6 +194,17 @@ def _extract_sheet_for_reinspection(full_path: str, folder_path: str, sheet_inde
                     wb.Worksheets(sheet_index + 1).Select()
                     wb.ExportAsFixedFormat(0, os.path.abspath(pdf_path))
                     logger.info(f"✅ Generated {pdf_path} via win32com workbook export")
+                    
+                    if wb:
+                        wb.Close(SaveChanges=False)
+                        wb = None
+                    ws = None
+                    if excel:
+                        excel.Quit()
+                        excel = None
+                    import gc
+                    gc.collect()
+                    pythoncom.CoUninitialize()
                     return pdf_path
                 except Exception as e:
                     logger.warning(f"PDF strategy 2 failed (workbook export): {e}")
@@ -194,9 +218,25 @@ def _extract_sheet_for_reinspection(full_path: str, folder_path: str, sheet_inde
                     try:
                         temp_wb.ExportAsFixedFormat(0, os.path.abspath(pdf_path))
                         logger.info(f"✅ Generated {pdf_path} via win32com temp workbook export")
+                        
+                        temp_wb.Close(SaveChanges=False)
+                        temp_wb = None
+                        if wb:
+                            wb.Close(SaveChanges=False)
+                            wb = None
+                        ws = None
+                        if excel:
+                            excel.Quit()
+                            excel = None
+                        import gc
+                        gc.collect()
+                        pythoncom.CoUninitialize()
                         return pdf_path
                     finally:
-                        temp_wb.Close(SaveChanges=False)
+                        if temp_wb:
+                            try: temp_wb.Close(SaveChanges=False)
+                            except Exception: pass
+                            temp_wb = None
                 except Exception as e:
                     logger.warning(f"PDF strategy 3 failed (temp workbook export): {e}")
                     attempt_failures.append(f"Strategy 3 error: {e}")
@@ -206,10 +246,21 @@ def _extract_sheet_for_reinspection(full_path: str, folder_path: str, sheet_inde
                 logger.warning(f"Excel file does not have {sheet_index + 1} sheets. Cannot export PDF.")
                 attempt_failures.append(f"Workbook has only {wb.Worksheets.Count} sheets")
         finally:
+            if temp_wb:
+                try: temp_wb.Close(SaveChanges=False)
+                except Exception: pass
+                temp_wb = None
             if wb:
-                wb.Close(SaveChanges=False)
+                try: wb.Close(SaveChanges=False)
+                except Exception: pass
+                wb = None
+            ws = None
             if excel:
-                excel.Quit()
+                try: excel.Quit()
+                except Exception: pass
+                excel = None
+            import gc
+            gc.collect()
             pythoncom.CoUninitialize()
     except ImportError:
         logger.warning("win32com not installed, skipping PDF export.")

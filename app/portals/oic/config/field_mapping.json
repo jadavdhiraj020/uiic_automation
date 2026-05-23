@@ -1,0 +1,14 @@
+{
+  "_comment": "field_mapping.json — Maps ClaimData fields to Excel labels for OIC portal. The reader scans the entire sheet for the label text, then reads the first non-empty value to its RIGHT.",
+  "claim_no": {
+    "sheet": "ALL",
+    "search_labels": [
+      "Claim no",
+      "Claim Number",
+      "claim_number",
+      "claim_no"
+    ],
+    "row_offset": 0,
+    "col_offset": 1
+  }
+}

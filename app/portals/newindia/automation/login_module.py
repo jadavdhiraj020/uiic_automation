@@ -219,7 +219,10 @@ async def do_login(
     else:
         log("⏳ Waiting for manual CAPTCHA + login (up to 30s)...")
 
-    manual_login_timeout = settings.get("manual_login_timeout_s", 45)
+    try:
+        manual_login_timeout = int(settings.get("manual_login_timeout_s") or 45)
+    except (ValueError, TypeError):
+        manual_login_timeout = 45
     success = await _wait_for_url_change(page, log, stop_cb, timeout_seconds=manual_login_timeout)
 
     if success:

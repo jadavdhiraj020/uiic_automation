@@ -172,12 +172,8 @@ def load_field_mapping(portal_id: Optional[str] = None) -> dict[str, Any]:
     user = read_json_file(paths["user"]) or {}
     merged = {}
     
-    # Maintain the precise order from the base config file
+    # Maintain the precise order from the base config file and only keep keys present in base
     all_keys = list(base.keys())
-    # Append any custom keys the user might have added that aren't in base
-    for k in user.keys():
-        if k not in base:
-            all_keys.append(k)
             
     for key in all_keys:
         b = base.get(key)
@@ -241,10 +237,15 @@ def _merge_doc_mapping(base: dict[str, Any], user: dict[str, Any]) -> dict[str, 
         base_value = merged.get(key)
         if isinstance(base_value, dict) and isinstance(value, dict):
             section = dict(base_value)
-            section.update(value)
+            for k, val in value.items():
+                if k in base_value:
+                    section[k] = val
             merged[key] = section
-        else:
-            merged[key] = value
+        elif key in merged:
+            if isinstance(base_value, list) and isinstance(value, list):
+                merged[key] = [v for v in value if v in base_value]
+            else:
+                merged[key] = value
     return merged
 
 

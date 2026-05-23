@@ -208,3 +208,13 @@ register_portal(PortalInfo(
     description="New India Assurance Company — Intermediary Portal",
     requires_document_merge=True,   # NIA has a single 'Claim Related' upload slot
 ))
+
+register_portal(PortalInfo(
+    portal_id="oic",
+    display_name="OIC (Oriental Insurance)",
+    url="https://orientalinsurance.org.in/",
+    config_subdir="config",
+    description="Oriental Insurance Company — Portal",
+    requires_document_merge=False,  # OIC accepts individual document slots
+))
+

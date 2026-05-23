@@ -1,0 +1,13 @@
+{
+  "_comment": "doc_mapping.json — Oriental Insurance Company portal. Contains strictly the required documents for OIC automation.",
+  "claim_documents_tab": {},
+  "expected_claim_docs": [],
+  "other_slots": [],
+  "claim_assessment_tab": {
+    "invoice": [
+      "final_invoice",
+      "invoice"
+    ]
+  },
+  "document_upload_tab": {}
+}

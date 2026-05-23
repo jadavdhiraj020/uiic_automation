@@ -493,8 +493,14 @@ class MainWindow(QMainWindow):
     def _append_log(self, text):
         self.workspace_page.append_log(text)
         if self._log_file and not self._log_file.closed:
-            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            self._log_file.write(f"[{ts}] {text}\n")
+            import re
+            match = re.match(r"^\[(\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\] (.*)$", text)
+            if match:
+                today = datetime.now().strftime("%Y-%m-%d")
+                self._log_file.write(f"[{today} {match.group(1)}] {match.group(2)}\n")
+            else:
+                ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                self._log_file.write(f"[{ts}] {text}\n")
             self._log_file.flush()
 
     def log(self, text):
@@ -537,6 +543,11 @@ class MainWindow(QMainWindow):
 
         # ── Gracefully stop folder scanning thread before closing ───────────────
         if hasattr(self, "_scan_thread") and self._scan_thread and self._scan_thread.isRunning():
+            if hasattr(self, "_scan_worker") and self._scan_worker:
+                try:
+                    self._scan_worker.request_stop()
+                except Exception:
+                    pass
             self._scan_thread.quit()
             self._scan_thread.wait(2000)
 
