@@ -6110,13 +6110,11 @@ class TestOicLogin:
         from unittest.mock import MagicMock
         dummy_bytes = self._create_dummy_image_bytes()
         
+        # 3 variants: gray, otsu, adaptive (reduced from 6 for speed)
         variant_responses = [
             "ABCD",    # gray
-            "ABCD",    # otsu
-            "ABCD",    # fixed
+            "ABCDE",   # otsu
             "ABCDE",   # adaptive
-            "ABCDE",   # clahe
-            "ABCDEF",  # morphology
         ]
         response_iter = iter(variant_responses)
         
@@ -6326,79 +6324,6 @@ class TestOicNavigation:
         )
         assert result is None
 
-
-class TestOicAutomationModules:
-    @pytest.mark.asyncio
-    async def test_oic_claim_assessment_success(self):
-        from unittest.mock import MagicMock
-        from app.portals.oic.automation.claim_assessment_module import fill_claim_assessment_details
-        
-        mock_page = MagicMock()
-        mock_claim = MagicMock()
-        mock_claim.claim_no = "OIC-123456"
-        mock_log = MagicMock()
-        
-        res = await fill_claim_assessment_details(
-            page=mock_page,
-            claim=mock_claim,
-            log=mock_log,
-            stop_cb=lambda: False
-        )
-        assert res is True
-
-    @pytest.mark.asyncio
-    async def test_oic_claim_assessment_stop(self):
-        from unittest.mock import MagicMock
-        from app.portals.oic.automation.claim_assessment_module import fill_claim_assessment_details
-        
-        mock_page = MagicMock()
-        mock_claim = MagicMock()
-        mock_claim.claim_no = "OIC-123456"
-        mock_log = MagicMock()
-        
-        res = await fill_claim_assessment_details(
-            page=mock_page,
-            claim=mock_claim,
-            log=mock_log,
-            stop_cb=lambda: True
-        )
-        assert res is False
-
-    @pytest.mark.asyncio
-    async def test_oic_document_upload_success(self):
-        from unittest.mock import MagicMock
-        from app.portals.oic.automation.document_upload_module import fill_document_upload_section
-        
-        mock_page = MagicMock()
-        mock_claim = MagicMock()
-        mock_claim.claim_no = "OIC-123456"
-        mock_log = MagicMock()
-        
-        res = await fill_document_upload_section(
-            page=mock_page,
-            claim=mock_claim,
-            log=mock_log,
-            stop_cb=lambda: False
-        )
-        assert res is True
-
-    @pytest.mark.asyncio
-    async def test_oic_document_upload_stop(self):
-        from unittest.mock import MagicMock
-        from app.portals.oic.automation.document_upload_module import fill_document_upload_section
-        
-        mock_page = MagicMock()
-        mock_claim = MagicMock()
-        mock_claim.claim_no = "OIC-123456"
-        mock_log = MagicMock()
-        
-        res = await fill_document_upload_section(
-            page=mock_page,
-            claim=mock_claim,
-            log=mock_log,
-            stop_cb=lambda: True
-        )
-        assert res is False
 
 
 class TestOicHardening:

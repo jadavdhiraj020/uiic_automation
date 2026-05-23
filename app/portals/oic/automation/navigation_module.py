@@ -39,7 +39,7 @@ async def navigate_to_claim(
         log(f"[{_ts()}]   🧭 Starting OIC Workspace navigation...")
 
     # Dismiss any post-login alerts
-    await popup_service.dismiss_portal_popup(page, log, max_wait_s=2.0, context="Navigation Start")
+    await popup_service.dismiss_portal_popup(page, log, max_wait_s=1.0, context="Navigation Start")
 
     # 1. Wait for dashboard / home redirection
     try:
@@ -99,7 +99,7 @@ async def navigate_to_claim(
         else:
             log(f"[{_ts()}]   ⚠️ 'Others' tab click skipped or not found. Continuing.")
 
-    await asyncio.sleep(1.0)
+    await asyncio.sleep(0.5)
     if stop_cb():
         if isinstance(log, AutomationLogger): log.outdent()
         return None
@@ -134,13 +134,13 @@ async def navigate_to_claim(
         else:
             log(f"[{_ts()}]   ⚠️ Sub-link 'Motor OD Surveyor Assessment' not found.")
 
-    await asyncio.sleep(1.5)
+    await asyncio.sleep(0.8)
     if stop_cb():
         if isinstance(log, AutomationLogger): log.outdent()
         return None
 
     # Dismiss any sub-navigation popups
-    await popup_service.dismiss_portal_popup(page, log, max_wait_s=1.5, context="Sub-navigation")
+    await popup_service.dismiss_portal_popup(page, log, max_wait_s=0.5, context="Sub-navigation")
 
     # 4. Wait for Surveyor Assessment page & Click 'Generate Assessment +'
     try:
@@ -180,8 +180,8 @@ async def navigate_to_claim(
         else:
             log(f"[{_ts()}]   ⚠️ 'Generate Assessment +' button not found. Continuing workflow.")
 
-    await asyncio.sleep(2.0)
-    await popup_service.dismiss_portal_popup(page, log, max_wait_s=2.0, context="Post Navigation Finish")
+    await asyncio.sleep(1.0)
+    await popup_service.dismiss_portal_popup(page, log, max_wait_s=1.0, context="Post Navigation Finish")
 
     if isinstance(log, AutomationLogger):
         log.success("OIC navigation phase complete.")

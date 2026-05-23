@@ -7,11 +7,11 @@ Allows zero-code modification of selector targets when portal structure changes.
 # --- LOGIN FORM SELECTORS ---
 SEL_USERNAME = "#userName, #username, [name='username'], [name='userName'], #login-username"
 SEL_PASSWORD = "#password, [name='password'], #login-password"
-SEL_CAPTCHA_IN = "input[name='captchaInput'], input[name='captcha'], input[name='captchaValue'], #captcha"
+SEL_CAPTCHA_IN = "#captcha, input[name='captcha'], input[name='captchaInput'], input[name='captchaValue']"
 SEL_CAPTCHA_CVS = "canvas#captcha, canvas, img#captchaImg"
-SEL_LOGIN_BTN = "button[type='submit'], #continue-btn, #btn-login, button:has-text('Login'), button:has-text('Sign In')"
-SEL_REFRESH_BTN = "button[title='Refresh Captcha'], a[ng-click*='captcha'], .captcha-refresh, [title*='Refresh']"
-SEL_ERROR_MSG = ".alert-danger, .text-danger, .ng-scope .alert, #errorMsg, .error-message"
+SEL_LOGIN_BTN = ".login-formno button[type='submit'], .login-formno #continue-btn, #continue-btn, .login-formno button.btn-login-btn"
+SEL_REFRESH_BTN = "button[aria-label*='Refresh CAPTCHA'], button.reset-btn-icon, button[title='Refresh Captcha'], .captcha-refresh, [title*='Refresh']"
+SEL_ERROR_MSG = ".error-msg, .alert-danger, .text-danger, .ng-scope .alert, #errorMsg, .error-message"
 
 # --- ADVERTISEMENT / DIALOG POPUP SELECTORS ---
 SEL_POPUP_CLOSE = [

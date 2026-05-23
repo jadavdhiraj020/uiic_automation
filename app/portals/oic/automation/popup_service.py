@@ -50,14 +50,18 @@ _JS_DETECT_POPUP = r"""
         };
     }
     // 4. PrimeNG dialog / modal popup covers
+    //    IMPORTANT: Skip PrimeNG containers that hold the login form — those are NOT popups.
     const prime = document.querySelector('.p-dialog, .p-dynamicdialog, p-dialog');
     if (prime) {
-        const body = prime.querySelector('.p-dialog-content');
-        return {
-            found: true,
-            type: 'primeng',
-            body: body ? body.innerText.trim().substring(0, 200) : ''
-        };
+        const isLoginForm = prime.querySelector('.login-formno, #username, #password, .login-wthmobile-box');
+        if (!isLoginForm) {
+            const body = prime.querySelector('.p-dialog-content');
+            return {
+                found: true,
+                type: 'primeng',
+                body: body ? body.innerText.trim().substring(0, 200) : ''
+            };
+        }
     }
     return { found: false };
 }

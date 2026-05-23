@@ -241,8 +241,6 @@ _OIC_METADATA = PortalUiMetadata(
     phases=[
         WorkflowPhase("login", "Login"),
         WorkflowPhase("navigate", "Navigate to Claim"),
-        WorkflowPhase("claim_assessment", "Claim Assessment"),
-        WorkflowPhase("document_upload", "Document Upload"),
         WorkflowPhase("complete", "Complete"),
     ],
     field_groups=[

@@ -1,0 +1,17 @@
+import { test, expect } from '@playwright/test';
+
+test('test', async ({ page }) => {
+  await page.goto('https://orientalinsurance.org.in/');
+  await page.getByRole('button', { name: 'Close' }).click();
+  await page.getByRole('button', { name: 'Login' }).click();
+  await page.getByRole('textbox', { name: 'Username *' }).click();
+  await page.getByRole('textbox', { name: 'Username *' }).fill('ABCDEF');
+  await page.getByRole('textbox', { name: 'Password *' }).click();
+  await page.getByRole('textbox', { name: 'Password *' }).fill('ABCDEF');
+  await page.getByRole('textbox', { name: 'Enter Captcha *' }).click();
+  await page.getByRole('textbox', { name: 'Enter Captcha *' }).fill('ABCDEF');
+  await page.getByLabel('User ID').getByRole('button', { name: 'Login' }).click();
+  await page.getByRole('tab', { name: 'Others' }).click();
+  await page.getByRole('link', { name: 'Motor OD Surveyor Assessment' }).click();
+  await page.getByRole('button', { name: 'Generate Assessment +' }).click();
+});

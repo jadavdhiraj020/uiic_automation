@@ -51,9 +51,8 @@ def _to_grayscale(img) -> np.ndarray:
 
 def get_variants(img_bytes: bytes):
     """
-    Generate different binarization variants of the captcha image for OCR.
-    Variants: grayscale, otsu thresholding, fixed thresholding, adaptive thresholding,
-    CLAHE, and morphological binarization.
+    Generate binarization variants of the captcha image for OCR.
+    Uses 3 high-value variants (gray + otsu + adaptive) for optimal speed/accuracy.
     """
     try:
         nparr = np.frombuffer(img_bytes, np.uint8)
@@ -64,33 +63,18 @@ def get_variants(img_bytes: bytes):
         gray = _to_grayscale(img)
         variants = []
 
-        # 1. Raw grayscale
+        # 1. Raw grayscale — baseline for clean captchas
         variants.append(("gray", gray))
 
-        # 2. Otsu thresholding
+        # 2. Otsu thresholding — best for bimodal intensity captchas
         _, thresh_otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         variants.append(("otsu", thresh_otsu))
 
-        # 3. Simple fixed threshold
-        _, thresh_fixed = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
-        variants.append(("fixed", thresh_fixed))
-
-        # 4. Adaptive Thresholding
+        # 3. Adaptive Thresholding — handles uneven lighting/noise
         thresh_adapt = cv2.adaptiveThreshold(
             gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
         )
         variants.append(("adaptive", thresh_adapt))
-
-        # 5. CLAHE (Contrast Limited Adaptive Histogram Equalization) + Otsu
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        cl_gray = clahe.apply(gray)
-        _, thresh_clahe = cv2.threshold(cl_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        variants.append(("clahe", thresh_clahe))
-
-        # 6. Morphological Binarization
-        kernel = np.ones((2, 2), np.uint8)
-        opened = cv2.morphologyEx(thresh_otsu, cv2.MORPH_OPEN, kernel)
-        variants.append(("morphology", opened))
 
         # Convert back to bytes
         byte_variants = []
@@ -180,7 +164,7 @@ def _solve_captcha_best_of_n(img_bytes: bytes, log) -> Optional[str]:
 
 async def _get_captcha_bytes(page) -> bytes:
     """Reads CAPTCHA from canvas using toDataURL or screenshot fallback."""
-    await asyncio.sleep(1.0)
+    await asyncio.sleep(0.5)
     try:
         # Evaluate toDataURL on canvas
         base64_data = await page.evaluate("""() => {
@@ -210,7 +194,7 @@ async def _refresh_captcha(page):
             btn = page.locator(sel).first
             if await btn.is_visible(timeout=1000):
                 await btn.click()
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(0.5)
                 return True
         except Exception:
             continue
@@ -321,7 +305,7 @@ async def do_login(
 
     # Go to login page
     await page.goto(portal_url, wait_until="domcontentloaded", timeout=30000)
-    await asyncio.sleep(2.0)
+    await asyncio.sleep(1.5)
 
     # Try to close OIC PrimeNG startup dialog banner if visible
     try:
@@ -332,28 +316,42 @@ async def do_login(
             else:
                 log(f"[{_ts()}]   ℹ️ PrimeNG startup modal detected. Dismissing...")
             await close_btn.click()
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(0.5)
     except Exception:
         pass
 
-    # Clean overlays / SweetAlerts / NgDialogs on startup
-    await popup_service.dismiss_portal_popup(page, log, max_wait_s=3.0, context="OIC Startup Dismissal")
+    # Clean overlays / SweetAlerts / NgDialogs on startup (short wait — ad was already closed above)
+    await popup_service.dismiss_portal_popup(page, log, max_wait_s=1.0, context="OIC Startup Dismissal")
 
     # Click the header 'Login' button to open the login dropdown/modal form
     try:
-        login_btn = page.locator('button#login-btn, button.header-login-btn, button:has-text("Login")').first
+        login_btn = page.locator('button.header-login-btn, button#login-btn:visible').first
         await login_btn.wait_for(state="visible", timeout=5000)
         if isinstance(log, AutomationLogger):
             log.info("Clicking header Login button to open login form...")
         else:
             log(f"[{_ts()}]   ℹ️ Clicking header Login button to open login form...")
         await login_btn.click()
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(1.0)
     except Exception as click_exc:
         if isinstance(log, AutomationLogger):
             log.warning(f"Could not click header Login button (might already be open): {click_exc}")
         else:
             log(f"[{_ts()}]   ⚠️ Could not click header Login button: {click_exc}")
+
+    # Wait for the login form container (.login-formno) to appear first,
+    # THEN wait for the username input inside it.
+    try:
+        await page.wait_for_selector('.login-formno', state="visible", timeout=5000)
+        if isinstance(log, AutomationLogger):
+            log.info("Login form container (.login-formno) detected.")
+        else:
+            log(f"[{_ts()}]   ℹ️ Login form container detected.")
+    except Exception:
+        if isinstance(log, AutomationLogger):
+            log.warning("Login form container not detected, checking for inputs directly...")
+        else:
+            log(f"[{_ts()}]   ⚠️ Login form container not detected, checking for inputs directly...")
 
     try:
         await page.wait_for_selector(SEL_USERNAME, state="visible", timeout=10000)
@@ -381,8 +379,8 @@ async def do_login(
         else:
             log(f"\n[{_ts()}]   🔄 Attempt {attempt}/{max_retries}")
 
-        # Ensure no residual popup blocking input
-        await popup_service.dismiss_portal_popup(page, log, max_wait_s=1.0, context="Pre-input clean")
+        # NOTE: Intentionally NOT running popup_service here.
+        # The login form uses PrimeNG components that get falsely detected as popups.
 
         try:
             img_bytes = await _get_captcha_bytes(page)
@@ -428,11 +426,11 @@ async def do_login(
             continue
 
         # Wait for login state change or error alerts
-        await asyncio.sleep(2.0)
+        await asyncio.sleep(1.5)
         
         # Check if login outcome triggers alert (incorrect password/captcha)
         popup_tag = await popup_service.dismiss_portal_popup(
-            page, log, max_wait_s=2.5, classify=True, context="Post-login check"
+            page, log, max_wait_s=2.0, classify=True, context="Post-login check"
         )
         
         if popup_tag == "credential_error":
@@ -467,7 +465,7 @@ async def do_login(
             pass
 
         await _refresh_captcha(page)
-        await asyncio.sleep(1.0)
+        await asyncio.sleep(0.5)
         if isinstance(log, AutomationLogger): log.outdent()
 
     # CAPTCHA retries exhausted. Capture final attempt screenshot.
