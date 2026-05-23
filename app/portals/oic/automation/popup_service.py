@@ -49,6 +49,16 @@ _JS_DETECT_POPUP = r"""
             body: ngd.innerText.trim().substring(0, 200)
         };
     }
+    // 4. PrimeNG dialog / modal popup covers
+    const prime = document.querySelector('.p-dialog, .p-dynamicdialog, p-dialog');
+    if (prime) {
+        const body = prime.querySelector('.p-dialog-content');
+        return {
+            found: true,
+            type: 'primeng',
+            body: body ? body.innerText.trim().substring(0, 200) : ''
+        };
+    }
     return { found: false };
 }
 """
@@ -58,6 +68,9 @@ _JS_DISMISS_POPUP = r"""
 () => {
     // Priority 1: Common confirmation / generic Close / OK buttons in active dialogs
     const selectors = [
+        'button.p-dialog-header-close',
+        'button[aria-label="Close"]',
+        '.p-dialog-header-close-icon',
         '.modal.in button[data-ng-click*="ok"]',
         '.modal.in button[ng-click*="ok"]',
         '.modal.in button[data-ng-click*="close"]',

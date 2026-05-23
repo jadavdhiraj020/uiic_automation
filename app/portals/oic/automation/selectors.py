@@ -9,7 +9,7 @@ SEL_USERNAME = "#userName, #username, [name='username'], [name='userName'], #log
 SEL_PASSWORD = "#password, [name='password'], #login-password"
 SEL_CAPTCHA_IN = "input[name='captchaInput'], input[name='captcha'], input[name='captchaValue'], #captcha"
 SEL_CAPTCHA_CVS = "canvas#captcha, canvas, img#captchaImg"
-SEL_LOGIN_BTN = "button[type='submit'], #btn-login, button:has-text('Login'), button:has-text('Sign In')"
+SEL_LOGIN_BTN = "button[type='submit'], #continue-btn, #btn-login, button:has-text('Login'), button:has-text('Sign In')"
 SEL_REFRESH_BTN = "button[title='Refresh Captcha'], a[ng-click*='captcha'], .captcha-refresh, [title*='Refresh']"
 SEL_ERROR_MSG = ".alert-danger, .text-danger, .ng-scope .alert, #errorMsg, .error-message"
 

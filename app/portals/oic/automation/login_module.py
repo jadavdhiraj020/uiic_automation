@@ -323,8 +323,37 @@ async def do_login(
     await page.goto(portal_url, wait_until="domcontentloaded", timeout=30000)
     await asyncio.sleep(2.0)
 
+    # Try to close OIC PrimeNG startup dialog banner if visible
+    try:
+        close_btn = page.locator('button.p-dialog-header-close, button[aria-label="Close"], button.p-dialog-header-icon').first
+        if await close_btn.is_visible(timeout=3000):
+            if isinstance(log, AutomationLogger):
+                log.info("PrimeNG startup modal detected. Dismissing...")
+            else:
+                log(f"[{_ts()}]   ℹ️ PrimeNG startup modal detected. Dismissing...")
+            await close_btn.click()
+            await asyncio.sleep(1.0)
+    except Exception:
+        pass
+
     # Clean overlays / SweetAlerts / NgDialogs on startup
     await popup_service.dismiss_portal_popup(page, log, max_wait_s=3.0, context="OIC Startup Dismissal")
+
+    # Click the header 'Login' button to open the login dropdown/modal form
+    try:
+        login_btn = page.locator('button#login-btn, button.header-login-btn, button:has-text("Login")').first
+        await login_btn.wait_for(state="visible", timeout=5000)
+        if isinstance(log, AutomationLogger):
+            log.info("Clicking header Login button to open login form...")
+        else:
+            log(f"[{_ts()}]   ℹ️ Clicking header Login button to open login form...")
+        await login_btn.click()
+        await asyncio.sleep(1.5)
+    except Exception as click_exc:
+        if isinstance(log, AutomationLogger):
+            log.warning(f"Could not click header Login button (might already be open): {click_exc}")
+        else:
+            log(f"[{_ts()}]   ⚠️ Could not click header Login button: {click_exc}")
 
     try:
         await page.wait_for_selector(SEL_USERNAME, state="visible", timeout=10000)
