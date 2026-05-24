@@ -9,6 +9,7 @@ from app.ui.components.widgets import (
     create_input as _input, card as _card, stat_card as _stat_card,
     search_row as _search_row
 )
+from app.ui.components.table_clipboard import attach_row_copy_on_double_click
 
 class HomePage(QWidget):
     browse_clicked = pyqtSignal()
@@ -125,6 +126,7 @@ class HomePage(QWidget):
                 text-transform: uppercase; 
             }
         """)
+        attach_row_copy_on_double_click(self.preview_table)
         lay.addWidget(self.preview_table)
         return _card(w, "📊  Extracted Data", "🔴 Critical missing  /  🟡 Optional  /  🟢 Found")
 

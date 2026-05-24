@@ -31,6 +31,7 @@ from app.ui.components.widgets import (
     search_row as _search_row,
     stat_card as _stat_card,
 )
+from app.ui.components.table_clipboard import attach_row_copy_on_double_click
 from app.ui.portal_ui_metadata import get_portal_ui_metadata
 
 
@@ -244,6 +245,7 @@ class StructuredLogsPanel(QWidget):
         self.table.verticalHeader().setDefaultSectionSize(46)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        attach_row_copy_on_double_click(self.table)
         root.addWidget(self.table, 1)
 
     def append_log(self, text, portal_id="uiic", phase=""):
@@ -553,6 +555,7 @@ class DataReviewPanel(QWidget):
         table.verticalHeader().setDefaultSectionSize(40)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        attach_row_copy_on_double_click(table)
         table.setWordWrap(False)
         table.setRowCount(len(rows))
         table.setMinimumHeight(550)
@@ -708,6 +711,7 @@ class DocumentReviewPanel(QWidget):
         table.verticalHeader().setDefaultSectionSize(42)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        attach_row_copy_on_double_click(table)
         table.setWordWrap(False)
         table.setRowCount(len(rows))
         table.setMinimumHeight(550)
