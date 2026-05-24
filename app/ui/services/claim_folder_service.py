@@ -115,6 +115,9 @@ class ClaimFolderService:
                 all_docs = {**claim.claim_doc_files, **(claim.upload_doc_files or {})}
                 for doc_name, file_path in all_docs.items():
                     if "cheque" in doc_name.lower() or "check" in doc_name.lower():
+                        if "fallback" in os.path.basename(file_path).lower():
+                            logs.append(f"ℹ️ Cheque file is an invoice fallback ({Path(file_path).name}); skipping OCR to prevent hanging.")
+                            continue
                         cheque_path = file_path
                         break
                 

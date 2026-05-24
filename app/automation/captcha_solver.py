@@ -64,25 +64,25 @@ def _get_ocr():
 
                     kwargs = dict(use_angle_cls=False, lang='en', show_log=False)
 
-                    # Use bundled models if available
+                    # Resolve model directories — prefer bundled (EXE), then local cache
                     if getattr(sys, "frozen", False):
                         model_root = os.path.join(sys._MEIPASS, ".paddleocr", "whl")
+                    else:
+                        # Running from source: use models already cached in user home.
+                        # Without this, PaddleOCR tries to reach Baidu CDN for downloads
+                        # which hangs for minutes in regions with poor China connectivity.
+                        from pathlib import Path
+                        model_root = str(Path.home() / ".paddleocr" / "whl")
 
-                        det_dir = os.path.join(model_root, "det", "en", "en_PP-OCRv3_det_infer")
-                        rec_dir = os.path.join(model_root, "rec", "en", "en_PP-OCRv4_rec_infer")
-                        cls_dir = os.path.join(model_root, "cls", "ch_ppocr_mobile_v2.0_cls_infer")
-
-                        if os.path.isdir(det_dir):
-                            kwargs["det_model_dir"] = det_dir
-                        if os.path.isdir(rec_dir):
-                            kwargs["rec_model_dir"] = rec_dir
-                        if os.path.isdir(cls_dir):
-                            kwargs["cls_model_dir"] = cls_dir
-
-                        if os.path.isdir(model_root):
-                            logger.info(f"Using bundled OCR models from: {model_root}")
-                        else:
-                            logger.info("No bundled models — will download on first run.")
+                    det_dir = os.path.join(model_root, "det", "en", "en_PP-OCRv3_det_infer")
+                    rec_dir = os.path.join(model_root, "rec", "en", "en_PP-OCRv4_rec_infer")
+                    cls_dir = os.path.join(model_root, "cls", "ch_ppocr_mobile_v2.0_cls_infer")
+                    if os.path.isdir(det_dir):
+                        kwargs["det_model_dir"] = det_dir
+                    if os.path.isdir(rec_dir):
+                        kwargs["rec_model_dir"] = rec_dir
+                    if os.path.isdir(cls_dir):
+                        kwargs["cls_model_dir"] = cls_dir
 
                     _ocr = PaddleOCR(**kwargs)
                     logger.info("PaddleOCR initialized successfully.")

@@ -8,10 +8,12 @@ from app.automation.automation_logger import AutomationLogger, _ts
 
 def _find_cheque_document(data: ClaimData) -> str:
     """Scans claim and upload doc dicts to find the cheque image/PDF."""
+    import os
     all_docs = {**data.claim_doc_files, **(data.upload_doc_files or {})}
     for doc_name, file_path in all_docs.items():
         if "cheque" in doc_name.lower() or "check" in doc_name.lower():
-            return file_path
+            if "fallback" not in os.path.basename(file_path).lower():
+                return file_path
     return ""
 
 async def fill_neft_details(page: Page, data: ClaimData, log, stop_cb, field_delay_ms: int = 600) -> bool:

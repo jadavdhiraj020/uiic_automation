@@ -142,18 +142,25 @@ def _get_doc_ocr():
 
                 kwargs = dict(use_angle_cls=True, lang='en', show_log=False)
 
-                # Use bundled models if available (PyInstaller EXE)
+                # Resolve model directories — prefer bundled (EXE), then local cache
                 if getattr(sys, "frozen", False):
                     model_root = os.path.join(sys._MEIPASS, ".paddleocr", "whl")
-                    det_dir = os.path.join(model_root, "det", "en", "en_PP-OCRv3_det_infer")
-                    rec_dir = os.path.join(model_root, "rec", "en", "en_PP-OCRv4_rec_infer")
-                    cls_dir = os.path.join(model_root, "cls", "ch_ppocr_mobile_v2.0_cls_infer")
-                    if os.path.isdir(det_dir):
-                        kwargs["det_model_dir"] = det_dir
-                    if os.path.isdir(rec_dir):
-                        kwargs["rec_model_dir"] = rec_dir
-                    if os.path.isdir(cls_dir):
-                        kwargs["cls_model_dir"] = cls_dir
+                else:
+                    # Running from source: use models already cached in user home.
+                    # Without this, PaddleOCR tries to reach Baidu CDN for downloads
+                    # which hangs for minutes in regions with poor China connectivity.
+                    from pathlib import Path
+                    model_root = str(Path.home() / ".paddleocr" / "whl")
+
+                det_dir = os.path.join(model_root, "det", "en", "en_PP-OCRv3_det_infer")
+                rec_dir = os.path.join(model_root, "rec", "en", "en_PP-OCRv4_rec_infer")
+                cls_dir = os.path.join(model_root, "cls", "ch_ppocr_mobile_v2.0_cls_infer")
+                if os.path.isdir(det_dir):
+                    kwargs["det_model_dir"] = det_dir
+                if os.path.isdir(rec_dir):
+                    kwargs["rec_model_dir"] = rec_dir
+                if os.path.isdir(cls_dir):
+                    kwargs["cls_model_dir"] = cls_dir
 
                 _doc_ocr = PaddleOCR(**kwargs)
                 logger.info("[OCR] PaddleOCR (document mode) initialized successfully.")
@@ -304,17 +311,18 @@ class ChequeExtractor:
                 return texts
             with pdfplumber.open(self.doc_path) as pdf:
                 full = ""
-                for page in pdf.pages:
+                # Cheques are strictly 1-page documents. Limit to first page to avoid hanging on large multi-page PDFs.
+                for page in pdf.pages[:1]:
                     if stop_cb and stop_cb():
                         return texts
                     t = page.extract_text() or ""
                     full += t + "\n"
                 if full.strip():
-                    self._log(log, "info", f"pdfplumber: extracted {len(full)} chars.")
+                    self._log(log, "info", f"pdfplumber: extracted {len(full)} chars from first page.")
                     texts.append(full)
                 else:
-                    self._log(log, "info", "pdfplumber returned no text (scanned PDF); trying image OCR on pages.")
-                    for i, page in enumerate(pdf.pages):
+                    self._log(log, "info", "pdfplumber returned no text (scanned PDF); trying image OCR on page 1.")
+                    for i, page in enumerate(pdf.pages[:1]):
                         if stop_cb and stop_cb():
                             return texts
                         try:
