@@ -60,6 +60,10 @@ def _get_ocr():
                         else:
                             logger.warning(f"Paddle libs dir NOT found: {paddle_libs}")
 
+                    import time
+                    logger.info("Initializing PaddleOCR for CAPTCHA solver...")
+                    start_time = time.perf_counter()
+
                     from paddleocr import PaddleOCR
 
                     kwargs = dict(use_angle_cls=False, lang='en', show_log=False)
@@ -77,6 +81,10 @@ def _get_ocr():
                     det_dir = os.path.join(model_root, "det", "en", "en_PP-OCRv3_det_infer")
                     rec_dir = os.path.join(model_root, "rec", "en", "en_PP-OCRv4_rec_infer")
                     cls_dir = os.path.join(model_root, "cls", "ch_ppocr_mobile_v2.0_cls_infer")
+
+                    if not os.path.isdir(det_dir) or not os.path.isdir(rec_dir) or not os.path.isdir(cls_dir):
+                        logger.warning("⚠️ Local CAPTCHA OCR models not found. PaddleOCR will download them now (approx. 1-3 minutes depending on internet connection)...")
+
                     if os.path.isdir(det_dir):
                         kwargs["det_model_dir"] = det_dir
                     if os.path.isdir(rec_dir):
@@ -85,7 +93,8 @@ def _get_ocr():
                         kwargs["cls_model_dir"] = cls_dir
 
                     _ocr = PaddleOCR(**kwargs)
-                    logger.info("PaddleOCR initialized successfully.")
+                    elapsed = time.perf_counter() - start_time
+                    logger.info(f"PaddleOCR CAPTCHA engine initialized successfully in {elapsed:.2f} seconds.")
 
                 except Exception as exc:
                     _init_error = f"{type(exc).__name__}: {exc}"

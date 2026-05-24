@@ -138,6 +138,9 @@ def _get_doc_ocr():
                         except (OSError, AttributeError):
                             pass
 
+                import time
+                start_time = time.perf_counter()
+
                 from paddleocr import PaddleOCR
 
                 kwargs = dict(use_angle_cls=True, lang='en', show_log=False)
@@ -155,6 +158,10 @@ def _get_doc_ocr():
                 det_dir = os.path.join(model_root, "det", "en", "en_PP-OCRv3_det_infer")
                 rec_dir = os.path.join(model_root, "rec", "en", "en_PP-OCRv4_rec_infer")
                 cls_dir = os.path.join(model_root, "cls", "ch_ppocr_mobile_v2.0_cls_infer")
+
+                if not os.path.isdir(det_dir) or not os.path.isdir(rec_dir) or not os.path.isdir(cls_dir):
+                    logger.warning("[OCR] ⚠️ Local Document OCR models not found. PaddleOCR will download them now (approx. 1-3 minutes depending on internet connection)...")
+
                 if os.path.isdir(det_dir):
                     kwargs["det_model_dir"] = det_dir
                 if os.path.isdir(rec_dir):
@@ -163,7 +170,8 @@ def _get_doc_ocr():
                     kwargs["cls_model_dir"] = cls_dir
 
                 _doc_ocr = PaddleOCR(**kwargs)
-                logger.info("[OCR] PaddleOCR (document mode) initialized successfully.")
+                elapsed = time.perf_counter() - start_time
+                logger.info(f"[OCR] PaddleOCR (document mode) initialized successfully in {elapsed:.2f} seconds.")
 
             except Exception as exc:
                 _doc_ocr_error = f"{type(exc).__name__}: {exc}"
