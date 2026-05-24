@@ -104,7 +104,7 @@ if defined CI_MODE (
     if errorlevel 1 exit /b 1
 
     echo [5/7] Preparing bundled PaddleOCR models...
-    "%BUILD_PYTHON%" -c "from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=False, lang='en', show_log=False); print('PaddleOCR models ready.')"
+    "%BUILD_PYTHON%" -c "from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=True, lang='en', show_log=False); print('PaddleOCR models ready.')"
     if errorlevel 1 exit /b 1
 )
 

@@ -262,6 +262,7 @@ hiddenimports.extend(
         "app.portals.newindia.automation.popup_service",
         "app.portals.newindia.automation.ui_utils",
         "app.portals.newindia.automation.ocr_helper",
+        "app.portals.newindia.automation.survey_fee_bill_module",
         # ── Oriental Insurance Company portal — automation package ───────────
         # engine.py imports these lazily inside if-blocks; static analysis
         # cannot find them. List explicitly so they are always compiled in.
@@ -273,6 +274,9 @@ hiddenimports.extend(
         "app.portals.oic.automation.popup_service",
         "app.portals.oic.automation.ui_utils",
         "app.portals.oic.automation.workflow_module",
+        "app.portals.oic.automation.basic_details_module",
+        "app.portals.oic.automation.claim_search_module",
+        "app.portals.oic.automation.selectors",
         # ── UI service layer (lazy-imported inside main_window event handlers)
         "app.ui.services",
         # ── Automation service layer (if it contains dynamically loaded code)

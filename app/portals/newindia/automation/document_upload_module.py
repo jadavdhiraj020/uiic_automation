@@ -1,5 +1,5 @@
 """
-document_upload_module.py — Phase 9: Document Upload Section Automation
+document_upload_module.py — Phase 11: Document Upload Section Automation
 New India Assurance portal.
 
 Handles:
@@ -9,15 +9,18 @@ Handles:
        - Driving License
        - Registration Certificate
        - Claim Form
-       - Claim Related Documents (merged remaining files as single PDF)
-  4. Skip "Non-Mandatory Documents" section
-  5. Skip "Reminder to Insured" section
+       - Claim Related Documents (pre-merged PDF from folder scan)
+  4. Click Upload button and wait for all rows to show "Successful"
+  5. Dismiss the post-upload alert popup
+  6. Skip "Non-Mandatory Documents" section
+  7. Skip "Reminder to Insured" section
 
 IMPORTANT:
   - Files are attached through the portal Browse controls.
   - The portal Upload button is clicked after attachments are ready.
+  - Claim Related Documents uses ONLY the pre-merged PDF from folder_scanner.
+    No runtime merging is performed — all merging happens at scan time.
   - Final claim review/submission remains manual.
-  - PDF merge respects 15MB max size limit.
 """
 
 import asyncio
@@ -546,7 +549,6 @@ def _validate_merged_pdf(
 
 
 
-
 def _compress_mandatory_file_if_needed(
     file_path: str,
     label: str,
@@ -729,6 +731,91 @@ async def _open_upload_new_documents_section(page: Page, log) -> bool:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# POST-UPLOAD VERIFICATION — Wait for "Successful" status on all rows
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _wait_for_upload_success(page: Page, expected_rows: int, log, max_wait_s: float = 30.0) -> bool:
+    """
+    After clicking the Upload button, the portal takes 5–10s (variable) to
+    process all files.  Each row transitions to show a green "Successful ✓"
+    status text once its file is accepted.
+
+    This function polls until ALL expected rows display "Successful", or
+    until the timeout expires.
+
+    Returns True if all rows show Successful, False on timeout.
+    """
+    if expected_rows <= 0:
+        return True
+
+    poll_interval = 1.0
+    elapsed = 0.0
+
+    if isinstance(log, AutomationLogger):
+        log.wait(f"Waiting for {expected_rows} document(s) to show 'Successful' (max {max_wait_s:.0f}s)...")
+    else:
+        log(f"[{_ts()}]   ⏳ Waiting for {expected_rows} doc(s) to upload successfully (max {max_wait_s:.0f}s)...")
+
+    while elapsed < max_wait_s:
+        await asyncio.sleep(poll_interval)
+        elapsed += poll_interval
+
+        try:
+            # Count how many rows currently show "Successful" text
+            successful_count = 0
+            for i in range(expected_rows):
+                row_loc = page.locator(f'tr:has(input#mandatoryFiles{i}), div:has(input#mandatoryFiles{i})').first
+                has_success = await row_loc.locator(
+                    'span:has-text("Successful"), td:has-text("Successful"), div:has-text("Successful")'
+                ).first.is_visible()
+                if has_success:
+                    successful_count += 1
+
+            if successful_count >= expected_rows:
+                if isinstance(log, AutomationLogger):
+                    log.success(f"All {expected_rows} document(s) uploaded successfully ({elapsed:.0f}s).")
+                else:
+                    log(f"[{_ts()}]   ✅ All {expected_rows} doc(s) uploaded successfully ({elapsed:.0f}s).")
+                return True
+
+            # Log progress every 3 seconds
+            if elapsed % 3 < poll_interval:
+                if isinstance(log, AutomationLogger):
+                    log.info(f"Upload progress: {successful_count}/{expected_rows} rows successful ({elapsed:.0f}s)...")
+                else:
+                    log(f"[{_ts()}]   ⏳ {successful_count}/{expected_rows} successful ({elapsed:.0f}s)...")
+
+        except Exception as exc:
+            if isinstance(log, AutomationLogger):
+                log.warning(f"Upload status check error: {str(exc)[:80]}")
+
+    # Timeout — log how many actually succeeded
+    try:
+        final_count = 0
+        for i in range(expected_rows):
+            row_loc = page.locator(f'tr:has(input#mandatoryFiles{i}), div:has(input#mandatoryFiles{i})').first
+            has_success = await row_loc.locator(
+                'span:has-text("Successful"), td:has-text("Successful"), div:has-text("Successful")'
+            ).first.is_visible()
+            if has_success:
+                final_count += 1
+    except Exception:
+        final_count = 0
+
+    if isinstance(log, AutomationLogger):
+        log.warning(
+            f"Upload timeout after {max_wait_s:.0f}s: {final_count}/{expected_rows} rows successful. "
+            "Continuing anyway..."
+        )
+    else:
+        log(
+            f"[{_ts()}]   ⚠️ Upload timeout ({max_wait_s:.0f}s): {final_count}/{expected_rows} successful. "
+            "Continuing..."
+        )
+    return final_count > 0  # partial success is still acceptable
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # MAIN UPLOAD FUNCTION
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -747,7 +834,7 @@ async def fill_document_upload_section(
     else:
         log("")
         log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        log("  📝 Phase 9: Document Upload Section")
+        log("  📝 Phase 11: Document Upload Section")
         log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
     await dismiss_portal_popup(page, log, max_wait_s=1.5)
@@ -893,93 +980,51 @@ async def fill_document_upload_section(
 
     if stop_cb(): return False
 
-    # ── CLAIM RELATED DOCUMENTS — Merge remaining files ──────────────────────
+    # ── CLAIM RELATED DOCUMENTS — Use pre-merged PDF from folder scan ────────
     if isinstance(log, AutomationLogger):
-        log.info("Processing 'Claim Related Documents' (Merged PDF)")
+        log.info("Processing 'Claim Related Documents' (Pre-merged PDF)")
         log.indent()
     else:
         log("")
-        log(f"[{_ts()}]   📎 Preparing: Claim Related Documents (merged PDF)")
+        log(f"[{_ts()}]   📎 Preparing: Claim Related Documents (pre-merged PDF)")
 
-    # Use scan-time pre-merged PDF if available (zero extra disk I/O at runtime)
+    # Strictly use the pre-merged PDF generated by folder_scanner at scan time.
+    # No runtime merging is performed — all merging happens before automation starts.
     scan_result = getattr(data, "_scan_result", None)
     precomputed_pdf = getattr(scan_result, "claim_related_merged_pdf", None) if scan_result else None
-    precomputed = getattr(scan_result, "claim_related_files", None) if scan_result else None
+
+    # Failsafe: if not provided by scan_result, search the folder directly for pre-merged PDFs
+    if not precomputed_pdf or not os.path.isfile(precomputed_pdf):
+        folder_path = _get_folder_path(data)
+        if folder_path and os.path.isdir(folder_path):
+            import glob
+            pattern = os.path.join(folder_path, "claim_others_documents_*.pdf")
+            found_files = sorted(glob.glob(pattern))
+            if found_files:
+                precomputed_pdf = found_files[-1]
+            else:
+                std_path = os.path.join(folder_path, "claim_others_documents.pdf")
+                if os.path.isfile(std_path):
+                    precomputed_pdf = std_path
 
     if precomputed_pdf and os.path.isfile(precomputed_pdf):
-        # Happy path: pre-merged PDF ready from scan phase
         merged_path = precomputed_pdf
+        precomputed = getattr(scan_result, "claim_related_files", None) if scan_result else None
         n = len(precomputed) if precomputed else "?"
+        mb = os.path.getsize(merged_path) / (1024 * 1024)
         if isinstance(log, AutomationLogger):
-            log.success(f"Using pre-merged PDF: {Path(merged_path).name} ({n} source file(s))")
+            log.success(f"Using pre-merged PDF: {Path(merged_path).name} ({n} source file(s), {mb:.1f}MB)")
         else:
-            log(f"[{_ts()}]     ✅ Using pre-merged: {Path(merged_path).name} ({n} source file(s))")
+            log(f"[{_ts()}]     ✅ Using pre-merged: {Path(merged_path).name} ({n} source file(s), {mb:.1f}MB)")
     else:
-        # Fallback: re-compute remaining files and merge at runtime
+        merged_path = None
         if isinstance(log, AutomationLogger):
-            log.info("Pre-merged PDF not available; falling back to runtime merge.")
-        else:
-            log(f"[{_ts()}]     ℹ️ No pre-merged PDF found; running runtime merge.")
-
-        if precomputed is not None:
-            remaining_files = [f for f in precomputed if os.path.isfile(f)]
-            if isinstance(log, AutomationLogger):
-                log.info(f"Using pre-scanned claim_related_files: {len(remaining_files)} file(s).")
-            else:
-                log(f"[{_ts()}]     📊 Pre-scanned remaining files: {len(remaining_files)}")
-        else:
-            used_files = _get_used_files(data, uploaded_keys)
-            remaining_files = _collect_remaining_files(data, used_files)
-
-        if isinstance(log, AutomationLogger):
-            log.info(f"Files to merge: {len(remaining_files)}")
-        else:
-            log(f"[{_ts()}]     📊 Remaining unmatched files: {len(remaining_files)}")
-
-        # Log each file with size
-        total_bytes = 0
-        valid_files = []
-        for rf in remaining_files:
-            if not os.path.isfile(rf):
-                if isinstance(log, AutomationLogger):
-                    log.warning(f"File missing at runtime, skipping: {Path(rf).name}")
-                continue
-            sz = os.path.getsize(rf)
-            total_bytes += sz
-            valid_files.append(rf)
-            if isinstance(log, AutomationLogger):
-                log.info(f"Will merge: {Path(rf).name} ({sz / 1024:.0f} KB)")
-            else:
-                log(f"[{_ts()}]       • {Path(rf).name} ({sz / 1024:.0f} KB)")
-
-        if not valid_files:
-            if isinstance(log, AutomationLogger):
-                log.warning("No valid remaining files. Skipping Claim Related Documents.")
-            else:
-                log(f"[{_ts()}]     ⚠️ No valid files to merge. Skipping Claim Related Documents.")
-            merged_path = None
-        else:
-            total_mb = total_bytes / (1024 * 1024)
-            if isinstance(log, AutomationLogger):
-                log.info(f"Total pre-merge size: {total_mb:.1f}MB (limit: 15MB)")
-
-            folder_path = _get_folder_path(data) or tempfile.gettempdir()
-            import time
-            timestamp = time.strftime("%Y%m%d_%H%M%S")
-            merged_pdf_path = os.path.join(folder_path, f"claim_others_documents_{timestamp}.pdf")
-
-
-            if isinstance(log, AutomationLogger):
-                log.wait("Creating consolidated PDF...")
-            else:
-                log(f"[{_ts()}]     🔄 Merging remaining files into single PDF...")
-
-            merged_path = merge_files_to_pdf(
-                file_paths=valid_files,
-                output_path=merged_pdf_path,
-                max_bytes=MAX_MERGED_PDF_BYTES,
-                log=log,
+            log.warning(
+                "No pre-merged PDF available. Claim Related Documents will not be uploaded. "
+                "Ensure folder scan completes before automation starts."
             )
+        else:
+            log(f"[{_ts()}]     ⚠️ No pre-merged PDF available. Skipping Claim Related Documents.")
 
     if merged_path:
         # Add a new row if we already used row(s) for other docs
@@ -1025,7 +1070,6 @@ async def fill_document_upload_section(
                 log=log,
             )
             if success:
-                mb = os.path.getsize(merged_path) / (1024 * 1024)
                 if not isinstance(log, AutomationLogger):
                     log(f"[{_ts()}]     ✅ Merged PDF attached ({mb:.1f}MB)")
             else:
@@ -1049,7 +1093,9 @@ async def fill_document_upload_section(
     if isinstance(log, AutomationLogger):
         log.outdent()
 
-    # ── Automatically click the Upload button ───────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════════
+    # CLICK UPLOAD BUTTON → WAIT FOR "SUCCESSFUL" → DISMISS ALERT
+    # ══════════════════════════════════════════════════════════════════════════
     if current_row > 0:
         if isinstance(log, AutomationLogger):
             log.info(f"All {current_row} documents attached. Clicking Upload button...")
@@ -1076,19 +1122,25 @@ async def fill_document_upload_section(
                 await upload_btn.click()
                 if isinstance(log, AutomationLogger):
                     log.success("Upload button clicked.")
-                    log.wait("Waiting for upload confirmation...")
+                    log.wait("Waiting for portal to process upload...")
                 else:
                     log(f"[{_ts()}]   ✅ Upload button clicked.")
 
-                # Dismiss success/confirmation modal (portal shows one after upload).
-                # Also handles "Duplicate Document Name" popup if the same file was
-                # previously uploaded in a prior run — both use the same DOM button.
-                # dismiss_portal_popup returns immediately on first dismissed popup.
+                # ── Wait for all rows to show "Successful" status ─────────────
+                # Portal takes 5-10s (variable) to process all files.
+                # Each row transitions to "Successful ✓" once accepted.
+                await _wait_for_upload_success(page, current_row, log, max_wait_s=30.0)
+
+                # ── Dismiss the post-upload alert popup ───────────────────────
+                # After all files are processed, the portal shows an Alert modal
+                # (e.g. "dl.jpg,Registration Certificate.pdf,claim_form.jpg is
+                # already applied for this claim number...") with an OK button.
+                # We must click OK to dismiss it before continuing.
                 await dismiss_portal_popup(page, log, max_wait_s=10.0)
-                # Catch any secondary alert (e.g. second duplicate popup) that may
-                # appear after the first one is dismissed. Short window (1.5s) —
-                # secondary popups appear within 0.5s or not at all.
-                await dismiss_portal_popup(page, log, classify=True, max_wait_s=1.5)
+
+                # Catch any secondary alert that may appear after the first one
+                # is dismissed (e.g. a second duplicate popup).
+                await dismiss_portal_popup(page, log, classify=True, max_wait_s=2.0)
 
         except Exception as e:
             if isinstance(log, AutomationLogger):
@@ -1128,6 +1180,6 @@ async def fill_document_upload_section(
     else:
         log("")
         log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        log("  ✅ Phase 9 (Document Upload Section) complete")
+        log("  ✅ Phase 11 (Document Upload Section) complete")
         log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     return True

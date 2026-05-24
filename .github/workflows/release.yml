@@ -107,7 +107,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path "build_assets\paddleocr" | Out-Null
           $env:PADDLEOCR_HOME = "${{ github.workspace }}\build_assets\paddleocr"
-          python -c "from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=False, lang='en', show_log=False); print('PaddleOCR models ready.')"
+          python -c "from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=True, lang='en', show_log=False); print('PaddleOCR models ready.')"
         shell: pwsh
 
       # ─── 7. Extract version from pyproject.toml ─────────────────────────
