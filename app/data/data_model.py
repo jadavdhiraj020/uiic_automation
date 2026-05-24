@@ -429,6 +429,7 @@ class ClaimData:
             if self.date_of_registration:
                 try:
                     reg_date_str = str(self.date_of_registration).strip()
+                    accident_date_str = str(self.date_of_accident).strip()
                     if reg_date_str:
                         reg_date = None
                         clean_val = reg_date_str.split()[0]
@@ -439,11 +440,23 @@ class ClaimData:
                             except ValueError:
                                 continue
                         
+                        accident_date = None
+                        if accident_date_str and not re.match(r'^(NA|N/A|nil|none|-)$', accident_date_str, re.IGNORECASE):
+                            clean_acc_val = accident_date_str.split()[0]
+                            for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d.%m.%Y", "%m/%d/%Y"):
+                                try:
+                                    accident_date = datetime.strptime(clean_acc_val, fmt).date()
+                                    break
+                                except ValueError:
+                                    continue
+                        
+                        # Use Date of Accident if available, otherwise fall back to today's date
+                        end_date = accident_date if accident_date else date.today()
+                        
                         if reg_date:
-                            today = date.today()
-                            years = today.year - reg_date.year
-                            months = today.month - reg_date.month
-                            days = today.day - reg_date.day
+                            years = end_date.year - reg_date.year
+                            months = end_date.month - reg_date.month
+                            days = end_date.day - reg_date.day
                             if days < 0:
                                 months -= 1
                             if months < 0:
@@ -451,8 +464,8 @@ class ClaimData:
                                 months += 12
                             
                             self.age_of_vehicle = f"{years} years {months} months"
-                            self._excel_coords["age_of_vehicle"] = "Calculated from Registration Date"
-                            self._excel_logs.append(f"  📊 age_of_vehicle: '{self.age_of_vehicle}' (Derived from Registration Date '{reg_date_str}' vs today '{today}')")
+                            self._excel_coords["age_of_vehicle"] = "Calculated from Registration & Accident Date"
+                            self._excel_logs.append(f"  📊 age_of_vehicle: '{self.age_of_vehicle}' (Derived from Registration Date '{reg_date_str}' vs Accident Date '{end_date}')")
                 except Exception as exc:
                     logger.warning("Failed to calculate age_of_vehicle from Registration Date %s: %s", self.date_of_registration, exc)
 
@@ -946,8 +959,10 @@ class ClaimData:
             ("Verification",          self.verification_checkbox,    True,  _src("verification_checkbox")),
 
             # ── Survey Fee Bill ─────────────────────────────
-            ("SFB Prof. Fee (₹)",     self.professional_fee,         False, _src("professional_fee")),
-            ("SFB Photos (₹)",        self.photo_charges,            False, _src("photo_charges")),
-            ("SFB Conveyance (₹)",    self.traveling_expenses,       False, _src("traveling_expenses")),
-            ("SFB Others (₹)",        self.sfb_others,               False, _src("sfb_others")),
+            ("SFB Invoice Number",    self.vendor_invoice_number,    True,  _src("vendor_invoice_number")),
+            ("SFB Invoice Date",      self.vendor_invoice_date,      True,  _src("vendor_invoice_date")),
+            ("Professional Fee (₹)",  self.professional_fee,         False, _src("professional_fee")),
+            ("Photos Amount (₹)",     self.photo_charges,            False, _src("photo_charges")),
+            ("Conveyance Amount (₹)", self.traveling_expenses,       False, _src("traveling_expenses")),
+            ("Others (₹)",            self.sfb_others,               False, _src("sfb_others")),
         ]

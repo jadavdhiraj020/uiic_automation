@@ -584,18 +584,27 @@ class TestClaimDataPreview:
         assert c.year_of_manufacture == "2015"
 
     def test_oic_vehicle_age_calculation(self):
-        from datetime import date
+        # 1. Primary path: Calculation using Date of Registration and Date of Accident
         c = ClaimData(portal_id="oic")
+        c.date_of_registration = "01/01/2010"
+        c.date_of_accident = "01/04/2020"
+        c.calculate_derived_fields()
+        assert c.age_of_vehicle == "10 years 3 months"
+
+        # 2. Fallback path: Accident date is missing/empty, uses today's date
+        from datetime import date
+        c2 = ClaimData(portal_id="oic")
         today = date.today()
-        target_year = today.year - 10
-        target_month = today.month - 3
+        target_year = today.year - 5
+        target_month = today.month - 2
         if target_month <= 0:
             target_year -= 1
             target_month += 12
-        # Use a day earlier than today's day to ensure day-diff is positive
-        c.date_of_registration = f"01/{target_month:02d}/{target_year}"
-        c.calculate_derived_fields()
-        assert c.age_of_vehicle == "10 years 3 months"
+        # Set day to 01 to ensure day difference is positive relative to today's day
+        c2.date_of_registration = f"01/{target_month:02d}/{target_year}"
+        c2.date_of_accident = ""
+        c2.calculate_derived_fields()
+        assert c2.age_of_vehicle == "5 years 2 months"
 
     def test_preview_oic_individual_address_fields(self):
         c = ClaimData(portal_id="oic")

@@ -116,7 +116,10 @@ async def _fill_work_approval_inner(
         acc_heading = page.locator('a.accordion-toggle:has-text("Work Approval Details")').first
         await acc_heading.wait_for(state="visible", timeout=10000)
 
-        is_collapsed = 'collapsed' in (await acc_heading.get_attribute('class') or '')
+        # Check the PARENT div.panel-heading for the 'collapsed' class
+        # (the 'collapsed' class is on the parent div, NOT the <a> link)
+        parent_div = page.locator('div.panel-heading').filter(has=acc_heading).first
+        is_collapsed = 'collapsed' in (await parent_div.get_attribute('class') or '')
         if is_collapsed:
             await acc_heading.click()
             await asyncio.sleep(1.0)
