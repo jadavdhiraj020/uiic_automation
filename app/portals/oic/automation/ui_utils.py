@@ -301,3 +301,152 @@ async def capture_error_screenshot(page: Page, context_name: str, log) -> Option
         elif callable(log):
             log(f"[{_ts()}]   ⚠️ {msg}")
         return None
+
+
+# ── PrimeNG-Specific Helpers ─────────────────────────────────────────────────
+
+
+
+async def click_primeng_radio(
+    page: Page, radio_selector: str, label: str,
+    log, delay_ms: int = 250
+):
+    """Click a PrimeNG radio button by its CSS selector (e.g. '#closeProximity1')."""
+    try:
+        loc = page.locator(radio_selector).first
+        await loc.wait_for(state="attached", timeout=5000)
+
+        # Try clicking the parent label first (PrimeNG wraps radios in labels)
+        parent_label = loc.locator("xpath=ancestor::label")
+        if await parent_label.count() > 0:
+            await parent_label.first.scroll_into_view_if_needed()
+            await parent_label.first.click()
+        else:
+            await loc.scroll_into_view_if_needed()
+            await loc.click()
+
+        if isinstance(log, AutomationLogger):
+            log.field_filled(label, "selected")
+        else:
+            log(f"[{_ts()}]   ✅ [{label}] → selected")
+    except Exception as e:
+        if isinstance(log, AutomationLogger):
+            log.field_failed(label, str(e))
+        else:
+            log(f"[{_ts()}]   ⚠️ [{label}] error: {e}")
+
+    await asyncio.sleep(delay_ms / 1000.0)
+
+
+async def select_primeng_dropdown(
+    page: Page, dropdown_selector: str, value: str, label: str,
+    log, delay_ms: int = 400
+):
+    """Select a value in a PrimeNG <p-dropdown> component."""
+    try:
+        # Wait up to 10 seconds for the dropdown to be visible and enabled (not disabled by Angular/PrimeNG)
+        try:
+            await page.wait_for_selector(f"{dropdown_selector}:not(.p-disabled)", state="visible", timeout=10000)
+        except Exception:
+            pass
+
+        dropdown = page.locator(dropdown_selector).first
+        await dropdown.wait_for(state="visible", timeout=5000)
+        await dropdown.scroll_into_view_if_needed()
+        await dropdown.click()
+
+        # Wait for the overlay panel to open and for actual options to populate (dynamic poll)
+        panel = page.locator(".p-dropdown-panel:visible, .p-overlay:visible")
+        items = panel.locator(".p-dropdown-item, li[role='option']")
+
+        count = 0
+        for _ in range(10):  # poll up to 3 seconds (10 * 300ms)
+            await asyncio.sleep(0.3)
+            count = await items.count()
+            if count > 0:
+                # Check if the overlay isn't showing a single "Loading..." or "No records found" option
+                first_text = (await items.first.inner_text()).strip().lower()
+                if "loading" not in first_text and "fetching" not in first_text:
+                    break
+
+        # Search the overlay panel for a matching option
+        search = str(value).strip().lower()
+        matched = False
+        for i in range(count):
+            item_text = (await items.nth(i).inner_text()).strip().lower()
+            if search in item_text or item_text in search:
+                await items.nth(i).click()
+                matched = True
+                if isinstance(log, AutomationLogger):
+                    log.field_selected(label, value)
+                else:
+                    log(f"[{_ts()}]   ✅ [{label}] selected → '{value}'")
+                break
+
+        if not matched:
+            # Try word-level match
+            words = search.split()
+            for i in range(count):
+                item_text = (await items.nth(i).inner_text()).strip().lower()
+                if any(w for w in words if len(w) > 2 and w in item_text):
+                    await items.nth(i).click()
+                    matched = True
+                    actual = await items.nth(i).inner_text()
+                    if isinstance(log, AutomationLogger):
+                        log.field_selected(label, actual.strip())
+                    else:
+                        log(f"[{_ts()}]   ✅ [{label}] selected → '{actual.strip()}'")
+                    break
+
+        if not matched:
+            # Close dropdown without selecting
+            await page.keyboard.press("Escape")
+            if isinstance(log, AutomationLogger):
+                log.field_failed(label, f"No match for '{value}' in {count} options")
+            else:
+                log(f"[{_ts()}]   ⚠️ [{label}] no match for '{value}' ({count} options)")
+
+    except Exception as e:
+        if isinstance(log, AutomationLogger):
+            log.field_failed(label, str(e))
+        else:
+            log(f"[{_ts()}]   ⚠️ [{label}] error: {e}")
+
+    await asyncio.sleep(delay_ms / 1000.0)
+
+
+async def fill_primeng_inputnumber(
+    page: Page, selector: str, value: str, label: str,
+    log, delay_ms: int = 250
+):
+    """Fill a PrimeNG <p-inputnumber> component (which nests an <input> inside)."""
+    try:
+        # PrimeNG inputnumber has a nested <input> element
+        inner_input = page.locator(f"{selector} input").first
+        is_visible = await inner_input.is_visible()
+        if not is_visible:
+            inner_input = page.locator(selector).first
+
+        await inner_input.wait_for(state="visible", timeout=5000)
+        await inner_input.scroll_into_view_if_needed()
+        await inner_input.focus()
+        await inner_input.fill("")
+
+        # Type value with human-like delay
+        for char in str(value):
+            await inner_input.type(char, delay=random.randint(15, 35))
+
+        # Trigger change events
+        await inner_input.evaluate("el => { el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); el.dispatchEvent(new Event('blur', { bubbles: true })); }")
+
+        if isinstance(log, AutomationLogger):
+            log.field_filled(label, value)
+        else:
+            log(f"[{_ts()}]   ✅ [{label}] filled → '{str(value)[:60]}'")
+    except Exception as e:
+        if isinstance(log, AutomationLogger):
+            log.field_failed(label, str(e))
+        else:
+            log(f"[{_ts()}]   ⚠️ [{label}] error: {e}")
+
+    await asyncio.sleep(delay_ms / 1000.0)

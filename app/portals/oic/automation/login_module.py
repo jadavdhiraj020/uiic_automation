@@ -31,6 +31,9 @@ from app.portals.oic.automation.selectors import (
     SEL_LOGIN_BTN,
     SEL_REFRESH_BTN,
     SEL_ERROR_MSG,
+    SEL_HEADER_LOGIN_BTN,
+    SEL_LOGIN_FORM_CONTAINER,
+    SEL_STARTUP_DIALOG_CLOSE,
 )
 
 # ── Captcha Utilities ─────────────────────────────────────────────────────────
@@ -309,7 +312,7 @@ async def do_login(
 
     # Try to close OIC PrimeNG startup dialog banner if visible
     try:
-        close_btn = page.locator('button.p-dialog-header-close, button[aria-label="Close"], button.p-dialog-header-icon').first
+        close_btn = page.locator(SEL_STARTUP_DIALOG_CLOSE).first
         if await close_btn.is_visible(timeout=3000):
             if isinstance(log, AutomationLogger):
                 log.info("PrimeNG startup modal detected. Dismissing...")
@@ -325,7 +328,7 @@ async def do_login(
 
     # Click the header 'Login' button to open the login dropdown/modal form
     try:
-        login_btn = page.locator('button.header-login-btn, button#login-btn:visible').first
+        login_btn = page.locator(SEL_HEADER_LOGIN_BTN).first
         await login_btn.wait_for(state="visible", timeout=5000)
         if isinstance(log, AutomationLogger):
             log.info("Clicking header Login button to open login form...")
@@ -342,7 +345,7 @@ async def do_login(
     # Wait for the login form container (.login-formno) to appear first,
     # THEN wait for the username input inside it.
     try:
-        await page.wait_for_selector('.login-formno', state="visible", timeout=5000)
+        await page.wait_for_selector(SEL_LOGIN_FORM_CONTAINER, state="visible", timeout=5000)
         if isinstance(log, AutomationLogger):
             log.info("Login form container (.login-formno) detected.")
         else:

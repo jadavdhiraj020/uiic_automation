@@ -15,7 +15,7 @@ MULTI-PORTAL SUPPORT (2026-05-09):
   - New India fields are additive (new attributes with empty defaults).
 """
 import logging
-from datetime import date
+from datetime import date, datetime
 import re
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
@@ -51,27 +51,39 @@ def _get_active_portal_id(override: Optional[str] = None) -> str:
         return "uiic"
 
 
-def _clean_mobile_10(raw: str) -> str:
-    """Clean mobile number to exactly 10 digits starting with 5, 6, 7, 8, or 9 for Website 2.
-    Strips trailing .0 (Excel float format) and non-digits.
-    Ensures it finds the correct 10-digit window matching valid Indian mobile prefixes.
+def clean_mobile_number(raw: Optional[str]) -> str:
     """
+    Standardized, prefix-aware mobile number cleaning for all portals.
+    1. Handles None and 'None' string inputs.
+    2. Removes Excel float suffixes (.0).
+    3. Strips out all non-digits.
+    4. Finds the first 10-digit window starting with valid Indian mobile prefix (5, 6, 7, 8, 9).
+    5. Falls back to the last 10 digits if a valid prefix-matching window is not found.
+    """
+    if raw is None:
+        return ""
     s = str(raw).strip()
+    if s.lower() == "none":
+        return ""
+
     if re.match(r'^\d+\.0$', s):
         s = s[:-2]
     digits = re.sub(r"[^\d]", "", s)
-    
+
     if len(digits) >= 10:
         # Check if the last 10 digits start with 5, 6, 7, 8, or 9
         last_10 = digits[-10:]
         if last_10[0] in "56789":
             return last_10
-        # If not, look for the first 10-digit match in the sequence starting with 5, 6, 7, 8, or 9
+        # Search for first 10-digit sequence starting with 5, 6, 7, 8, or 9
         match = re.search(r"[56789]\d{9}", digits)
         if match:
             return match.group(0)
-            
+
     return digits[-10:] if len(digits) >= 10 else digits
+
+
+_clean_mobile_10 = clean_mobile_number
 
 
 def _normalise_time(raw: str) -> str:
@@ -266,8 +278,64 @@ class ClaimData:
     less_other_deductions: str = "0"     # Optional
     verification_checkbox: str = ""
 
+    # ══════════════════════════════════════════════════════════════════════════
+    # OIC (ORIENTAL INSURANCE) — Additional Fields
+    # These are only populated when the OIC portal is active.
+    # They have no effect on UIIC or NIA workflow.
+    # ══════════════════════════════════════════════════════════════════════════
+
+    # ── Vehicle Details (OIC) ─────────────────────────────────────────────────
+    cubic_capacity: str = ""
+    year_of_manufacture: str = ""
+    unladen_weight: str = ""
+    road_tax_paid_upto: str = ""
+    seating_capacity: str = ""
+    fitness_valid_upto: str = ""
+    permit_number: str = ""
+    type_of_permit: str = ""
+    permit_valid_upto: str = ""
+    authorization_number: str = ""
+    validity_of_authorization: str = ""
+    road_area_of_operation: str = ""
+
+    # ── Loss Details (OIC) ────────────────────────────────────────────────────
+    age_of_vehicle: str = ""
+    date_of_accident: str = ""
+    date_of_allotment: str = ""
+
+    # ── Driver Details (OIC) ──────────────────────────────────────────────────
+    driver_address: str = ""
+    driver_city_state: str = ""      # Raw "City, State" from Excel — split at fill time
+    driver_pin_code: str = ""
+    badge_issue_date: str = ""       # Badge Issue Date — date field
+    driver_qualification: str = ""   # Educational qualification of driver
+    charges_filed: str = ""          # Any charges filed against driver
+
+    # ── Workshop Details (OIC) ────────────────────────────────────────────────
+    workshop_name: str = ""
+    workshop_estimate_amount: str = ""
+    workshop_estimate_date: str = ""
+    gst_number: str = ""
+
+    # ── Surveyor Details (OIC) ────────────────────────────────────────────────
+    surveyor_name: str = ""
+    surveyor_email: str = ""
+    surveyor_mobile: str = ""
+    surveyor_address: str = ""
+    surveyor_pan: str = ""
+
+
     def calculate_derived_fields(self):
         """Calculate fields that are derived from other extracted values."""
+        # 0. Clean and format mobile number & surveyor mobile number globally for all portals
+        if self.mobile_no:
+            self.mobile_no = _clean_mobile_10(self.mobile_no)
+            self._excel_logs.append(f"  📊 mobile_no cleaned: '{self.mobile_no}'")
+
+        if self.surveyor_mobile:
+            self.surveyor_mobile = _clean_mobile_10(self.surveyor_mobile)
+            self._excel_logs.append(f"  📊 surveyor_mobile cleaned: '{self.surveyor_mobile}'")
+
         # 1. Expected completion date aligns with date of survey
         if self.date_of_survey:
             self.expected_completion_date = self.date_of_survey
@@ -347,11 +415,6 @@ class ClaimData:
                 except Exception as exc:
                     logger.warning("Failed to calculate age_of_driver from DOB %s: %s", self.dob_of_driver, exc)
 
-            # 5. Clean and format mobile number for New India
-            if self.mobile_no:
-                self.mobile_no = _clean_mobile_10(self.mobile_no)
-                self._excel_logs.append(f"  📊 mobile_no cleaned: '{self.mobile_no}'")
-
             # 6. Normalize or construct time of survey for New India
             if self.time_of_survey:
                 self.time_of_survey = _normalise_time(self.time_of_survey)
@@ -359,6 +422,49 @@ class ClaimData:
             elif self.time_hh and self.time_mm:
                 self.time_of_survey = f"{self.time_hh}:{self.time_mm}"
                 self._excel_logs.append(f"  📊 time_of_survey derived: '{self.time_of_survey}' (Source: {self.time_hh}:{self.time_mm})")
+
+        elif portal_id == "oic":
+            # Calculate Age of Vehicle based on date_of_registration
+            if self.date_of_registration:
+                try:
+                    reg_date_str = str(self.date_of_registration).strip()
+                    if reg_date_str:
+                        reg_date = None
+                        clean_val = reg_date_str.split()[0]
+                        for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d.%m.%Y", "%m/%d/%Y"):
+                            try:
+                                reg_date = datetime.strptime(clean_val, fmt).date()
+                                break
+                            except ValueError:
+                                continue
+                        
+                        if reg_date:
+                            today = date.today()
+                            years = today.year - reg_date.year
+                            months = today.month - reg_date.month
+                            days = today.day - reg_date.day
+                            if days < 0:
+                                months -= 1
+                            if months < 0:
+                                years -= 1
+                                months += 12
+                            
+                            self.age_of_vehicle = f"{years} years {months} months"
+                            self._excel_coords["age_of_vehicle"] = "Calculated from Registration Date"
+                            self._excel_logs.append(f"  📊 age_of_vehicle: '{self.age_of_vehicle}' (Derived from Registration Date '{reg_date_str}' vs today '{today}')")
+                except Exception as exc:
+                    logger.warning("Failed to calculate age_of_vehicle from Registration Date %s: %s", self.date_of_registration, exc)
+
+            # Clean Year of Manufacture (keep only 4 digit year, e.g. 19xx or 20xx)
+            if self.year_of_manufacture:
+                try:
+                    yom_str = str(self.year_of_manufacture).strip()
+                    m = re.search(r'\b(19|20)\d{2}\b', yom_str)
+                    if m:
+                        self.year_of_manufacture = m.group(0)
+                        self._excel_logs.append(f"  📊 year_of_manufacture cleaned: '{self.year_of_manufacture}' (extracted from '{yom_str}')")
+                except Exception as exc:
+                    logger.warning("Failed to clean year_of_manufacture %s: %s", self.year_of_manufacture, exc)
 
     def validate(self) -> Tuple[List[str], List[str]]:
         """
@@ -379,16 +485,57 @@ class ClaimData:
             return self._validate_uiic()
 
     def _validate_oic(self) -> Tuple[List[str], List[str]]:
-        """OIC validation — claim_no and invoice are required."""
+        """OIC validation — claim_no, vehicle, driver, workshop details required."""
         errors, warnings = [], []
         if not self.claim_no or self.claim_no.strip() == "":
             errors.append("Claim Number is missing")
-            
+
+        # Vehicle mandatory fields
+        if not self.chassis_no:
+            warnings.append("Chassis Number not found in Excel")
+        if not self.engine_no:
+            warnings.append("Engine Number not found in Excel")
+        if not self.cubic_capacity:
+            warnings.append("Cubic Capacity not found in Excel")
+
+        # Validate year_of_manufacture if present
+        if self.year_of_manufacture:
+            year_str = str(self.year_of_manufacture).strip()
+            year_match = re.search(r'\b\d{4}\b', year_str)
+            if year_match:
+                year_val = int(year_match.group(0))
+                current_year = datetime.now().year
+                if not (1900 <= year_val <= current_year + 1):
+                    errors.append(f"Year of Manufacture '{year_str}' is invalid (must be between 1900 and {current_year + 1})")
+            else:
+                errors.append(f"Year of Manufacture '{year_str}' must be a valid 4-digit year")
+
+        # Driver mandatory fields
+        if not self.driver_name:
+            warnings.append("Driver Name not found in Excel")
+        if not self.driver_license_number:
+            warnings.append("Driver License Number not found in Excel")
+
+        # Workshop mandatory fields
+        if not self.workshop_name:
+            warnings.append("Workshop Name not found in Excel")
+        if not self.workshop_estimate_amount:
+            warnings.append("Workshop Estimate Amount not found in Excel")
+        else:
+            amt_str = re.sub(r'[^\d]', '', str(self.workshop_estimate_amount))
+            if amt_str:
+                amt_val = int(amt_str)
+                # 10 Crores = 100,000,000 (10,00,00,000)
+                if not (1000 <= amt_val <= 100000000):
+                    errors.append(f"Workshop Estimate Amount '{self.workshop_estimate_amount}' must be between 1,000 and 10 Crores")
+            else:
+                errors.append(f"Workshop Estimate Amount '{self.workshop_estimate_amount}' is not a valid numeric amount")
+
         # Invoice file check — required for assessment
         invoice_file = self.assessment_files.get("invoice", "")
         if not invoice_file or invoice_file.strip() == "":
             errors.append("Invoice File is missing")
-            
+
         if not self.workshop_invoice_no:
             warnings.append("Workshop Invoice No not found in PDF")
         if not self.workshop_invoice_date:
@@ -396,6 +543,7 @@ class ClaimData:
         if not self.claim_doc_files:
             warnings.append("No claim documents found in folder")
         return errors, warnings
+
 
     def _validate_uiic(self) -> Tuple[List[str], List[str]]:
         """Original UIIC validation — completely unchanged."""
@@ -545,15 +693,105 @@ class ClaimData:
             return self._preview_uiic()
 
     def _preview_oic(self) -> List[Tuple[str, str, bool, str]]:
-        """OIC preview — only Claim No, Workshop Inv No, Workshop Inv Date."""
+        """OIC preview — Claim, Vehicle, Driver, Workshop details."""
         def _src(key: str) -> str:
             return self._excel_coords.get(key, "")
 
+        # Extract variant dynamically for preview
+        from app.portals.oic.automation.basic_details_module import _extract_variant
+        variant = _extract_variant(self.vehicle_make)
+
+        # State & City derived from driver_city_state
+        from app.portals.oic.automation.basic_details_module import (
+            _extract_state, _extract_city, _extract_pin_code, _is_owner_driver
+        )
+        state_fallback = _extract_state(self.driver_city_state)
+        city_fallback = _extract_city(self.driver_city_state)
+        pincode_fallback = _extract_pin_code(self.driver_address or self.place_of_survey or "")
+
+        # Close Proximity and Nil Dep Cover derived/keyword
+        from app.portals.oic.automation.basic_details_module import _resolve_loss_proximity, _resolve_nil_depreciation
+        close_prox = "YES" if _resolve_loss_proximity(self.date_of_accident, self.date_of_allotment) else "NO"
+        nil_dep = "YES" if _resolve_nil_depreciation(self.nil_depreciation) else "NO"
+
         return [
+            # Claim Details
             ("Claim No",              self.claim_no,              True,  _src("claim_no")),
+            ("Claim Type",            "Reimbursement" if "insured" in str(self.payment_to).lower() or "reimbursement" in str(self.payment_to).lower() else "Cashless",
+                                                                  True,  _src("payment_to")),
+            
+            # Vehicle Details (all 24 fields)
+            ("Registration No",       self.vehicle_registration_number, True, _src("vehicle_registration_number")),
+            ("Make",                  self.vehicle_make,          True,  _src("vehicle_make")),
+            ("Variant",               variant,                    False, "Derived from Make"),
+            ("Registration Date",     self.date_of_registration,  False, _src("date_of_registration")),
+            ("Year of Manufacture",   self.year_of_manufacture,   False, _src("year_of_manufacture")),
+            ("Chassis No",            self.chassis_no,            True,  _src("chassis_no")),
+            ("Engine No",             self.engine_no,             True,  _src("engine_no")),
+            ("Cubic Capacity",        self.cubic_capacity,        True,  _src("cubic_capacity")),
+            ("Type of Body",          self.type_of_body,          False, _src("type_of_body")),
+            ("Class of Vehicle",      self.class_of_vehicle,      False, _src("class_of_vehicle")),
+            ("Unladen Weight",        self.unladen_weight,        False, _src("unladen_weight")),
+            ("Road Tax Paid Upto",    self.road_tax_paid_upto,    False, _src("road_tax_paid_upto")),
+            ("Color of Vehicle",      self.vehicle_color,         False, _src("vehicle_color")),
+            ("Type of Fuel",          self.type_of_fuel,          False, _src("type_of_fuel")),
+            ("RTO",                   self.rto_name,              False, _src("rto_name")),
+            ("Registered Laden Weight", self.registered_laden_weight, False, _src("registered_laden_weight")),
+            ("Seating Capacity",      self.seating_capacity,      False, _src("seating_capacity")),
+            ("Fitness Valid Upto",    self.fitness_valid_upto,     False, _src("fitness_valid_upto")),
+            ("Permit Number",         self.permit_number,          False, _src("permit_number")),
+            ("Type of Permit",        self.type_of_permit,         False, _src("type_of_permit")),
+            ("Permit Valid Upto",     self.permit_valid_upto,      False, _src("permit_valid_upto")),
+            ("Authorization Number",  self.authorization_number,   False, _src("authorization_number")),
+            ("Validity of Auth",      self.validity_of_authorization, False, _src("validity_of_authorization")),
+            ("Road/Area of Operation", self.road_area_of_operation, False, _src("road_area_of_operation")),
+
+
+            # Loss Details
+            ("Date of Accident",      self.date_of_accident,      False, _src("date_of_accident")),
+            ("Date of Allotment",     self.date_of_allotment,     False, _src("date_of_allotment")),
+            ("Close Proximity",       close_prox,                 False, "Calculated"),
+            ("64VB Confirmed",        "YES",                      False, "Hardcoded"),
+            ("Nil Depreciation Cover",nil_dep,                    False, _src("nil_depreciation")),
+            ("Age of Vehicle",        self.age_of_vehicle,        False, _src("age_of_vehicle")),
+            ("Loss Description",      "As per estimate",          False, "Hardcoded"),
+
+            # Surveyor Details
+            ("Name Of The Surveyor",  self.surveyor_name,         False, _src("surveyor_name")),
+            ("Email ID",              self.surveyor_email,        False, _src("surveyor_email")),
+            ("Mobile Number",         self.surveyor_mobile,       False, _src("surveyor_mobile")),
+            ("Address",               self.surveyor_address,      False, _src("surveyor_address")),
+            ("PAN Number",            self.surveyor_pan,          False, _src("surveyor_pan")),
+
+            # Driver Details (all 19 fields)
+            ("Driver Name",           self.driver_name,           True,  _src("driver_name")),
+            ("Date of Birth",         self.dob_of_driver,         True,  _src("dob_of_driver")),
+            ("License Type",          self.license_type_of_driver,True,  _src("license_type_of_driver")),
+            ("Valid From (DL Issue)",  self.driver_license_issue_date, True, _src("driver_license_issue_date")),
+            ("Valid Up To (DL Expiry)",self.driver_license_expiry_date, True, _src("driver_license_expiry_date")),
+            ("License Number",        self.driver_license_number, True,  _src("driver_license_number")),
+            ("Badge Number",          self.badge_number,          False, _src("badge_number")),
+            ("Badge Issue Date",      self.badge_issue_date,      False, _src("badge_issue_date")),
+            ("Is Owner Driver?",      "YES" if _is_owner_driver(self.driver_name, self.registered_owner_name) else "NO", False, "Derived"),
+            ("Qualification",         self.driver_qualification,  False, _src("driver_qualification")),
+            ("Third Party Involved",  "NO",                       False, "Hardcoded"),
+            ("Country",               "INDIA",                    True,  "Hardcoded"),
+            ("State",                 state_fallback,             True,  _src("driver_city_state")),
+            ("City",                  city_fallback,              True,  _src("driver_city_state") or "Derived"),
+            ("Pincode",               self.driver_pin_code or pincode_fallback, True, _src("driver_pin_code") or "Derived from Address"),
+            ("Address",               self.driver_address,        True,  _src("driver_address")),
+            ("Charges Filed",         self.charges_filed,         False, _src("charges_filed")),
+
+            # Workshop Details
+            ("Workshop Name",         self.workshop_name,         True,  _src("workshop_name")),
+            ("Estimate Amount",       self.workshop_estimate_amount, True, _src("workshop_estimate_amount")),
+            ("GST Number",            self.gst_number,            False, _src("gst_number")),
+
+            # Invoice Details
             ("Workshop Inv No",       self.workshop_invoice_no,   False, _src("workshop_invoice_no") or _src("vendor_invoice_number")),
             ("Workshop Inv Date",     self.workshop_invoice_date, False, _src("workshop_invoice_date") or _src("vendor_invoice_date")),
         ]
+
 
     def _preview_uiic(self) -> List[Tuple[str, str, bool, str]]:
         """Original UIIC preview — completely unchanged."""

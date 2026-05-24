@@ -116,6 +116,27 @@ _JS_CLICK_RADIO = r"""
 }
 """
 
+_JS_TRIGGER_CHANGE = r"""
+([sel]) => {
+    const el = document.querySelector(sel);
+    if (!el) return { ok: false };
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    try {
+        const s = angular.element(el).scope();
+        if (s && s.$apply) s.$apply();
+        else {
+            let p = el.parentElement;
+            while (p) {
+                const ps = angular.element(p).scope();
+                if (ps && ps.$apply) { ps.$apply(); break; }
+                p = p.parentElement;
+            }
+        }
+    } catch(e) {}
+    return { ok: true };
+}
+"""
+
 # ── Python Helpers ────────────────────────────────────────────────────────────
 
 async def fill_input_with_delay(
@@ -253,6 +274,13 @@ async def upload_file_via_input(
         file_input = page.locator(file_input_selector).first
         await file_input.wait_for(state="attached", timeout=5000)
         await file_input.set_input_files(file_path)
+        
+        # Trigger Angular digest cycle and change event for custom file input directives
+        try:
+            await page.evaluate(_JS_TRIGGER_CHANGE, [file_input_selector])
+        except Exception as js_exc:
+            import logging
+            logging.getLogger(__name__).debug(f"JS trigger change failed on file input: {js_exc}")
         
         if isinstance(log, AutomationLogger):
             log.upload_attached(label, os.path.basename(file_path))

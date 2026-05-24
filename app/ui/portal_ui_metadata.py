@@ -241,6 +241,8 @@ _OIC_METADATA = PortalUiMetadata(
     phases=[
         WorkflowPhase("login", "Login"),
         WorkflowPhase("navigate", "Navigate to Claim"),
+        WorkflowPhase("claim_search", "Claim Search"),
+        WorkflowPhase("basic_details", "Basic Details"),
         WorkflowPhase("complete", "Complete"),
     ],
     field_groups=[
@@ -249,6 +251,79 @@ _OIC_METADATA = PortalUiMetadata(
             "Claim Details",
             [
                 "Claim No",
+                "Claim Type",
+            ],
+        ),
+        FieldGroup(
+            "vehicle",
+            "Vehicle Details",
+            [
+                "Registration No",
+                "Make",
+                "Variant",
+                "Year of Manufacture",
+                "Chassis No",
+                "Engine No",
+                "Cubic Capacity",
+                "Type of Body",
+                "Color of Vehicle",
+                "Type of Fuel",
+            ],
+        ),
+        FieldGroup(
+            "loss_details",
+            "Loss Details",
+            [
+                "Date of Accident",
+                "Date of Allotment",
+                "Close Proximity",
+                "64VB Confirmed",
+                "Nil Depreciation Cover",
+                "Age of Vehicle",
+                "Loss Description",
+            ],
+        ),
+        FieldGroup(
+            "surveyor_details",
+            "Surveyor Details",
+            [
+                "Name Of The Surveyor",
+                "Email ID",
+                "Mobile Number",
+                "Address",
+                "PAN Number",
+            ],
+        ),
+        FieldGroup(
+            "driver",
+            "Driver Details",
+            [
+                "Driver Name",
+                "Date of Birth",
+                "License Type",
+                "Valid From (DL Issue)",
+                "Valid Up To (DL Expiry)",
+                "License Number",
+                "Badge Number",
+                "Badge Issue Date",
+                "Is Owner Driver?",
+                "Qualification",
+                "Third Party Involved",
+                "Country",
+                "State",
+                "City",
+                "Pincode",
+                "Address",
+                "Charges Filed",
+            ],
+        ),
+        FieldGroup(
+            "workshop",
+            "Workshop Details",
+            [
+                "Workshop Name",
+                "Estimate Amount",
+                "GST Number",
             ],
         ),
         FieldGroup(
@@ -261,6 +336,7 @@ _OIC_METADATA = PortalUiMetadata(
         ),
     ],
 )
+
 
 
 _METADATA: Dict[str, PortalUiMetadata] = {

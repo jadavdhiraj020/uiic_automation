@@ -319,8 +319,8 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
             else:
                 log("   ℹ️ Clicking Primary Assessment Excel Upload button...")
             await upload_btn.click()
-            # Wait for upload modal to appear and dismiss it (wait up to 2.0 seconds)
-            await dismiss_portal_popup(page, log, max_wait_s=2.0, context="Assessment Excel")
+            # Wait for upload modal to appear and dismiss it (wait up to 8.0 seconds for slower server response)
+            await dismiss_portal_popup(page, log, max_wait_s=8.0, context="Assessment Excel")
             await asyncio.sleep(0.5)
             
             if isinstance(log, AutomationLogger):
@@ -440,8 +440,8 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
                 else:
                     log("   ℹ️ Clicking Supp Assessment Excel Upload button...")
                 await upload_btn.click()
-                # Wait for upload modal to appear and dismiss it (wait up to 2.0 seconds)
-                await dismiss_portal_popup(page, log, max_wait_s=2.0, context="Supp Excel")
+                # Wait for upload modal to appear and dismiss it (wait up to 8.0 seconds for slower server response)
+                await dismiss_portal_popup(page, log, max_wait_s=8.0, context="Supp Excel")
                 await asyncio.sleep(0.5)
                 
                 if isinstance(log, AutomationLogger):

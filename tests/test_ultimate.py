@@ -562,6 +562,55 @@ class TestClaimDataPreview:
         s = ClaimData().summary()
         assert "N/A" in s
 
+    def test_preview_oic_claim_type(self):
+        c = ClaimData()
+        c.portal_id = "oic"
+        c.payment_to = "REPAIRER"
+        preview = c.all_fields_for_preview()
+        claim_type_row = [p for p in preview if p[0] == "Claim Type"][0]
+        assert claim_type_row[1] == "Cashless"
+
+        c2 = ClaimData()
+        c2.portal_id = "oic"
+        c2.payment_to = "INSURED"
+        preview2 = c2.all_fields_for_preview()
+        claim_type_row2 = [p for p in preview2 if p[0] == "Claim Type"][0]
+        assert claim_type_row2[1] == "Reimbursement"
+
+    def test_oic_yom_cleaning(self):
+        c = ClaimData(portal_id="oic")
+        c.year_of_manufacture = "MARUTI ALTO K10 VXI IN 2015"
+        c.calculate_derived_fields()
+        assert c.year_of_manufacture == "2015"
+
+    def test_oic_vehicle_age_calculation(self):
+        from datetime import date
+        c = ClaimData(portal_id="oic")
+        today = date.today()
+        target_year = today.year - 10
+        target_month = today.month - 3
+        if target_month <= 0:
+            target_year -= 1
+            target_month += 12
+        # Use a day earlier than today's day to ensure day-diff is positive
+        c.date_of_registration = f"01/{target_month:02d}/{target_year}"
+        c.calculate_derived_fields()
+        assert c.age_of_vehicle == "10 years 3 months"
+
+    def test_preview_oic_individual_address_fields(self):
+        c = ClaimData(portal_id="oic")
+        c.driver_city_state = "Gurgaon, Haryana"
+        c.driver_pin_code = "122001"
+        preview = c.all_fields_for_preview()
+        
+        state_row = [p for p in preview if p[0] == "State"][0]
+        city_row = [p for p in preview if p[0] == "City"][0]
+        pin_row = [p for p in preview if p[0] == "Pincode"][0]
+        
+        assert state_row[1] == "Haryana"
+        assert city_row[1] == "Gurgaon"
+        assert pin_row[1] == "122001"
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 8. PAYMENT OPTION DETECTION
@@ -2909,9 +2958,8 @@ class TestMobileNumberDeep:
 
         # If surveyor writes "9876543210 / 1234567890"
         result = _clean_mobile("9876543210 / 1234567890")
-        assert result == "1234567890"
-        # This is expected behavior as we want exactly 10 digits in the final submission.
-        # The portal will probably truncate it to 10.
+        assert result == "9876543210"
+        # Since 9876543210 matches first 10 digits starting with valid Indian prefix, it is taken.
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -6429,4 +6477,379 @@ class TestOicHardening:
 
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# OIC BASIC DETAILS — Business Logic Helper Tests
+# ══════════════════════════════════════════════════════════════════════════════
 
+class TestOicBasicDetailsHelpers:
+    """Tests for pure business-logic functions in basic_details_module.py."""
+
+    def test_resolve_loss_proximity_positive(self):
+        """If (allotment - accident) > 10 days → True."""
+        from app.portals.oic.automation.basic_details_module import _resolve_loss_proximity
+        assert _resolve_loss_proximity("01/01/2025", "15/01/2025") is True
+
+    def test_resolve_loss_proximity_negative(self):
+        """If (allotment - accident) <= 10 days → False."""
+        from app.portals.oic.automation.basic_details_module import _resolve_loss_proximity
+        assert _resolve_loss_proximity("01/01/2025", "05/01/2025") is False
+
+    def test_resolve_loss_proximity_na_dates(self):
+        """NA dates should return False (default)."""
+        from app.portals.oic.automation.basic_details_module import _resolve_loss_proximity
+        assert _resolve_loss_proximity("NA", "NA") is False
+        assert _resolve_loss_proximity("", "") is False
+        assert _resolve_loss_proximity("N/A", "15/01/2025") is False
+
+    def test_resolve_nil_depreciation_yes(self):
+        """Affirmative keywords should return True."""
+        from app.portals.oic.automation.basic_details_module import _resolve_nil_depreciation
+        assert _resolve_nil_depreciation("yes") is True
+        assert _resolve_nil_depreciation("Yes") is True
+        assert _resolve_nil_depreciation("Y") is True
+
+    def test_resolve_nil_depreciation_no(self):
+        """Non-affirmative or empty should return False."""
+        from app.portals.oic.automation.basic_details_module import _resolve_nil_depreciation
+        assert _resolve_nil_depreciation("") is False
+        assert _resolve_nil_depreciation("no") is False
+        assert _resolve_nil_depreciation("0") is False
+
+    def test_is_owner_driver_same_name(self):
+        """Same name (case-insensitive) → True."""
+        from app.portals.oic.automation.basic_details_module import _is_owner_driver
+        assert _is_owner_driver("JANG SINGH", "Jang Singh") is True
+
+    def test_is_owner_driver_different_name(self):
+        """Completely different names → False."""
+        from app.portals.oic.automation.basic_details_module import _is_owner_driver
+        assert _is_owner_driver("JANG SINGH", "RAMESH KUMAR") is False
+
+    def test_is_owner_driver_empty_defaults_yes(self):
+        """Empty names default to True (owner=driver assumed)."""
+        from app.portals.oic.automation.basic_details_module import _is_owner_driver
+        assert _is_owner_driver("JANG SINGH", "") is True
+        assert _is_owner_driver("", "Jang") is True
+
+    def test_split_license_space_separated(self):
+        """Standard space-separated license number → 3 parts."""
+        from app.portals.oic.automation.basic_details_module import _split_license_number
+        assert _split_license_number("HR49 2016 0000013") == ("HR49", "2016", "0000013")
+
+    def test_split_license_slash_separated(self):
+        """Slash-separated license number → 3 parts."""
+        from app.portals.oic.automation.basic_details_module import _split_license_number
+        result = _split_license_number("HR49/PDL/0000013/2016")
+        assert result == ("HR49", "PDL", "0000013")
+
+    def test_split_license_combined(self):
+        """Combined state+year+number → regex split."""
+        from app.portals.oic.automation.basic_details_module import _split_license_number
+        result = _split_license_number("DL1420110001234")
+        assert result[0] == "DL14"
+
+    def test_split_license_empty(self):
+        """Empty input → empty tuple."""
+        from app.portals.oic.automation.basic_details_module import _split_license_number
+        assert _split_license_number("") == ("", "", "")
+
+    def test_extract_state_comma(self):
+        """'City, State' → extract state."""
+        from app.portals.oic.automation.basic_details_module import _extract_state
+        assert _extract_state("Panchkula, HR") == "HR"
+
+    def test_extract_state_slash(self):
+        """'City/State' → extract state."""
+        from app.portals.oic.automation.basic_details_module import _extract_state
+        assert _extract_state("Mumbai/MH") == "MH"
+
+    def test_extract_state_empty(self):
+        """Empty string → empty result."""
+        from app.portals.oic.automation.basic_details_module import _extract_state
+        assert _extract_state("") == ""
+
+    def test_extract_city(self):
+        """'City, State' → extract city."""
+        from app.portals.oic.automation.basic_details_module import _extract_city
+        assert _extract_city("Panchkula, HR") == "Panchkula"
+
+    def test_extract_pin_code_found(self):
+        """6-digit PIN from address string."""
+        from app.portals.oic.automation.basic_details_module import _extract_pin_code
+        assert _extract_pin_code("VILL. KARANPUR, Panchkula, HR, 133302") == "133302"
+
+    def test_extract_pin_code_missing(self):
+        """No 6-digit number → empty string."""
+        from app.portals.oic.automation.basic_details_module import _extract_pin_code
+        assert _extract_pin_code("Some address with no pin") == ""
+
+    def test_extract_variant(self):
+        """Extract known variant suffix from make string."""
+        from app.portals.oic.automation.basic_details_module import _extract_variant
+        assert _extract_variant("MARUTI ALTO K10 VXI") == "VXI"
+
+    def test_extract_variant_short_make(self):
+        """Short make with <=2 words has no variant."""
+        from app.portals.oic.automation.basic_details_module import _extract_variant
+        assert _extract_variant("MARUTI ALTO") == ""
+
+    def test_extract_variant_empty(self):
+        """Empty make → empty variant."""
+        from app.portals.oic.automation.basic_details_module import _extract_variant
+        assert _extract_variant("") == ""
+
+    def test_clean_fuel_value(self):
+        """Clean 'Fuel used: PETROL' → 'PETROL'."""
+        from app.portals.oic.automation.basic_details_module import _clean_fuel_value
+        assert _clean_fuel_value("Fuel used: PETROL") == "PETROL"
+        assert _clean_fuel_value("DIESEL") == "DIESEL"
+        assert _clean_fuel_value("") == ""
+
+    def test_extract_year_from_make(self):
+        """Extract 4-digit year from make string."""
+        from app.portals.oic.automation.basic_details_module import _extract_year_from_make
+        assert _extract_year_from_make("MARUTI ALTO K10 VXI 2019") == "2019"
+        assert _extract_year_from_make("MARUTI ALTO K10 VXI") == ""
+
+
+class TestOicBasicDetailsPreview:
+    """Tests for updated OIC preview with vehicle/driver/workshop fields."""
+
+    def test_oic_preview_includes_vehicle_fields(self):
+        """OIC preview should now include Vehicle fields."""
+        from app.data.data_model import ClaimData
+        claim = ClaimData(portal_id="oic")
+        claim.claim_no = "OIC-TEST-123"
+        claim.vehicle_registration_number = "HR49H9873"
+        claim.vehicle_make = "MARUTI ALTO K10 VXI"
+        claim.chassis_no = "S00546022"
+        claim.engine_no = "N8272201"
+        claim.cubic_capacity = "998"
+
+        preview = claim.all_fields_for_preview()
+        labels = [row[0] for row in preview]
+        assert "Registration No" in labels
+        assert "Make" in labels
+        assert "Chassis No" in labels
+        assert "Engine No" in labels
+        assert "Cubic Capacity" in labels
+
+    def test_oic_preview_includes_driver_fields(self):
+        """OIC preview should include Driver fields."""
+        from app.data.data_model import ClaimData
+        claim = ClaimData(portal_id="oic")
+        claim.claim_no = "OIC-TEST-456"
+        claim.driver_name = "JANG SINGH"
+        claim.dob_of_driver = "25.07.1994"
+        claim.driver_license_number = "HR49 2016 0000013"
+
+        preview = claim.all_fields_for_preview()
+        labels = [row[0] for row in preview]
+        assert "Driver Name" in labels
+        assert "Date of Birth" in labels
+        assert "License Number" in labels
+
+    def test_oic_preview_includes_surveyor_fields(self):
+        """OIC preview should include Surveyor fields."""
+        from app.data.data_model import ClaimData
+        claim = ClaimData(portal_id="oic")
+        claim.claim_no = "OIC-TEST-789"
+        claim.surveyor_name = "K K Taneja"
+        claim.surveyor_email = "kk@taneja.com"
+        claim.surveyor_mobile = "9814100720"
+        claim.surveyor_address = "Sector 5, Panchkula"
+        claim.surveyor_pan = "AAPFK6107P"
+
+        preview = claim.all_fields_for_preview()
+        labels = [row[0] for row in preview]
+        assert "Name Of The Surveyor" in labels
+        assert "Email ID" in labels
+        assert "Mobile Number" in labels
+        assert "Address" in labels
+        assert "PAN Number" in labels
+
+
+class TestOicBasicDetailsValidation:
+    """Tests for updated OIC validation with vehicle/driver/workshop checks."""
+
+    def test_oic_validation_warns_on_missing_vehicle_fields(self):
+        """Missing chassis/engine should produce warnings, not errors."""
+        from app.data.data_model import ClaimData
+        claim = ClaimData(portal_id="oic")
+        claim.claim_no = "OIC-TEST-789"
+        claim.assessment_files = {"invoice": "/path/to/invoice.pdf"}
+
+        errors, warnings = claim.validate()
+        assert len(errors) == 0  # claim_no present, invoice present
+        warning_strs = " ".join(warnings)
+        assert "Chassis" in warning_strs
+        assert "Engine" in warning_strs
+        assert "Driver" in warning_strs
+
+    def test_oic_validation_clean_when_all_present(self):
+        """No warnings when all mandatory fields are present."""
+        from app.data.data_model import ClaimData
+        claim = ClaimData(portal_id="oic")
+        claim.claim_no = "OIC-TEST-FULL"
+        claim.assessment_files = {"invoice": "/path/to/invoice.pdf"}
+        claim.chassis_no = "S00546022"
+        claim.engine_no = "N8272201"
+        claim.cubic_capacity = "998"
+        claim.year_of_manufacture = "2020"
+        claim.driver_name = "JANG SINGH"
+        claim.driver_license_number = "HR49 2016 0000013"
+        claim.workshop_name = "Govind Motor"
+        claim.workshop_estimate_amount = "5000"
+        claim.workshop_invoice_no = "INV-001"
+        claim.workshop_invoice_date = "20/03/2026"
+        claim.claim_doc_files = {"some_doc": "/path/to/doc.pdf"}
+
+        errors, warnings = claim.validate()
+        assert len(errors) == 0
+        assert len(warnings) == 0
+
+    def test_oic_validation_invalid_year(self):
+        """Invalid year of manufacture produces an error."""
+        from app.data.data_model import ClaimData
+        claim = ClaimData(portal_id="oic")
+        claim.claim_no = "OIC-TEST-YEAR"
+        claim.assessment_files = {"invoice": "/path/to/invoice.pdf"}
+        claim.year_of_manufacture = "1899"
+        errors, _ = claim.validate()
+        assert any("Year of Manufacture" in e for e in errors)
+
+    def test_oic_validation_invalid_estimate_amount(self):
+        """Estimate amount outside [1000, 10 Crores] produces an error."""
+        from app.data.data_model import ClaimData
+        claim = ClaimData(portal_id="oic")
+        claim.claim_no = "OIC-TEST-AMT"
+        claim.assessment_files = {"invoice": "/path/to/invoice.pdf"}
+        claim.workshop_estimate_amount = "500"  # below 1000
+        errors, _ = claim.validate()
+        assert any("Workshop Estimate Amount" in e for e in errors)
+
+        claim.workshop_estimate_amount = "150000000"  # above 10 Crores
+        errors, _ = claim.validate()
+        assert any("Workshop Estimate Amount" in e for e in errors)
+
+
+class TestOicBasicDetailsSurveyorFilling:
+    """Tests for Surveyor Details editable/read-only detection and filling."""
+
+    @pytest.mark.asyncio
+    async def test_is_field_editable_true(self):
+        from unittest.mock import AsyncMock, MagicMock
+        from app.portals.oic.automation.basic_details_module import _is_field_editable
+
+        mock_page = MagicMock()
+        mock_element = MagicMock()
+        mock_element.is_visible = AsyncMock(return_value=True)
+        # Mock evaluate to return False (meaning NOT disabled/locked)
+        mock_element.evaluate = AsyncMock(return_value=False)
+        mock_page.locator = MagicMock(return_value=mock_element)
+        mock_element.first = mock_element
+
+        result = await _is_field_editable(mock_page, "#someField")
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_is_field_editable_false(self):
+        from unittest.mock import AsyncMock, MagicMock
+        from app.portals.oic.automation.basic_details_module import _is_field_editable
+
+        mock_page = MagicMock()
+        mock_element = MagicMock()
+        mock_element.is_visible = AsyncMock(return_value=True)
+        # Mock evaluate to return True (meaning it is locked/disabled)
+        mock_element.evaluate = AsyncMock(return_value=True)
+        mock_page.locator = MagicMock(return_value=mock_element)
+        mock_element.first = mock_element
+
+        result = await _is_field_editable(mock_page, "#someField")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_is_field_editable_not_visible(self):
+        from unittest.mock import AsyncMock, MagicMock
+        from app.portals.oic.automation.basic_details_module import _is_field_editable
+
+        mock_page = MagicMock()
+        mock_element = MagicMock()
+        mock_element.is_visible = AsyncMock(return_value=False)
+        mock_page.locator = MagicMock(return_value=mock_element)
+        mock_element.first = mock_element
+
+        result = await _is_field_editable(mock_page, "#someField")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_fill_surveyor_details_skips_readonly(self, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock
+        from app.portals.oic.automation.basic_details_module import _fill_surveyor_details
+        from app.data.data_model import ClaimData
+
+        mock_page = MagicMock()
+        log = MagicMock()
+
+        # Mock _is_field_editable to return False for all fields
+        monkeypatch.setattr(
+            "app.portals.oic.automation.basic_details_module._is_field_editable",
+            AsyncMock(return_value=False)
+        )
+
+        # Mock fill_input_with_delay to trace if it is called
+        mock_fill = AsyncMock()
+        monkeypatch.setattr(
+            "app.portals.oic.automation.basic_details_module.fill_input_with_delay",
+            mock_fill
+        )
+
+        claim = ClaimData(
+            portal_id="oic",
+            surveyor_name="K K Taneja",
+            surveyor_email="kk@taneja.com",
+            surveyor_mobile="9814100720",
+            surveyor_address="Sector 5",
+            surveyor_pan="AAPFK6107P"
+        )
+
+        await _fill_surveyor_details(mock_page, claim, log, delay=50)
+        
+        # Verify fill_input_with_delay was NEVER called because all fields were read-only
+        assert mock_fill.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_fill_surveyor_details_fills_editable(self, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock
+        from app.portals.oic.automation.basic_details_module import _fill_surveyor_details
+        from app.data.data_model import ClaimData
+
+        mock_page = MagicMock()
+        log = MagicMock()
+
+        # Mock _is_field_editable to return True for all fields
+        monkeypatch.setattr(
+            "app.portals.oic.automation.basic_details_module._is_field_editable",
+            AsyncMock(return_value=True)
+        )
+
+        # Mock fill_input_with_delay to trace calls
+        mock_fill = AsyncMock()
+        monkeypatch.setattr(
+            "app.portals.oic.automation.basic_details_module.fill_input_with_delay",
+            mock_fill
+        )
+
+        claim = ClaimData(
+            portal_id="oic",
+            surveyor_name="K K Taneja",
+            surveyor_email="kk@taneja.com",
+            surveyor_mobile="9814100720",
+            surveyor_address="Sector 5",
+            surveyor_pan="AAPFK6107P"
+        )
+
+        await _fill_surveyor_details(mock_page, claim, log, delay=50)
+        
+        # Verify fill_input_with_delay was called 5 times (one for each field)
+        assert mock_fill.call_count == 5

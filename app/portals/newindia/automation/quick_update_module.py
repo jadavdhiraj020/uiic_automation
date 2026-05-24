@@ -51,27 +51,7 @@ async def _ensure_yes(page: Page, name: str, label: str,
             log(f"   ⚠️  [{label}] error: {e}")
 
 
-def _clean_mobile_10(raw: str) -> str:
-    """Clean mobile number to exactly 10 digits starting with 5, 6, 7, 8, or 9 for Website 2.
-    Strips trailing .0 (Excel float format) and non-digits.
-    Ensures it finds the correct 10-digit window matching valid Indian mobile prefixes.
-    """
-    s = str(raw).strip()
-    if re.match(r'^\d+\.0$', s):
-        s = s[:-2]
-    digits = re.sub(r"[^\d]", "", s)
-    
-    if len(digits) >= 10:
-        # Check if the last 10 digits start with 5, 6, 7, 8, or 9
-        last_10 = digits[-10:]
-        if last_10[0] in "56789":
-            return last_10
-        # If not, look for the first 10-digit match in the sequence starting with 5, 6, 7, 8, or 9
-        match = re.search(r"[56789]\d{9}", digits)
-        if match:
-            return match.group(0)
-            
-    return digits[-10:] if len(digits) >= 10 else digits
+from app.data.data_model import clean_mobile_number as _clean_mobile_10
 
 
 def _normalise_time(raw: str) -> str:

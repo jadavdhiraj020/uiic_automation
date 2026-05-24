@@ -58,6 +58,7 @@ class LogLevel:
 _PORTAL_TAGS = {
     "uiic":      "UIIC",
     "newindia":  "NIA",
+    "oic":       "OIC",
 }
 
 

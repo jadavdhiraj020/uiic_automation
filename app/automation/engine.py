@@ -275,7 +275,7 @@ class AutomationEngine:
                 "Claim Assessment", "Document Upload"
             ]
         elif self.portal_id == "oic":
-            steps = ["Login", "Navigate"]
+            steps = ["Login", "Navigate", "Claim Search", "Basic Details"]
         else:
             steps = ["Login", "Navigate", "Interim Report", "Claim Documents", "Claim Assessment"]
 
@@ -486,6 +486,21 @@ class AutomationEngine:
 
                 # --- OIC PORTAL PHASES ---
                 if self.portal_id == "oic":
+                    from app.portals.oic.automation.claim_search_module import fill_claim_search
+                    from app.portals.oic.automation.basic_details_module import fill_basic_details
+
+                    # Phase 3: Claim Search (Generate Assessment form)
+                    self.step_cb(2, steps[2])
+                    self.log.phase_banner(3, total_steps, "Claim Search")
+                    if not await fill_claim_search(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
+                        return AutomationRunResult(False, "Phase 3 (Claim Search) failed.")
+
+                    # Phase 4: Basic Details
+                    self.step_cb(3, steps[3])
+                    self.log.phase_banner(4, total_steps, "Basic Details")
+                    if not await fill_basic_details(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
+                        return AutomationRunResult(False, "Phase 4 (Basic Details) failed.")
+
                     t_total = time.time() - t_start
                     self.log.section_done("Total Oriental Insurance Workflow", show_duration=True)
                     await self._wait_for_manual_review(browser)
