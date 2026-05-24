@@ -1126,21 +1126,20 @@ async def fill_document_upload_section(
                 else:
                     log(f"[{_ts()}]   ✅ Upload button clicked.")
 
-                # ── Wait for all rows to show "Successful" status ─────────────
-                # Portal takes 5-10s (variable) to process all files.
-                # Each row transitions to "Successful ✓" once accepted.
-                await _wait_for_upload_success(page, current_row, log, max_wait_s=30.0)
+                # ── Wait for the post-upload alert popup ───────────────────────
+                # The portal shows a loading spinner and performs heavy network I/O.
+                # To prevent tab crashes and CPU overhead, we wait 20 seconds
+                # without executing any JS or Playwright actions.
+                if isinstance(log, AutomationLogger):
+                    log.wait("Waiting 20 seconds for upload processing quiet period...")
+                else:
+                    log(f"[{_ts()}]   ⏳ Waiting 20 seconds for upload processing quiet period...")
+                
+                await asyncio.sleep(20.0)
 
-                # ── Dismiss the post-upload alert popup ───────────────────────
-                # After all files are processed, the portal shows an Alert modal
-                # (e.g. "dl.jpg,Registration Certificate.pdf,claim_form.jpg is
-                # already applied for this claim number...") with an OK button.
-                # We must click OK to dismiss it before continuing.
-                await dismiss_portal_popup(page, log, max_wait_s=10.0)
-
-                # Catch any secondary alert that may appear after the first one
-                # is dismissed (e.g. a second duplicate popup).
-                await dismiss_portal_popup(page, log, classify=True, max_wait_s=2.0)
+                # After the quiet period, we poll for the popup modal (max 30s)
+                # to dismiss the "already applied/uploaded successfully" alert.
+                await dismiss_portal_popup(page, log, max_wait_s=30.0, context="Post-upload processing")
 
         except Exception as e:
             if isinstance(log, AutomationLogger):

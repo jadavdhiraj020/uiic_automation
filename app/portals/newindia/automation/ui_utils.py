@@ -274,14 +274,13 @@ async def upload_file_via_input(
         file_input = page.locator(file_input_selector).first
         await file_input.wait_for(state="attached", timeout=5000)
         await file_input.set_input_files(file_path)
-        
-        # Trigger Angular digest cycle and change event for custom file input directives
-        try:
-            await page.evaluate(_JS_TRIGGER_CHANGE, [file_input_selector])
-        except Exception as js_exc:
-            import logging
-            logging.getLogger(__name__).debug(f"JS trigger change failed on file input: {js_exc}")
-        
+
+        # NOTE: Do NOT manually dispatch a 'change' event here.
+        # Playwright's set_input_files() already fires a native 'change' event
+        # that Angular processes correctly. Dispatching a second 'change' event
+        # causes the portal's ng-change handler to register the file twice,
+        # triggering: "X is selected more than once for this claim number."
+
         if isinstance(log, AutomationLogger):
             log.upload_attached(label, os.path.basename(file_path))
         else:
