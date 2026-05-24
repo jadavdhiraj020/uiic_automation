@@ -84,5 +84,15 @@
       "claim form",
       "claimform"
     ]
+  },
+  "survey_fee_bill": {
+    "_comment": "Survey Fee Bill document upload — reuses final invoice document.",
+    "survey_fee_bill_doc": [
+      "final_invoice",
+      "invoice",
+      "survey_fee_bill",
+      "survey_fee",
+      "fee_bill"
+    ]
   }
 }

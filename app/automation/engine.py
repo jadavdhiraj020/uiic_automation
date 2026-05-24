@@ -272,7 +272,7 @@ class AutomationEngine:
             steps = [
                 "Login", "Navigate", "Quick Update", "Photo Graph", "RC Details",
                 "Driver Details", "FIR Details", "NEFT Details", "Work Approval",
-                "Claim Assessment", "Document Upload"
+                "Claim Assessment", "Survey Fee Bill", "Document Upload"
             ]
         elif self.portal_id == "oic":
             steps = ["Login", "Navigate", "Claim Search", "Basic Details"]
@@ -423,6 +423,7 @@ class AutomationEngine:
                     from app.portals.newindia.automation.neft_module import fill_neft_details
                     from app.portals.newindia.automation.work_approval_module import fill_work_approval_details
                     from app.portals.newindia.automation.claim_assessment_module import fill_claim_assessment_details
+                    from app.portals.newindia.automation.survey_fee_bill_module import fill_survey_fee_bill
                     from app.portals.newindia.automation.document_upload_module import fill_document_upload_section
 
                     # Phase 3: Quick Update
@@ -473,11 +474,17 @@ class AutomationEngine:
                     if not await fill_claim_assessment_details(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
                         return AutomationRunResult(False, "Phase 10 failed.")
 
-                    # Phase 11: Document Upload
+                    # Phase 11: Survey Fee Bill
                     self.step_cb(10, steps[10])
-                    self.log.phase_banner(11, total_steps, "Document Upload")
-                    if not await fill_document_upload_section(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
+                    self.log.phase_banner(11, total_steps, "Survey Fee Bill")
+                    if not await fill_survey_fee_bill(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
                         return AutomationRunResult(False, "Phase 11 failed.")
+
+                    # Phase 12: Document Upload
+                    self.step_cb(11, steps[11])
+                    self.log.phase_banner(12, total_steps, "Document Upload")
+                    if not await fill_document_upload_section(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
+                        return AutomationRunResult(False, "Phase 12 failed.")
 
                     t_total = time.time() - t_start
                     self.log.section_done("Total New India Workflow", show_duration=True)

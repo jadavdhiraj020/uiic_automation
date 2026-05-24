@@ -663,5 +663,14 @@
     "row_offset": 0,
     "col_offset": 1,
     "_mandatory": true
+  },
+
+  "_comment_sfb": "Survey Fee Bill — 'Others' amount from Excel. The other SFB fields (professional_fee, photo_charges, traveling_expenses) are already mapped above via shared field names.",
+  "sfb_others": {
+    "sheet": "ALL",
+    "search_labels": ["Others", "Other Charges", "Other Amount", "Misc", "Misc Charges"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": false
   }
 }

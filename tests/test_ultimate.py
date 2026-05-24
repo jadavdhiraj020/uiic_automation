@@ -6053,6 +6053,72 @@ class TestWorkApprovalInvoice:
         found = _find_final_invoice_document(data)
         assert found == str(bill_file)
 
+    def test_find_final_invoice_document_rejects_non_pdf(self, tmp_path):
+        from app.portals.newindia.automation.work_approval_module import _find_final_invoice_document
+        jpg_file = tmp_path / "invoice_garage_123.jpg"
+        jpg_file.write_text("img-content")
+        
+        pdf_file = tmp_path / "final_invoice_valid.pdf"
+        pdf_file.write_text("pdf-content")
+        
+        data = ClaimData()
+        data.claim_doc_files = {
+            "Random Doc": str(jpg_file),
+            "Another Doc": str(pdf_file)
+        }
+        
+        # Only the PDF should be found
+        found = _find_final_invoice_document(data)
+        assert found == str(pdf_file)
+
+
+class TestSurveyFeeBillInvoice:
+    """Verify survey fee bill document discovery algorithm."""
+
+    def test_find_survey_fee_bill_document_direct_mapping(self, tmp_path):
+        from app.portals.newindia.automation.survey_fee_bill_module import _find_survey_fee_bill_document
+        invoice_file = tmp_path / "final_invoice_123.pdf"
+        invoice_file.write_text("pdf-content")
+        
+        data = ClaimData()
+        data.assessment_files = {
+            "invoice": str(invoice_file)
+        }
+        
+        found = _find_survey_fee_bill_document(data)
+        assert found == str(invoice_file)
+
+    def test_find_survey_fee_bill_document_by_filename_keywords(self, tmp_path):
+        from app.portals.newindia.automation.survey_fee_bill_module import _find_survey_fee_bill_document
+        sfb_file = tmp_path / "fee_bill_999.pdf"
+        sfb_file.write_text("pdf-content")
+        
+        data = ClaimData()
+        data.claim_doc_files = {
+            "Random Doc": str(sfb_file)
+        }
+        
+        found = _find_survey_fee_bill_document(data)
+        assert found == str(sfb_file)
+
+    def test_find_survey_fee_bill_document_rejects_non_pdf(self, tmp_path):
+        from app.portals.newindia.automation.survey_fee_bill_module import _find_survey_fee_bill_document
+        jpg_file = tmp_path / "invoice_garage_123.jpg"
+        jpg_file.write_text("img-content")
+        
+        pdf_file = tmp_path / "survey_fee_valid.pdf"
+        pdf_file.write_text("pdf-content")
+        
+        data = ClaimData()
+        data.claim_doc_files = {
+            "Random Doc": str(jpg_file),
+            "Another Doc": str(pdf_file)
+        }
+        
+        # Only the PDF should be found
+        found = _find_survey_fee_bill_document(data)
+        assert found == str(pdf_file)
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 42. NEW INDIA MOBILE AND SURVEY TIME CLEANING TESTS

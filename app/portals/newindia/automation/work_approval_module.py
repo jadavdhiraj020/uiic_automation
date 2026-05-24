@@ -13,7 +13,9 @@ from app.automation.automation_logger import AutomationLogger
 logger = logging.getLogger(__name__)
 
 def _find_final_invoice_document(data: ClaimData) -> str:
-    """Finds final invoice document using tracked scan dicts, then falls back to folder scan."""
+    """Finds final invoice document using tracked scan dicts, then falls back to folder scan.
+    Only allows .pdf files as per portal requirement.
+    """
     try:
         from app.utils import load_doc_mapping
         raw = load_doc_mapping()
@@ -29,17 +31,17 @@ def _find_final_invoice_document(data: ClaimData) -> str:
 
     # Check for direct mapping 'invoice' or 'final_invoice' in assessment_files
     invoice_path = (getattr(data, 'assessment_files', {}) or {}).get("invoice", "")
-    if invoice_path and os.path.isfile(invoice_path):
+    if invoice_path and os.path.isfile(invoice_path) and invoice_path.lower().endswith('.pdf'):
         return invoice_path
 
     for doc_name, file_path in all_tracked.items():
         if not file_path or not os.path.isfile(file_path):
             continue
         fname_lower = os.path.basename(file_path).lower()
-        if any(k in fname_lower for k in invoice_map):
+        if fname_lower.endswith('.pdf') and any(k in fname_lower for k in invoice_map):
             return file_path
 
-    # 2. Fallback: raw folder scan (finds files not mapped by scanner)
+    # Extract folder path from any known document
     folder_path = None
     for d in (all_tracked,):
         for fp in d.values():
@@ -48,26 +50,27 @@ def _find_final_invoice_document(data: ClaimData) -> str:
                 break
         if folder_path:
             break
-
+            
     if not folder_path or not os.path.isdir(folder_path):
         return ""
-
+        
+    # Scan all files in the folder directly to avoid missing files skipped by the mapper
     try:
         all_files = [os.path.join(folder_path, f) for f in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, f))]
     except Exception as e:
         logger.error(f"Failed to read folder for final invoice documents: {e}")
         return ""
-
+        
     for file_path in all_files:
         fname_lower = os.path.basename(file_path).lower()
-        if any(k in fname_lower for k in invoice_map):
+        if fname_lower.endswith('.pdf') and any(k in fname_lower for k in invoice_map):
             return file_path
 
     # Secondary fallback for invoice keywords
     secondary_keywords = ["garage_bill", "garage bill", "garagebill", "bill"]
     for file_path in all_files:
         fname_lower = os.path.basename(file_path).lower()
-        if any(k in fname_lower for k in secondary_keywords):
+        if fname_lower.endswith('.pdf') and any(k in fname_lower for k in secondary_keywords):
             return file_path
 
     return ""
@@ -110,43 +113,57 @@ async def _fill_work_approval_inner(
     else:
         log("Opening Work Approval Details section...")
     try:
-        accordion_header = page.locator('a.accordion-toggle:has-text("Work Approval Details")').first
-        if await accordion_header.count() > 0:
-            # Check <a> tag class (NIA portal sets 'collapsed' on the <a>, not div.panel-heading)
-            acc_class = await accordion_header.get_attribute('class') or ''
-            if 'collapsed' in acc_class:
-                await accordion_header.click()
-                await asyncio.sleep(1.0)
-                if isinstance(log, AutomationLogger):
-                    log.success("Accordion expanded.")
-                else:
-                    log("  ✅ Expanded Work Approval Details.")
+        acc_heading = page.locator('a.accordion-toggle:has-text("Work Approval Details")').first
+        await acc_heading.wait_for(state="visible", timeout=10000)
+
+        is_collapsed = 'collapsed' in (await acc_heading.get_attribute('class') or '')
+        if is_collapsed:
+            await acc_heading.click()
+            await asyncio.sleep(1.0)
+            if isinstance(log, AutomationLogger):
+                log.success("Accordion expanded.")
             else:
-                if isinstance(log, AutomationLogger):
-                    log.info("Accordion already expanded.")
-                else:
-                    log("  ℹ️ Work Approval Details already expanded.")
+                log("  ✅ Expanded Work Approval Details.")
+        else:
+            if isinstance(log, AutomationLogger):
+                log.info("Accordion already expanded.")
+            else:
+                log("  ℹ️ Work Approval Details already expanded.")
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Expansion attempt failed: {str(e)[:100]}")
         else:
             log(f"  ⚠️ Error expanding Work Approval Details: {e}")
 
-    # 2. Determine Approval Type from internal extracted state
-    payment_to_val = getattr(data, 'bank_payment_to', '') or ""
-    # Dealer means Cashless, Insured means Non-Cashless
-    is_cashless = ("Dealer" in payment_to_val)
-    
-    if isinstance(log, AutomationLogger):
-        log.info(f"Using payment context: '{payment_to_val}'")
+    # 2. Determine Approval Type
+    #    Normalise to exact portal dropdown text so the JS selector hits the
+    #    fast exact-match path (Pass 1) every time, regardless of source casing.
+    raw_approval = (getattr(data, 'approval_type', '') or '').strip()
+    if not raw_approval:
+        # Derive from payment context: Dealer → Cashless, otherwise Non-cashless
+        payment_to_val = getattr(data, 'bank_payment_to', '') or ""
+        approval_val = "Cashless approved" if "Dealer" in payment_to_val else "Non-cashless approved"
+        if isinstance(log, AutomationLogger):
+            log.info(f"Derived Approval Type from payment context: '{approval_val}'")
+        else:
+            log(f"  ℹ️ Derived Approval Type from payment context: '{approval_val}'")
     else:
-        log(f"  ℹ️ Using existing Payment Type from extraction: '{payment_to_val}'")
+        # Normalise extracted value to exact portal text (case-insensitive check)
+        lower_approval = raw_approval.lower()
+        if "non-cashless" in lower_approval or "non cashless" in lower_approval:
+            approval_val = "Non-cashless approved"
+        elif "cashless" in lower_approval:
+            approval_val = "Cashless approved"
+        else:
+            # Unrecognised value — pass through and let the JS substring matcher handle it
+            approval_val = raw_approval
+        if isinstance(log, AutomationLogger):
+            log.info(f"Normalised Approval Type: '{raw_approval}' → '{approval_val}'")
+        else:
+            log(f"  ℹ️ Normalised Approval Type: '{raw_approval}' → '{approval_val}'")
 
     try:
-        if is_cashless:
-            await select_dropdown_with_delay(page, 'select[name="Approval Type"]', "Cashless approved", "Approval Type", log, field_delay_ms)
-        else:
-            await select_dropdown_with_delay(page, 'select[name="Approval Type"]', "Non-cashless approved", "Approval Type", log, field_delay_ms)
+        await select_dropdown_with_delay(page, 'select[name="Approval Type"]', approval_val, "Approval Type", log, field_delay_ms)
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Approval Type dropdown error: {str(e)[:100]}")
@@ -190,9 +207,9 @@ async def _fill_work_approval_inner(
                 log(f"  ⚠️ Error uploading Final Invoice: {e}")
     else:
         if isinstance(log, AutomationLogger):
-            log.warning("No Final Invoice found; skipping.")
+            log.warning("No Final Invoice PDF document found; skipping.")
         else:
-            log("  ⚠️ No Final Invoice found. Skipping upload.")
+            log("  ⚠️ No Final Invoice PDF document found. Skipping upload.")
 
     if stop_cb(): return False
 
@@ -235,7 +252,7 @@ async def _fill_work_approval_inner(
 
     if stop_cb(): return False
 
-    # 5.1 Click Submit button for Work Approval (now Final Invoice)
+    # 5.1 Click Submit button for Work Approval (Final Invoice)
     if doc_path and os.path.exists(doc_path):
         if isinstance(log, AutomationLogger):
             log.wait("Submitting Final Invoice (Work Approval Document)...")

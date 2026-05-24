@@ -171,6 +171,7 @@ class ClaimData:
     professional_fee: str = "0"
     daily_allowance: str = "0"
     photo_charges: str = "0"
+    sfb_others: str = "0"               # NIA Survey Fee Bill "Others" amount
     total_claimed_amount: str = "0"
 
     # ── File Paths (from folder_scanner) ─────────────────────────────────────
@@ -345,7 +346,7 @@ class ClaimData:
         try:
             calculated_total = 0
             invalid_values = []
-            for key in ["traveling_expenses", "professional_fee", "daily_allowance", "photo_charges"]:
+            for key in ["traveling_expenses", "professional_fee", "daily_allowance", "photo_charges", "sfb_others"]:
                 try:
                     calculated_total += _parse_amount_for_total(getattr(self, key, "0"))
                 except ValueError:
@@ -943,4 +944,10 @@ class ClaimData:
             ("Addl. Towing (₹)",      self.additional_towing_charges, False, _src("additional_towing_charges")),
             ("Other Deductions (₹)",   self.less_other_deductions,     False, _src("less_other_deductions")),
             ("Verification",          self.verification_checkbox,    True,  _src("verification_checkbox")),
+
+            # ── Survey Fee Bill ─────────────────────────────
+            ("SFB Prof. Fee (₹)",     self.professional_fee,         False, _src("professional_fee")),
+            ("SFB Photos (₹)",        self.photo_charges,            False, _src("photo_charges")),
+            ("SFB Conveyance (₹)",    self.traveling_expenses,       False, _src("traveling_expenses")),
+            ("SFB Others (₹)",        self.sfb_others,               False, _src("sfb_others")),
         ]
