@@ -26,11 +26,12 @@ from app.automation.automation_logger import AutomationLogger, _ts
 from app.data.data_model import ClaimData
 from app.portals.oic.automation import popup_service
 from app.portals.oic.automation.ui_utils import capture_error_screenshot
+from app.utils import load_automation_defaults
 
 logger = logging.getLogger(__name__)
 
 
-def _resolve_claim_type(claim: ClaimData) -> str:
+def _resolve_claim_type(claim: ClaimData, defaults: dict | None = None) -> str:
     """
     Resolve Claim Type for OIC dropdown using same logic as Website 1 (UIIC).
 
@@ -47,7 +48,8 @@ def _resolve_claim_type(claim: ClaimData) -> str:
         return "REIMBURSEMENT"
 
     # Default: REPAIRER, DEALER, empty, or any other value → Cashless
-    return "CASHLESS"
+    defaults = defaults or {}
+    return str(defaults.get("unknown_claim_type_default", "CASHLESS") or "CASHLESS")
 
 
 async def fill_claim_search(
@@ -83,7 +85,8 @@ async def fill_claim_search(
         return False
 
     # ── Step 1: Select Claim Type from PrimeNG Dropdown ───────────────────────
-    claim_type = _resolve_claim_type(claim)
+    defaults = load_automation_defaults(portal_id=getattr(claim, "portal_id", "oic"))
+    claim_type = _resolve_claim_type(claim, defaults)
     _log_info(f"🔽 [Dropdown] Selecting Claim Type: '{claim_type}' (payment_to='{claim.payment_to}')...")
 
     try:

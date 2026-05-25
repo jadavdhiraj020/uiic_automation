@@ -249,6 +249,12 @@ async def safe_fill_date(page, sel: str, value, label: str,
                 else:
                     log(f"  ✅ [Filled] {label} : '{actual}' ({src_tag}, Mode: JS)")
                 return True
+            else:
+                if isinstance(log, AutomationLogger):
+                    log.field_failed(label, "Value verification failed")
+                else:
+                    log(f"  ⚠️  {label}: Value verification failed")
+                return False
 
     except Exception as e1:
         if isinstance(log, AutomationLogger):

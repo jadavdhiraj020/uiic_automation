@@ -398,11 +398,12 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
       - Logs exactly which cell was read for each field
     """
     from app.data.data_model import ClaimData
-    from app.utils import load_field_mapping
+    from app.utils import load_automation_defaults, load_field_mapping
 
     # Use the user's custom field mapping from AppData if it exists,
     # otherwise fall back to the bundled default.
     mapping = load_field_mapping(portal_id=portal_id)
+    automation_defaults = load_automation_defaults(portal_id=portal_id)
 
     wb = _open_workbook(excel_path)
     claim = ClaimData(portal_id=portal_id or "uiic")
@@ -415,10 +416,13 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
             continue
 
         if field_name == "surveyor_observation":
-            claim.surveyor_observation = "ok"
-            claim._excel_coords["surveyor_observation"] = "Fixed Value"
-            claim._excel_logs.append("  📊 surveyor_observation: 'ok' (Source: Fixed Value)")
-            logger.info("  [FIXED] surveyor_observation = ok")
+            observation_default = str(automation_defaults.get("observation_default", "Ok") or "Ok")
+            claim.surveyor_observation = observation_default
+            claim._excel_coords["surveyor_observation"] = "Automation Defaults"
+            claim._excel_logs.append(
+                f"  [DEFAULT] surveyor_observation: '{observation_default}' (Source: Automation Defaults)"
+            )
+            logger.info("  [DEFAULT] surveyor_observation = %s", observation_default)
             found_count += 1
             continue
 
@@ -525,6 +529,22 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
             logger.info(f"  [FOUND] {field_name} = {value}")
         else:
             fallback = cfg.get("fallback_value")
+            default_key_by_field = {
+                "remarks": "remarks_default",
+                "fir_number": "missing_text_default",
+                "police_station_name": "missing_text_default",
+                "charged_us_motor_vehicle_act": "missing_text_default",
+                "charged_us_ipc": "missing_text_default",
+                "account_type": "account_type",
+                "party_payment_method": "payment_method",
+                "driver_relationship_with_insured": "relationship_with_insured",
+                "re_inspection_required": "reinspection_required",
+                "is_gst_applicable": "gst_applicable",
+                "payment_invoice_in_name_of_nia": "invoice_in_company_name",
+            }
+            default_key = default_key_by_field.get(field_name)
+            if default_key and automation_defaults.get(default_key) not in (None, ""):
+                fallback = automation_defaults.get(default_key)
             if fallback is not None:
                 setattr(claim, field_name, fallback)
                 logger.info(f"  [FALLBACK] {field_name} = {fallback}")
@@ -535,6 +555,15 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
                 logger.warning(f"  [MISSING] {field_name}: labels '{labels_str}' not found or value empty")
 
     # ── Calculate Derived Business Logic ──────────────────────────────────────
+    if portal_id == "newindia" and claim._excel_coords.get("photo_charges") != "Hardcoded":
+        photo_charges_default = str(automation_defaults.get("photo_charges_default", "200") or "200")
+        claim.photo_charges = photo_charges_default
+        claim._excel_coords["photo_charges"] = "Hardcoded"
+        claim._excel_logs.append(
+            f"  [HARDCODED] photo_charges: '{photo_charges_default}' (Source: Automation Defaults)"
+        )
+        logger.info("  [HARDCODED] photo_charges = %s", photo_charges_default)
+
     claim.calculate_derived_fields()
 
     logger.info(f"Excel read complete: {found_count} fields found, "

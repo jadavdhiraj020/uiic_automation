@@ -6,6 +6,7 @@ from app.portals.newindia.automation.ui_utils import (
     fill_input_with_delay, click_radio_with_delay
 )
 from app.automation.automation_logger import AutomationLogger
+from app.utils import load_automation_defaults
 
 # ── JavaScript helpers ────────────────────────────────────────────────────────
 
@@ -90,6 +91,8 @@ async def fill_quick_update_details(
     stop_cb: Callable[[], bool] = lambda: False,
     field_delay_ms: int = 600
 ) -> bool:
+    defaults = load_automation_defaults(portal_id=getattr(claim_data, "portal_id", "newindia"))
+
     if isinstance(log, AutomationLogger):
         log.info("Starting Quick Update Details phase...")
         log.indent()
@@ -218,8 +221,11 @@ async def fill_quick_update_details(
     if stop_cb(): return False
 
     # ── 11. Remarks ──────────────────────────────────────────────────────────
-    remarks = getattr(claim_data, "remarks", "") or \
-              getattr(claim_data, "surveyor_observation", "") or "Ok"
+    remarks = (
+        getattr(claim_data, "remarks", "")
+        or getattr(claim_data, "surveyor_observation", "")
+        or str(defaults.get("remarks_default", "Ok") or "Ok")
+    )
     if isinstance(log, AutomationLogger):
         log.info(f"Filling Remarks: {remarks[:50]}...")
     else:

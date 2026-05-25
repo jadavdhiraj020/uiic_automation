@@ -14,16 +14,64 @@ Based on the proven extraction logic from excel_mapper.py (reference implementat
 
 import logging
 import os
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 import openpyxl
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.datavalidation import DataValidation
+from app.utils import load_automation_defaults
 
 logger = logging.getLogger(__name__)
 
-# ── Output filename — matches the doc_mapping.json keyword "primary_assessment" ──
-_OUTPUT_FILENAME = "primary_assessment.xlsx"
+# ── Output filename — includes doc_mapping.json keyword "primary_assessment" ──
+_OUTPUT_FILENAME = "auto_primary_assessment.xlsx"
+_MIN_HEADER_CONFIDENCE = 80
+
+
+@dataclass
+class HeaderDetection:
+    row: Optional[int]
+    col_map: Dict[str, int]
+    score: int
+    confidence: int
+    matched_keys: List[str]
+    missing_keys: List[str]
+
+
+def _coerce_hsn_code(value, fallback: str):
+    raw = str(value or fallback).strip() or fallback
+    return int(raw) if raw.isdigit() else raw
+
+
+def _header_confidence(matched_keys: List[str], required_keys: List[str], expected_keys: List[str]) -> int:
+    matched = set(matched_keys)
+    required = set(required_keys)
+    expected = set(expected_keys)
+    required_score = 70 * len(matched & required) / max(len(required), 1)
+    optional = expected - required
+    optional_score = 30 * len(matched & optional) / max(len(optional), 1)
+    return int(round(required_score + optional_score))
+
+
+def _next_available_path(output_folder: str, filename: str = _OUTPUT_FILENAME) -> str:
+    base, ext = os.path.splitext(filename)
+    candidate = os.path.join(output_folder, filename)
+    idx = 1
+    while os.path.exists(candidate):
+        candidate = os.path.join(output_folder, f"{base}_{idx}{ext}")
+        idx += 1
+    return candidate
+
+
+def _audit_path_for(output_path: str) -> str:
+    root, _ext = os.path.splitext(output_path)
+    return f"{root}_audit.txt"
+
+
+def _write_audit_file(audit_path: str, lines: List[str]) -> None:
+    with open(audit_path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines).rstrip() + "\n")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -61,7 +109,7 @@ def _is_summary_row(text: str) -> bool:
 # DYNAMIC HEADER DETECTION
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _find_parts_header(sheet) -> Tuple[Optional[int], Dict[str, int]]:
+def _detect_parts_header(sheet) -> HeaderDetection:
     """
     Locate the Spare Parts table header row using keyword scoring.
     Strict range: only columns between Serial Number (sn) and Glass are accepted.
@@ -77,7 +125,9 @@ def _find_parts_header(sheet) -> Tuple[Optional[int], Dict[str, int]]:
         "glass":     ["glass"],
     }
 
-    best_row, best_score, best_map = None, 0, {}
+    expected_keys = ["sn", "part_desc", "estimated", "metal", "plastic", "glass"]
+    required_keys = ["sn", "part_desc", "glass"]
+    best = HeaderDetection(None, {}, 0, 0, [], expected_keys.copy())
 
     for r in range(1, sheet.max_row + 1):
         temp_map = {}
@@ -100,15 +150,28 @@ def _find_parts_header(sheet) -> Tuple[Optional[int], Dict[str, int]]:
             idx_end = temp_map["glass"]
             bounded = {k: v for k, v in temp_map.items() if idx_start <= v <= idx_end}
 
-            if "part_desc" in bounded and score > best_score:
-                best_score = score
-                best_row = r
-                best_map = bounded
+            if "part_desc" in bounded:
+                matched = [key for key in expected_keys if key in bounded]
+                confidence = _header_confidence(matched, required_keys, expected_keys)
+                if (score, confidence) > (best.score, best.confidence):
+                    best = HeaderDetection(
+                        row=r,
+                        col_map=bounded,
+                        score=score,
+                        confidence=confidence,
+                        matched_keys=matched,
+                        missing_keys=[key for key in expected_keys if key not in bounded],
+                    )
 
-    return best_row, best_map
+    return best
 
 
-def _find_labour_header(sheet) -> Tuple[Optional[int], Dict[str, int]]:
+def _find_parts_header(sheet) -> Tuple[Optional[int], Dict[str, int]]:
+    detection = _detect_parts_header(sheet)
+    return detection.row, detection.col_map
+
+
+def _detect_labour_header(sheet) -> HeaderDetection:
     """
     Locate the Labour Charges table header row using keyword scoring.
     Strict range: only columns between Serial Number (sn) and CW are accepted.
@@ -126,7 +189,9 @@ def _find_labour_header(sheet) -> Tuple[Optional[int], Dict[str, int]]:
         "estimated":   ["estimated", "estimate"],
     }
 
-    best_row, best_score, best_map = None, 0, {}
+    expected_keys = ["sn", "labour_desc", "rr", "denting", "cw", "painting", "alignment", "estimated"]
+    required_keys = ["sn", "labour_desc", "cw"]
+    best = HeaderDetection(None, {}, 0, 0, [], expected_keys.copy())
 
     for r in range(1, sheet.max_row + 1):
         temp_map = {}
@@ -149,19 +214,38 @@ def _find_labour_header(sheet) -> Tuple[Optional[int], Dict[str, int]]:
             idx_end = temp_map["cw"]
             bounded = {k: v for k, v in temp_map.items() if idx_start <= v <= idx_end}
 
-            if "labour_desc" in bounded and score > best_score:
-                best_score = score
-                best_row = r
-                best_map = bounded
+            if "labour_desc" in bounded:
+                matched = [key for key in expected_keys if key in bounded]
+                confidence = _header_confidence(matched, required_keys, expected_keys)
+                if (score, confidence) > (best.score, best.confidence):
+                    best = HeaderDetection(
+                        row=r,
+                        col_map=bounded,
+                        score=score,
+                        confidence=confidence,
+                        matched_keys=matched,
+                        missing_keys=[key for key in expected_keys if key not in bounded],
+                    )
 
-    return best_row, best_map
+    return best
+
+
+def _find_labour_header(sheet) -> Tuple[Optional[int], Dict[str, int]]:
+    detection = _detect_labour_header(sheet)
+    return detection.row, detection.col_map
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ROW EXTRACTION
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _extract_parts_rows(sheet, header_row: int, col_map: Dict[str, int]) -> List[dict]:
+def _extract_parts_rows(
+    sheet,
+    header_row: int,
+    col_map: Dict[str, int],
+    hsn_code=8512,
+    audit_lines: Optional[List[str]] = None,
+) -> List[dict]:
     """Extract spare part rows from the sheet using the detected header and column map."""
     rows = []
     desc_col = col_map.get("part_desc")
@@ -179,21 +263,29 @@ def _extract_parts_rows(sheet, header_row: int, col_map: Dict[str, int]) -> List
         ]
         if any("sub total" in t or "subtotal" in t or t == "total" for t in row_texts):
             logger.debug("Parts extraction: subtotal boundary at row %d", r)
+            if audit_lines is not None:
+                audit_lines.append(f"Parts row {r}: stopped at subtotal/total boundary")
             break
 
         # Read part description
         part_raw = sheet.cell(row=r, column=desc_col).value if desc_col else None
         if part_raw is None or str(part_raw).strip() == "":
+            if audit_lines is not None:
+                audit_lines.append(f"Parts row {r}: skipped blank part name")
             continue
 
         part_name = str(part_raw).strip()
 
         # Skip summary/aggregation rows
         if _is_summary_row(part_name):
+            if audit_lines is not None:
+                audit_lines.append(f"Parts row {r}: skipped summary row '{part_name}'")
             continue
 
         # Skip labour rows that accidentally appear in parts section
         if "labour" in part_name.lower() or "labor" in part_name.lower():
+            if audit_lines is not None:
+                audit_lines.append(f"Parts row {r}: skipped likely labour row '{part_name}'")
             continue
 
         # Read values (all protected by the SN→Glass boundary)
@@ -217,6 +309,8 @@ def _extract_parts_rows(sheet, header_row: int, col_map: Dict[str, int]) -> List
             billed_amt = glass_val
         else:
             # No valid material amount found — skip this row
+            if audit_lines is not None:
+                audit_lines.append(f"Parts row {r}: skipped no metal/plastic/glass amount for '{part_name}'")
             continue
 
         rows.append({
@@ -228,15 +322,25 @@ def _extract_parts_rows(sheet, header_row: int, col_map: Dict[str, int]) -> List
             "billed_amount": billed_amt,
             "assessed_amount": billed_amt,
             "depreciation_pct": 0,
-            "hsn_code": 8512,
+            "hsn_code": hsn_code,
             "gst_pct": 0,
         })
+        if audit_lines is not None:
+            audit_lines.append(
+                f"Parts row {r}: added '{part_name}' billed={billed_amt} assessed={billed_amt} hsn={hsn_code}"
+            )
         logger.debug("Parts row %d: %s | amt=%.2f | type=%s", r, part_name, billed_amt, dep_type)
 
     return rows
 
 
-def _extract_labour_rows(sheet, header_row: int, col_map: Dict[str, int]) -> List[dict]:
+def _extract_labour_rows(
+    sheet,
+    header_row: int,
+    col_map: Dict[str, int],
+    hsn_code=8729,
+    audit_lines: Optional[List[str]] = None,
+) -> List[dict]:
     """Extract labour charge rows from the sheet using the detected header and column map."""
     rows = []
     desc_col = col_map.get("labour_desc")
@@ -253,11 +357,15 @@ def _extract_labour_rows(sheet, header_row: int, col_map: Dict[str, int]) -> Lis
         ]
         if any("sub total" in t or "subtotal" in t or "total" in t for t in row_texts):
             logger.debug("Labour extraction: subtotal boundary at row %d", r)
+            if audit_lines is not None:
+                audit_lines.append(f"Labour row {r}: stopped at subtotal/total boundary")
             break
 
         # Read labour description
         name_raw = sheet.cell(row=r, column=desc_col).value if desc_col else None
         if name_raw is None or str(name_raw).strip() == "":
+            if audit_lines is not None:
+                audit_lines.append(f"Labour row {r}: skipped blank labour name")
             continue
 
         labour_name = str(name_raw).strip()
@@ -272,6 +380,8 @@ def _extract_labour_rows(sheet, header_row: int, col_map: Dict[str, int]) -> Lis
                     amounts.append(val)
 
         if not amounts:
+            if audit_lines is not None:
+                audit_lines.append(f"Labour row {r}: skipped no valid labour amount for '{labour_name}'")
             continue
 
         total_billed = sum(amounts)
@@ -285,9 +395,13 @@ def _extract_labour_rows(sheet, header_row: int, col_map: Dict[str, int]) -> Lis
             "billed_amount": total_billed,
             "assessed_amount": total_billed,
             "depreciation_pct": 0,
-            "hsn_code": 8729,
+            "hsn_code": hsn_code,
             "gst_pct": 0,
         })
+        if audit_lines is not None:
+            audit_lines.append(
+                f"Labour row {r}: added '{labour_name}' billed={total_billed} assessed={total_billed} hsn={hsn_code}"
+            )
         logger.debug("Labour row %d: %s | amt=%.2f", r, labour_name, total_billed)
 
     return rows
@@ -398,66 +512,155 @@ def generate_primary_assessment(source_excel_path: str, output_folder: str) -> O
     if not os.path.exists(source_excel_path):
         raise FileNotFoundError(f"Source Excel not found: {source_excel_path}")
 
+    defaults = load_automation_defaults(portal_id="newindia")
+    parts_hsn = _coerce_hsn_code(defaults.get("assessment_parts_hsn_code"), "8512")
+    labour_hsn = _coerce_hsn_code(defaults.get("assessment_labour_hsn_code"), "8729")
+
     logger.info("Assessment generator: loading source Excel %s", source_excel_path)
     src_wb = openpyxl.load_workbook(source_excel_path, data_only=True)
     src_ws = src_wb.active
 
     all_rows: List[dict] = []
+    audit_lines: List[str] = [
+        "Primary Assessment Generation Audit",
+        f"Source Excel: {source_excel_path}",
+        f"Source Sheet: {src_ws.title}",
+        f"Parts HSN: {parts_hsn}",
+        f"Labour HSN: {labour_hsn}",
+        "",
+        "Header Detection",
+    ]
 
     # ── Phase 1: Spare Parts ──
-    parts_header, parts_col_map = _find_parts_header(src_ws)
-    if parts_header:
+    parts_detection = _detect_parts_header(src_ws)
+    parts_rows: List[dict] = []
+    if parts_detection.row:
+        parts_header, parts_col_map = parts_detection.row, parts_detection.col_map
         logger.info(
-            "Assessment generator: parts header found at row %d, columns: %s",
-            parts_header, list(parts_col_map.keys()),
+            "Assessment generator: parts header found at row %d, confidence=%d, columns: %s",
+            parts_header, parts_detection.confidence, list(parts_col_map.keys()),
         )
-        parts_rows = _extract_parts_rows(src_ws, parts_header, parts_col_map)
-        logger.info("Assessment generator: extracted %d spare part rows", len(parts_rows))
-        all_rows.extend(parts_rows)
+        audit_lines.extend([
+            f"Parts header row: {parts_header}",
+            f"Parts confidence: {parts_detection.confidence}%",
+            f"Parts matched: {', '.join(parts_detection.matched_keys) or '-'}",
+            f"Parts missing: {', '.join(parts_detection.missing_keys) or '-'}",
+        ])
+        if parts_detection.confidence < _MIN_HEADER_CONFIDENCE:
+            warning = (
+                f"Parts header confidence below minimum {_MIN_HEADER_CONFIDENCE}%; "
+                "skipping parts extraction."
+            )
+            logger.warning("Assessment generator: %s", warning)
+            audit_lines.append(f"Parts warning: {warning}")
+        else:
+            parts_rows = _extract_parts_rows(
+                src_ws, parts_header, parts_col_map, hsn_code=parts_hsn, audit_lines=audit_lines
+            )
+            logger.info("Assessment generator: extracted %d spare part rows", len(parts_rows))
+            all_rows.extend(parts_rows)
     else:
         logger.warning("Assessment generator: no spare parts header found in Excel")
+        audit_lines.append("Parts header row: not found")
 
     # ── Phase 2: Labour Charges ──
-    labour_header, labour_col_map = _find_labour_header(src_ws)
-    if labour_header:
+    labour_detection = _detect_labour_header(src_ws)
+    labour_rows: List[dict] = []
+    if labour_detection.row:
+        labour_header, labour_col_map = labour_detection.row, labour_detection.col_map
         logger.info(
-            "Assessment generator: labour header found at row %d, columns: %s",
-            labour_header, list(labour_col_map.keys()),
+            "Assessment generator: labour header found at row %d, confidence=%d, columns: %s",
+            labour_header, labour_detection.confidence, list(labour_col_map.keys()),
         )
-        labour_rows = _extract_labour_rows(src_ws, labour_header, labour_col_map)
-        logger.info("Assessment generator: extracted %d labour rows", len(labour_rows))
-        all_rows.extend(labour_rows)
+        audit_lines.extend([
+            f"Labour header row: {labour_header}",
+            f"Labour confidence: {labour_detection.confidence}%",
+            f"Labour matched: {', '.join(labour_detection.matched_keys) or '-'}",
+            f"Labour missing: {', '.join(labour_detection.missing_keys) or '-'}",
+        ])
+        if labour_detection.confidence < _MIN_HEADER_CONFIDENCE:
+            warning = (
+                f"Labour header confidence below minimum {_MIN_HEADER_CONFIDENCE}%; "
+                "skipping labour extraction."
+            )
+            logger.warning("Assessment generator: %s", warning)
+            audit_lines.append(f"Labour warning: {warning}")
+        else:
+            labour_rows = _extract_labour_rows(
+                src_ws, labour_header, labour_col_map, hsn_code=labour_hsn, audit_lines=audit_lines
+            )
+            logger.info("Assessment generator: extracted %d labour rows", len(labour_rows))
+            all_rows.extend(labour_rows)
     else:
         logger.warning("Assessment generator: no labour header found in Excel")
+        audit_lines.append("Labour header row: not found")
 
     src_wb.close()
 
     # ── Guard: no data extracted ──
     if not all_rows:
         logger.warning("Assessment generator: no parts or labour data found — skipping generation")
+        audit_path = _audit_path_for(_next_available_path(output_folder))
+        audit_lines.extend(["", "Result", "No parts or labour data found. Excel generation skipped."])
+        _write_audit_file(audit_path, audit_lines)
         return None
 
     # ── Phase 3: Generate Template ──
     wb = _create_template_workbook(all_rows)
 
-    output_path = os.path.join(output_folder, _OUTPUT_FILENAME)
+    output_path = _next_available_path(output_folder)
+    audit_path = _audit_path_for(output_path)
+    _max_save_attempts = 3
     try:
-        wb.save(output_path)
-    except PermissionError:
-        # Fallback: file might be open in Excel
-        from datetime import datetime
-        ts = datetime.now().strftime("%H%M%S")
-        output_path = os.path.join(output_folder, f"primary_assessment_{ts}.xlsx")
-        wb.save(output_path)
-        logger.warning("Assessment generator: original path locked, saved to %s", output_path)
+        for _attempt in range(1, _max_save_attempts + 1):
+            try:
+                wb.save(output_path)
+                break
+            except PermissionError:
+                if _attempt == _max_save_attempts:
+                    logger.error(
+                        "Assessment generator: all %d save attempts failed (last path: %s)",
+                        _max_save_attempts, output_path,
+                    )
+                    audit_lines.extend([
+                        "", "Result",
+                        f"FAILED: Could not save after {_max_save_attempts} attempts.",
+                        f"Last attempted path: {output_path}",
+                    ])
+                    _write_audit_file(audit_path, audit_lines)
+                    raise
+                logger.warning(
+                    "Assessment generator: path locked on attempt %d, retrying: %s",
+                    _attempt, output_path,
+                )
+                output_path = _next_available_path(output_folder)
+                audit_path = _audit_path_for(output_path)
+        else:
+            return None
     finally:
         wb.close()
+
+    parts_total = sum(float(row["assessed_amount"] or 0) for row in parts_rows)
+    labour_total = sum(float(row["assessed_amount"] or 0) for row in labour_rows)
+    audit_lines.extend([
+        "",
+        "Result",
+        f"Output Excel: {output_path}",
+        f"Audit File: {audit_path}",
+        f"Parts rows: {len(parts_rows)}",
+        f"Labour rows: {len(labour_rows)}",
+        f"Total rows: {len(all_rows)}",
+        f"Parts assessed total: {parts_total}",
+        f"Labour assessed total: {labour_total}",
+        f"Grand assessed total: {parts_total + labour_total}",
+    ])
+    _write_audit_file(audit_path, audit_lines)
 
     logger.info(
         "Assessment generator: SUCCESS — %d rows (%d parts + %d labour) → %s",
         len(all_rows),
-        len(parts_rows) if parts_header else 0,
-        len(labour_rows) if labour_header else 0,
+        len(parts_rows),
+        len(labour_rows),
         output_path,
     )
     return output_path

@@ -1,0 +1,16 @@
+{
+  "_comment": "Basic user-facing automation defaults for New India Assurance. These are business values, not selectors, waits, retries, or upload internals.",
+  "remarks_default": "Ok",
+  "observation_default": "Ok",
+  "missing_text_default": "NA",
+  "photo_charges_default": "200",
+  "assessment_parts_hsn_code": "8512",
+  "assessment_labour_hsn_code": "8729",
+  "hsn_code": "8512",
+  "gst_applicable": "Yes",
+  "invoice_in_company_name": "Yes",
+  "payment_method": "NEFT",
+  "account_type": "Savings",
+  "relationship_with_insured": "Self",
+  "reinspection_required": "No"
+}

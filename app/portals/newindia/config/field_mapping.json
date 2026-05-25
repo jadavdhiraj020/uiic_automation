@@ -351,14 +351,6 @@
     "allow_text_values": true,
     "_mandatory": false
   },
-  "remarks": {
-    "sheet": "ALL",
-    "search_labels": ["Remarks", "Remark"],
-    "row_offset": 0,
-    "col_offset": 1,
-    "allow_text_values": true,
-    "_mandatory": false
-  },
   "whether_driver_without_license": {
     "sheet": "ALL",
     "search_labels": ["Whether driver without license", "Driver without license"],
@@ -643,7 +635,7 @@
   },
   "remarks": {
     "sheet": "ALL",
-    "search_labels": ["remarks", "surveyor observation", "OBERVATIONS/COMMENTS"],
+    "search_labels": ["remarks", "Remarks", "Remark", "surveyor observation", "OBERVATIONS/COMMENTS"],
     "row_offset": 0,
     "col_offset": 1,
     "allow_text_values": true,
@@ -665,17 +657,10 @@
     "_mandatory": true
   },
 
-  "_comment_sfb": "Survey Fee Bill fields — Professional Fee, Photo Charges, Traveling Expenses, and Others amount from Excel.",
+  "_comment_sfb": "Survey Fee Bill fields — Professional Fee, Traveling Expenses, and Others amount from Excel. Photo Charges uses Website 2 Automation Defaults, bundled as 200.",
   "professional_fee": {
     "sheet": "ALL",
     "search_labels": ["professional fee", "professional fees", "survey fee", "survey fees", "Prof. Fee", "Prof. Fees"],
-    "row_offset": 0,
-    "col_offset": 1,
-    "_mandatory": false
-  },
-  "photo_charges": {
-    "sheet": "ALL",
-    "search_labels": ["Photos Amount", "Photo Charges", "Photos Charges", "Photo Charge", "Photographs Amount", "Photographs"],
     "row_offset": 0,
     "col_offset": 1,
     "_mandatory": false

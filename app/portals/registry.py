@@ -187,6 +187,20 @@ def portal_doc_mapping_paths(portal_id: Optional[str] = None) -> dict:
     return _portal_config_paths(info, "doc_mapping.json")
 
 
+def portal_automation_defaults_paths(portal_id: Optional[str] = None) -> dict:
+    if portal_id is None:
+        portal_id = _active_portal_id
+
+    if portal_id is None:
+        return _legacy_config_paths("automation_defaults.json")
+
+    info = _PORTALS.get(portal_id)
+    if info is None:
+        raise ValueError(f"Unknown portal: {portal_id!r}")
+
+    return _portal_config_paths(info, "automation_defaults.json")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Auto-register bundled portals
 # ─────────────────────────────────────────────────────────────────────────────

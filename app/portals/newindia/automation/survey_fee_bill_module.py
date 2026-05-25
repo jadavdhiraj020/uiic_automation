@@ -9,6 +9,7 @@ from app.portals.newindia.automation.ui_utils import (
 )
 from app.portals.newindia.automation.popup_service import dismiss_portal_popup
 from app.automation.automation_logger import AutomationLogger
+from app.utils import load_automation_defaults
 
 
 def _find_survey_fee_bill_document(data: ClaimData) -> str:
@@ -138,17 +139,18 @@ async def _expand_survey_fee_bill_accordion(page: Page, log) -> bool:
     return True  # Non-fatal — fields might already be visible
 
 
-async def _fill_hsn_code_typeahead(page: Page, log, field_delay_ms: int = 600) -> bool:
-    """Fill the HSN Code typeahead field with hardcoded value '8512'.
+async def _fill_hsn_code_typeahead(page: Page, log, field_delay_ms: int = 600, hsn_code: str = "8512") -> bool:
+    """Fill the HSN Code typeahead field with the configured default.
 
     The field uses Angular typeahead with editable=false, so we must:
     1. Clear existing value
-    2. Type '8512' to trigger the dropdown
+    2. Type the configured HSN code to trigger the dropdown
     3. Wait for the dropdown list to appear
     4. Select the matching item from the dropdown
     """
     _structured = isinstance(log, AutomationLogger)
     selector = "#hSNCode"
+    hsn_code = str(hsn_code or "8512")
 
     try:
         field = page.locator(selector).first
@@ -167,23 +169,23 @@ async def _fill_hsn_code_typeahead(page: Page, log, field_delay_ms: int = 600) -
         await asyncio.sleep(0.2)
         await field.fill("")
         await asyncio.sleep(0.2)
-        await field.type("8512", delay=80)  # Slow typing to trigger typeahead
+        await field.type(hsn_code, delay=80)  # Slow typing to trigger typeahead
         await asyncio.sleep(1.5)  # Wait for typeahead dropdown to populate
 
         # Try to select the first matching item from the typeahead dropdown
         typeahead_item = page.locator(
             'ul.dropdown-menu[typeahead-popup] li a, '
             'ul.dropdown-menu li a'
-        ).filter(has_text=re.compile(r"8512"))
+        ).filter(has_text=re.compile(re.escape(hsn_code)))
 
         item_count = await typeahead_item.count()
         if item_count > 0:
             await typeahead_item.first.click()
             await asyncio.sleep(0.5)
             if _structured:
-                log.success("HSN Code '8512' selected from typeahead.")
+                log.success(f"HSN Code '{hsn_code}' selected from typeahead.")
             else:
-                log("   ✅ HSN Code '8512' selected from typeahead dropdown.")
+                log(f"   ✅ HSN Code '{hsn_code}' selected from typeahead dropdown.")
             return True
 
         # Fallback: try pressing Enter or Down+Enter if dropdown is open
@@ -194,30 +196,31 @@ async def _fill_hsn_code_typeahead(page: Page, log, field_delay_ms: int = 600) -
 
         # Verify the value was set
         current_val = await field.input_value()
-        if "8512" in str(current_val):
+        if hsn_code in str(current_val):
             if _structured:
-                log.success("HSN Code '8512' set via keyboard navigation.")
+                log.success(f"HSN Code '{hsn_code}' set via keyboard navigation.")
             else:
-                log("   ✅ HSN Code '8512' set via keyboard.")
+                log(f"   ✅ HSN Code '{hsn_code}' set via keyboard.")
             return True
 
         # Last resort: JS direct model set
         await page.evaluate(
             """
-            () => {
+            (hsnCode) => {
                 const el = document.querySelector('#hSNCode');
                 if (el) {
                     const scope = angular.element(el).scope();
                     if (scope && scope.surveyorData && scope.surveyorData.worklist && scope.surveyorData.worklist.surveyFeeBill) {
-                        scope.surveyorData.worklist.surveyFeeBill.hsnCode = '8512';
+                        scope.surveyorData.worklist.surveyFeeBill.hsnCode = hsnCode;
                         scope.$apply();
                         // Trigger the onSelect callback to populate GST %
                         const ctrl = angular.element(el).controller('ngModel');
-                        if (ctrl) ctrl.$setViewValue('8512');
+                        if (ctrl) ctrl.$setViewValue(hsnCode);
                     }
                 }
             }
-            """
+            """,
+            hsn_code,
         )
         await asyncio.sleep(0.5)
 
@@ -361,6 +364,7 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
     """Inner body of fill_survey_fee_bill — called via try/finally wrapper."""
 
     _structured = isinstance(log, AutomationLogger)
+    defaults = load_automation_defaults(portal_id=getattr(data, "portal_id", "newindia"))
 
     # 0. Pre-validate: mandatory Survey Fee Bill document must exist BEFORE
     #    any UI interaction. This avoids wasting time on accordion expansion,
@@ -409,10 +413,11 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
         log("")
         log("   ── Section: Mandatory Fields ──")
 
-    # Field 1: Is Invoice in name of NIA → ALWAYS "Yes"
+    # Field 1: Is Invoice in name of NIA
     try:
         sel = 'select#isInvoiceInNameOfNIA'
-        await select_dropdown_with_delay(page, sel, "Yes", "Invoice in NIA Name", log, field_delay_ms)
+        invoice_in_company = str(defaults.get("invoice_in_company_name", "Yes") or "Yes")
+        await select_dropdown_with_delay(page, sel, invoice_in_company, "Invoice in NIA Name", log, field_delay_ms)
     except Exception as e:
         if _structured:
             log.error(f"Invoice NIA Name dropdown error: {str(e)[:100]}")
@@ -484,12 +489,13 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
         ("traveling_expenses",   "input#conveyanceAmount",  "Conveyance Amount"),
         ("sfb_others",           "input#others",            "Others"),
     ]
+    photo_charges_default = str(defaults.get("photo_charges_default", "200") or "200")
 
     for attr_name, selector, label in amount_fields:
         if stop_cb():
             return False
         try:
-            val = str(getattr(data, attr_name, '') or '').strip()
+            val = photo_charges_default if attr_name == "photo_charges" else str(getattr(data, attr_name, '') or '').strip()
             if val and val != "0":
                 await fill_input_with_delay(page, selector, val, label, log, field_delay_ms)
             else:
@@ -520,10 +526,11 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
         log("")
         log("   ── Section: GST & HSN ──")
 
-    # Field 8: Is GST applicable → ALWAYS "Yes"
+    # Field 8: Is GST applicable
     try:
         sel = 'select#isGSTApplicable'
-        await select_dropdown_with_delay(page, sel, "Yes", "GST Applicable", log, field_delay_ms)
+        gst_applicable = str(defaults.get("gst_applicable", "Yes") or "Yes")
+        await select_dropdown_with_delay(page, sel, gst_applicable, "GST Applicable", log, field_delay_ms)
     except Exception as e:
         if _structured:
             log.error(f"GST Applicable dropdown error: {str(e)[:100]}")
@@ -533,8 +540,13 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
     if stop_cb():
         return False
 
-    # Field 9: HSN Code → ALWAYS "8512" (typeahead)
-    await _fill_hsn_code_typeahead(page, log, field_delay_ms)
+    # Field 9: HSN Code (typeahead)
+    await _fill_hsn_code_typeahead(
+        page,
+        log,
+        field_delay_ms,
+        hsn_code=str(defaults.get("hsn_code", "8512") or "8512"),
+    )
 
     if stop_cb():
         return False

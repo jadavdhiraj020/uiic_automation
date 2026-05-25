@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 APP_NAME = "UIIC_Surveyor_Automation"
-REQUIRED_JSON = ("settings.json", "field_mapping.json", "doc_mapping.json")
+REQUIRED_JSON = ("settings.json", "field_mapping.json", "doc_mapping.json", "automation_defaults.json")
 REQUIRED_PORTALS = ("uiic", "newindia", "oic")
 MIN_QSS_BYTES = 1024
 

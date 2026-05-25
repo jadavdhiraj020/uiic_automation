@@ -11,7 +11,8 @@ import json
 from app.utils import (
     load_settings, save_settings, settings_paths,
     load_field_mapping, save_field_mapping, reset_field_mapping,
-    load_doc_mapping, save_doc_mapping, reset_doc_mapping
+    load_doc_mapping, save_doc_mapping, reset_doc_mapping,
+    load_automation_defaults, save_automation_defaults, reset_automation_defaults,
 )
 from app.ui.components.widgets import TagDelegate, ChipLineEdit, search_row as _search_row
 
@@ -68,7 +69,7 @@ class SettingsPage(QWidget):
         self.tab_bar = QFrame(); tl = QHBoxLayout(self.tab_bar); tl.setContentsMargins(32, 10, 32, 0)
         self.tab_bar.setObjectName("settingsTabBar")
         self.tabs = []
-        for i, name in enumerate(["General", "Field Mapping", "Document Mapping", "PDF Mapping"]):
+        for i, name in enumerate(["General", "Automation Defaults", "Field Mapping", "Document Mapping", "PDF Mapping"]):
             btn = QPushButton(name); btn.setObjectName("settingsTabBtn"); btn.setProperty("active", i==0)
             btn.setMinimumSize(150, 38); btn.clicked.connect(lambda ch, idx=i: self._switch_tab(idx))
             tl.addWidget(btn); self.tabs.append(btn)
@@ -76,6 +77,7 @@ class SettingsPage(QWidget):
 
         self.stack = QStackedWidget()
         self.stack.addWidget(self._build_general_tab())
+        self.stack.addWidget(self._build_automation_defaults_tab())
         self.stack.addWidget(self._build_field_mapping_tab())
         self.stack.addWidget(self._build_doc_mapping_tab())
         self.stack.addWidget(self._build_pdf_mapping_tab())
@@ -142,6 +144,49 @@ class SettingsPage(QWidget):
         self.inp_password.setEchoMode(QLineEdit.EchoMode.Normal if ch else QLineEdit.EchoMode.Password)
         self.btn_eye.setIcon(self._icon_eye_open if ch else self._icon_eye_closed)
         self.btn_eye.setToolTip("Hide password" if ch else "Show password")
+
+    def _automation_default_rows(self):
+        rows_by_portal = {
+            "uiic": [
+                ("remarks_default", "Remarks Default", "Interim Report, Claim Assessment", "text"),
+                ("observation_default", "Observation Default", "Surveyor Observation fallback", "text"),
+            ],
+            "newindia": [
+                ("remarks_default", "Remarks Default", "Remarks fallback", "text"),
+                ("observation_default", "Observation Default", "Observation fallback", "text"),
+                ("missing_text_default", "Missing Text Default", "FIR / police / charge fallbacks", "text"),
+                ("photo_charges_default", "Photo Charges Default", "Survey Fee Bill Photos Amount", "text"),
+                ("assessment_parts_hsn_code", "Assessment Parts HSN Code", "Auto primary assessment spare parts", "text"),
+                ("assessment_labour_hsn_code", "Assessment Labour HSN Code", "Auto primary assessment labour", "text"),
+                ("hsn_code", "HSN Code", "Survey Fee Bill GST section", "text"),
+                ("gst_applicable", "GST Applicable", "Survey Fee Bill GST dropdown", "yesno"),
+                ("invoice_in_company_name", "Invoice In Company Name", "Claim Assessment, Survey Fee Bill", "yesno"),
+                ("payment_method", "Payment Method", "NEFT payment method", "text"),
+                ("account_type", "Account Type", "NEFT account type fallback", "text"),
+                ("relationship_with_insured", "Relationship With Insured", "Driver details fallback", "text"),
+                ("reinspection_required", "Reinspection Required", "Claim Assessment dropdown", "yesno"),
+            ],
+            "oic": [
+                ("unknown_claim_type_default", "Unknown Payment Default", "Claim Search claim type fallback", "claimtype"),
+            ],
+        }
+        return rows_by_portal.get(self._portal_id, rows_by_portal["uiic"])
+
+    def _build_automation_defaults_tab(self):
+        s = QScrollArea(); s.setWidgetResizable(True); s.setFrameShape(QFrame.Shape.NoFrame)
+        w = QWidget(); l = QVBoxLayout(w); l.setContentsMargins(32, 24, 32, 24)
+        self.defaults_table = QTableWidget(0, 3)
+        self.defaults_table.setObjectName("settingsTable")
+        self.defaults_table.setAlternatingRowColors(True)
+        self.defaults_table.setHorizontalHeaderLabels(["SETTING", "VALUE", "USED IN"])
+        self.defaults_table.verticalHeader().setVisible(False)
+        self.defaults_table.verticalHeader().setDefaultSectionSize(48)
+        self.defaults_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.defaults_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        self.defaults_table.setColumnWidth(1, 220)
+        self.defaults_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        l.addWidget(self.defaults_table)
+        s.setWidget(w); return s
 
     def _build_field_mapping_tab(self):
         s = QScrollArea(); s.setWidgetResizable(True); s.setFrameShape(QFrame.Shape.NoFrame)
@@ -215,6 +260,36 @@ class SettingsPage(QWidget):
         
         self.inp_pdf_inv.setText(" | ".join(s.get("pdf_invoice_no_labels", [])))
         self.inp_pdf_date.setText(" | ".join(s.get("pdf_invoice_date_labels", [])))
+
+        # Automation Defaults
+        defaults = load_automation_defaults(portal_id=self._portal_id)
+        default_rows = self._automation_default_rows()
+        self.defaults_table.setRowCount(len(default_rows))
+        for i, (key, label, used_in, kind) in enumerate(default_rows):
+            label_item = QTableWidgetItem(label)
+            label_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            label_item.setData(Qt.ItemDataRole.UserRole, key)
+            self.defaults_table.setItem(i, 0, label_item)
+
+            raw_value = str(defaults.get(key, ""))
+            if kind in {"yesno", "claimtype"}:
+                value_widget = SafeComboBox()
+                value_widget.setObjectName("embeddedCombo")
+                value_widget.addItems(["Yes", "No"] if kind == "yesno" else ["CASHLESS", "REIMBURSEMENT"])
+                idx = value_widget.findText(raw_value, Qt.MatchFlag.MatchFixedString)
+                if idx >= 0:
+                    value_widget.setCurrentIndex(idx)
+                elif raw_value:
+                    value_widget.addItem(raw_value)
+                    value_widget.setCurrentText(raw_value)
+                self.defaults_table.setCellWidget(i, 1, value_widget)
+            else:
+                value_item = QTableWidgetItem(raw_value)
+                self.defaults_table.setItem(i, 1, value_item)
+
+            used_item = QTableWidgetItem(used_in)
+            used_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            self.defaults_table.setItem(i, 2, used_item)
 
         # Field Mapping
         m = load_field_mapping(portal_id=self._portal_id)
@@ -339,6 +414,23 @@ class SettingsPage(QWidget):
             })
             save_settings(current_settings, portal_id=self._portal_id)
 
+            # Automation Defaults Save
+            defaults = load_automation_defaults(portal_id=self._portal_id)
+            for r in range(self.defaults_table.rowCount()):
+                key_item = self.defaults_table.item(r, 0)
+                if not key_item:
+                    continue
+                key = key_item.data(Qt.ItemDataRole.UserRole)
+                if not key:
+                    continue
+                widget = self.defaults_table.cellWidget(r, 1)
+                if isinstance(widget, QComboBox):
+                    defaults[key] = widget.currentText().strip()
+                else:
+                    value_item = self.defaults_table.item(r, 1)
+                    defaults[key] = value_item.text().strip() if value_item else ""
+            save_automation_defaults(defaults, portal_id=self._portal_id)
+
             # Field Mapping Save
             m = load_field_mapping(portal_id=self._portal_id)
             nm = {k: v for k, v in m.items() if k.startswith("_")}
@@ -390,7 +482,7 @@ class SettingsPage(QWidget):
 
     def _reset_defaults(self):
         if QMessageBox.question(self, "Reset", "Reset all to defaults?") == QMessageBox.StandardButton.Yes:
-            reset_field_mapping(portal_id=self._portal_id); reset_doc_mapping(portal_id=self._portal_id)
+            reset_field_mapping(portal_id=self._portal_id); reset_doc_mapping(portal_id=self._portal_id); reset_automation_defaults(portal_id=self._portal_id)
             # Reset user settings by removing file
             sp = settings_paths(portal_id=self._portal_id)
             if os.path.exists(sp["user"]): os.remove(sp["user"])

@@ -11,6 +11,7 @@ from app.automation.form_helpers import (
 from app.automation.selectors import ASSESSMENT, ASSESSMENT_SLOTS, TABS, TAB_SEL
 from app.automation.tab_utils import click_tab
 from app.automation.automation_logger import AutomationLogger
+from app.utils import load_automation_defaults
 
 logger = logging.getLogger(__name__)
 
@@ -591,6 +592,7 @@ async def fill_claim_assessment(page, claim: ClaimData,
     Fill the entire Claim Assessment tab.
     """
     log = log_cb
+    defaults = load_automation_defaults(portal_id=getattr(claim, "portal_id", "uiic"))
     if isinstance(log, AutomationLogger):
         log.section_start("PHASE 5: CLAIM ASSESSMENT")
     
@@ -630,9 +632,10 @@ async def fill_claim_assessment(page, claim: ClaimData,
 
     # Remarks
     try:
+        remarks_default = str(defaults.get("remarks_default", "Done") or "Done")
         await safe_fill_portal_text(page, ASSESSMENT["remarks"],
-                             "Done", "Remarks", log,
-                             source="Hardcoded")
+                             remarks_default, "Remarks", log,
+                             source="Automation Defaults")
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.warning(f"Remarks error: {e}")

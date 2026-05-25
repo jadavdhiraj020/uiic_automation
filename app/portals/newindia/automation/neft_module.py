@@ -5,6 +5,7 @@ from app.portals.newindia.automation.ui_utils import (
     fill_input_with_delay, select_dropdown_with_delay
 )
 from app.automation.automation_logger import AutomationLogger, _ts
+from app.utils import load_automation_defaults
 
 def _find_cheque_document(data: ClaimData) -> str:
     """Scans claim and upload doc dicts to find the cheque image/PDF."""
@@ -34,6 +35,7 @@ async def fill_neft_details(page: Page, data: ClaimData, log, stop_cb, field_del
 
 async def _fill_neft_details_inner(page: Page, data: ClaimData, log, stop_cb, field_delay_ms: int = 600) -> bool:
     if stop_cb(): return False
+    defaults = load_automation_defaults(portal_id=getattr(data, "portal_id", "newindia"))
 
     try:
         acc_heading = page.locator('a.accordion-toggle:has-text("NEFT Details")').first
@@ -69,7 +71,7 @@ async def _fill_neft_details_inner(page: Page, data: ClaimData, log, stop_cb, fi
     
     ifsc = data.ifsc_code
     acc_no = data.account_number
-    acc_type = data.account_type
+    acc_type = data.account_type or defaults.get("account_type", "")
 
     if cheque_path:
         # Run OCR only if fields are missing in data (e.g. if extraction failed or excel was empty)
@@ -246,7 +248,8 @@ async def _fill_neft_details_inner(page: Page, data: ClaimData, log, stop_cb, fi
 
     # 8. Party Payment Method
     try:
-        await select_dropdown_with_delay(page, 'select[name="Party Payment Method"]', "NEFT", "Payment Method", log, field_delay_ms)
+        payment_method = str(defaults.get("payment_method", "NEFT") or "NEFT")
+        await select_dropdown_with_delay(page, 'select[name="Party Payment Method"]', payment_method, "Payment Method", log, field_delay_ms)
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Payment Method dropdown error: {str(e)[:100]}")

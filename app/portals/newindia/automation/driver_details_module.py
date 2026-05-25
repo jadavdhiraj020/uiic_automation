@@ -5,9 +5,11 @@ from app.portals.newindia.automation.ui_utils import (
     fill_input_with_delay, select_dropdown_with_delay, format_date_ddmmyyyy
 )
 from app.automation.automation_logger import AutomationLogger
+from app.utils import load_automation_defaults
 
 async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_delay_ms: int = 600) -> bool:
     if stop_cb(): return False
+    defaults = load_automation_defaults(portal_id=getattr(data, "portal_id", "newindia"))
 
     if isinstance(log, AutomationLogger):
         log.info("Opening Driver Details section...")
@@ -91,14 +93,15 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
                 val, "Relationship", log, field_delay_ms
             )
         else:
+            relationship_default = str(defaults.get("relationship_with_insured", "Self") or "Self")
             if isinstance(log, AutomationLogger):
-                log.warning("Relationship missing from data; defaulting to 'Self'.")
+                log.warning(f"Relationship missing from data; defaulting to '{relationship_default}'.")
             else:
-                log("   ⚠️ Relationship with Insured missing from Excel, defaulting to 'Self'")
+                log(f"   ⚠️ Relationship with Insured missing from Excel, defaulting to '{relationship_default}'")
             await select_dropdown_with_delay(
                 page,
                 'select[name="Relationship of the driver with the Insured"]',
-                "Self", "Relationship", log, field_delay_ms
+                relationship_default, "Relationship", log, field_delay_ms
             )
     except Exception as e:
         if isinstance(log, AutomationLogger):

@@ -9,6 +9,7 @@ from app.portals.newindia.automation.ui_utils import (
 )
 from app.portals.newindia.automation.popup_service import dismiss_portal_popup
 from app.automation.automation_logger import AutomationLogger
+from app.utils import load_automation_defaults
 
 
 
@@ -200,6 +201,8 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_c
 async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_delay_ms):
     """Inner body of fill_claim_assessment_details — called via try/finally wrapper."""
 
+    defaults = load_automation_defaults(portal_id=getattr(data, "portal_id", "newindia"))
+
     # 0. Handle Alert Popup (if any)
     await dismiss_portal_popup(page, log, max_wait_s=3.0, context="Claim Assessment Start")
 
@@ -217,10 +220,11 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
     if stop_cb(): return False
 
     # 1. Whether Payment invoice is in the name of NIA (Yes/No)
-    # Behavior: ALWAYS select YES
+    # Behavior: use configured invoice-name default
     try:
         sel = 'select[data-ng-model*="isPaymentInvoice"]'
-        await select_dropdown_with_delay(page, sel, "Yes", "Payment Invoice NIA", log, field_delay_ms)
+        invoice_in_company = str(defaults.get("invoice_in_company_name", "Yes") or "Yes")
+        await select_dropdown_with_delay(page, sel, invoice_in_company, "Payment Invoice NIA", log, field_delay_ms)
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Payment Invoice dropdown error: {str(e)[:100]}")
@@ -649,10 +653,11 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
 
     if stop_cb(): return False
 
-    # Whether Re-Inspection Required — ALWAYS "No"
+    # Whether Re-Inspection Required
     try:
         sel = 'select#whetherReinspectionRequired'
-        await select_dropdown_with_delay(page, sel, "No", "Re-Inspection", log, field_delay_ms)
+        reinspection_required = str(defaults.get("reinspection_required", "No") or "No")
+        await select_dropdown_with_delay(page, sel, reinspection_required, "Re-Inspection", log, field_delay_ms)
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Re-Inspection dropdown error: {str(e)[:100]}")

@@ -10,6 +10,7 @@ from app.automation.form_helpers import (
 from app.automation.selectors import INTERIM
 from app.automation.tab_utils import click_tab
 from app.automation.automation_logger import AutomationLogger
+from app.utils import load_automation_defaults
 
 import re
 
@@ -129,6 +130,7 @@ async def fill_interim_report(page, claim: ClaimData,
                                log_cb = print,
                                settings: dict = None) -> None:
     log = log_cb
+    defaults = load_automation_defaults(portal_id=getattr(claim, "portal_id", "uiic"))
     if isinstance(log, AutomationLogger):
         log.section_start("PHASE 3: INTERIM REPORT")
     
@@ -243,10 +245,11 @@ async def fill_interim_report(page, claim: ClaimData,
                                 source=_src("surveyor_observation"))
     
     # User requested 'Remarks *' field is blank on interim report
+    remarks_default = str(defaults.get("remarks_default", "Done") or "Done")
     await safe_fill_portal_text(page, "#remarks, textarea[ng-model*='remark'], textarea[name*='emarks']",
-                                "Done",
+                                remarks_default,
                                 "Remarks", log, T,
-                                source="Hardcoded")
+                                source="Automation Defaults")
 
     if isinstance(log, AutomationLogger):
         log.step(3, 3, "Finalizing Interim Report")

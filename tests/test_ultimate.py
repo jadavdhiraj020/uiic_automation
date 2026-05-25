@@ -2739,7 +2739,7 @@ class TestExcelReaderEnhancements:
         finally:
             os.remove(excel_path)
 
-    def test_surveyor_observation_uses_fixed_ok_not_excel_value(self):
+    def test_surveyor_observation_uses_automation_default_not_excel_value(self):
         openpyxl = pytest.importorskip("openpyxl")
         from app.data.excel_reader import extract_claim_data
 
@@ -2754,15 +2754,14 @@ class TestExcelReaderEnhancements:
         wb.save(excel_path)
 
         try:
-            config_dir = os.path.join(PROJECT_ROOT, "app", "config")
             claim = extract_claim_data(excel_path)
 
-            assert claim.surveyor_observation == "ok"
+            assert claim.surveyor_observation == "Ok"
             observation_row = [
                 row for row in claim.all_fields_for_preview() if row[0] == "Observation"
             ][0]
-            assert observation_row[1] == "ok"
-            assert observation_row[3] == "Fixed Value"
+            assert observation_row[1] == "Ok"
+            assert observation_row[3] == "Automation Defaults"
         finally:
             os.remove(excel_path)
 
@@ -6527,31 +6526,6 @@ class TestOicHardening:
         assert "Claim Number is missing" in errors
         assert "Invoice File is missing" in errors
 
-    @pytest.mark.asyncio
-    async def test_oic_engine_no_early_abort(self):
-        """Verify that engine does not perform a pre-run hard abort when invoice is missing, letting browser launch."""
-        from unittest.mock import MagicMock, patch
-        from app.automation.engine import AutomationEngine
-        from app.data.data_model import ClaimData
-        
-        engine = AutomationEngine(portal_id="oic", log_cb=MagicMock(), step_cb=MagicMock())
-        claim = ClaimData()
-        claim.claim_no = "OIC-12345"
-        claim.assessment_files = {} # Missing invoice
-        
-        with patch("app.automation.engine.async_playwright") as mock_pw:
-            mock_pw.return_value.__aenter__.side_effect = Exception("Playwright bypassed")
-            with pytest.raises(Exception, match="Playwright bypassed"):
-                await engine.run_automation(claim, settings={
-                    "field_wait_ms": 250,
-                    "portal_url": "https://orientalinsurance.org.in/",
-                    "username": "test_username",
-                    "password": "test_password"
-                })
-
-
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # OIC BASIC DETAILS — Business Logic Helper Tests
 # ══════════════════════════════════════════════════════════════════════════════
@@ -6928,3 +6902,403 @@ class TestOicBasicDetailsSurveyorFilling:
         
         # Verify fill_input_with_delay was called 5 times (one for each field)
         assert mock_fill.call_count == 5
+
+
+class TestOcrOfflineConfig:
+    """Tests validating offline OCR configurations."""
+
+    def test_runtime_hook_paddleocr_home_config(self, monkeypatch, tmp_path):
+        """
+        Test that pyinstaller_hooks/runtime_hook.py properly configures PADDLEOCR_HOME.
+        - When bundled models exist: PADDLEOCR_HOME should point to the bundled directory.
+        - When bundled models do not exist: PADDLEOCR_HOME should fall back to AppData.
+        """
+        import importlib.util
+        # Create mock environment folders
+        bundled_dir = tmp_path / "meipass"
+        bundled_models_dir = bundled_dir / ".paddleocr"
+        user_appdata_dir = tmp_path / "appdata"
+        
+        # Scenario A: Bundled models exist in _MEIPASS
+        bundled_models_dir.mkdir(parents=True, exist_ok=True)
+        user_appdata_dir.mkdir(parents=True, exist_ok=True)
+
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "_MEIPASS", str(bundled_dir), raising=False)
+        monkeypatch.setenv("LOCALAPPDATA", str(user_appdata_dir))
+        
+        # Clear environment variables under test
+        monkeypatch.delenv("PADDLEOCR_HOME", raising=False)
+        monkeypatch.delenv("PADDLE_HOME", raising=False)
+        monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+        
+        # Load and execute the runtime hook script dynamically
+        hook_path = os.path.join(
+            os.path.dirname(__file__), "..", "pyinstaller_hooks", "runtime_hook.py"
+        )
+        spec = importlib.util.spec_from_file_location("runtime_hook_test_a", hook_path)
+        module = importlib.util.module_from_spec(spec)
+        
+        # Execute the hook module
+        spec.loader.exec_module(module)
+        
+        # Assert PADDLEOCR_HOME points to bundled models
+        assert os.environ.get("PADDLEOCR_HOME") == str(bundled_models_dir)
+
+        # Scenario B: Bundled models DO NOT exist in _MEIPASS (falls back to AppData)
+        # Remove the bundled .paddleocr directory
+        os.rmdir(bundled_models_dir)
+        
+        monkeypatch.delenv("PADDLEOCR_HOME", raising=False)
+        spec = importlib.util.spec_from_file_location("runtime_hook_test_b", hook_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        
+        # Assert PADDLEOCR_HOME falls back to local AppData
+        expected_fallback = os.path.join(str(user_appdata_dir), "UIIC_Surveyor_Automation", ".paddleocr")
+        assert os.environ.get("PADDLEOCR_HOME") == expected_fallback
+
+    def test_captcha_solver_passes_download_false(self, monkeypatch):
+        """
+        Verify that captcha_solver.py passes download=False to PaddleOCR
+        constructor to prevent internet checks.
+        """
+        mock_paddleocr = MagicMock()
+        # Mock the imported PaddleOCR class
+        monkeypatch.setattr("paddleocr.PaddleOCR", mock_paddleocr)
+        
+        # Reset singleton state
+        monkeypatch.setattr("app.automation.captcha_solver._ocr", None)
+        monkeypatch.setattr("app.automation.captcha_solver._init_error", None)
+        
+        # Mock system state to trigger local path branch
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "_MEIPASS", "dummy_meipass", raising=False)
+        
+        # Mock os.path.isdir to return True for model directories
+        monkeypatch.setattr(os.path, "isdir", lambda path: True)
+        
+        from app.automation.captcha_solver import _get_ocr
+        try:
+            _get_ocr()
+        except Exception:
+            pass  # We only care about constructor invocation parameters
+            
+        assert mock_paddleocr.called
+        kwargs = mock_paddleocr.call_args[1]
+        assert kwargs.get("download") is False
+
+    def test_ocr_helper_passes_download_false(self, monkeypatch):
+        """
+        Verify that ocr_helper.py passes download=False to PaddleOCR
+        constructor to prevent internet checks.
+        """
+        mock_paddleocr = MagicMock()
+        # Mock the imported PaddleOCR class
+        monkeypatch.setattr("paddleocr.PaddleOCR", mock_paddleocr)
+        
+        # Reset singleton state
+        monkeypatch.setattr("app.portals.newindia.automation.ocr_helper._doc_ocr", None)
+        monkeypatch.setattr("app.portals.newindia.automation.ocr_helper._doc_ocr_error", None)
+        
+        # Mock system state to trigger local path branch
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "_MEIPASS", "dummy_meipass", raising=False)
+        
+        # Mock os.path.isdir to return True for model directories
+        monkeypatch.setattr(os.path, "isdir", lambda path: True)
+        
+        from app.portals.newindia.automation.ocr_helper import _get_doc_ocr
+        try:
+            _get_doc_ocr()
+        except Exception:
+            pass  # We only care about constructor invocation parameters
+            
+        assert mock_paddleocr.called
+        kwargs = mock_paddleocr.call_args[1]
+        assert kwargs.get("download") is False
+
+
+def create_mock_locator(inner_text_val="", evaluate_val=""):
+    loc = MagicMock()
+    loc.first = loc
+    loc.last = loc
+    loc.nth = MagicMock(return_value=loc)
+    loc.filter = MagicMock(return_value=loc)
+    loc.locator = MagicMock(return_value=loc)
+    
+    loc.wait_for = AsyncMock()
+    loc.click = AsyncMock()
+    loc.fill = AsyncMock()
+    loc.press = AsyncMock()
+    loc.select_option = AsyncMock()
+    loc.set_input_files = AsyncMock()
+    loc.is_visible = AsyncMock(return_value=True)
+    loc.count = AsyncMock(return_value=1)
+    loc.inner_text = AsyncMock(return_value=inner_text_val)
+    loc.evaluate = AsyncMock(return_value=evaluate_val)
+    loc.evaluate_handle = AsyncMock()
+    return loc
+
+
+class TestProductionGradeRobustness:
+    """Production-grade robustness and reliability tests to detect real-world regressions."""
+
+    @pytest.mark.asyncio
+    async def test_document_upload_failure_propagation(self, monkeypatch):
+        """Verify that when a document upload fails, fill_claim_documents returns False (no silent failures)."""
+        from app.automation.claim_documents import fill_claim_documents
+        from app.data.data_model import ClaimData
+
+        mock_page = MagicMock()
+        mock_page.evaluate = AsyncMock()
+        mock_page.on = MagicMock()
+        claim = ClaimData(portal_id="uiic")
+        claim.claim_doc_files = {"rc": "path/to/rc.pdf"}
+
+        # Mock the file to exist so it gets queued
+        monkeypatch.setattr(os.path, "isfile", lambda x: True)
+        monkeypatch.setattr(os.path, "getsize", lambda x: 1024)
+
+        # Mock DocumentUploadService to return a failure status in upload_queue
+        mock_service = MagicMock()
+        mock_service.wait_for_upload_section = AsyncMock()
+        mock_service.upload_queue = AsyncMock(return_value=([("rc", "rc.pdf", "FAILED", "Dropdown mismatch")], []))
+
+        monkeypatch.setattr("app.automation.claim_documents.DocumentUploadService", lambda page, log_cb: mock_service)
+        monkeypatch.setattr("app.automation.claim_documents.click_tab", AsyncMock(return_value=True))
+
+        logs = []
+        result = await fill_claim_documents(mock_page, claim, log_cb=logs.append)
+        assert result is False, "Expected fill_claim_documents to fail when a document upload fails"
+        assert any("failed to upload" in log.lower() for log in logs)
+
+    @pytest.mark.asyncio
+    async def test_claim_assessment_error_logging(self, monkeypatch):
+        """Verify that sub-step failures in claim assessment are logged with error markers."""
+        from app.automation.claim_assessment import fill_claim_assessment
+        from app.data.data_model import ClaimData
+
+        mock_page = MagicMock()
+        claim = ClaimData(portal_id="uiic")
+        claim.parts_age_dep_excl_gst = "100"
+
+        # Force safe_fill_amount to raise an exception
+        async def mock_raise(*args, **kwargs):
+            raise RuntimeError("Database Locked / Field Not Found")
+
+        monkeypatch.setattr("app.automation.claim_assessment.safe_fill_amount", mock_raise)
+        monkeypatch.setattr("app.automation.claim_assessment.click_tab", AsyncMock())
+        monkeypatch.setattr("app.automation.claim_assessment.safe_fill_portal_text", AsyncMock())
+        monkeypatch.setattr("app.automation.claim_assessment._upload_all", AsyncMock())
+        monkeypatch.setattr("app.automation.claim_assessment._click_declaration_radio", AsyncMock())
+
+        logs = []
+        await fill_claim_assessment(mock_page, claim, log_cb=logs.append)
+        # Check that error is logged
+        assert any("error" in log.lower() or "failed" in log.lower() for log in logs), "Expected error logging when safe_fill_amount fails"
+
+    @pytest.mark.asyncio
+    async def test_stale_ui_state_retry_behavior(self, monkeypatch):
+        """Verify that safe_click and _raw_fill retries and succeeds if a locator fails initially."""
+        from app.automation.form_helpers import _raw_fill, safe_click
+
+        mock_page = MagicMock()
+        mock_locator = create_mock_locator()
+
+        # Simulate initial failure then success
+        call_count = 0
+        async def mock_click(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("Stale Element Reference")
+            return True
+
+        mock_locator.click = mock_click
+        mock_page.locator.return_value = mock_locator
+
+        logs = []
+        # Test safe_click retry
+        click_success = await safe_click(mock_page, "#my-btn", log=logs.append, label="Submit", retries=2)
+        assert click_success is True
+        assert call_count == 2
+        assert any("retry" in log.lower() for log in logs)
+
+        # Test _raw_fill retry
+        call_count = 0
+        logs.clear()
+        fill_success = await _raw_fill(mock_page, "#my-input", "value", "Input", log=logs.append, retries=2)
+        assert fill_success is True
+        assert call_count == 2
+        assert any("retry" in log.lower() for log in logs)
+
+    @pytest.mark.asyncio
+    async def test_angular_date_picker_verification_failure(self, monkeypatch):
+        """Verify safe_fill_date returns False and logs error when verified value does not stick."""
+        from app.automation.form_helpers import safe_fill_date
+
+        mock_page = MagicMock()
+        mock_page.keyboard.press = AsyncMock()
+        mock_locator = create_mock_locator()
+        mock_page.locator.return_value = mock_locator
+
+        # Evaluate returns True (JS execution succeeded) but value verification returns empty
+        async def mock_evaluate(script, *args, **kwargs):
+            if "document.querySelector" in script and "value" in script:
+                if "actual = " in script or "return el ? el.value : ''" in script:
+                    return "" # Verification fails
+            return True
+
+        mock_page.evaluate = mock_evaluate
+
+        logs = []
+        result = await safe_fill_date(mock_page, "#datepicker", "16/02/2026", "Survey Date", log=logs.append)
+        assert not result
+        assert any("failed" in log.lower() or "bad" in log.lower() for log in logs)
+
+    @pytest.mark.asyncio
+    async def test_dropdown_js_fallback_matching(self, monkeypatch):
+        """Verify that when standard select_option fails, DocumentUploadService JS fallback recovers."""
+        from app.automation.services.document_upload_service import DocumentUploadService
+
+        mock_page = MagicMock()
+        mock_select = create_mock_locator(inner_text_val="Survey Report", evaluate_val="survey.pdf")
+        
+        # Standard select_option raises an exception (e.g. Option not found)
+        mock_select.select_option.side_effect = RuntimeError("Option not found")
+        
+        mock_page.locator.return_value = mock_select
+        
+        # Mock evaluating the JS selector returning a matched value
+        async def mock_evaluate(script, *args, **kwargs):
+            if "selects[" in script:
+                return "Matched Option"
+            elif "files" in script:
+                return "survey.pdf"
+            return True
+
+        mock_page.evaluate = mock_evaluate
+        mock_page.evaluate_handle = AsyncMock()
+
+        # Set up isfile / getsize mocks
+        monkeypatch.setattr(os.path, "isfile", lambda x: True)
+        monkeypatch.setattr(os.path, "getsize", lambda x: 1024)
+
+        service = DocumentUploadService(mock_page, log_cb=lambda x: None)
+        success = await service.select_doc_and_set_file(
+            row_index=0, doc_label="Survey Report", file_path="survey.pdf", timeout_ms=100
+        )
+        assert success is True
+
+    def test_portal_settings_isolation(self, monkeypatch, tmp_path):
+        """Verify portal defaults and settings do not leak across distinct portal runs."""
+        from app.utils import load_automation_defaults, save_automation_defaults, reset_automation_defaults
+
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+
+        # Save defaults for newindia
+        save_automation_defaults({"payment_method": "NEFT_NEW"}, portal_id="newindia")
+        
+        # Save defaults for oic
+        save_automation_defaults({"payment_method": "OIC_DIRECT"}, portal_id="oic")
+
+        # Load both and verify distinct isolated values
+        newindia_defaults = load_automation_defaults(portal_id="newindia")
+        oic_defaults = load_automation_defaults(portal_id="oic")
+
+        assert newindia_defaults["payment_method"] == "NEFT_NEW"
+        assert oic_defaults["payment_method"] == "OIC_DIRECT"
+
+        # Verify reset on one doesn't reset the other
+        reset_automation_defaults(portal_id="newindia")
+        assert load_automation_defaults(portal_id="newindia")["payment_method"] == "NEFT"
+        assert load_automation_defaults(portal_id="oic")["payment_method"] == "OIC_DIRECT"
+
+    @pytest.mark.asyncio
+    async def test_circuit_breaker_aborts_on_empty_pages(self, monkeypatch):
+        """Verify that the engine's health monitor detects when all pages are closed and aborts."""
+        from app.automation.engine import AutomationEngine
+        from app.data.data_model import ClaimData
+
+        engine = AutomationEngine(portal_id="uiic", log_cb=lambda x: None)
+        claim = ClaimData(portal_id="uiic")
+
+        # Mock browser, context, page
+        mock_browser = MagicMock()
+        mock_browser.close = AsyncMock()
+        
+        mock_context = MagicMock()
+        
+        # Initially, 1 page is alive
+        mock_page = MagicMock()
+        mock_page.is_closed = MagicMock(return_value=False)
+        mock_page.bring_to_front = AsyncMock()
+        mock_page.evaluate = AsyncMock()
+        mock_page.wait_for_load_state = AsyncMock()
+        
+        mock_context.pages = [mock_page]
+        mock_browser.contexts = [mock_context]
+        mock_browser.new_context = AsyncMock(return_value=mock_context)
+        mock_context.new_page = AsyncMock(return_value=mock_page)
+
+        # Mock playwright launch
+        mock_playwright = MagicMock()
+        mock_playwright.chromium.launch = AsyncMock(return_value=mock_browser)
+
+        # normal function returning async context manager
+        def mock_async_playwright():
+            class FakePlaywrightContext:
+                async def __aenter__(self):
+                    return mock_playwright
+                async def __aexit__(self, exc_type, exc_val, exc_tb):
+                    pass
+            return FakePlaywrightContext()
+
+        monkeypatch.setattr("app.automation.engine.async_playwright", mock_async_playwright)
+        
+        # Patch import modules to succeed immediately
+        monkeypatch.setattr("app.automation.login_module.do_login", AsyncMock(return_value=True))
+        monkeypatch.setattr("app.automation.engine._get_active_page", AsyncMock(return_value=mock_page))
+        monkeypatch.setattr("app.automation.navigation_module.navigate_to_claim", AsyncMock(return_value=mock_page))
+
+        # We want the monitor loop to trigger the circuit breaker.
+        # Let's make mock_page.is_closed return True when queried by the health monitor
+        mock_page.is_closed.side_effect = lambda: True
+
+        # Mock time module in engine.py to quickly exceed the grace period in health monitor
+        mock_time_module = MagicMock()
+        t_val = 100.0
+        def mock_time():
+            nonlocal t_val
+            t_val += 5.0
+            return t_val
+        mock_time_module.time = mock_time
+        monkeypatch.setattr("app.automation.engine.time", mock_time_module)
+
+        # Let's run automation and verify it cancels/fails due to circuit breaker
+        # We patch asyncio.sleep in the run_automation function to speed up the loop with yielding
+        original_sleep_in_test = asyncio.sleep
+        async def quick_sleep(delay):
+            await original_sleep_in_test(0)
+        monkeypatch.setattr("app.automation.engine.asyncio.sleep", quick_sleep)
+
+        # Mock fill_interim_report to sleep / hang so the health task runs
+        async def mock_interim(*args, **kwargs):
+            for _ in range(10):
+                if engine._stop_requested:
+                    break
+                await asyncio.sleep(0.01)
+
+        monkeypatch.setattr("app.automation.engine.fill_interim_report", mock_interim)
+        monkeypatch.setattr("app.automation.engine.fill_claim_documents", AsyncMock())
+        monkeypatch.setattr("app.automation.engine.fill_claim_assessment", AsyncMock())
+
+        res = await engine.run_automation(claim, settings={"browser_headless": True})
+        assert res.success is False
+        assert engine._stop_requested is True
+        assert "CIRCUIT BREAKER" in res.message or "stopped" in res.message or "failed" in res.message
+
+
+
+

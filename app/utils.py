@@ -277,3 +277,56 @@ def reset_doc_mapping(portal_id: Optional[str] = None) -> None:
             os.remove(paths["user"])
     except OSError:
         pass
+
+
+# Automation Defaults persistence
+
+def automation_defaults_paths(portal_id: Optional[str] = None) -> dict[str, str]:
+    """
+    Canonical automation-default file locations.
+
+    These are user-facing business defaults such as remarks text, HSN code,
+    payment method, and common Yes/No values. Technical selectors, waits, and
+    retry behavior intentionally stay out of this config.
+    """
+    reg = _get_portal_registry()
+    if reg is not None:
+        try:
+            return reg.portal_automation_defaults_paths(portal_id=portal_id)
+        except Exception:
+            pass
+    return {
+        "default": resource_path("app", "config", "automation_defaults.json"),
+        "user": os.path.join(user_data_dir("config"), "automation_defaults.json"),
+    }
+
+
+def load_automation_defaults(portal_id: Optional[str] = None) -> dict[str, Any]:
+    """Load automation defaults with user values layered over bundled defaults."""
+    paths = automation_defaults_paths(portal_id=portal_id)
+    base = read_json_file(paths["default"]) or {}
+    user = read_json_file(paths["user"]) or {}
+    merged = dict(base)
+    for key, value in user.items():
+        if key in merged or not str(key).startswith("_"):
+            merged[key] = value
+    return merged
+
+
+def save_automation_defaults(defaults: dict[str, Any], portal_id: Optional[str] = None) -> str:
+    """Save automation defaults into the writable user config file."""
+    paths = automation_defaults_paths(portal_id=portal_id)
+    current = load_automation_defaults(portal_id=portal_id)
+    current.update(defaults or {})
+    write_json_file(paths["user"], current)
+    return paths["user"]
+
+
+def reset_automation_defaults(portal_id: Optional[str] = None) -> None:
+    """Delete user automation defaults so bundled defaults are used again."""
+    paths = automation_defaults_paths(portal_id=portal_id)
+    try:
+        if os.path.exists(paths["user"]):
+            os.remove(paths["user"])
+    except OSError:
+        pass

@@ -82,8 +82,16 @@ def _get_ocr():
                     rec_dir = os.path.join(model_root, "rec", "en", "en_PP-OCRv4_rec_infer")
                     cls_dir = os.path.join(model_root, "cls", "ch_ppocr_mobile_v2.0_cls_infer")
 
-                    if not os.path.isdir(det_dir) or not os.path.isdir(rec_dir) or not os.path.isdir(cls_dir):
-                        logger.warning("⚠️ Local CAPTCHA OCR models not found. PaddleOCR will download them now (approx. 1-3 minutes depending on internet connection)...")
+                    _missing = [n for n, d in [("det", det_dir), ("rec", rec_dir), ("cls", cls_dir)] if not os.path.isdir(d)]
+                    if _missing:
+                        msg = (
+                            f"PaddleOCR CAPTCHA models missing: {', '.join(_missing)}. "
+                            f"Expected in: {model_root}. "
+                            "Re-run the build with models cached in build_assets/paddleocr "
+                            "or pre-populate ~/.paddleocr/whl/ before first run."
+                        )
+                        logger.error(msg)
+                        raise RuntimeError(msg)
 
                     if os.path.isdir(det_dir):
                         kwargs["det_model_dir"] = det_dir
@@ -92,6 +100,7 @@ def _get_ocr():
                     if os.path.isdir(cls_dir):
                         kwargs["cls_model_dir"] = cls_dir
 
+                    kwargs["download"] = False  # Never download — use bundled/cached models only
                     _ocr = PaddleOCR(**kwargs)
                     elapsed = time.perf_counter() - start_time
                     logger.info(f"PaddleOCR CAPTCHA engine initialized successfully in {elapsed:.2f} seconds.")

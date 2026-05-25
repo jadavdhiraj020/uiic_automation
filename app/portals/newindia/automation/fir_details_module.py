@@ -5,9 +5,12 @@ from app.portals.newindia.automation.ui_utils import (
     fill_input_with_delay, select_dropdown_with_delay
 )
 from app.automation.automation_logger import AutomationLogger
+from app.utils import load_automation_defaults
 
 async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_delay_ms: int = 600) -> bool:
     if stop_cb(): return False
+    defaults = load_automation_defaults(portal_id=getattr(data, "portal_id", "newindia"))
+    missing_text_default = str(defaults.get("missing_text_default", "NA") or "NA")
 
     if isinstance(log, AutomationLogger):
         log.info("Opening FIR Details section...")
@@ -45,7 +48,7 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
 
     # 1. FIR Number
     try:
-        val = data.fir_number or "NA"
+        val = data.fir_number or missing_text_default
         await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.firNo"]', val, "FIR Number", log, field_delay_ms)
     except Exception as e:
         if isinstance(log, AutomationLogger):
@@ -75,7 +78,7 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
 
     # 3. Police Station Name
     try:
-        val = data.police_station_name or "NA"
+        val = data.police_station_name or missing_text_default
         await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.policeStation"]', val, "Station Name", log, field_delay_ms)
     except Exception as e:
         if isinstance(log, AutomationLogger):
@@ -87,7 +90,7 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
 
     # 4. Charged U/S Motor Vehicle act
     try:
-        val = data.charged_us_motor_vehicle_act or "NA"
+        val = data.charged_us_motor_vehicle_act or missing_text_default
         await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.chargedUSMotorVehAct"]', val, "Charged U/S MV Act", log, field_delay_ms)
     except Exception as e:
         if isinstance(log, AutomationLogger):
@@ -99,7 +102,7 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
 
     # 5. Charged U/S IPC
     try:
-        val = data.charged_us_ipc or "NA"
+        val = data.charged_us_ipc or missing_text_default
         await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.chargedUSIPC"]', val, "Charged U/S IPC", log, field_delay_ms)
     except Exception as e:
         if isinstance(log, AutomationLogger):
