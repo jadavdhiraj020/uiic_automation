@@ -529,6 +529,23 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
         except Exception as e:
             logger.error("Failed to copy invoice to %s: %s", cancel_check_name, e)
 
+    # ── Fallback: Copy Invoice as Work Approval Document if missing ────────────
+    work_approval_key = next((k for k in claim_map.keys() if "work approval" in k.lower() or "approval" in k.lower()), None)
+    if work_approval_key and work_approval_key not in result.claim_doc_files and "invoice" in result.assessment_files:
+        invoice_path = result.assessment_files["invoice"]
+        ext = Path(invoice_path).suffix
+        work_approval_name = f"work_approval_fallback{ext}"
+        work_approval_path = os.path.join(folder_path, work_approval_name)
+        
+        try:
+            if not os.path.exists(work_approval_path):
+                import shutil
+                shutil.copy2(invoice_path, work_approval_path)
+            result.claim_doc_files[work_approval_key] = work_approval_path
+            logger.info("Generated %s from invoice because Work Approval Document was missing", work_approval_name)
+        except Exception as e:
+            logger.error("Failed to copy invoice to %s: %s", work_approval_name, e)
+
     # ── Pre-compress mandatory upload files that exceed portal's 1.5 MB limit ─
     # This runs BEFORE automation starts so the UI shows the final file size
     # and the automation directly attaches the ready-to-use compressed file.

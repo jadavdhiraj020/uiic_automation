@@ -72,7 +72,9 @@ def main() -> None:
 
     window = MainWindow()
 
-
+    # Pre-warm PaddleOCR in background so it's fully loaded by the time OCR is needed
+    from app.automation.ocr_engine import warmup_ocr_background
+    warmup_ocr_background()
 
     window.showMaximized()
     sys.exit(app.exec())

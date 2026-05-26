@@ -32,6 +32,7 @@ def _find_survey_fee_bill_document(data: ClaimData) -> str:
     if isinstance(raw, dict):
         for key in ["invoice", "final_invoice"]:
             path = raw.get(key, "")
+            path = os.path.normpath(path) if path else ""
             if path and os.path.isfile(path) and path.lower().endswith(".pdf"):
                 return path
 
@@ -40,6 +41,7 @@ def _find_survey_fee_bill_document(data: ClaimData) -> str:
         if not isinstance(pool, dict):
             continue
         for _key, path in pool.items():
+            path = os.path.normpath(path) if path else ""
             if path and os.path.isfile(path) and path.lower().endswith(".pdf"):
                 lower_name = os.path.basename(path).lower()
                 if any(kw in lower_name for kw in sfb_map):
@@ -366,28 +368,28 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
     _structured = isinstance(log, AutomationLogger)
     defaults = load_automation_defaults(portal_id=getattr(data, "portal_id", "newindia"))
 
-    # 0. Pre-validate: mandatory Survey Fee Bill document must exist BEFORE
-    #    any UI interaction. This avoids wasting time on accordion expansion,
-    #    field fills, and HSN typeahead only to fail at a disabled Submit button.
+    # 0. Pre-check: locate the Survey Fee Bill document. If missing, we still
+    #    fill all form fields and only skip the document upload + submit.
     doc_path = _find_survey_fee_bill_document(data)
     if not doc_path:
         if _structured:
-            log.error(
-                "Mandatory Survey Fee Bill PDF not found in claim directories "
-                "(expected: final_invoice.pdf or invoice.pdf). Aborting phase."
+            log.warning(
+                "Survey Fee Bill PDF not found in claim directories "
+                "(expected: final_invoice.pdf or invoice.pdf). "
+                "Will fill fields only — skipping document upload."
             )
         else:
             log(
-                "   ❌ Mandatory Survey Fee Bill PDF not found "
-                "(expected: final_invoice.pdf or invoice.pdf). Aborting phase."
+                "   ⚠️ Survey Fee Bill PDF not found "
+                "(expected: final_invoice.pdf or invoice.pdf). "
+                "Will fill fields only — skipping document upload."
             )
-        return False
-
-    if _structured:
-        log.info(f"Survey Fee Bill document located: {doc_path}")
     else:
-        import os as _os
-        log(f"   ✅ Document pre-check passed: {_os.path.basename(doc_path)}")
+        if _structured:
+            log.info(f"Survey Fee Bill document located: {doc_path}")
+        else:
+            import os as _os
+            log(f"   ✅ Document pre-check passed: {_os.path.basename(doc_path)}")
 
     # Handle any stale popup
     await dismiss_portal_popup(page, log, max_wait_s=3.0, context="Survey Fee Bill Start")
@@ -567,59 +569,64 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
 
     # ══════════════════════════════════════════════════════════════════════════
     # DOCUMENT UPLOAD (Survey Fee Bill document)
-    #   doc_path was pre-validated at the top of this function — guaranteed
-    #   to be a valid, existing PDF path at this point.
+    #   Upload only if doc_path was found during pre-check.
     # ══════════════════════════════════════════════════════════════════════════
 
-    if _structured:
-        log.info("Section: Document Upload")
-        log.indent()
-    else:
-        log("")
-        log("   ── Section: Document Upload ──")
-
-    try:
-        await upload_file_via_input(
-            page,
-            file_input_selector='input#uploadDigSig',
-            file_path=doc_path,
-            label="Survey Fee Bill Document",
-            log=log,
-        )
-
-        # Click the Upload button
-        upload_btn = page.locator(
-            'button[data-ng-click="uploadDigSignature1(\'mandatory\')"]'
-        ).first
-        try:
-            await upload_btn.wait_for(state="visible", timeout=5000)
-            await asyncio.sleep(0.5)
-            await upload_btn.click()
-            await asyncio.sleep(1.5)
-
-            # Handle upload confirmation popup
-            await dismiss_portal_popup(page, log, max_wait_s=8.0, context="SFB Upload")
-
-            if _structured:
-                log.success("Survey Fee Bill document uploaded successfully.")
-            else:
-                log("   ✅ Survey Fee Bill document uploaded.")
-        except Exception as ue:
-            if _structured:
-                log.error(f"Upload button click failed: {str(ue)[:100]}")
-            else:
-                log(f"   ⚠️ Upload button error: {ue}")
-    except Exception as e:
+    if doc_path:
         if _structured:
-            log.error(f"SFB document upload error: {str(e)[:100]}")
+            log.info("Section: Document Upload")
+            log.indent()
         else:
-            log(f"   ⚠️ Error uploading Survey Fee Bill document: {e}")
+            log("")
+            log("   ── Section: Document Upload ──")
 
-    if stop_cb():
-        return False
+        try:
+            await upload_file_via_input(
+                page,
+                file_input_selector='input#uploadDigSig',
+                file_path=doc_path,
+                label="Survey Fee Bill Document",
+                log=log,
+            )
 
-    if _structured:
-        log.outdent()
+            # Click the Upload button
+            upload_btn = page.locator(
+                'button[data-ng-click="uploadDigSignature1(\'mandatory\')"]'
+            ).first
+            try:
+                await upload_btn.wait_for(state="visible", timeout=5000)
+                await asyncio.sleep(0.5)
+                await upload_btn.click()
+                await asyncio.sleep(1.5)
+
+                # Handle upload confirmation popup
+                await dismiss_portal_popup(page, log, max_wait_s=8.0, context="SFB Upload")
+
+                if _structured:
+                    log.success("Survey Fee Bill document uploaded successfully.")
+                else:
+                    log("   ✅ Survey Fee Bill document uploaded.")
+            except Exception as ue:
+                if _structured:
+                    log.error(f"Upload button click failed: {str(ue)[:100]}")
+                else:
+                    log(f"   ⚠️ Upload button error: {ue}")
+        except Exception as e:
+            if _structured:
+                log.error(f"SFB document upload error: {str(e)[:100]}")
+            else:
+                log(f"   ⚠️ Error uploading Survey Fee Bill document: {e}")
+
+        if stop_cb():
+            return False
+
+        if _structured:
+            log.outdent()
+    else:
+        if _structured:
+            log.warning("Document upload skipped — no Survey Fee Bill PDF available.")
+        else:
+            log("   ⚠️ Document upload skipped — no PDF available.")
 
     # ══════════════════════════════════════════════════════════════════════════
     # SUBMIT

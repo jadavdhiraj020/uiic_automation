@@ -87,10 +87,28 @@ class ClaimFolderService:
 
             # SSOT is now fully isolated and calculated directly within excel_reader.py
 
-            # ── Auto-generate primary assessment Excel if not provided by user ──
-            if self.portal_id == "newindia" and "assessment_excel" not in claim.assessment_files:
+            # ── Auto-generate primary assessment Excel if not provided by user, or update if it's our auto-generated file ──
+            is_auto_generated = False
+            if "assessment_excel" in claim.assessment_files:
+                fpath = claim.assessment_files["assessment_excel"]
+                if os.path.basename(fpath) == "auto_primary_assessment.xlsx":
+                    is_auto_generated = True
+
+            if self.portal_id == "newindia" and ("assessment_excel" not in claim.assessment_files or is_auto_generated):
                 if scan_result.excel_path:
                     try:
+                        if is_auto_generated:
+                            try:
+                                old_path = claim.assessment_files["assessment_excel"]
+                                if os.path.exists(old_path):
+                                    os.remove(old_path)
+                                # Also remove old audit file if it exists
+                                audit_path = old_path.replace(".xlsx", "_audit.txt")
+                                if os.path.exists(audit_path):
+                                    os.remove(audit_path)
+                            except Exception as rm_exc:
+                                logger.warning(f"Failed to remove old auto-generated Excel/audit: {rm_exc}")
+
                         from app.data.assessment_generator import generate_primary_assessment
                         generated_path = generate_primary_assessment(
                             scan_result.excel_path,
@@ -107,7 +125,19 @@ class ClaimFolderService:
             if stop_cb and stop_cb():
                 return ClaimFolderProcessResult(False, scan_result, claim, ["⚠️ Scan cancelled."], "Cancelled")
 
-            self._extract_pdf_invoice_data(scan_result, claim, logs, stop_cb=stop_cb)
+            from app.utils import load_automation_defaults
+            defaults = load_automation_defaults(portal_id=self.portal_id)
+            eager_ocr = defaults.get("eager_folder_ocr", True)
+
+            invoice_pdf = scan_result.assessment_files.get("invoice")
+            if eager_ocr:
+                if invoice_pdf:
+                    self._extract_pdf_invoice_data(scan_result, claim, logs, stop_cb=stop_cb)
+            else:
+                if invoice_pdf and os.path.exists(invoice_pdf):
+                    logs.append(f"📄 Workshop Invoice PDF found: {Path(invoice_pdf).name} — OCR deferred to automation phase (OCR in background).")
+                    claim._pending_invoice_ocr = True
+                    claim._pending_invoice_pdf_path = invoice_pdf
 
             # ── Run Cheque OCR during folder load if bank details are missing in Excel ──
             if not getattr(claim, "ifsc_code", None) or not getattr(claim, "account_number", None):
@@ -122,47 +152,52 @@ class ClaimFolderService:
                         break
                 
                 if cheque_path:
-                    if stop_cb and stop_cb():
-                        logs.append("⚠️ Scan cancelled before cheque OCR.")
-                    else:
-                        logs.append(f"🔍 Cheque document detected: {Path(cheque_path).name}. Extracting bank details via OCR...")
-                        try:
-                            from app.portals.newindia.automation.ocr_helper import ChequeExtractor
-                            extractor = ChequeExtractor(cheque_path)
-                            ocr_logs = []
-                            def ocr_log_fn(msg):
-                                clean_msg = msg.encode('ascii', errors='ignore').decode('ascii')
-                                ocr_logs.append(f"  • {clean_msg.strip()}")
-                            
-                            cheque_details = extractor.extract_details(
-                                log=ocr_log_fn,
-                                excel_ifsc=getattr(claim, "ifsc_code", None) or "",
-                                excel_account=getattr(claim, "account_number", None) or "",
-                                stop_cb=stop_cb,
-                            )
-                            
-                            if cheque_details.get("ifsc"):
-                                claim.ifsc_code = cheque_details["ifsc"]
-                                if hasattr(claim, "_excel_coords"):
-                                    claim._excel_coords["ifsc_code"] = "Cheque OCR"
-                                if hasattr(claim, "_excel_logs"):
-                                    claim._excel_logs.append(f"  📊 ifsc_code: '{claim.ifsc_code}' (Source: Cheque OCR)")
-                            if cheque_details.get("account_number"):
-                                claim.account_number = cheque_details["account_number"]
-                                if hasattr(claim, "_excel_coords"):
-                                    claim._excel_coords["account_number"] = "Cheque OCR"
-                                if hasattr(claim, "_excel_logs"):
-                                    claim._excel_logs.append(f"  📊 account_number: '{claim.account_number}' (Source: Cheque OCR)")
-                            if cheque_details.get("account_type"):
-                                claim.account_type = cheque_details["account_type"]
-                                if hasattr(claim, "_excel_coords"):
-                                    claim._excel_coords["account_type"] = "Cheque OCR"
-                                if hasattr(claim, "_excel_logs"):
-                                    claim._excel_logs.append(f"  📊 account_type: '{claim.account_type}' (Source: Cheque OCR)")
+                    if eager_ocr:
+                        if stop_cb and stop_cb():
+                            logs.append("⚠️ Scan cancelled before cheque OCR.")
+                        else:
+                            logs.append(f"🔍 Cheque document detected: {Path(cheque_path).name}. Extracting bank details via OCR...")
+                            try:
+                                from app.portals.newindia.automation.ocr_helper import ChequeExtractor
+                                extractor = ChequeExtractor(cheque_path)
+                                ocr_logs = []
+                                def ocr_log_fn(msg):
+                                    clean_msg = msg.encode('ascii', errors='ignore').decode('ascii')
+                                    ocr_logs.append(f"  • {clean_msg.strip()}")
                                 
-                            logs.extend(ocr_logs)
-                        except Exception as ocr_exc:
-                            logs.append(f"  ⚠️ Cheque OCR failed: {ocr_exc}")
+                                cheque_details = extractor.extract_details(
+                                    log=ocr_log_fn,
+                                    excel_ifsc=getattr(claim, "ifsc_code", None) or "",
+                                    excel_account=getattr(claim, "account_number", None) or "",
+                                    stop_cb=stop_cb,
+                                )
+                                
+                                if cheque_details.get("ifsc"):
+                                    claim.ifsc_code = cheque_details["ifsc"]
+                                    if hasattr(claim, "_excel_coords"):
+                                        claim._excel_coords["ifsc_code"] = "Cheque OCR"
+                                    if hasattr(claim, "_excel_logs"):
+                                        claim._excel_logs.append(f"  📊 ifsc_code: '{claim.ifsc_code}' (Source: Cheque OCR)")
+                                if cheque_details.get("account_number"):
+                                    claim.account_number = cheque_details["account_number"]
+                                    if hasattr(claim, "_excel_coords"):
+                                        claim._excel_coords["account_number"] = "Cheque OCR"
+                                    if hasattr(claim, "_excel_logs"):
+                                        claim._excel_logs.append(f"  📊 account_number: '{claim.account_number}' (Source: Cheque OCR)")
+                                if cheque_details.get("account_type"):
+                                    claim.account_type = cheque_details["account_type"]
+                                    if hasattr(claim, "_excel_coords"):
+                                        claim._excel_coords["account_type"] = "Cheque OCR"
+                                    if hasattr(claim, "_excel_logs"):
+                                        claim._excel_logs.append(f"  📊 account_type: '{claim.account_type}' (Source: Cheque OCR)")
+                                    
+                                logs.extend(ocr_logs)
+                            except Exception as ocr_exc:
+                                logs.append(f"  ⚠️ Cheque OCR failed: {ocr_exc}")
+                    else:
+                        logs.append(f"🔍 Cheque document detected: {Path(cheque_path).name} — OCR deferred to automation phase (OCR in background).")
+                        claim._pending_cheque_ocr = True
+                        claim._pending_cheque_path = cheque_path
 
             if hasattr(claim, "_excel_logs") and claim._excel_logs:
                 logs.append("📌 Excel Data Sources Map:")
@@ -208,6 +243,25 @@ class ClaimFolderService:
         # Remove surrounding punctuation, parenthetical suffixes
         val = re.sub(r'\(.*$', '', raw).strip()        # Remove "(Credit)" etc.
         val = val.strip(':;,. \t')
+        
+        # Split on 2 or more consecutive spaces to prevent column/field leakage
+        if "  " in val:
+            val = val.split("  ")[0].strip()
+
+        # Truncate at common stop words that mark subsequent fields on the same line
+        stop_words = [
+            "date", "gst", "dt", "gstin", "time", "amount", "amt", 
+            "phone", "mobile", "email", "bill", "invoice", "to", 
+            "for", "name", "address", "vehicle", "reg"
+        ]
+        for stop_word in stop_words:
+            pattern = re.compile(r'\b' + stop_word + r'\b', re.IGNORECASE)
+            m = pattern.search(val)
+            if m:
+                val = val[:m.start()].strip()
+
+        val = val.strip(':;,. \t\\/-')
+
         # Must have at least one alphanumeric character
         if not val or not re.search(r'[A-Za-z0-9]', val):
             return None
@@ -393,45 +447,115 @@ class ClaimFolderService:
                              stop_cb: Optional[callable] = None) -> tuple:
         """
         OCR fallback for scanned PDFs with no extractable text.
-        Uses pdf2image + pytesseract if available, otherwise skips.
+
+        Engine priority:
+          1. PaddleOCR (already bundled — same engine used for cheque OCR & CAPTCHA)
+          2. pytesseract (legacy fallback, requires external Tesseract binary)
+
+        PDF pages are rendered to PIL images via pdfplumber's built-in
+        `page.to_image()` — no external poppler/pdf2image dependency needed.
         """
-        try:
-            if stop_cb and stop_cb():
-                return None, None
-            from pdf2image import convert_from_path
-            import pytesseract
-        except ImportError:
-            logs.append("  ⚠️ OCR libraries (pdf2image/pytesseract) not installed — skipping OCR")
+        if stop_cb and stop_cb():
             return None, None
 
+        # ── Step 1: Render PDF pages → PIL images via pdfplumber ─────────
+        pil_images = []
         try:
-            if stop_cb and stop_cb():
-                return None, None
-            images = convert_from_path(pdf_path, dpi=200, first_page=1, last_page=3)
-            all_text = ""
-            for img in images:
-                if stop_cb and stop_cb():
-                    logs.append("⚠️ PDF OCR cancelled by user.")
-                    return None, None
-                all_text += pytesseract.image_to_string(img) + "\n"
-
-            if not all_text.strip():
-                logs.append("  ⚠️ OCR produced no text from scanned PDF")
-                return None, None
-
-            logs.append("  📝 OCR text extracted successfully, searching for invoice data...")
-            all_lines = all_text.splitlines()
-            ext_inv = self._find_invoice_no(all_text, all_lines, inv_labels)
-            ext_date = self._find_invoice_date(all_text, all_lines, date_labels)
-            return ext_inv, ext_date
+            import pdfplumber
+            with pdfplumber.open(pdf_path) as pdf:
+                for page_idx, page in enumerate(pdf.pages[:3]):  # First 3 pages max
+                    if stop_cb and stop_cb():
+                        logs.append("⚠️ PDF OCR cancelled by user.")
+                        return None, None
+                    try:
+                        pil_img = page.to_image(resolution=250).original
+                        pil_images.append(pil_img)
+                    except Exception as render_exc:
+                        exc_name = type(render_exc).__name__
+                        if "PDFInfoNotInstalledError" in exc_name or "pdfinfo" in str(render_exc).lower():
+                            logs.append("  ⚠️ PDF page rendering needs Ghostscript. Trying direct PaddleOCR on file...")
+                            break
+                        logs.append(f"  ⚠️ Page {page_idx + 1} render failed: {str(render_exc)[:80]}")
         except Exception as exc:
-            exc_name = type(exc).__name__
-            if "PDFInfoNotInstalledError" in exc_name or "pdfinfo" in str(exc).lower():
-                logs.append("  ⚠️ OCR failed: 'poppler' system binary is missing or not in PATH.")
-                logs.append("     👉 Solution: Install Poppler (e.g., via Scoop: 'scoop install poppler' or manual download) and add it to PATH.")
-            elif "TesseractNotFoundError" in exc_name or "tesseract is not installed" in str(exc).lower():
-                logs.append("  ⚠️ OCR failed: 'Tesseract-OCR' system binary is missing or not in PATH.")
-                logs.append("     👉 Solution: Install Tesseract-OCR (https://github.com/UB-Mannheim/tesseract/wiki) and add it to PATH.")
-            else:
-                logs.append(f"  ⚠️ OCR extraction failed: {exc}")
+            logs.append(f"  ⚠️ PDF open for rendering failed: {str(exc)[:80]}")
+
+        # ── Step 2: Try PaddleOCR (primary — already in project) ─────────
+        all_text = ""
+        paddle_ok = False
+        if pil_images:
+            try:
+                from app.portals.newindia.automation.ocr_helper import _get_doc_ocr
+                import tempfile
+                ocr_engine = _get_doc_ocr()
+
+                for img_idx, pil_img in enumerate(pil_images):
+                    if stop_cb and stop_cb():
+                        logs.append("⚠️ PDF OCR cancelled by user.")
+                        return None, None
+
+                    # PaddleOCR needs a file path — save temp PNG
+                    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".png")
+                    try:
+                        pil_img.save(tmp_path)
+                        result = ocr_engine.ocr(tmp_path, cls=True)
+                        if result and result[0]:
+                            page_text = " ".join(
+                                line[1][0] for line in result[0]
+                                if line[1] and line[1][0]
+                            )
+                            all_text += page_text + "\n"
+                    finally:
+                        try:
+                            os.close(tmp_fd)
+                        except OSError:
+                            pass
+                        try:
+                            os.unlink(tmp_path)
+                        except OSError:
+                            pass
+
+                if all_text.strip():
+                    paddle_ok = True
+                    logs.append(f"  📝 PaddleOCR extracted {len(all_text)} chars from {len(pil_images)} page(s).")
+                else:
+                    logs.append("  ⚠️ PaddleOCR produced no text from scanned PDF pages.")
+            except Exception as paddle_exc:
+                logs.append(f"  ⚠️ PaddleOCR unavailable ({type(paddle_exc).__name__}: {str(paddle_exc)[:80]}), trying pytesseract...")
+
+        # ── Step 3: Fallback to pytesseract if PaddleOCR failed ──────────
+        if not paddle_ok and pil_images:
+            try:
+                import pytesseract
+                all_text = ""
+                for img in pil_images:
+                    if stop_cb and stop_cb():
+                        logs.append("⚠️ PDF OCR cancelled by user.")
+                        return None, None
+                    all_text += pytesseract.image_to_string(img) + "\n"
+                if all_text.strip():
+                    logs.append(f"  📝 Tesseract OCR extracted {len(all_text)} chars.")
+                else:
+                    logs.append("  ⚠️ Tesseract OCR produced no text from scanned PDF.")
+                    return None, None
+            except ImportError:
+                logs.append("  ⚠️ Neither PaddleOCR nor pytesseract could extract text — skipping OCR.")
+                return None, None
+            except Exception as tess_exc:
+                exc_name = type(tess_exc).__name__
+                if "TesseractNotFoundError" in exc_name or "tesseract is not installed" in str(tess_exc).lower():
+                    logs.append("  ⚠️ Tesseract binary not installed. Install from https://github.com/UB-Mannheim/tesseract/wiki")
+                else:
+                    logs.append(f"  ⚠️ Tesseract fallback failed: {tess_exc}")
+                return None, None
+
+        if not all_text.strip():
+            if not pil_images:
+                logs.append("  ⚠️ Could not render PDF pages for OCR — no images produced.")
             return None, None
+
+        # ── Step 4: Extract invoice no/date from OCR text ────────────────
+        logs.append("  🔍 Searching OCR text for invoice number and date...")
+        all_lines = all_text.splitlines()
+        ext_inv = self._find_invoice_no(all_text, all_lines, inv_labels)
+        ext_date = self._find_invoice_date(all_text, all_lines, date_labels)
+        return ext_inv, ext_date

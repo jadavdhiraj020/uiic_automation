@@ -1,4 +1,5 @@
 {
   "_comment": "Basic user-facing automation defaults for OIC. These are business values, not selectors, waits, retries, or upload internals.",
-  "unknown_claim_type_default": "CASHLESS"
+  "unknown_claim_type_default": "CASHLESS",
+  "eager_folder_ocr": false
 }

@@ -347,6 +347,66 @@ class AutomationEngine:
                     loss_amount=claim.initial_loss_amount or "—"
                 )
 
+                # ── Start Deferred OCR in a background thread ──────────────────
+                def _run_deferred_ocr():
+                    if getattr(claim, "_pending_invoice_ocr", False) and getattr(claim, "_pending_invoice_pdf_path", None):
+                        self.log_cb("📄 [Background OCR] Running deferred Workshop Invoice OCR in the background...")
+                        try:
+                            from app.ui.services.claim_folder_service import ClaimFolderService
+                            from app.utils import resource_path
+                            config_dir = resource_path("app", "portals", self.portal_id, "config")
+                            service = ClaimFolderService(config_dir=config_dir, portal_id=self.portal_id)
+                            
+                            class MockScanResult:
+                                def __init__(self, invoice_path):
+                                    self.assessment_files = {"invoice": invoice_path}
+                            
+                            mock_scan = MockScanResult(claim._pending_invoice_pdf_path)
+                            ocr_logs = []
+                            service._extract_pdf_invoice_data(mock_scan, claim, ocr_logs, stop_cb=self._check_stop)
+                            for log in ocr_logs:
+                                self.log_cb(f"[Background OCR] {log.strip()}")
+                            claim._pending_invoice_ocr = False
+                        except Exception as exc:
+                            self.log_cb(f"  ⚠️ [Background OCR] Deferred Invoice OCR failed: {exc}")
+
+                    if getattr(claim, "_pending_cheque_ocr", False) and getattr(claim, "_pending_cheque_path", None):
+                        self.log_cb("🔍 [Background OCR] Running deferred Cheque OCR in the background...")
+                        try:
+                            from app.portals.newindia.automation.ocr_helper import ChequeExtractor
+                            cheque_path = claim._pending_cheque_path
+                            extractor = ChequeExtractor(cheque_path)
+                            ocr_logs = []
+                            def ocr_log_fn(msg):
+                                clean_msg = msg.encode('ascii', errors='ignore').decode('ascii')
+                                ocr_logs.append(f"  • {clean_msg.strip()}")
+                            
+                            cheque_details = extractor.extract_details(
+                                log=ocr_log_fn,
+                                excel_ifsc=getattr(claim, "ifsc_code", None) or "",
+                                excel_account=getattr(claim, "account_number", None) or "",
+                                stop_cb=self._check_stop,
+                            )
+                            
+                            if cheque_details.get("ifsc"):
+                                claim.ifsc_code = cheque_details["ifsc"]
+                                self.log_cb(f"  ✅ [Background OCR] IFSC Code (from Cheque OCR): {claim.ifsc_code}")
+                            if cheque_details.get("account_number"):
+                                claim.account_number = cheque_details["account_number"]
+                                self.log_cb(f"  ✅ [Background OCR] Account Number (from Cheque OCR): {claim.account_number}")
+                            if cheque_details.get("account_type"):
+                                claim.account_type = cheque_details["account_type"]
+                                self.log_cb(f"  ✅ [Background OCR] Account Type (from Cheque OCR): {claim.account_type}")
+                            
+                            for log in ocr_logs:
+                                self.log_cb(f"[Background OCR] {log}")
+                            claim._pending_cheque_ocr = False
+                        except Exception as exc:
+                            self.log_cb(f"  ⚠️ [Background OCR] Deferred Cheque OCR failed: {exc}")
+
+                import threading
+                threading.Thread(target=_run_deferred_ocr, name="Deferred-OCR", daemon=True).start()
+
                 total_steps = len(steps)
 
                 self.step_cb(0, steps[0])

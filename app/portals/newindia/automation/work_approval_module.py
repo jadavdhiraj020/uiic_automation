@@ -31,11 +31,15 @@ def _find_final_invoice_document(data: ClaimData) -> str:
 
     # Check for direct mapping 'invoice' or 'final_invoice' in assessment_files
     invoice_path = (getattr(data, 'assessment_files', {}) or {}).get("invoice", "")
+    invoice_path = os.path.normpath(invoice_path) if invoice_path else ""
     if invoice_path and os.path.isfile(invoice_path) and invoice_path.lower().endswith('.pdf'):
         return invoice_path
 
     for doc_name, file_path in all_tracked.items():
-        if not file_path or not os.path.isfile(file_path):
+        if not file_path:
+            continue
+        file_path = os.path.normpath(file_path)
+        if not os.path.isfile(file_path):
             continue
         fname_lower = os.path.basename(file_path).lower()
         if fname_lower.endswith('.pdf') and any(k in fname_lower for k in invoice_map):

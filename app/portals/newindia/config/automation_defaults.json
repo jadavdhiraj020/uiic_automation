@@ -12,5 +12,6 @@
   "payment_method": "NEFT",
   "account_type": "Savings",
   "relationship_with_insured": "Self",
-  "reinspection_required": "No"
+  "reinspection_required": "No",
+  "eager_folder_ocr": false
 }

@@ -632,6 +632,12 @@ class ClaimData:
         ]
 
         for attr, label in mandatory_checks:
+            # Skip validation errors for fields deferred to background OCR
+            if attr in ("vendor_invoice_date", "vendor_invoice_number") and getattr(self, "_pending_invoice_ocr", False):
+                continue
+            if attr in ("ifsc_code", "account_number") and getattr(self, "_pending_cheque_ocr", False):
+                continue
+
             val = getattr(self, attr, "")
             if not val or str(val).strip() in ("", "0"):
                 # "0" is valid for amounts but NOT for text fields like names
@@ -855,6 +861,26 @@ class ClaimData:
         def _src(key: str) -> str:
             return self._excel_coords.get(key, "")
 
+        def _inv_val(val: str) -> str:
+            if getattr(self, "_pending_invoice_ocr", False) and (not val or str(val).strip() in ("", "—")):
+                return "Deferred (OCR in background)"
+            return val or "—"
+
+        def _inv_src(key: str) -> str:
+            if getattr(self, "_pending_invoice_ocr", False) and (not getattr(self, key, None) or str(getattr(self, key, "")).strip() in ("", "—")):
+                return "Deferred OCR"
+            return _src(key)
+
+        def _chk_val(val: str) -> str:
+            if getattr(self, "_pending_cheque_ocr", False) and (not val or str(val).strip() in ("", "—")):
+                return "Deferred (OCR in background)"
+            return val or "—"
+
+        def _chk_src(key: str) -> str:
+            if getattr(self, "_pending_cheque_ocr", False) and (not getattr(self, key, None) or str(getattr(self, key, "")).strip() in ("", "—")):
+                return "Deferred OCR"
+            return _src(key)
+
         return [
             # ── Claim Details ───────────────────────────────
             ("Claim No",              self.claim_no,                 True,  _src("claim_no")),
@@ -924,9 +950,9 @@ class ClaimData:
             # ── Bank Details ────────────────────────────────
             ("Payment To",            self.bank_payment_to or "Unknown",          True,  _src("bank_payment_to")),
 
-            ("IFSC Code",             self.ifsc_code,                True,  _src("ifsc_code")),
-            ("Account Number",        self.account_number,           True,  _src("account_number")),
-            ("Account Type",          self.account_type,             True,  _src("account_type")),
+            ("IFSC Code",             _chk_val(self.ifsc_code),      True,  _chk_src("ifsc_code")),
+            ("Account Number",        _chk_val(self.account_number), True,  _chk_src("account_number")),
+            ("Account Type",          _chk_val(self.account_type),   True,  _chk_src("account_type")),
             ("Payment Method",        self.party_payment_method,     True,  _src("party_payment_method")),
 
             # ── Invoice & Assessment ────────────────────────
@@ -936,8 +962,8 @@ class ClaimData:
             ("No. of Invoices",       self.no_of_invoices,           True,  _src("no_of_invoices")),
             ("Invoice in NIA Name?",  self.payment_invoice_in_name_of_nia, True, _src("payment_invoice_in_name_of_nia")),
             ("GST Applicable?",       self.is_gst_applicable,        True,  _src("is_gst_applicable")),
-            ("Invoice Date",          self.vendor_invoice_date,      True,  _src("vendor_invoice_date")),
-            ("Invoice Number",        self.vendor_invoice_number,    True,  _src("vendor_invoice_number")),
+            ("Invoice Date",          _inv_val(self.vendor_invoice_date), True, _inv_src("vendor_invoice_date")),
+            ("Invoice Number",        _inv_val(self.vendor_invoice_number), True, _inv_src("vendor_invoice_number")),
             ("Primary Assessment (₹)",self.primary_assessment,       True,  _src("primary_assessment")),
             ("Supplementary Est.?",   self.is_supplementary_estimate, True, _src("is_supplementary_estimate")),
             ("Painting Details",      self.painting_work_details,    True,  _src("painting_work_details")),
@@ -959,8 +985,8 @@ class ClaimData:
             ("Verification",          self.verification_checkbox,    True,  _src("verification_checkbox")),
 
             # ── Survey Fee Bill ─────────────────────────────
-            ("SFB Invoice Number",    self.vendor_invoice_number,    True,  _src("vendor_invoice_number")),
-            ("SFB Invoice Date",      self.vendor_invoice_date,      True,  _src("vendor_invoice_date")),
+            ("SFB Invoice Number",    _inv_val(self.vendor_invoice_number), True, _inv_src("vendor_invoice_number")),
+            ("SFB Invoice Date",      _inv_val(self.vendor_invoice_date), True, _inv_src("vendor_invoice_date")),
             ("Professional Fee (₹)",  self.professional_fee,         False, _src("professional_fee")),
             ("Photos Amount (₹)",     self.photo_charges,            False, _src("photo_charges")),
             ("Conveyance Amount (₹)", self.traveling_expenses,       False, _src("traveling_expenses")),
