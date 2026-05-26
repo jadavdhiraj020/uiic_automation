@@ -15,11 +15,8 @@ Fields extracted (all optional, fallback to Excel if missing):
 
 import os
 import re
-import sys
 import logging
 import tempfile
-import traceback
-import threading
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 
@@ -100,7 +97,7 @@ _KNOWN_BANK_PREFIXES = {
 # PaddleOCR Document-OCR Lazy Singleton
 # ══════════════════════════════════════════════════════════════════════════════
 
-from app.automation.ocr_engine import get_shared_ocr as _get_doc_ocr
+from app.automation.ocr_engine import ensure_ocr_ready, run_shared_ocr
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -474,7 +471,8 @@ class ChequeExtractor:
             return blocks
 
         try:
-            ocr_engine = _get_doc_ocr()
+            if not ensure_ocr_ready():
+                raise RuntimeError("shared PaddleOCR initialization failed")
         except Exception as e:
             self._log(log, "error", f"PaddleOCR not available: {str(e)[:100]}")
             # Fallback to pytesseract if available (backward compat)
@@ -482,14 +480,14 @@ class ChequeExtractor:
 
         # Save PIL image to temp file (PaddleOCR needs a file path)
         tmp_fd, tmp_path = tempfile.mkstemp(suffix=".png")
+        os.close(tmp_fd)
         try:
             if stop_cb and stop_cb():
                 return blocks
             pil_image.save(tmp_path)
-            with _doc_ocr_lock:
-                if stop_cb and stop_cb():
-                    return blocks
-                result = ocr_engine.ocr(tmp_path, cls=True)
+            if stop_cb and stop_cb():
+                return blocks
+            result = run_shared_ocr(tmp_path, cls=True)
 
             if not result or result[0] is None:
                 return blocks
@@ -511,10 +509,6 @@ class ChequeExtractor:
         except Exception as e:
             self._log(log, "warning", f"PaddleOCR execution error: {str(e)[:100]}")
         finally:
-            try:
-                os.close(tmp_fd)
-            except OSError:
-                pass
             try:
                 os.unlink(tmp_path)
             except OSError:

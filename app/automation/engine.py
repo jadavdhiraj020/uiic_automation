@@ -2,6 +2,7 @@ import asyncio
 import logging
 import time
 import os
+import threading
 from contextlib import suppress
 from datetime import datetime
 from typing import Callable, List, Optional
@@ -18,6 +19,8 @@ from app.portals.registry import get_portal
 
 
 logger = logging.getLogger(__name__)
+
+DEFERRED_OCR_TIMEOUT_SECONDS = 180.0
 
 
 def _setting_int(settings: dict, primary_key: str, legacy_key: str, default: int) -> int:
@@ -238,6 +241,220 @@ class AutomationEngine:
             return True
         return False
 
+    def _start_deferred_ocr_jobs(self, claim: ClaimData) -> None:
+        """Start invoice and cheque OCR jobs requested during folder processing."""
+        if getattr(claim, "_deferred_ocr_started", False):
+            return
+        claim._deferred_ocr_started = True
+        claim_lock = getattr(claim, "_deferred_ocr_claim_lock", None)
+        if claim_lock is None:
+            claim_lock = threading.RLock()
+            claim._deferred_ocr_claim_lock = claim_lock
+
+        def _mark_source(field: str, value: str, source: str) -> None:
+            if not value:
+                return
+            with claim_lock:
+                if hasattr(claim, "_excel_coords"):
+                    claim._excel_coords[field] = source
+                if hasattr(claim, "_excel_logs"):
+                    claim._excel_logs.append(f"  📊 {field}: '{value}' (Source: {source})")
+
+        def _set_claim_field(field: str, value: str, source: str) -> None:
+            if not value:
+                return
+            with claim_lock:
+                setattr(claim, field, value)
+                _mark_source(field, value, source)
+
+        def _set_claim_status(field: str, value) -> None:
+            with claim_lock:
+                setattr(claim, field, value)
+
+        def _start_job(kind: str, target: Callable[[], None]) -> None:
+            event = threading.Event()
+            setattr(claim, f"_deferred_{kind}_ocr_event", event)
+
+            def _runner() -> None:
+                try:
+                    target()
+                finally:
+                    event.set()
+
+            thread = threading.Thread(
+                target=_runner,
+                name=f"Deferred-{kind.title()}-OCR",
+                daemon=True,
+            )
+            setattr(claim, f"_deferred_{kind}_ocr_thread", thread)
+            thread.start()
+
+        if getattr(claim, "_pending_invoice_ocr", False) and getattr(claim, "_pending_invoice_pdf_path", None):
+            def _invoice_job() -> None:
+                self.log.info("Deferred Workshop Invoice OCR started in background.")
+                try:
+                    from app.ui.services.claim_folder_service import ClaimFolderService
+                    from app.utils import resource_path
+
+                    config_dir = resource_path("app", "portals", self.portal_id, "config")
+                    service = ClaimFolderService(config_dir=config_dir, portal_id=self.portal_id)
+
+                    class MockScanResult:
+                        def __init__(self, invoice_path: str):
+                            self.assessment_files = {"invoice": invoice_path}
+
+                    ocr_logs: List[str] = []
+                    mock_scan = MockScanResult(claim._pending_invoice_pdf_path)
+                    from copy import copy
+                    with claim_lock:
+                        ocr_claim = copy(claim)
+                        ocr_claim._excel_coords = dict(getattr(claim, "_excel_coords", {}) or {})
+                        ocr_claim._excel_logs = []
+
+                    service._extract_pdf_invoice_data(mock_scan, ocr_claim, ocr_logs, stop_cb=self._check_stop)
+
+                    with claim_lock:
+                        for attr in (
+                            "workshop_invoice_no",
+                            "vendor_invoice_number",
+                            "workshop_invoice_date",
+                            "vendor_invoice_date",
+                        ):
+                            value = getattr(ocr_claim, attr, None)
+                            if value:
+                                setattr(claim, attr, value)
+                        if hasattr(claim, "_excel_coords"):
+                            claim._excel_coords.update(getattr(ocr_claim, "_excel_coords", {}) or {})
+                        if hasattr(claim, "_excel_logs"):
+                            claim._excel_logs.extend(getattr(ocr_claim, "_excel_logs", []) or [])
+
+                    for line in ocr_logs:
+                        self.log_cb(f"[Background OCR] {line.strip()}")
+
+                    missing = [
+                        label for label, attr in (
+                            ("invoice number", "vendor_invoice_number"),
+                            ("invoice date", "vendor_invoice_date"),
+                        )
+                        if not str(getattr(claim, attr, "") or "").strip()
+                    ]
+                    if missing:
+                        message = f"Workshop Invoice OCR finished but missing: {', '.join(missing)}"
+                        _set_claim_status("_deferred_invoice_ocr_error", message)
+                        self.log.warning(message)
+                    else:
+                        _set_claim_status("_deferred_invoice_ocr_error", "")
+                        self.log.success("Deferred Workshop Invoice OCR completed.")
+                except Exception as exc:
+                    _set_claim_status("_deferred_invoice_ocr_error", str(exc))
+                    self.log.warning(f"Deferred Workshop Invoice OCR failed: {exc}")
+                finally:
+                    _set_claim_status("_pending_invoice_ocr", False)
+
+            _start_job("invoice", _invoice_job)
+
+        if getattr(claim, "_pending_cheque_ocr", False) and getattr(claim, "_pending_cheque_path", None):
+            def _cheque_job() -> None:
+                self.log.info("Deferred Cheque OCR started in background.")
+                try:
+                    from app.portals.newindia.automation.ocr_helper import ChequeExtractor
+
+                    extractor = ChequeExtractor(claim._pending_cheque_path)
+                    ocr_logs: List[str] = []
+
+                    def ocr_log_fn(msg: str) -> None:
+                        clean_msg = msg.encode("ascii", errors="ignore").decode("ascii")
+                        if clean_msg.strip():
+                            ocr_logs.append(f"  • {clean_msg.strip()}")
+
+                    cheque_details = extractor.extract_details(
+                        log=ocr_log_fn,
+                        excel_ifsc=getattr(claim, "ifsc_code", None) or "",
+                        excel_account=getattr(claim, "account_number", None) or "",
+                        stop_cb=self._check_stop,
+                    )
+
+                    if cheque_details.get("ifsc"):
+                        _set_claim_field("ifsc_code", cheque_details["ifsc"], "Cheque OCR")
+                        self.log_cb(f"  ✅ [Background OCR] IFSC Code: {cheque_details['ifsc']}")
+                    if cheque_details.get("account_number"):
+                        _set_claim_field("account_number", cheque_details["account_number"], "Cheque OCR")
+                        self.log_cb(f"  ✅ [Background OCR] Account Number: {cheque_details['account_number']}")
+                    if cheque_details.get("account_type"):
+                        _set_claim_field("account_type", cheque_details["account_type"], "Cheque OCR")
+                        self.log_cb(f"  ✅ [Background OCR] Account Type: {cheque_details['account_type']}")
+
+                    for line in ocr_logs:
+                        self.log_cb(f"[Background OCR] {line}")
+
+                    missing = [
+                        label for label, attr in (
+                            ("IFSC code", "ifsc_code"),
+                            ("account number", "account_number"),
+                        )
+                        if not str(getattr(claim, attr, "") or "").strip()
+                    ]
+                    if missing:
+                        message = f"Cheque OCR finished but missing: {', '.join(missing)}"
+                        _set_claim_status("_deferred_cheque_ocr_error", message)
+                        self.log.warning(message)
+                    else:
+                        _set_claim_status("_deferred_cheque_ocr_error", "")
+                        self.log.success("Deferred Cheque OCR completed.")
+                except Exception as exc:
+                    _set_claim_status("_deferred_cheque_ocr_error", str(exc))
+                    self.log.warning(f"Deferred Cheque OCR failed: {exc}")
+                finally:
+                    _set_claim_status("_pending_cheque_ocr", False)
+
+            _start_job("cheque", _cheque_job)
+
+    async def _wait_for_deferred_ocr(
+        self,
+        claim: ClaimData,
+        *,
+        kind: str,
+        label: str,
+        required_fields: tuple[tuple[str, str], ...],
+        timeout_s: float = DEFERRED_OCR_TIMEOUT_SECONDS,
+    ) -> bool:
+        """Wait until a deferred OCR job finishes before dependent form fill."""
+        event = getattr(claim, f"_deferred_{kind}_ocr_event", None)
+        if event is None:
+            return True
+
+        if not event.is_set():
+            self.log.wait(f"deferred {label} OCR", f"timeout {int(timeout_s)}s")
+            deadline = time.monotonic() + timeout_s
+            next_progress_log = time.monotonic() + 30.0
+
+            while not event.is_set():
+                if self._check_stop():
+                    return False
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self.log.error(f"Deferred {label} OCR timed out after {int(timeout_s)} seconds.")
+                    return False
+                if time.monotonic() >= next_progress_log:
+                    self.log.info(f"Still waiting for deferred {label} OCR ({int(remaining)}s left).")
+                    next_progress_log = time.monotonic() + 30.0
+                await asyncio.sleep(0.5)
+
+        missing = [
+            label_name for label_name, attr in required_fields
+            if not str(getattr(claim, attr, "") or "").strip()
+        ]
+        if missing:
+            detail = getattr(claim, f"_deferred_{kind}_ocr_error", "") or "OCR produced no usable value."
+            self.log.warning(
+                f"Deferred {label} OCR did not resolve: {', '.join(missing)}. "
+                f"{detail} Continuing with Excel/manual-entry fallback."
+            )
+            return True
+
+        self.log.success(f"Deferred {label} OCR data is ready.")
+        return True
+
     async def _wait_for_manual_review(self, browser: Browser):
         """
         Wait for either the user to close the browser manually OR
@@ -347,66 +564,6 @@ class AutomationEngine:
                     loss_amount=claim.initial_loss_amount or "—"
                 )
 
-                # ── Start Deferred OCR in a background thread ──────────────────
-                def _run_deferred_ocr():
-                    if getattr(claim, "_pending_invoice_ocr", False) and getattr(claim, "_pending_invoice_pdf_path", None):
-                        self.log_cb("📄 [Background OCR] Running deferred Workshop Invoice OCR in the background...")
-                        try:
-                            from app.ui.services.claim_folder_service import ClaimFolderService
-                            from app.utils import resource_path
-                            config_dir = resource_path("app", "portals", self.portal_id, "config")
-                            service = ClaimFolderService(config_dir=config_dir, portal_id=self.portal_id)
-                            
-                            class MockScanResult:
-                                def __init__(self, invoice_path):
-                                    self.assessment_files = {"invoice": invoice_path}
-                            
-                            mock_scan = MockScanResult(claim._pending_invoice_pdf_path)
-                            ocr_logs = []
-                            service._extract_pdf_invoice_data(mock_scan, claim, ocr_logs, stop_cb=self._check_stop)
-                            for log in ocr_logs:
-                                self.log_cb(f"[Background OCR] {log.strip()}")
-                            claim._pending_invoice_ocr = False
-                        except Exception as exc:
-                            self.log_cb(f"  ⚠️ [Background OCR] Deferred Invoice OCR failed: {exc}")
-
-                    if getattr(claim, "_pending_cheque_ocr", False) and getattr(claim, "_pending_cheque_path", None):
-                        self.log_cb("🔍 [Background OCR] Running deferred Cheque OCR in the background...")
-                        try:
-                            from app.portals.newindia.automation.ocr_helper import ChequeExtractor
-                            cheque_path = claim._pending_cheque_path
-                            extractor = ChequeExtractor(cheque_path)
-                            ocr_logs = []
-                            def ocr_log_fn(msg):
-                                clean_msg = msg.encode('ascii', errors='ignore').decode('ascii')
-                                ocr_logs.append(f"  • {clean_msg.strip()}")
-                            
-                            cheque_details = extractor.extract_details(
-                                log=ocr_log_fn,
-                                excel_ifsc=getattr(claim, "ifsc_code", None) or "",
-                                excel_account=getattr(claim, "account_number", None) or "",
-                                stop_cb=self._check_stop,
-                            )
-                            
-                            if cheque_details.get("ifsc"):
-                                claim.ifsc_code = cheque_details["ifsc"]
-                                self.log_cb(f"  ✅ [Background OCR] IFSC Code (from Cheque OCR): {claim.ifsc_code}")
-                            if cheque_details.get("account_number"):
-                                claim.account_number = cheque_details["account_number"]
-                                self.log_cb(f"  ✅ [Background OCR] Account Number (from Cheque OCR): {claim.account_number}")
-                            if cheque_details.get("account_type"):
-                                claim.account_type = cheque_details["account_type"]
-                                self.log_cb(f"  ✅ [Background OCR] Account Type (from Cheque OCR): {claim.account_type}")
-                            
-                            for log in ocr_logs:
-                                self.log_cb(f"[Background OCR] {log}")
-                            claim._pending_cheque_ocr = False
-                        except Exception as exc:
-                            self.log_cb(f"  ⚠️ [Background OCR] Deferred Cheque OCR failed: {exc}")
-
-                import threading
-                threading.Thread(target=_run_deferred_ocr, name="Deferred-OCR", daemon=True).start()
-
                 total_steps = len(steps)
 
                 self.step_cb(0, steps[0])
@@ -467,6 +624,8 @@ class AutomationEngine:
                 if self._check_stop():
                     return AutomationRunResult(False, "Automation stopped by user.")
 
+                self._start_deferred_ocr_jobs(claim)
+
                 await asyncio.sleep(1.5)
 
                 # --- NEW INDIA PORTAL PHASES ---
@@ -519,6 +678,16 @@ class AutomationEngine:
                     # Phase 8: NEFT Details
                     self.step_cb(7, steps[7])
                     self.log.phase_banner(8, total_steps, "NEFT Details")
+                    if not await self._wait_for_deferred_ocr(
+                        claim,
+                        kind="cheque",
+                        label="Cheque",
+                        required_fields=(
+                            ("IFSC Code", "ifsc_code"),
+                            ("Account Number", "account_number"),
+                        ),
+                    ):
+                        return AutomationRunResult(False, "Phase 8 failed: cheque OCR data not ready.")
                     if not await fill_neft_details(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
                         return AutomationRunResult(False, "Phase 8 failed.")
 
@@ -531,6 +700,16 @@ class AutomationEngine:
                     # Phase 10: Claim Assessment
                     self.step_cb(9, steps[9])
                     self.log.phase_banner(10, total_steps, "Claim Assessment")
+                    if not await self._wait_for_deferred_ocr(
+                        claim,
+                        kind="invoice",
+                        label="Workshop Invoice",
+                        required_fields=(
+                            ("Vendor Invoice Date", "vendor_invoice_date"),
+                            ("Vendor Invoice Number", "vendor_invoice_number"),
+                        ),
+                    ):
+                        return AutomationRunResult(False, "Phase 10 failed: invoice OCR data not ready.")
                     if not await fill_claim_assessment_details(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
                         return AutomationRunResult(False, "Phase 10 failed.")
 
@@ -599,6 +778,15 @@ class AutomationEngine:
 
                 self.step_cb(4, steps[4])
                 self.log.phase_banner(5, total_steps, "Fill Claim Assessment")
+                await self._wait_for_deferred_ocr(
+                    claim,
+                    kind="invoice",
+                    label="Workshop Invoice",
+                    required_fields=(
+                        ("Workshop Invoice No", "workshop_invoice_no"),
+                        ("Workshop Invoice Date", "workshop_invoice_date"),
+                    ),
+                )
                 await page.evaluate("window.scrollTo(0, 0)")
                 await fill_claim_assessment(page, claim, log_cb=self.log, settings=settings)
                 if self._check_stop():

@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 from dataclasses import dataclass
@@ -5,6 +6,8 @@ from pathlib import Path
 from typing import List, Optional
 
 from app.utils import load_settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -484,9 +487,8 @@ class ClaimFolderService:
         paddle_ok = False
         if pil_images:
             try:
-                from app.portals.newindia.automation.ocr_helper import _get_doc_ocr
+                from app.automation.ocr_engine import run_shared_ocr
                 import tempfile
-                ocr_engine = _get_doc_ocr()
 
                 for img_idx, pil_img in enumerate(pil_images):
                     if stop_cb and stop_cb():
@@ -495,9 +497,10 @@ class ClaimFolderService:
 
                     # PaddleOCR needs a file path — save temp PNG
                     tmp_fd, tmp_path = tempfile.mkstemp(suffix=".png")
+                    os.close(tmp_fd)
                     try:
                         pil_img.save(tmp_path)
-                        result = ocr_engine.ocr(tmp_path, cls=True)
+                        result = run_shared_ocr(tmp_path, cls=True)
                         if result and result[0]:
                             page_text = " ".join(
                                 line[1][0] for line in result[0]
@@ -505,10 +508,6 @@ class ClaimFolderService:
                             )
                             all_text += page_text + "\n"
                     finally:
-                        try:
-                            os.close(tmp_fd)
-                        except OSError:
-                            pass
                         try:
                             os.unlink(tmp_path)
                         except OSError:

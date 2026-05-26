@@ -74,8 +74,12 @@ async def _fill_neft_details_inner(page: Page, data: ClaimData, log, stop_cb, fi
     acc_type = data.account_type or defaults.get("account_type", "")
 
     if cheque_path:
+        deferred_cheque_done = bool(
+            getattr(data, "_deferred_cheque_ocr_event", None)
+            and data._deferred_cheque_ocr_event.is_set()
+        )
         # Run OCR only if fields are missing in data (e.g. if extraction failed or excel was empty)
-        if not ifsc or not acc_no:
+        if (not ifsc or not acc_no) and not deferred_cheque_done:
             if isinstance(log, AutomationLogger):
                 log.success("Cheque document detected. Running OCR for missing bank details...")
                 import os
@@ -112,6 +116,11 @@ async def _fill_neft_details_inner(page: Page, data: ClaimData, log, stop_cb, fi
                     log(f"   ⚠️ IFSC not found in cheque. Falling back to Excel.")
                 if not cheque_details.get("account_number"):
                     log(f"   ⚠️ Account Number not found in cheque. Falling back to Excel.")
+        elif not ifsc or not acc_no:
+            if isinstance(log, AutomationLogger):
+                log.warning("Deferred cheque OCR already ran; using available Excel/manual fallback values.")
+            else:
+                log("   ⚠️ Deferred cheque OCR already ran. Using available fallback values.")
         else:
             if isinstance(log, AutomationLogger):
                 log.success("Cheque document detected. Using pre-extracted and reviewed bank details.")

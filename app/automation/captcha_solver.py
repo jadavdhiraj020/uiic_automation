@@ -14,13 +14,11 @@ import logging
 import tempfile
 import traceback
 from typing import Optional
-import sys
-import threading
 
 logger = logging.getLogger(__name__)
 
 # ── PaddleOCR shared engine singleton ────────────────────────────────────────
-from app.automation.ocr_engine import get_shared_ocr as _get_ocr
+from app.automation.ocr_engine import run_shared_ocr
 
 
 def _extract_text(img_bytes: bytes) -> str:
@@ -33,9 +31,7 @@ def _extract_text(img_bytes: bytes) -> str:
         with os.fdopen(tmp_fd, "wb") as f:
             f.write(img_bytes)
 
-        ocr_engine = _get_ocr()
-        with _ocr_lock:
-            result = ocr_engine.ocr(tmp_path, cls=False)
+        result = run_shared_ocr(tmp_path, cls=False)
 
         if not result or result[0] is None:
             logger.warning("PaddleOCR returned no result")

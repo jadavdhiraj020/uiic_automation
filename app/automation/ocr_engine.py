@@ -4,12 +4,11 @@ Shared singleton engine for PaddleOCR, used for both CAPTCHA solving and documen
 Loads models in a thread-safe manner, supports eager background warmup.
 """
 
+import logging
 import os
 import sys
-import logging
 import threading
 import time
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +16,7 @@ logger = logging.getLogger(__name__)
 _ocr = None
 _init_error = None
 _ocr_lock = threading.Lock()
+_ocr_run_lock = threading.Lock()
 
 
 def get_shared_ocr():
@@ -102,6 +102,24 @@ def get_shared_ocr():
                 raise
 
     return _ocr
+
+
+def run_shared_ocr(image_path: str, *, cls: bool = False):
+    """
+    Run OCR through the shared PaddleOCR instance.
+
+    PaddleOCR is not treated as re-entrant here: all CAPTCHA, cheque, and
+    invoice OCR calls share one execution lock so local runs and frozen EXE
+    runs behave consistently even when background OCR is active.
+    """
+    ocr_engine = get_shared_ocr()
+    with _ocr_run_lock:
+        return ocr_engine.ocr(image_path, cls=cls)
+
+
+def get_ocr_init_error() -> str | None:
+    """Return the cached OCR initialization error, if initialization failed."""
+    return _init_error
 
 
 def ensure_ocr_ready():

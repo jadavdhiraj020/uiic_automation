@@ -285,12 +285,13 @@ async def do_login(
             continue
 
         if not captcha_text or len(captcha_text) < 3:
-            from app.automation.captcha_solver import _init_error
-            if _init_error:
+            from app.automation.ocr_engine import get_ocr_init_error
+            init_error = get_ocr_init_error()
+            if init_error:
                 if isinstance(log, AutomationLogger):
-                    log.error(f"OCR ENGINE FAILED: {_init_error}")
+                    log.error(f"OCR ENGINE FAILED: {init_error}")
                 else:
-                    log(f"⚠️ OCR ENGINE FAILED: {_init_error}")
+                    log(f"⚠️ OCR ENGINE FAILED: {init_error}")
             else:
                 if isinstance(log, AutomationLogger):
                     log.warning("CAPTCHA unreadable. Refreshing...")
