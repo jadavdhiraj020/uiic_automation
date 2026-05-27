@@ -527,13 +527,25 @@ class AutomationEngine:
                 """Closes automation if the user manually closes the tab mid-run."""
                 while not self._stop_requested:
                     try:
-                        alive = [p for p in context.pages if not p.is_closed()]
+                        alive = [pg for pg in context.pages if not pg.is_closed()]
                         if not alive:
                             now = time.time()
                             if health_state["empty_pages_since"] is None:
                                 health_state["empty_pages_since"] = now
+                                # Log the start of the empty-page window so
+                                # operators can see if the circuit breaker is
+                                # close to firing (helps diagnose false positives
+                                # on slow machines during UIIC tab transitions).
+                                self.log.warning(
+                                    "Circuit breaker: no open pages detected — "
+                                    "waiting for portal tab to appear..."
+                                )
 
-                            grace_seconds = 2.0 if health_state["authenticated_page_ready"] else 10.0
+                            # Post-auth grace is 8 s (not 2 s) so UIIC's
+                            # login→Surveyor.html tab transition doesn't
+                            # trigger a false abort on slow machines.
+                            # Pre-auth grace stays at 10 s.
+                            grace_seconds = 8.0 if health_state["authenticated_page_ready"] else 10.0
                             if now - health_state["empty_pages_since"] >= grace_seconds:
                                 self.log.error("CIRCUIT BREAKER: All pages were closed. Aborting run.")
                                 self.request_stop()
@@ -843,4 +855,12 @@ class AutomationEngine:
                     health_task.cancel()
                     with suppress(asyncio.CancelledError):
                         await health_task
+                # IMPORTANT: browser.close() MUST be called here explicitly.
+                # We use `async with async_playwright() as p:` which only stops
+                # the Playwright server — it does NOT auto-close the browser.
+                # The browser is launched manually via `browser_type.launch()`,
+                # so we are solely responsible for closing it in all exit paths.
+                # Do NOT switch to `async with browser:` here; that pattern
+                # conflicts with the circuit-breaker monitor task and causes
+                # RuntimeWarnings on graceful stop paths.
                 await browser.close()

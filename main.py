@@ -75,6 +75,11 @@ def main() -> None:
     # Pre-warm PaddleOCR in background so it's fully loaded by the time OCR is needed
     from app.automation.ocr_engine import warmup_ocr_background
     warmup_ocr_background()
+    # NOTE: warmup_ocr_background() spawns a daemon thread. If PaddleOCR init
+    # fails, the error is logged at WARNING level in startup.log by
+    # ensure_ocr_ready() (see ocr_engine.py). The UI will surface the error
+    # message when OCR is first required (captcha, cheque, or invoice OCR).
+    # Check startup.log if captcha solving silently fails at runtime.
 
     window.showMaximized()
     sys.exit(app.exec())
