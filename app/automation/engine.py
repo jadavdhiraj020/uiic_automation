@@ -492,7 +492,7 @@ class AutomationEngine:
                 "Claim Assessment", "Document Upload", "Survey Fee Bill"
             ]
         elif self.portal_id == "oic":
-            steps = ["Login", "Navigate", "Claim Search", "Basic Details"]
+            steps = ["Login", "Navigate", "Claim Search", "Basic Details", "Interim Report", "Assessment of Loss", "Document Upload"]
         else:
             steps = ["Login", "Navigate", "Interim Report", "Claim Documents", "Claim Assessment"]
 
@@ -749,6 +749,37 @@ class AutomationEngine:
                     if not await fill_basic_details(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
                         return AutomationRunResult(False, "Phase 4 (Basic Details) failed.")
 
+                    # Phase 5: Interim Report
+                    self.step_cb(4, steps[4])
+                    self.log.phase_banner(5, total_steps, "Interim Report")
+                    from app.portals.oic.automation.interim_report_module import fill_interim_report
+                    if not await fill_interim_report(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
+                        return AutomationRunResult(False, "Phase 5 (Interim Report) failed.")
+
+                    # Phase 6: Assessment of Loss
+                    self.step_cb(5, steps[5])
+                    self.log.phase_banner(6, total_steps, "Assessment of Loss")
+                    if not await self._wait_for_deferred_ocr(
+                        claim,
+                        kind="invoice",
+                        label="Workshop Invoice",
+                        required_fields=(
+                            ("Workshop Invoice No", "workshop_invoice_no"),
+                            ("Workshop Invoice Date", "workshop_invoice_date"),
+                        ),
+                    ):
+                        return AutomationRunResult(False, "Phase 6 failed: invoice OCR timed out or stopped.")
+                    from app.portals.oic.automation.assessment_of_loss_module import fill_assessment_of_loss
+                    if not await fill_assessment_of_loss(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
+                        return AutomationRunResult(False, "Phase 6 (Assessment of Loss) failed.")
+
+                    # Phase 7: Document Upload
+                    self.step_cb(6, steps[6])
+                    self.log.phase_banner(7, total_steps, "Document Upload")
+                    from app.portals.oic.automation.document_upload_module import fill_document_upload_section
+                    if not await fill_document_upload_section(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
+                        return AutomationRunResult(False, "Phase 7 (Document Upload) failed.")
+
                     t_total = time.time() - t_start
                     self.log.section_done("Total Oriental Insurance Workflow", show_duration=True)
                     await self._wait_for_manual_review(browser)
@@ -778,7 +809,7 @@ class AutomationEngine:
 
                 self.step_cb(4, steps[4])
                 self.log.phase_banner(5, total_steps, "Fill Claim Assessment")
-                await self._wait_for_deferred_ocr(
+                if not await self._wait_for_deferred_ocr(
                     claim,
                     kind="invoice",
                     label="Workshop Invoice",
@@ -786,7 +817,8 @@ class AutomationEngine:
                         ("Workshop Invoice No", "workshop_invoice_no"),
                         ("Workshop Invoice Date", "workshop_invoice_date"),
                     ),
-                )
+                ):
+                    return AutomationRunResult(False, "Phase 5 failed: invoice OCR timed out or stopped.")
                 await page.evaluate("window.scrollTo(0, 0)")
                 await fill_claim_assessment(page, claim, log_cb=self.log, settings=settings)
                 if self._check_stop():

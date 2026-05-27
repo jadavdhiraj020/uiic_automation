@@ -135,3 +135,113 @@ SEL_WORKSHOP_GST = "#gstNumber"
 # --- BASIC DETAILS: NEXT BUTTON ---
 SEL_BASIC_DETAILS_NEXT = "button:has-text('Next'), button[aria-label='Next']"
 
+
+# ============================================================================
+# INTERIM REPORT (STEP 3) SELECTORS
+# ============================================================================
+
+# --- INTERIM REPORT: SURVEY DETAILS ---
+SEL_VEHICLE_INSPECTED_YES = "#whetherVehicleInspected1"
+SEL_VEHICLE_INSPECTED_NO = "#whetherVehicleInspected2"
+SEL_SURVEY_COMPLETED_YES = "#isSurveyCompleted1"
+SEL_SURVEY_COMPLETED_NO = "#isSurveyCompleted2"
+SEL_TYPE_OF_SETTLEMENT = "#typeOfSettlement"          # Read-only / p-disabled
+SEL_PLACE_OF_SURVEY = "#placeOfSurvey"
+# NOTE: Date of Survey & Surveyor Appointed Date use MUI DatePickers with
+# dynamic IDs (e.g. :r0:, :r4:). Selectors are resolved at runtime via
+# label text in fill_mui_datepicker(). No static constants needed.
+
+# --- INTERIM REPORT: DOCUMENTATION VERIFICATION ---
+SEL_DL_APPLICABLE_YES = "#isDrivingLicenseApplicable1"
+SEL_DL_APPLICABLE_NO = "#isDrivingLicenseApplicable2"
+SEL_DOCS_VERIFIED_YES = "#isDrivingLicenseVerified1"
+SEL_DOCS_VERIFIED_NO = "#isDrivingLicenseVerified2"
+SEL_DOCS_VERIFIED_REMARKS = "#isDrivingLicenseVerifiedRemarks"
+SEL_SPOT_SURVEY_YES = "#spotSurveyDone1"
+SEL_SPOT_SURVEY_NO = "#spotSurveyDone2"
+SEL_SPOT_SURVEY_REMARKS = "#spotSurveyDoneRemarks"
+
+# --- INTERIM REPORT: CLAIM ASSESSMENT & CONTACT ---
+SEL_INITIAL_LOSS_AMOUNT = "input[name='initialLossAssessmentAmount']"
+SEL_MOBILE_CLAIMANT = "#mobileNumberClaimant"
+SEL_EMAIL_CLAIMANT = "#claimantEmail"
+SEL_SURVEYOR_OBSERVATION = "#surveyorObservation"
+SEL_CAUSE_NATURE_ACCIDENT = "#causeNatureOfAccident"
+SEL_PARTICULARS_LOSS = "#particularsOfLossDamage"
+# NOTE: Submission Date of Final Document uses MUI DatePicker (dynamic ID).
+
+# --- INTERIM REPORT: NAVIGATION ---
+SEL_INTERIM_NEXT = "button.next-btn[aria-label='Next'], button:has-text('Next')"
+
+
+# ============================================================================
+# ASSESSMENT OF LOSS (STEP 4) SELECTORS
+# ============================================================================
+
+# --- INVOICE SECTION ---
+SEL_LOSS_INV_NO = "input#invoiceNumber"
+SEL_LOSS_INV_DATE_LABEL = "Invoice Date"
+SEL_LOSS_GST_TYPE_DROPDOWN = "#gstType"
+SEL_LOSS_INV_AMT_NO_GST = "#invoiceAmount"
+SEL_LOSS_INV_GST_AMT = "#invoiceGstAmount"
+SEL_LOSS_ADD_INV_BTN = "button[aria-label='Add Invoice +']"
+
+# --- EXCESS SECTION ---
+SEL_LOSS_EXCESS_DROPDOWN = "#excess"
+SEL_LOSS_ADD_EXCESS_BTN = "button[aria-label='Add Excess +']"
+SEL_LOSS_EXCESS_AMT_INPUT = "#amount"
+
+# --- SALVAGE CHARGES SECTION ---
+SEL_LOSS_SALVAGE_AMT_INPUT = "#salvageAmount"
+
+# --- SURVEY CHARGES SECTION ---
+SEL_LOSS_SURVEY_GST_YES = "#isSurveyorGstApplicable1"
+SEL_LOSS_SURVEY_GST_NO = "#isSurveyorGstApplicable2"
+SEL_LOSS_SURVEY_LICENSE_NO = "#licenseNumber"
+SEL_LOSS_SURVEY_LICENSE_EXP_LABEL = "License Expiry Date"
+SEL_LOSS_SURVEY_OICL_GST_NO = "#oiclGstNo"
+SEL_LOSS_EXPENSES_DROPDOWN = "#expenses"
+SEL_LOSS_ADD_EXPENSES_BTN = "button[aria-label='Add Expenses +']"
+
+# --- DYNAMIC EXPENSE ACCORDION BLOCKS ---
+SEL_EXPENSE_ACCORDION_TABS = ".p-accordion-tab"
+SEL_EXPENSE_DESC_INPUT = "input#description"
+SEL_EXPENSE_AMT_INPUT = "input[name='amount']"
+
+# --- RECOMMENDATION & DECLARATION ---
+SEL_LOSS_FINAL_REC = "textarea#finalRecommendation"
+SEL_LOSS_DECLARATION = "input#declaration1, input[name='surveyorDeclaration']"
+
+# --- NAVIGATION ---
+SEL_LOSS_SAVE_AND_NEXT_BTN = "button[aria-label='Save and Next']"
+
+
+# ============================================================================
+# DOCUMENT UPLOAD (STEP 5) SELECTORS
+# ============================================================================
+
+# --- FILE INPUT SELECTORS ---
+# Sections 1-4 use sequential numeric IDs (fileInput0..fileInput3)
+SEL_UPLOAD_WORKSHOP_ESTIMATE = "#fileInput0"
+SEL_UPLOAD_DISCHARGE_VOUCHER = "#fileInput1"
+SEL_UPLOAD_INVOICE = "#fileInput2"
+SEL_UPLOAD_REINSPECTION = "#fileInput3"
+
+# Section 5: Driving License — TWO file inputs share id="fileInput" (duplicate).
+# We differentiate via sibling <span> placeholder text using XPath.
+SEL_UPLOAD_DL_FRONT = "xpath=//span[contains(text(),'Upload Front Side')]/preceding-sibling::input[@type='file']"
+SEL_UPLOAD_DL_BACK = "xpath=//span[contains(text(),'Upload Back Side')]/preceding-sibling::input[@type='file']"
+
+# Section 6 & 7 have unique IDs
+SEL_UPLOAD_PHOTOGRAPHS = "#photographs"
+SEL_UPLOAD_OTHER_DOCS = "#otherDocument"
+
+# --- TEXT FIELDS ---
+SEL_UPLOAD_DL_NUMBER = "#identificationNumber"   # Disabled, pre-filled by portal
+SEL_UPLOAD_REMARKS = "textarea#remarks"
+
+# --- NAVIGATION & ACTION BUTTONS ---
+SEL_UPLOAD_BACK_BTN = "button[aria-label='Back']"
+SEL_UPLOAD_PREVIEW_BTN = "button[aria-label='Preview']"
+SEL_UPLOAD_SUBMIT_BTN = "button[aria-label='Submit']"
+

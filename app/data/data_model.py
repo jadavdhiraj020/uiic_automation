@@ -32,7 +32,7 @@ def _parse_amount_for_total(value) -> int:
     normalized = str(value).replace(",", "")
     matches = re.findall(r"-?\d+(?:\.\d+)?", normalized)
     if not matches:
-        return 0
+        raise ValueError(f"No numeric value found in: {value!r}")
 
     try:
         return int(Decimal(matches[-1]))
@@ -173,6 +173,15 @@ class ClaimData:
     photo_charges: str = "0"
     sfb_others: str = "0"               # NIA Survey Fee Bill "Others" amount
     total_claimed_amount: str = "0"
+
+    # ── OIC Assessment of Loss ───────────────────────────────────────────────
+    invoice_amount_without_gst: str = "0"
+    invoice_gst_amount: str = "0"
+    salvage_amount: str = "0"
+    surveyor_license_number: str = ""
+    surveyor_license_expiry_date: str = ""
+    oicl_gst_number: str = ""
+    surveyor_other_expenses: str = "0"
 
     # ── File Paths (from folder_scanner) ─────────────────────────────────────
     claim_doc_files: Dict[str, str] = field(default_factory=dict)
@@ -556,6 +565,33 @@ class ClaimData:
             warnings.append("Workshop Invoice Date not found in PDF")
         if not self.claim_doc_files:
             warnings.append("No claim documents found in folder")
+
+        # Assessment of Loss validations
+        try:
+            inv_amt = _parse_amount_for_total(self.invoice_amount_without_gst)
+            if not self.invoice_amount_without_gst or str(self.invoice_amount_without_gst).strip() == "":
+                errors.append("Invoice Amount Without GST is missing")
+        except ValueError:
+            errors.append(f"Invoice Amount Without GST '{self.invoice_amount_without_gst}' is not a valid numeric amount")
+            inv_amt = None
+
+        try:
+            inv_gst = _parse_amount_for_total(self.invoice_gst_amount)
+            if not self.invoice_gst_amount or str(self.invoice_gst_amount).strip() == "":
+                errors.append("Invoice GST Amount is missing")
+        except ValueError:
+            errors.append(f"Invoice GST Amount '{self.invoice_gst_amount}' is not a valid numeric amount")
+            inv_gst = None
+
+        if inv_amt is not None and inv_gst is not None:
+            if inv_amt < inv_gst:
+                errors.append(f"Invoice Amount Without GST (₹{inv_amt}) cannot be less than Invoice GST Amount (₹{inv_gst})")
+
+        if not self.surveyor_license_number or str(self.surveyor_license_number).strip() == "":
+            errors.append("Surveyor License Number is missing")
+        if not self.surveyor_license_expiry_date or str(self.surveyor_license_expiry_date).strip() == "":
+            errors.append("Surveyor License Expiry Date is missing")
+
         return errors, warnings
 
 
@@ -810,6 +846,17 @@ class ClaimData:
             # Invoice Details
             ("Workshop Inv No",       self.workshop_invoice_no,   False, _src("workshop_invoice_no") or _src("vendor_invoice_number")),
             ("Workshop Inv Date",     self.workshop_invoice_date, False, _src("workshop_invoice_date") or _src("vendor_invoice_date")),
+
+            # Assessment of Loss Details
+            ("Inv Amt Without GST (₹)", self.invoice_amount_without_gst, True, _src("invoice_amount_without_gst")),
+            ("Invoice GST Amt (₹)",   self.invoice_gst_amount,    True,  _src("invoice_gst_amount")),
+            ("Voluntary Excess (₹)",  self.voluntary_excess,      False, _src("voluntary_excess")),
+            ("Imposed Excess (₹)",    self.imposed_excess,        False, _src("imposed_excess")),
+            ("Salvage Amount (₹)",     self.salvage_amount,        False, _src("salvage_amount")),
+            ("Surveyor License No",   self.surveyor_license_number, True, _src("surveyor_license_number")),
+            ("License Expiry Date",   self.surveyor_license_expiry_date, True, _src("surveyor_license_expiry_date")),
+            ("OICL GST Number",        self.oicl_gst_number,       False, _src("oicl_gst_number")),
+            ("Surveyor Other Exp (₹)", self.surveyor_other_expenses, False, _src("surveyor_other_expenses")),
         ]
 
 

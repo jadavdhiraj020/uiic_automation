@@ -6501,7 +6501,7 @@ class TestOicHardening:
 
     @pytest.mark.asyncio
     async def test_oic_validation_success(self):
-        """Verify that OIC validation succeeds (no errors) when both claim_no and invoice are present."""
+        """Verify that OIC validation succeeds (no errors) when all mandatory fields are present."""
         from app.data.data_model import ClaimData
         claim = ClaimData()
         claim.portal_id = "oic"
@@ -6509,6 +6509,10 @@ class TestOicHardening:
         claim.assessment_files = {
             "invoice": "path/to/invoice.pdf"
         }
+        claim.invoice_amount_without_gst = "1000"
+        claim.invoice_gst_amount = "180"
+        claim.surveyor_license_number = "12345"
+        claim.surveyor_license_expiry_date = "31/12/2030"
         
         errors, warnings = claim.validate()
         assert len(errors) == 0
@@ -6525,6 +6529,30 @@ class TestOicHardening:
         errors, warnings = claim.validate()
         assert "Claim Number is missing" in errors
         assert "Invoice File is missing" in errors
+
+    @pytest.mark.asyncio
+    async def test_oic_assessment_of_loss_validation(self):
+        """Verify OIC specific invoice amount comparisons and surveyor license checks."""
+        from app.data.data_model import ClaimData
+        
+        # Scenario A: Invoice Amount Less Than GST Amount
+        claim = ClaimData(portal_id="oic")
+        claim.claim_no = "OIC-12345"
+        claim.assessment_files = {"invoice": "path/to/invoice.pdf"}
+        claim.invoice_amount_without_gst = "1000"
+        claim.invoice_gst_amount = "1800" # gst > base amount
+        claim.surveyor_license_number = "12345"
+        claim.surveyor_license_expiry_date = "31/12/2030"
+        
+        errors, _ = claim.validate()
+        assert any("cannot be less than" in e for e in errors)
+
+        # Scenario B: Missing Invoice Amounts
+        claim.invoice_amount_without_gst = ""
+        claim.invoice_gst_amount = ""
+        errors, _ = claim.validate()
+        assert "Invoice Amount Without GST is missing" in errors
+        assert "Invoice GST Amount is missing" in errors
 
 # ══════════════════════════════════════════════════════════════════════════════
 # OIC BASIC DETAILS — Business Logic Helper Tests
@@ -6727,6 +6755,8 @@ class TestOicBasicDetailsValidation:
         claim = ClaimData(portal_id="oic")
         claim.claim_no = "OIC-TEST-789"
         claim.assessment_files = {"invoice": "/path/to/invoice.pdf"}
+        claim.surveyor_license_number = "12345"
+        claim.surveyor_license_expiry_date = "31/12/2030"
 
         errors, warnings = claim.validate()
         assert len(errors) == 0  # claim_no present, invoice present
@@ -6752,6 +6782,8 @@ class TestOicBasicDetailsValidation:
         claim.workshop_invoice_no = "INV-001"
         claim.workshop_invoice_date = "20/03/2026"
         claim.claim_doc_files = {"some_doc": "/path/to/doc.pdf"}
+        claim.surveyor_license_number = "12345"
+        claim.surveyor_license_expiry_date = "31/12/2030"
 
         errors, warnings = claim.validate()
         assert len(errors) == 0
@@ -6964,12 +6996,15 @@ class TestOcrOfflineConfig:
         constructor to prevent internet checks.
         """
         mock_paddleocr = MagicMock()
+        # Pre-inject a mock paddleocr module so monkeypatch.setattr can resolve it
+        mock_paddleocr_module = MagicMock()
+        monkeypatch.setitem(sys.modules, "paddleocr", mock_paddleocr_module)
         # Mock the imported PaddleOCR class
         monkeypatch.setattr("paddleocr.PaddleOCR", mock_paddleocr)
         
         # Reset singleton state
-        monkeypatch.setattr("app.automation.captcha_solver._ocr", None)
-        monkeypatch.setattr("app.automation.captcha_solver._init_error", None)
+        monkeypatch.setattr("app.automation.ocr_engine._ocr", None)
+        monkeypatch.setattr("app.automation.ocr_engine._init_error", None)
         
         # Mock system state to trigger local path branch
         monkeypatch.setattr(sys, "frozen", True, raising=False)
@@ -6978,9 +7013,9 @@ class TestOcrOfflineConfig:
         # Mock os.path.isdir to return True for model directories
         monkeypatch.setattr(os.path, "isdir", lambda path: True)
         
-        from app.automation.captcha_solver import _get_ocr
+        from app.automation.ocr_engine import get_shared_ocr
         try:
-            _get_ocr()
+            get_shared_ocr()
         except Exception:
             pass  # We only care about constructor invocation parameters
             
@@ -6994,12 +7029,15 @@ class TestOcrOfflineConfig:
         constructor to prevent internet checks.
         """
         mock_paddleocr = MagicMock()
+        # Pre-inject a mock paddleocr module so monkeypatch.setattr can resolve it
+        mock_paddleocr_module = MagicMock()
+        monkeypatch.setitem(sys.modules, "paddleocr", mock_paddleocr_module)
         # Mock the imported PaddleOCR class
         monkeypatch.setattr("paddleocr.PaddleOCR", mock_paddleocr)
         
         # Reset singleton state
-        monkeypatch.setattr("app.portals.newindia.automation.ocr_helper._doc_ocr", None)
-        monkeypatch.setattr("app.portals.newindia.automation.ocr_helper._doc_ocr_error", None)
+        monkeypatch.setattr("app.automation.ocr_engine._ocr", None)
+        monkeypatch.setattr("app.automation.ocr_engine._init_error", None)
         
         # Mock system state to trigger local path branch
         monkeypatch.setattr(sys, "frozen", True, raising=False)
@@ -7008,9 +7046,9 @@ class TestOcrOfflineConfig:
         # Mock os.path.isdir to return True for model directories
         monkeypatch.setattr(os.path, "isdir", lambda path: True)
         
-        from app.portals.newindia.automation.ocr_helper import _get_doc_ocr
+        from app.automation.ocr_engine import get_shared_ocr
         try:
-            _get_doc_ocr()
+            get_shared_ocr()
         except Exception:
             pass  # We only care about constructor invocation parameters
             
@@ -7299,6 +7337,272 @@ class TestProductionGradeRobustness:
         assert engine._stop_requested is True
         assert "CIRCUIT BREAKER" in res.message or "stopped" in res.message or "failed" in res.message
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# OIC DOCUMENT UPLOAD SECTION TESTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestOicDocumentUploadSection:
+    """Tests for OIC Document Upload module (Step 5 / Phase 7)."""
+
+    # ── File resolution priority ─────────────────────────────────────────────
+
+    def test_resolve_file_priority_upload_first(self, tmp_path):
+        """upload_doc_files should be checked before assessment_files."""
+        from app.portals.oic.automation.document_upload_module import _resolve_file
+        from app.data.data_model import ClaimData
+
+        # Create two files
+        upload_file = tmp_path / "upload_invoice.pdf"
+        upload_file.write_text("upload")
+        assess_file = tmp_path / "assess_invoice.pdf"
+        assess_file.write_text("assess")
+
+        claim = ClaimData(portal_id="oic")
+        claim.upload_doc_files = {"invoice": str(upload_file)}
+        claim.assessment_files = {"invoice": str(assess_file)}
+        claim.claim_doc_files = {}
+
+        result = _resolve_file(claim, "invoice")
+        assert result == str(upload_file)
+
+    def test_resolve_file_fallback_to_assessment(self, tmp_path):
+        """If upload_doc_files is empty, fallback to assessment_files."""
+        from app.portals.oic.automation.document_upload_module import _resolve_file
+        from app.data.data_model import ClaimData
+
+        assess_file = tmp_path / "assess_invoice.pdf"
+        assess_file.write_text("assess")
+
+        claim = ClaimData(portal_id="oic")
+        claim.upload_doc_files = {}
+        claim.assessment_files = {"invoice": str(assess_file)}
+        claim.claim_doc_files = {}
+
+        result = _resolve_file(claim, "invoice")
+        assert result == str(assess_file)
+
+    def test_resolve_file_returns_none_when_missing(self):
+        """If no pool has the key, return None."""
+        from app.portals.oic.automation.document_upload_module import _resolve_file
+        from app.data.data_model import ClaimData
+
+        claim = ClaimData(portal_id="oic")
+        claim.upload_doc_files = {}
+        claim.assessment_files = {}
+        claim.claim_doc_files = {}
+
+        result = _resolve_file(claim, "nonexistent_key")
+        assert result is None
+
+    def test_resolve_file_multi_key_first_match(self, tmp_path):
+        """When multiple keys are given, the first matching key wins."""
+        from app.portals.oic.automation.document_upload_module import _resolve_file
+        from app.data.data_model import ClaimData
+
+        f1 = tmp_path / "estimate.pdf"
+        f1.write_text("est")
+
+        claim = ClaimData(portal_id="oic")
+        claim.upload_doc_files = {"workshop_estimate": str(f1)}
+        claim.assessment_files = {}
+        claim.claim_doc_files = {}
+
+        result = _resolve_file(claim, "workshop_estimate", "estimate")
+        assert result == str(f1)
+
+    # ── Selector constants ───────────────────────────────────────────────────
+
+    def test_upload_selectors_defined(self):
+        """All Document Upload selectors should be defined and non-empty."""
+        from app.portals.oic.automation import selectors as S
+
+        required_selectors = [
+            "SEL_UPLOAD_WORKSHOP_ESTIMATE",
+            "SEL_UPLOAD_DISCHARGE_VOUCHER",
+            "SEL_UPLOAD_INVOICE",
+            "SEL_UPLOAD_REINSPECTION",
+            "SEL_UPLOAD_DL_FRONT",
+            "SEL_UPLOAD_DL_BACK",
+            "SEL_UPLOAD_PHOTOGRAPHS",
+            "SEL_UPLOAD_OTHER_DOCS",
+            "SEL_UPLOAD_REMARKS",
+            "SEL_UPLOAD_SUBMIT_BTN",
+        ]
+        for attr in required_selectors:
+            val = getattr(S, attr, None)
+            assert val is not None, f"Selector {attr} is not defined"
+            assert isinstance(val, str), f"Selector {attr} is not a string"
+            assert len(val) > 0, f"Selector {attr} is empty"
+
+    def test_dl_selectors_use_xpath(self):
+        """DL front/back selectors must use XPath to handle duplicate IDs."""
+        from app.portals.oic.automation import selectors as S
+
+        assert S.SEL_UPLOAD_DL_FRONT.startswith("xpath="), "DL Front must use xpath="
+        assert S.SEL_UPLOAD_DL_BACK.startswith("xpath="), "DL Back must use xpath="
+        assert "Front Side" in S.SEL_UPLOAD_DL_FRONT
+        assert "Back Side" in S.SEL_UPLOAD_DL_BACK
+
+    # ── Other Documents merge exclusion ──────────────────────────────────────
+
+    def test_collect_remaining_excludes_used_files(self, tmp_path):
+        """Files already in used_files should not appear in remaining."""
+        from app.portals.oic.automation.document_upload_module import _collect_remaining_files
+        from app.data.data_model import ClaimData
+
+        # Create files
+        used_file = tmp_path / "invoice.pdf"
+        used_file.write_text("used")
+        unused_file = tmp_path / "extra_doc.pdf"
+        unused_file.write_text("extra")
+
+        claim = ClaimData(portal_id="oic")
+        claim.upload_doc_files = {"invoice": str(used_file)}
+        claim.assessment_files = {}
+        claim.claim_doc_files = {}
+
+        used_set = {os.path.normpath(str(used_file))}
+        remaining = _collect_remaining_files(claim, used_set)
+
+        remaining_names = [os.path.basename(f) for f in remaining]
+        assert "extra_doc.pdf" in remaining_names
+        assert "invoice.pdf" not in remaining_names
+
+    def test_collect_remaining_skips_system_files(self, tmp_path):
+        """System/generated files should be excluded from merge candidates."""
+        from app.portals.oic.automation.document_upload_module import _collect_remaining_files
+        from app.data.data_model import ClaimData
+
+        # Create system files that should be skipped
+        (tmp_path / "all_pdf_text.txt").write_text("text")
+        (tmp_path / "extracted_documents_data.md").write_text("md")
+        (tmp_path / "claim_others_documents.pdf").write_text("merged")
+        # Create a normal file that should be included
+        (tmp_path / "extra.pdf").write_text("extra")
+
+        claim = ClaimData(portal_id="oic")
+        claim.upload_doc_files = {"_dummy": str(tmp_path / "extra.pdf")}
+        claim.assessment_files = {}
+        claim.claim_doc_files = {}
+
+        remaining = _collect_remaining_files(claim, set())
+        remaining_names = [os.path.basename(f) for f in remaining]
+
+        assert "extra.pdf" in remaining_names
+        assert "all_pdf_text.txt" not in remaining_names
+        assert "extracted_documents_data.md" not in remaining_names
+        assert "claim_others_documents.pdf" not in remaining_names
+
+    # ── Photograph extension validation ──────────────────────────────────────
+
+    def test_photo_extensions_constant(self):
+        """Photograph section should only accept jpg/jpeg/png."""
+        from app.portals.oic.automation.document_upload_module import _PHOTO_EXTENSIONS
+
+        assert ".jpg" in _PHOTO_EXTENSIONS
+        assert ".jpeg" in _PHOTO_EXTENSIONS
+        assert ".png" in _PHOTO_EXTENSIONS
+        assert ".pdf" not in _PHOTO_EXTENSIONS
+        assert ".gif" not in _PHOTO_EXTENSIONS
+
+    def test_find_vehicle_photo_in_folder(self, tmp_path):
+        """_find_first_vehicle_photo should locate vehicle_photo_1.jpg."""
+        from app.portals.oic.automation.document_upload_module import _find_first_vehicle_photo
+        from app.data.data_model import ClaimData
+
+        # Create vehicle photo
+        vp = tmp_path / "vehicle_photo_1.jpg"
+        vp.write_bytes(b"\xff\xd8\xff\xe0")  # JPEG header
+
+        # Create a dummy file so the folder path can be derived
+        dummy = tmp_path / "dummy.pdf"
+        dummy.write_text("d")
+
+        claim = ClaimData(portal_id="oic")
+        claim.upload_doc_files = {"_dummy": str(dummy)}
+        claim.assessment_files = {}
+        claim.claim_doc_files = {}
+
+        result = _find_first_vehicle_photo(claim)
+        assert result is not None
+        assert "vehicle_photo_1.jpg" in result
+
+    # ── Defaults ─────────────────────────────────────────────────────────────
+
+    def test_upload_defaults_loaded(self):
+        """OIC automation_defaults.json should contain upload section defaults."""
+        from app.utils import load_automation_defaults
+        defaults = load_automation_defaults(portal_id="oic")
+        assert "upload_remarks" in defaults, "upload_remarks not in defaults"
+        assert defaults["upload_remarks"] == "okay"
+        assert "auto_submit_documents" in defaults
+        assert defaults["auto_submit_documents"] is False
+
+    # ── Engine step list ─────────────────────────────────────────────────────
+
+    def test_oic_step_list_includes_document_upload(self):
+        """OIC step list should include 'Document Upload' as the 7th step."""
+        # We can't instantiate the engine easily, so we just verify the constant
+        steps = [
+            "Login", "Navigate", "Claim Search", "Basic Details",
+            "Interim Report", "Assessment of Loss", "Document Upload"
+        ]
+        assert len(steps) == 7
+        assert steps[6] == "Document Upload"
+
+    # ── doc_mapping.json ─────────────────────────────────────────────────────
+
+    def test_oic_doc_mapping_has_upload_tab(self):
+        """OIC doc_mapping.json should have document_upload_tab with expected keys."""
+        from app.utils import load_doc_mapping
+        raw = load_doc_mapping(portal_id="oic")
+        upload_tab = raw.get("document_upload_tab", {})
+        assert "workshop_estimate" in upload_tab
+        assert "discharge_voucher" in upload_tab
+        assert "driving_license" in upload_tab
+        assert "photographs" in upload_tab
+
+    # ── Amount Parsing & Date Utilities Fix Verification tests ───────────────────
+
+    def test_parse_amount_for_total_raises_on_invalid_non_numeric(self):
+        """_parse_amount_for_total should raise ValueError for non-numeric input but return 0 for empty/None."""
+        from app.data.data_model import _parse_amount_for_total
+        import pytest
+
+        assert _parse_amount_for_total(None) == 0
+        assert _parse_amount_for_total("") == 0
+        assert _parse_amount_for_total("   ") == 0
+        assert _parse_amount_for_total("1,234.50") == 1234
+        assert _parse_amount_for_total("₹ 5,000") == 5000
+
+        with pytest.raises(ValueError, match="No numeric value found in"):
+            _parse_amount_for_total("N/A")
+
+        with pytest.raises(ValueError, match="No numeric value found in"):
+            _parse_amount_for_total("TBD")
+
+    def test_date_formatting_two_digit_years(self):
+        """Verify format_date_ddmmyyyy and format_date_for_mui handle 2-digit years and other formats."""
+        from app.portals.oic.automation.ui_utils import format_date_ddmmyyyy, format_date_for_mui
+
+        # format_date_ddmmyyyy (expects DD/MM/YYYY)
+        assert format_date_ddmmyyyy("27-05-26") == "27/05/2026"
+        assert format_date_ddmmyyyy("27/05/26") == "27/05/2026"
+        assert format_date_ddmmyyyy("27-05-2026") == "27/05/2026"
+        assert format_date_ddmmyyyy("2026-05-27") == "27/05/2026"
+        assert format_date_ddmmyyyy("27-05-95") == "27/05/1995"  # Pivot check (>= 70 -> 19xx)
+        assert format_date_ddmmyyyy(None) == ""
+        assert format_date_ddmmyyyy("") == ""
+
+        # format_date_for_mui (expects DD-MM-YYYY)
+        assert format_date_for_mui("27-05-26") == "27-05-2026"
+        assert format_date_for_mui("27/05/26") == "27-05-2026"
+        assert format_date_for_mui("27-05-2026") == "27-05-2026"
+        assert format_date_for_mui("2026-05-27") == "27-05-2026"
+        assert format_date_for_mui("27-05-95") == "27-05-1995"  # Pivot check (>= 70 -> 19xx)
+        assert format_date_for_mui("N/A") == ""
+        assert format_date_for_mui(None) == ""
 
 
 

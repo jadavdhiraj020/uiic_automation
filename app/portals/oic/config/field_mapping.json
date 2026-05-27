@@ -447,5 +447,93 @@
     "col_offset": 1,
     "allow_text_values": true,
     "_mandatory": false
+  },
+
+  "expected_completion_date": {
+    "sheet": "ALL",
+    "search_labels": ["Submission Date", "Final Document Date", "Expected Completion Date", "Completion Date", "Date of Final Submission"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": false
+  },
+  "invoice_amount_without_gst": {
+    "sheet": "ALL",
+    "search_labels": ["invoice_amount_without_gst", "Invoice Amount Without GST", "Invoice Amount Excl GST", "net_payable_excluding_gst", "Net Invoice Amt"],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "invoice_gst_amount": {
+    "sheet": "ALL",
+    "search_labels": ["invoice_gst_amount", "Invoice GST Amount", "Invoice GST", "GST Amount"],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "voluntary_excess": {
+    "sheet": "ALL",
+    "search_labels": ["voluntary_excess", "Voluntary Excess", "voluntry excess"],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "imposed_excess": {
+    "sheet": "ALL",
+    "search_labels": ["imposed_excess", "Imposed Excess", "imposed excess"],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "salvage_amount": {
+    "sheet": "ALL",
+    "search_labels": ["salvage_amount", "Salvage Amount", "salvage amount", "LESS SALVAGE VALUE", "Less Salvage Value"],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "surveyor_license_number": {
+    "sheet": "ALL",
+    "search_labels": ["license_number", "License Number", "Surveyor License Number", "Lic No", "License No"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true
+  },
+  "surveyor_license_expiry_date": {
+    "sheet": "ALL",
+    "search_labels": ["license_expiry_date", "License Expiry Date", "Expiry Date", "Lic Expiry Date"],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "oicl_gst_number": {
+    "sheet": "ALL",
+    "search_labels": ["oicl_gst_number", "OICL GST Number", "OICL GST No", "GST No of OICL"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true
+  },
+  "traveling_expenses": {
+    "sheet": "ALL",
+    "search_labels": ["traveling_expenses", "conveyance", "CONVEYANCE CHARGE", "CONVEYANCE CHARGES", "traveling expenses"],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "professional_fee": {
+    "sheet": "ALL",
+    "search_labels": ["professional_fee", "professional fee", "SURVEY FEE", "SURVEY FEES"],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "daily_allowance": {
+    "sheet": "ALL",
+    "search_labels": ["DAILY_ALLOWANCE", "daily allowance", "DAILY allowances"],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "photo_charges": {
+    "sheet": "ALL",
+    "search_labels": ["photocharges", "PHOTOGRAPHS", "PHOTO charge", "photo charges"],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "surveyor_other_expenses": {
+    "sheet": "ALL",
+    "search_labels": ["other_expenses", "Other Expenses", "other expenses", "Others"],
+    "row_offset": 0,
+    "col_offset": 1
   }
 }

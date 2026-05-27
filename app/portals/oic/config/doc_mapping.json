@@ -9,5 +9,28 @@
       "invoice"
     ]
   },
-  "document_upload_tab": {}
+  "document_upload_tab": {
+    "workshop_estimate": [
+      "estimate",
+      "workshop_estimate",
+      "repair_estimate",
+      "workshop_repair"
+    ],
+    "discharge_voucher": [
+      "discharge",
+      "voucher",
+      "satisfaction",
+      "discharge_voucher"
+    ],
+    "driving_license": [
+      "driving_license",
+      "driving license",
+      "dl"
+    ],
+    "photographs": [
+      "vehicle_photo",
+      "photograph",
+      "photo"
+    ]
+  }
 }

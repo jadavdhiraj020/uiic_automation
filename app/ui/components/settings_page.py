@@ -168,6 +168,11 @@ class SettingsPage(QWidget):
             ],
             "oic": [
                 ("unknown_claim_type_default", "Unknown Payment Default", "Claim Search claim type fallback", "claimtype"),
+                ("gst_type", "GST Type", "Invoice Section GST dropdown fallback", "gsttype"),
+                ("survey_gst_applicable", "Survey GST Applicable", "Survey Charges GST dropdown fallback", "yesno"),
+                ("expense_description", "Expense Description", "Default description for all expense types", "text"),
+                ("final_recommendation", "Final Recommendation", "Default surveyor recommendation text", "text"),
+                ("declaration_checked", "Declaration Checked", "Auto-check declaration checkbox default", "yesno"),
             ],
         }
         return rows_by_portal.get(self._portal_id, rows_by_portal["uiic"])
@@ -272,10 +277,15 @@ class SettingsPage(QWidget):
             self.defaults_table.setItem(i, 0, label_item)
 
             raw_value = str(defaults.get(key, ""))
-            if kind in {"yesno", "claimtype"}:
+            if kind in {"yesno", "claimtype", "gsttype"}:
                 value_widget = SafeComboBox()
                 value_widget.setObjectName("embeddedCombo")
-                value_widget.addItems(["Yes", "No"] if kind == "yesno" else ["CASHLESS", "REIMBURSEMENT"])
+                if kind == "yesno":
+                    value_widget.addItems(["Yes", "No"])
+                elif kind == "gsttype":
+                    value_widget.addItems(["IGST", "CGST/SGST"])
+                else:
+                    value_widget.addItems(["CASHLESS", "REIMBURSEMENT"])
                 idx = value_widget.findText(raw_value, Qt.MatchFlag.MatchFixedString)
                 if idx >= 0:
                     value_widget.setCurrentIndex(idx)

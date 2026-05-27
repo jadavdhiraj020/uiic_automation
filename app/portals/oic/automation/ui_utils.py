@@ -215,7 +215,18 @@ def format_date_ddmmyyyy(raw_date) -> str:
     val = str(raw_date).strip()
     
     # Common formats
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d-%m-%Y %H:%M:%S", "%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y"):
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d",
+        "%d-%m-%Y %H:%M:%S",
+        "%d-%m-%Y",
+        "%d/%m/%Y",
+        "%m/%d/%Y",
+        "%d-%m-%y",
+        "%d/%m/%y",
+        "%d-%m-%y %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+    ):
         try:
             dt = datetime.strptime(val, fmt)
             return dt.strftime("%d/%m/%Y")
@@ -232,6 +243,12 @@ def format_date_ddmmyyyy(raw_date) -> str:
     if m2:
         y, mon, d = m2.groups()
         return f"{int(d):02d}/{int(mon):02d}/{y}"
+
+    m3 = re.search(r'(\d{1,2})[-/.](\d{1,2})[-/.](\d{2})(?!\d)', val)
+    if m3:
+        d, mon, y2 = m3.groups()
+        full_year = f"20{y2}" if int(y2) < 70 else f"19{y2}"
+        return f"{int(d):02d}/{int(mon):02d}/{full_year}"
         
     return val.split(" ")[0]
 
@@ -448,5 +465,188 @@ async def fill_primeng_inputnumber(
             log.field_failed(label, str(e))
         else:
             log(f"[{_ts()}]   ⚠️ [{label}] error: {e}")
+
+    await asyncio.sleep(delay_ms / 1000.0)
+
+
+# ── MUI DatePicker Helpers ───────────────────────────────────────────────────
+
+
+def format_date_for_mui(raw_date) -> str:
+    """Format any date string to DD-MM-YYYY (hyphen-separated) for MUI DatePickers.
+
+    The OIC MUI DatePicker expects DD-MM-YYYY with hyphens (see placeholder).
+    This is similar to format_date_ddmmyyyy but uses hyphens instead of slashes.
+    """
+    if not raw_date:
+        return ""
+
+    val = str(raw_date).strip()
+
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d",
+        "%d-%m-%Y %H:%M:%S",
+        "%d-%m-%Y",
+        "%d/%m/%Y",
+        "%m/%d/%Y",
+        "%d/%m/%Y %H:%M:%S",
+        "%d-%m-%y",
+        "%d/%m/%y",
+        "%d-%m-%y %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+    ):
+        try:
+            dt = datetime.strptime(val, fmt)
+            return dt.strftime("%d-%m-%Y")
+        except ValueError:
+            pass
+
+    # Regex fallbacks
+    m = re.search(r'(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})', val)
+    if m:
+        d, mon, y = m.groups()
+        return f"{int(d):02d}-{int(mon):02d}-{y}"
+
+    m2 = re.search(r'(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})', val)
+    if m2:
+        y, mon, d = m2.groups()
+        return f"{int(d):02d}-{int(mon):02d}-{y}"
+
+    m3 = re.search(r'(\d{1,2})[-/.](\d{1,2})[-/.](\d{2})(?!\d)', val)
+    if m3:
+        d, mon, y2 = m3.groups()
+        full_year = f"20{y2}" if int(y2) < 70 else f"19{y2}"
+        return f"{int(d):02d}-{int(mon):02d}-{full_year}"
+
+    # Last-resort: take the first space-separated token
+    fallback = val.split(" ")[0]
+
+    # Validate that the result actually looks like a date (DD-MM-YYYY).
+    # If not (e.g. the raw value was "N/A", "TBD", etc.) return empty string
+    # so that fill_mui_datepicker skips the field gracefully.
+    if not re.match(r'^\d{2}-\d{2}-\d{4}$', fallback):
+        return ""
+    return fallback
+
+
+async def fill_mui_datepicker(
+    page: Page, label_text: str, value: str, label: str,
+    log, delay_ms: int = 250
+) -> bool:
+    """Fill a Material UI DatePicker by locating it via its visible label text.
+
+    MUI DatePickers on the OIC portal use dynamic IDs (e.g., :r0:, :r4:)
+    that change on every render.  This helper finds the correct input by:
+      1. Locating the `.DatePicker` container whose label contains *label_text*
+      2. Finding the `MuiInputBase-input` inside that container
+      3. Triple-clicking to select all, then typing the formatted date
+      4. Pressing Escape to close any calendar popup, then Tab to blur
+
+    Args:
+        label_text: The visible label text (e.g., "Date of Survey").
+        value:      Date string — will be formatted to DD-MM-YYYY automatically.
+        label:      Human-friendly label for logging.
+
+    Returns:
+        True if the date was successfully filled, False otherwise.
+    """
+    formatted = format_date_for_mui(value)
+    if not formatted:
+        if isinstance(log, AutomationLogger):
+            log.field_failed(label, "empty date value — skipped")
+        else:
+            log(f"[{_ts()}]   ⚠️ [{label}] empty date value — skipped")
+        return False
+
+    try:
+        # 1. Locate the DatePicker container by its label text
+        container = page.locator(
+            f".DatePicker:has(label:has-text('{label_text}'))"
+        ).first
+        await container.wait_for(state="visible", timeout=8000)
+
+        # 2. Find the MUI input inside that container
+        input_el = container.locator("input.MuiInputBase-input").first
+        await input_el.wait_for(state="visible", timeout=3000)
+        await input_el.scroll_into_view_if_needed()
+
+        # 3. Triple-click to select all existing text, then type the new date
+        await input_el.click(click_count=3)
+        await asyncio.sleep(0.15)
+        await input_el.fill("")
+        await asyncio.sleep(0.1)
+
+        # Type date with human-like delay
+        for char in formatted:
+            await input_el.type(char, delay=random.randint(15, 35))
+
+        # 4. Close any calendar popup and blur
+        await page.keyboard.press("Escape")
+        await asyncio.sleep(0.1)
+        await page.keyboard.press("Tab")
+
+        if isinstance(log, AutomationLogger):
+            log.field_filled(label, formatted)
+        else:
+            log(f"[{_ts()}]   ✅ [{label}] filled → '{formatted}'")
+        return True
+
+    except Exception as e:
+        if isinstance(log, AutomationLogger):
+            log.field_failed(label, str(e))
+        else:
+            log(f"[{_ts()}]   ⚠️ [{label}] error: {e}")
+        return False
+    finally:
+        await asyncio.sleep(delay_ms / 1000.0)
+
+
+# ── PrimeNG Textarea Helper ──────────────────────────────────────────────────
+
+
+async def fill_textarea_primeng(
+    page: Page, selector: str, value: str, label: str,
+    log, delay_ms: int = 250
+) -> None:
+    """Fill a PrimeNG textarea (<textarea> element) with human-like typing.
+
+    PrimeNG textareas are plain <textarea> elements (not <input>).  This helper:
+      1. Waits for the element to be visible.
+      2. Focuses and clears existing content.
+      3. Types character-by-character with a realistic per-key delay.
+      4. Dispatches input / change / blur events so the framework registers the
+         change (same pattern as fill_input_with_delay for <input> elements).
+
+    This is the centralised replacement for any module-local _fill_textarea
+    helpers — all new code should call this function instead.
+    """
+    try:
+        locator = page.locator(selector).first
+        await locator.wait_for(state="visible", timeout=5000)
+        await locator.scroll_into_view_if_needed()
+        await locator.focus()
+        await locator.fill("")
+
+        for char in str(value):
+            await locator.type(char, delay=random.randint(15, 35))
+
+        # Dispatch change events so the Angular/PrimeNG framework registers the value
+        await locator.evaluate(
+            "el => { "
+            "el.dispatchEvent(new Event('input',  {bubbles: true})); "
+            "el.dispatchEvent(new Event('change', {bubbles: true})); "
+            "el.dispatchEvent(new Event('blur',   {bubbles: true})); }"
+        )
+
+        if isinstance(log, AutomationLogger):
+            log.field_filled(label, str(value)[:60])
+        else:
+            log(f"[{_ts()}]   \u2705 [{label}] filled \u2192 '{str(value)[:60]}'")
+    except Exception as e:
+        if isinstance(log, AutomationLogger):
+            log.field_failed(label, str(e))
+        else:
+            log(f"[{_ts()}]   \u26a0\ufe0f [{label}] error: {e}")
 
     await asyncio.sleep(delay_ms / 1000.0)

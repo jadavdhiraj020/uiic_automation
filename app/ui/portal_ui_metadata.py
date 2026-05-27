@@ -262,6 +262,9 @@ _OIC_METADATA = PortalUiMetadata(
         WorkflowPhase("navigate", "Navigate to Claim"),
         WorkflowPhase("claim_search", "Claim Search"),
         WorkflowPhase("basic_details", "Basic Details"),
+        WorkflowPhase("interim_report", "Interim Report"),
+        WorkflowPhase("assessment_of_loss", "Assessment of Loss"),
+        WorkflowPhase("document_upload", "Document Upload"),
         WorkflowPhase("complete", "Complete"),
     ],
     field_groups=[
@@ -351,6 +354,26 @@ _OIC_METADATA = PortalUiMetadata(
             [
                 "Workshop Inv No",
                 "Workshop Inv Date",
+            ],
+        ),
+        FieldGroup(
+            "interim_survey",
+            "Interim Report — Survey",
+            [
+                "Date of Survey",
+                "Place of Survey",
+                "Surveyor Appointed Date",
+            ],
+        ),
+        FieldGroup(
+            "interim_assessment",
+            "Interim Report — Assessment",
+            [
+                "Initial Loss Amount (₹)",
+                "Mobile Number",
+                "Email ID",
+                "Submission Date",
+                "Cause of Accident",
             ],
         ),
     ],
