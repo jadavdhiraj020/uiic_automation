@@ -126,12 +126,21 @@ def ensure_ocr_ready():
     """
     Forces the initialization of PaddleOCR.
     Safe to call; handles and catches errors internally without blocking app flow.
+    On failure, the error is recorded in _init_error and will be re-raised
+    on any subsequent call to get_shared_ocr() so callers always see it.
     """
     try:
         get_shared_ocr()
         return True
     except Exception as exc:
-        logger.error(f"[OCR] Eager background warming failed: {exc}")
+        logger.warning(
+            "[OCR] Background warmup failed: %s. "
+            "Captcha solving and document OCR will be unavailable. "
+            "Ensure PaddleOCR models are present under ~/.paddleocr/whl/ "
+            "(source run) or bundled under .paddleocr/whl/ (EXE build). "
+            "Check startup.log for the full traceback.",
+            exc,
+        )
         return False
 
 

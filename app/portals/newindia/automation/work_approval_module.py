@@ -18,7 +18,10 @@ def _find_final_invoice_document(data: ClaimData) -> str:
     """
     try:
         from app.utils import load_doc_mapping
-        raw = load_doc_mapping()
+        # Explicitly pass portal_id to ensure New India's doc_mapping.json is
+        # loaded, not the currently active portal's mapping (which may be "uiic"
+        # if the registry global is unset at test time or during a startup race).
+        raw = load_doc_mapping(portal_id="newindia")
         invoice_map = raw.get("claim_assessment_tab", {}).get("invoice", ["final_invoice", "invoice"])
     except Exception:
         invoice_map = ["final_invoice", "invoice"]

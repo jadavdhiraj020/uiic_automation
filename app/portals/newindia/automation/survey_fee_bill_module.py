@@ -19,7 +19,10 @@ def _find_survey_fee_bill_document(data: ClaimData) -> str:
     import os
     try:
         from app.utils import load_doc_mapping
-        raw_mapping = load_doc_mapping()
+        # Explicitly pass portal_id to ensure New India's doc_mapping.json is
+        # loaded, not the currently active portal's mapping (which may be "uiic"
+        # if the registry global is unset at test time or during a startup race).
+        raw_mapping = load_doc_mapping(portal_id="newindia")
         sfb_map = (raw_mapping.get("survey_fee_bill", {}) or {}).get("survey_fee_bill_doc", [])
     except Exception:
         sfb_map = []

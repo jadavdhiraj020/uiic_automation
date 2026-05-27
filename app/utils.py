@@ -172,9 +172,17 @@ def load_field_mapping(portal_id: Optional[str] = None) -> dict[str, Any]:
     user = read_json_file(paths["user"]) or {}
     merged = {}
     
-    # Maintain the precise order from the base config file and only keep keys present in base
+    # Maintain the precise order from the base config file first
     all_keys = list(base.keys())
-            
+
+    # Preserve any user-defined keys that are NOT in the bundled base.
+    # Without this, custom field mappings a user added will be silently
+    # dropped on the next save/load cycle after a bundled update.
+    # Private keys (starting with "_") are excluded from user extensions.
+    for k in user.keys():
+        if k not in base and not str(k).startswith("_"):
+            all_keys.append(k)
+
     for key in all_keys:
         b = base.get(key)
         u = user.get(key)

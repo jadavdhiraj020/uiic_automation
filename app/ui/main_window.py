@@ -365,9 +365,12 @@ class MainWindow(QMainWindow):
     def _scan_folder(self, folder):
         from app.ui.worker import FolderScanWorker
 
-        portal = get_active_portal()
         portal_id = get_active_portal_id() or "uiic"
-        config_dir = os.path.dirname(doc_mapping_paths(portal_id=portal_id)["default"]) if portal else CONFIG_DIR
+        # Always derive config_dir from portal_id so FolderScanWorker and
+        # config_dir stay in sync. The old `CONFIG_DIR` fallback caused a
+        # mismatch: portal_id="uiic" was passed but config_dir pointed to the
+        # legacy app/config directory (a different location on portal refactors).
+        config_dir = os.path.dirname(doc_mapping_paths(portal_id=portal_id)["default"])
 
         # Update status to running scan
         self._set_status("running", "Scanning...")
