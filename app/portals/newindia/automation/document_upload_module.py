@@ -45,6 +45,8 @@ from app.data.folder_scanner import (
     _compress_image_for_upload,
 )
 from app.portals.newindia.automation.popup_service import dismiss_portal_popup
+from app.automation.services.pdf_merge_service import PdfMergeService, MergeConfig
+
 
 logger = logging.getLogger(__name__)
 
@@ -506,7 +508,6 @@ async def fill_document_upload_section(
 
     # Failsafe: if not provided by scan_result, search the folder directly for pre-merged PDFs
     if not precomputed_pdf or not os.path.isfile(precomputed_pdf):
-        from app.automation.services.pdf_merge_service import PdfMergeService, MergeConfig
         folder_path = PdfMergeService.get_folder_path(data)
         if folder_path and os.path.isdir(folder_path):
             import glob
@@ -521,10 +522,10 @@ async def fill_document_upload_section(
 
     # Runtime fallback merge if precomputed PDF is still not found/valid
     if not precomputed_pdf or not os.path.isfile(precomputed_pdf):
-        from app.automation.services.pdf_merge_service import PdfMergeService, MergeConfig
         folder_path = PdfMergeService.get_folder_path(data)
         if folder_path and os.path.isdir(folder_path):
             used_files = set()
+
             for pool_name in ("claim_doc_files", "assessment_files", "upload_doc_files"):
                 pool = getattr(data, pool_name, {}) or {}
                 for fpath in pool.values():

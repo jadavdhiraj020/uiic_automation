@@ -5238,7 +5238,7 @@ class TestPreMergeCompression:
 
     def test_sc28_01_under_limit_no_compression(self, tmp_path):
         """Total size below limit → originals returned unchanged, no temp files created."""
-        from app.data.folder_scanner import _prepare_files_for_merge
+        from app.automation.services.document_utils import _prepare_files_for_merge
         f1 = tmp_path / "a.pdf"; f1.write_bytes(b"x" * 100)
         f2 = tmp_path / "b.pdf"; f2.write_bytes(b"x" * 200)
 
@@ -5253,7 +5253,7 @@ class TestPreMergeCompression:
 
     def test_sc28_02_exactly_at_limit_no_compression(self, tmp_path):
         """File totalling exactly the limit is not compressed (boundary)."""
-        from app.data.folder_scanner import _prepare_files_for_merge
+        from app.automation.services.document_utils import _prepare_files_for_merge
         limit = 1000
         f1 = tmp_path / "exact.pdf"; f1.write_bytes(b"x" * limit)
 
@@ -5263,7 +5263,7 @@ class TestPreMergeCompression:
 
     def test_sc28_03_over_limit_compresses_largest_first(self, tmp_path):
         """When over limit, the LARGEST file is compressed first."""
-        from app.data.folder_scanner import _prepare_files_for_merge
+        from app.automation.services.document_utils import _prepare_files_for_merge
         import os
         small = tmp_path / "small.pdf"; small.write_bytes(b"x" * 100)
         large = tmp_path / "large.pdf"; large.write_bytes(b"x" * 900)
@@ -5275,7 +5275,7 @@ class TestPreMergeCompression:
             with open(out_path, "wb") as f: f.write(b"x" * 50)
             return True
 
-        with patch("app.data.folder_scanner._compress_pdf_for_upload", side_effect=fake_compress):
+        with patch("app.automation.services.document_utils._compress_pdf_for_upload", side_effect=fake_compress):
             _, tmps = _prepare_files_for_merge(
                 [str(small), str(large)], max_bytes=500, log_fn=lambda m: None
             )
@@ -5288,7 +5288,7 @@ class TestPreMergeCompression:
 
     def test_sc28_04_each_file_compressed_at_most_once(self, tmp_path):
         """Each file is compressed at most once even when still over limit after compression."""
-        from app.data.folder_scanner import _prepare_files_for_merge
+        from app.automation.services.document_utils import _prepare_files_for_merge
         import os
         f1 = tmp_path / "doc1.pdf"; f1.write_bytes(b"x" * 600)
         f2 = tmp_path / "doc2.pdf"; f2.write_bytes(b"x" * 600)
@@ -5300,7 +5300,7 @@ class TestPreMergeCompression:
             with open(out_path, "wb") as fh: fh.write(b"x" * 500)
             return True
 
-        with patch("app.data.folder_scanner._compress_pdf_for_upload", side_effect=fake_compress):
+        with patch("app.automation.services.document_utils._compress_pdf_for_upload", side_effect=fake_compress):
             _, tmps = _prepare_files_for_merge(
                 [str(f1), str(f2)], max_bytes=1000, log_fn=lambda m: None
             )
@@ -5313,7 +5313,7 @@ class TestPreMergeCompression:
 
     def test_sc28_05_stops_early_when_limit_reached(self, tmp_path):
         """Compression stops as soon as total drops under limit — remaining files NOT compressed."""
-        from app.data.folder_scanner import _prepare_files_for_merge
+        from app.automation.services.document_utils import _prepare_files_for_merge
         import os
         f1 = tmp_path / "big1.pdf"; f1.write_bytes(b"x" * 600)
         f2 = tmp_path / "big2.pdf"; f2.write_bytes(b"x" * 500)
@@ -5326,7 +5326,7 @@ class TestPreMergeCompression:
             with open(out_path, "wb") as fh: fh.write(b"x" * 50)  # 50+500+400=950 < 1000
             return True
 
-        with patch("app.data.folder_scanner._compress_pdf_for_upload", side_effect=fake_compress):
+        with patch("app.automation.services.document_utils._compress_pdf_for_upload", side_effect=fake_compress):
             _, tmps = _prepare_files_for_merge(
                 [str(f1), str(f2), str(f3)], max_bytes=1000, log_fn=lambda m: None
             )
@@ -5339,7 +5339,7 @@ class TestPreMergeCompression:
 
     def test_sc28_06_still_over_limit_after_all_compressed_warns(self, tmp_path):
         """If still over limit after all files compressed, warning is logged and we still proceed."""
-        from app.data.folder_scanner import _prepare_files_for_merge
+        from app.automation.services.document_utils import _prepare_files_for_merge
         import os
         f1 = tmp_path / "huge.pdf"; f1.write_bytes(b"x" * 2000)
 
@@ -5349,7 +5349,7 @@ class TestPreMergeCompression:
             with open(out_path, "wb") as fh: fh.write(b"x" * 1500)
             return True
 
-        with patch("app.data.folder_scanner._compress_pdf_for_upload", side_effect=fake_compress):
+        with patch("app.automation.services.document_utils._compress_pdf_for_upload", side_effect=fake_compress):
             working, tmps = _prepare_files_for_merge(
                 [str(f1)], max_bytes=1000, log_fn=logs.append
             )
@@ -5363,13 +5363,13 @@ class TestPreMergeCompression:
 
     def test_sc28_07_empty_input_returns_two_empty_lists(self, tmp_path):
         """Empty file list returns ([], []) immediately."""
-        from app.data.folder_scanner import _prepare_files_for_merge
+        from app.automation.services.document_utils import _prepare_files_for_merge
         working, tmps = _prepare_files_for_merge([], max_bytes=15 * 1024 * 1024, log_fn=lambda m: None)
         assert working == [] and tmps == []
 
     def test_sc28_08_nonexistent_files_filtered_out(self, tmp_path):
         """Files that don't exist on disk are silently excluded."""
-        from app.data.folder_scanner import _prepare_files_for_merge
+        from app.automation.services.document_utils import _prepare_files_for_merge
         real = tmp_path / "real.pdf"; real.write_bytes(b"x" * 100)
 
         working, tmps = _prepare_files_for_merge(
@@ -5381,11 +5381,11 @@ class TestPreMergeCompression:
 
     def test_sc28_09_compression_failure_keeps_original(self, tmp_path):
         """If compression returns False, the original file is kept — no crash, no temp file."""
-        from app.data.folder_scanner import _prepare_files_for_merge
+        from app.automation.services.document_utils import _prepare_files_for_merge
         f1 = tmp_path / "fail.pdf"; f1.write_bytes(b"x" * 800)
         f2 = tmp_path / "ok.pdf";   f2.write_bytes(b"x" * 300)
 
-        with patch("app.data.folder_scanner._compress_pdf_for_upload", return_value=False):
+        with patch("app.automation.services.document_utils._compress_pdf_for_upload", return_value=False):
             working, tmps = _prepare_files_for_merge(
                 [str(f1), str(f2)], max_bytes=900, log_fn=lambda m: None
             )
@@ -5396,7 +5396,7 @@ class TestPreMergeCompression:
 
     def test_sc28_10_image_files_use_image_compressor_not_pdf(self, tmp_path):
         """Image files (.jpg) use _compress_image_for_upload, not _compress_pdf_for_upload."""
-        from app.data.folder_scanner import _prepare_files_for_merge
+        from app.automation.services.document_utils import _prepare_files_for_merge
         import os
         img = tmp_path / "photo.jpg"; img.write_bytes(b"x" * 900)
 
@@ -5407,8 +5407,8 @@ class TestPreMergeCompression:
             with open(out, "wb") as fh: fh.write(b"x" * 100)
             return True
 
-        with patch("app.data.folder_scanner._compress_pdf_for_upload", side_effect=lambda p, o, **kw: pdf_calls.append(p) or True):
-            with patch("app.data.folder_scanner._compress_image_for_upload", side_effect=fake_img):
+        with patch("app.automation.services.document_utils._compress_pdf_for_upload", side_effect=lambda p, o, **kw: pdf_calls.append(p) or True):
+            with patch("app.automation.services.document_utils._compress_image_for_upload", side_effect=fake_img):
                 _, tmps = _prepare_files_for_merge([str(img)], max_bytes=500, log_fn=lambda m: None)
 
         assert pdf_calls == []
@@ -5419,12 +5419,12 @@ class TestPreMergeCompression:
 
     def test_sc28_11_unsupported_ext_not_compressed(self, tmp_path):
         """Files with .docx/.xlsx extension are never passed to any compressor."""
-        from app.data.folder_scanner import _prepare_files_for_merge
+        from app.automation.services.document_utils import _prepare_files_for_merge
         docx = tmp_path / "report.docx"; docx.write_bytes(b"x" * 900)
 
         pdf_calls, img_calls = [], []
-        with patch("app.data.folder_scanner._compress_pdf_for_upload", side_effect=lambda p, o, **kw: pdf_calls.append(p) or True):
-            with patch("app.data.folder_scanner._compress_image_for_upload", side_effect=lambda p, o, **kw: img_calls.append(p) or True):
+        with patch("app.automation.services.document_utils._compress_pdf_for_upload", side_effect=lambda p, o, **kw: pdf_calls.append(p) or True):
+            with patch("app.automation.services.document_utils._compress_image_for_upload", side_effect=lambda p, o, **kw: img_calls.append(p) or True):
                 working, tmps = _prepare_files_for_merge([str(docx)], max_bytes=100, log_fn=lambda m: None)
 
         assert pdf_calls == [] and img_calls == []
@@ -5432,7 +5432,7 @@ class TestPreMergeCompression:
 
     def test_sc28_12_temp_files_returned_for_caller_cleanup(self, tmp_path):
         """All compressed temp paths are returned in tmps so caller can delete them."""
-        from app.data.folder_scanner import _prepare_files_for_merge
+        from app.automation.services.document_utils import _prepare_files_for_merge
         import os
         f1 = tmp_path / "big.pdf"; f1.write_bytes(b"x" * 700)
         f2 = tmp_path / "also.pdf"; f2.write_bytes(b"x" * 700)
@@ -5444,7 +5444,7 @@ class TestPreMergeCompression:
             created.append(out_path)
             return True
 
-        with patch("app.data.folder_scanner._compress_pdf_for_upload", side_effect=fake_compress):
+        with patch("app.automation.services.document_utils._compress_pdf_for_upload", side_effect=fake_compress):
             _, tmps = _prepare_files_for_merge([str(f1), str(f2)], max_bytes=500, log_fn=lambda m: None)
 
         for t in created:
@@ -5525,7 +5525,7 @@ class TestPreMergeCompression:
             called_with["max_bytes"] = max_bytes
             return list(file_paths), []
 
-        with patch("app.data.folder_scanner._prepare_files_for_merge", side_effect=fake_prepare):
+        with patch("app.automation.services.pdf_merge_service._prepare_files_for_merge", side_effect=fake_prepare):
             _merge_claim_related_pdf([str(f1)], str(out), max_bytes=500)
 
         assert str(f1) in called_with.get("paths", [])
@@ -5533,7 +5533,7 @@ class TestPreMergeCompression:
 
     def test_sc28_19_pre_flight_logs_filename_and_sizes(self, tmp_path):
         """Pre-flight log messages include the filename and size values."""
-        from app.data.folder_scanner import _prepare_files_for_merge
+        from app.automation.services.document_utils import _prepare_files_for_merge
         import os
         f1 = tmp_path / "bigreport.pdf"; f1.write_bytes(b"x" * 900)
 
@@ -5543,7 +5543,7 @@ class TestPreMergeCompression:
             with open(out_path, "wb") as fh: fh.write(b"x" * 50)
             return True
 
-        with patch("app.data.folder_scanner._compress_pdf_for_upload", side_effect=fake_compress):
+        with patch("app.automation.services.document_utils._compress_pdf_for_upload", side_effect=fake_compress):
             _, tmps = _prepare_files_for_merge([str(f1)], max_bytes=500, log_fn=logs.append)
 
         joined = " ".join(logs)
@@ -5556,7 +5556,7 @@ class TestPreMergeCompression:
 
     def test_sc28_20_working_paths_are_compressed_tmps_not_originals(self, tmp_path):
         """After compression, returned working_paths differ from originals and exist on disk."""
-        from app.data.folder_scanner import _prepare_files_for_merge
+        from app.automation.services.document_utils import _prepare_files_for_merge
         import os
         f1 = tmp_path / "orig.pdf"; f1.write_bytes(b"x" * 900)
 
@@ -5564,7 +5564,7 @@ class TestPreMergeCompression:
             with open(out_path, "wb") as fh: fh.write(b"x" * 50)
             return True
 
-        with patch("app.data.folder_scanner._compress_pdf_for_upload", side_effect=fake_compress):
+        with patch("app.automation.services.document_utils._compress_pdf_for_upload", side_effect=fake_compress):
             working, tmps = _prepare_files_for_merge([str(f1)], max_bytes=500, log_fn=lambda m: None)
 
         assert working[0] != str(f1)  # not the original

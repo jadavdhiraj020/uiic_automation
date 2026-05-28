@@ -6,10 +6,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional, Set, Union
 
+import logging
 from app.automation.automation_logger import AutomationLogger, _ts
 from app.data.data_model import ClaimData
-import app.data.folder_scanner
-
+from app.automation.services.document_utils import _prepare_files_for_merge
 
 @dataclass
 class MergeConfig:
@@ -50,7 +50,7 @@ class PdfMergeService:
         # Determine the log callable for the pre-flight
         preflight_log = PdfMergeService._get_callable_logger(log)
 
-        file_paths, compression_tmps = app.data.folder_scanner._prepare_files_for_merge(
+        file_paths, compression_tmps = _prepare_files_for_merge(
             file_paths, config.max_bytes, log_fn=preflight_log
         )
         if not file_paths:
@@ -172,7 +172,7 @@ class PdfMergeService:
     # ══════════════════════════════════════════════════════════════════════════════
 
     @staticmethod
-    def _log(log: Optional[Union[AutomationLogger, Callable]], msg: str) -> None:
+    def _log(log: Optional[Union[AutomationLogger, logging.Logger, Callable]], msg: str) -> None:
         if not log:
             return
         if isinstance(log, AutomationLogger):
@@ -185,17 +185,24 @@ class PdfMergeService:
                 log.success(clean_msg)
             else:
                 log.info(clean_msg)
+        elif isinstance(log, logging.Logger):
+            clean_msg = re.sub(r"^\[\d{2}:\d{2}:\d{2}\]\s*", "", msg)
+            if "❌" in clean_msg or "error" in clean_msg.lower():
+                log.error(clean_msg)
+            elif "⚠️" in clean_msg or "warning" in clean_msg.lower() or "skipped" in clean_msg.lower():
+                log.warning(clean_msg)
+            else:
+                log.info(clean_msg)
         else:
             # Callable like logger.info
             log(msg)
             
     @staticmethod
-    def _get_callable_logger(log: Optional[Union[AutomationLogger, Callable]]) -> Callable:
-        if isinstance(log, AutomationLogger):
+    def _get_callable_logger(log: Optional[Union[AutomationLogger, logging.Logger, Callable]]) -> Callable:
+        if isinstance(log, AutomationLogger) or isinstance(log, logging.Logger):
             return lambda m: PdfMergeService._log(log, m)
         if log:
             return log
-        import logging
         return logging.getLogger(__name__).info
 
     @staticmethod
