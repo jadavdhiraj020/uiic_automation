@@ -3,6 +3,9 @@
   "unknown_claim_type_default": "CASHLESS",
   "eager_folder_ocr": false,
 
+  "_comment_basic": "Hardcoded defaults for Basic Details (Step 2). Surveyors can change these via Settings UI.",
+  "driver_relation_default": "Self",
+
   "_comment_interim": "Hardcoded defaults for Interim Report (Step 3). Surveyors can change these via Settings UI.",
   "whether_vehicle_inspected": "YES",
   "is_survey_completed": "YES",

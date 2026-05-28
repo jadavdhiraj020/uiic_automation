@@ -65,7 +65,9 @@ SEL_NEXT_BTN = "button[aria-label='Next'], button.next-btn"
 SEL_REG_NUMBER = "#regNumber"
 SEL_MAKE = "#make"
 SEL_VARIANT = "#model"
-SEL_REGISTRATION_DATE = "#registrationDate"
+# Registration Date is a MUI DatePicker (dynamic id like :r4e:).
+# Located at runtime by its visible label text via fill_mui_datepicker().
+SEL_REGISTRATION_DATE_LABEL = "Registration Date"
 SEL_MANUFACTURING_YEAR = "#manufacturingYear"
 SEL_CHASSIS_NUMBER = "#chasisNumber"
 SEL_ENGINE_NUMBER = "#engineNumber"
@@ -73,16 +75,19 @@ SEL_CUBIC_CAPACITY = "#cubicCapacity"
 SEL_TYPE_OF_BODY = "#typeOfBody"
 SEL_CLASS_OF_VEHICLE = "#classOfVehicle"
 SEL_UNLADEN_WEIGHT = "#unladenWeight"
-SEL_ROAD_TAX_PAID_UPTO = "#roadTaxPaidUpto"
+# Road Tax Paid Upto is a MUI DatePicker (dynamic id).
+SEL_ROAD_TAX_PAID_UPTO_LABEL = "Road Tax Paid Upto"
 SEL_COLOR_OF_VEHICLE = "#colorOfVehicle"
 SEL_TYPE_OF_FUEL = "#typeOfFuel"
 SEL_RTO_DROPDOWN = "#rto"
 SEL_REGISTERED_LADEN_WEIGHT = "#registeredLadenWeight"
 SEL_SEATING_CAPACITY = "#seatingLoadCarryingCapacity"
-SEL_FITNESS_VALID_UPTO = "#fitnessValidUpto"
+# Fitness Valid Upto is a MUI DatePicker (dynamic id, has name='fitnessValidUpto').
+SEL_FITNESS_VALID_UPTO_LABEL = "Fitness Valid Upto"
 SEL_PERMIT_NUMBER = "#permitNumber"
 SEL_TYPE_OF_PERMIT = "#typeOfPermit"
-SEL_PERMIT_VALID_UPTO = "#permitValidUpto"
+# Permit Valid Upto is a MUI DatePicker (dynamic id).
+SEL_PERMIT_VALID_UPTO_LABEL = "Permit Valid Upto"
 SEL_AUTH_NUMBER = "#authorizationNumber"
 SEL_VALIDITY_AUTH = "#validityOfAuthorization"
 SEL_ROAD_AREA = "#roadAreaOfOperation"
@@ -106,17 +111,25 @@ SEL_SURVEYOR_PAN = "#panNumber"
 
 # --- BASIC DETAILS: DRIVER DETAILS FIELDS ---
 SEL_DRIVER_NAME = "#driverName"
-SEL_DOB_OF_DRIVER = "#dateOfBirth"
+# Date of Birth is a MUI DatePicker (dynamic id like :r4q:).
+# Located at runtime by its visible label text via fill_mui_datepicker().
+SEL_DOB_OF_DRIVER_LABEL = "Date of Birth"
 SEL_LICENSE_TYPE_DROPDOWN = "#licenseType"
-SEL_LICENSE_VALID_FROM = "#validFrom"
-SEL_LICENSE_VALID_UPTO = "#validUpTo"
+# Valid From (DL issue date) is a MUI DatePicker (dynamic id like :r4s:).
+SEL_LICENSE_VALID_FROM_LABEL = "Valid From"
+# Valid Up To (DL expiry date) is a MUI DatePicker (dynamic id like :r4u:).
+SEL_LICENSE_VALID_UPTO_LABEL = "Valid Up To"
 SEL_LICENSE_NO_1 = "#driverLicenseNoOne"
 SEL_LICENSE_NO_2 = "#driverLicenseNoTwo"
 SEL_LICENSE_NO_3 = "#driverLicenseNoThree"
 SEL_BADGE_NO = "#badgeNo"
-SEL_BADGE_ISSUE_DATE = "#badgeIssueDate"
+# Badge Issue Date is a MUI DatePicker (dynamic id like :r50:).
+SEL_BADGE_ISSUE_DATE_LABEL = "Badge Issue Date"
 SEL_OWNER_DRIVER_YES = "#ownerDriver1"
 SEL_OWNER_DRIVER_NO = "#ownerDriver2"
+# Relation of Driver: appears only when Is Owner Driver = NO.
+# Hardcoded default is "Self" (see automation_defaults.json → driver_relation_default).
+SEL_RELATION_OF_DRIVER = "#relationOfDriver"
 SEL_QUALIFICATION = "#qualification"
 SEL_TP_INVOLVED_YES = "#thirdPartyInvolved1"
 SEL_TP_INVOLVED_NO = "#thirdPartyInvolved2"
@@ -130,6 +143,9 @@ SEL_CHARGES_FILED = "#chargesFiled"
 # --- BASIC DETAILS: WORKSHOP DETAILS FIELDS ---
 SEL_WORKSHOP_NAME = "#workshopName"
 SEL_WORKSHOP_ESTIMATE_AMT = "#workshopEstimateAmount"
+# Workshop Estimate Date uses a MUI DatePicker with dynamic ID.
+# We locate it by its visible label text (see fill_mui_datepicker in ui_utils.py).
+SEL_WORKSHOP_ESTIMATE_DATE_LABEL = "Workshop Estimate Date"
 SEL_WORKSHOP_GST = "#gstNumber"
 
 # --- BASIC DETAILS: NEXT BUTTON ---

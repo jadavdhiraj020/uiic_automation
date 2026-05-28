@@ -6513,7 +6513,12 @@ class TestOicHardening:
         claim.invoice_gst_amount = "180"
         claim.surveyor_license_number = "12345"
         claim.surveyor_license_expiry_date = "31/12/2030"
-        
+        # Interim Report mandatory fields — now hard errors on the OIC portal (Step 3).
+        # Without these, the portal refuses to advance; validation must block too.
+        claim.date_of_survey = "15-05-2026"
+        claim.place_of_survey = "Mumbai"
+        claim.initial_loss_amount = "50000"
+
         errors, warnings = claim.validate()
         assert len(errors) == 0
 
@@ -6757,16 +6762,22 @@ class TestOicBasicDetailsValidation:
         claim.assessment_files = {"invoice": "/path/to/invoice.pdf"}
         claim.surveyor_license_number = "12345"
         claim.surveyor_license_expiry_date = "31/12/2030"
+        # Interim Report fields are now hard errors — must be supplied
+        claim.date_of_survey = "01-06-2026"
+        claim.place_of_survey = "Delhi"
+        claim.initial_loss_amount = "25000"
+        claim.invoice_amount_without_gst = "5000"
+        claim.invoice_gst_amount = "900"
 
         errors, warnings = claim.validate()
-        assert len(errors) == 0  # claim_no present, invoice present
+        assert len(errors) == 0  # claim_no present, invoice present, interim fields present
         warning_strs = " ".join(warnings)
         assert "Chassis" in warning_strs
         assert "Engine" in warning_strs
         assert "Driver" in warning_strs
 
     def test_oic_validation_clean_when_all_present(self):
-        """No warnings when all mandatory fields are present."""
+        """No errors and no warnings when all mandatory and optional fields are present."""
         from app.data.data_model import ClaimData
         claim = ClaimData(portal_id="oic")
         claim.claim_no = "OIC-TEST-FULL"
@@ -6779,11 +6790,23 @@ class TestOicBasicDetailsValidation:
         claim.driver_license_number = "HR49 2016 0000013"
         claim.workshop_name = "Govind Motor"
         claim.workshop_estimate_amount = "5000"
+        claim.workshop_estimate_date = "20-03-2026"  # suppress workshop date warning
         claim.workshop_invoice_no = "INV-001"
         claim.workshop_invoice_date = "20/03/2026"
         claim.claim_doc_files = {"some_doc": "/path/to/doc.pdf"}
         claim.surveyor_license_number = "12345"
         claim.surveyor_license_expiry_date = "31/12/2030"
+        # Interim Report mandatory fields (Step 3 portal hard requirements)
+        claim.date_of_survey = "15-05-2026"
+        claim.place_of_survey = "Mumbai"
+        claim.initial_loss_amount = "50000"
+        # Optional Interim Report fields (suppress soft warnings)
+        claim.cause_nature_of_accident = "Vehicle hit from behind"
+        claim.mobile_no = "9876543210"
+        claim.email_id = "test@example.com"
+        # Assessment of Loss financials
+        claim.invoice_amount_without_gst = "5000"
+        claim.invoice_gst_amount = "900"
 
         errors, warnings = claim.validate()
         assert len(errors) == 0

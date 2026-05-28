@@ -20,18 +20,19 @@ from typing import Callable, Optional
 
 from playwright.async_api import Page
 
-from app.automation.automation_logger import AutomationLogger, _ts
+from app.automation.automation_logger import AutomationLogger
 from app.portals.oic.automation.selectors import (
     # Vehicle
-    SEL_REG_NUMBER, SEL_MAKE, SEL_VARIANT, SEL_REGISTRATION_DATE,
+    SEL_REG_NUMBER, SEL_MAKE, SEL_VARIANT,
+    SEL_REGISTRATION_DATE_LABEL,
     SEL_MANUFACTURING_YEAR,
     SEL_CHASSIS_NUMBER, SEL_ENGINE_NUMBER, SEL_CUBIC_CAPACITY,
     SEL_TYPE_OF_BODY, SEL_CLASS_OF_VEHICLE, SEL_UNLADEN_WEIGHT,
-    SEL_ROAD_TAX_PAID_UPTO,
+    SEL_ROAD_TAX_PAID_UPTO_LABEL,
     SEL_COLOR_OF_VEHICLE, SEL_TYPE_OF_FUEL,
     SEL_RTO_DROPDOWN, SEL_REGISTERED_LADEN_WEIGHT,
-    SEL_SEATING_CAPACITY, SEL_FITNESS_VALID_UPTO,
-    SEL_PERMIT_NUMBER, SEL_TYPE_OF_PERMIT, SEL_PERMIT_VALID_UPTO,
+    SEL_SEATING_CAPACITY, SEL_FITNESS_VALID_UPTO_LABEL,
+    SEL_PERMIT_NUMBER, SEL_TYPE_OF_PERMIT, SEL_PERMIT_VALID_UPTO_LABEL,
     SEL_AUTH_NUMBER, SEL_VALIDITY_AUTH, SEL_ROAD_AREA,
     # Loss
     SEL_CLOSE_PROXIMITY_YES, SEL_CLOSE_PROXIMITY_NO,
@@ -42,17 +43,24 @@ from app.portals.oic.automation.selectors import (
     SEL_SURVEYOR_NAME, SEL_SURVEYOR_EMAIL, SEL_SURVEYOR_MOBILE,
     SEL_SURVEYOR_ADDRESS, SEL_SURVEYOR_PAN,
     # Driver
-    SEL_DRIVER_NAME, SEL_DOB_OF_DRIVER, SEL_LICENSE_TYPE_DROPDOWN,
-    SEL_LICENSE_VALID_FROM, SEL_LICENSE_VALID_UPTO,
+    SEL_DRIVER_NAME,
+    SEL_DOB_OF_DRIVER_LABEL,
+    SEL_LICENSE_TYPE_DROPDOWN,
+    SEL_LICENSE_VALID_FROM_LABEL,
+    SEL_LICENSE_VALID_UPTO_LABEL,
     SEL_LICENSE_NO_1, SEL_LICENSE_NO_2, SEL_LICENSE_NO_3,
-    SEL_BADGE_NO, SEL_BADGE_ISSUE_DATE,
-    SEL_OWNER_DRIVER_YES, SEL_OWNER_DRIVER_NO,
+    SEL_BADGE_NO, SEL_BADGE_ISSUE_DATE_LABEL,
+    SEL_OWNER_DRIVER_YES, SEL_OWNER_DRIVER_NO, SEL_RELATION_OF_DRIVER,
     SEL_QUALIFICATION,
     SEL_TP_INVOLVED_YES, SEL_TP_INVOLVED_NO,
-    SEL_COUNTRY, SEL_STATE_DROPDOWN, SEL_CITY_DROPDOWN, SEL_PINCODE_DROPDOWN,
+    # SEL_COUNTRY is intentionally excluded here — the OIC portal pre-fills
+    # Country as "INDIA" and marks the field read-only. Import it only when
+    # the portal re-enables manual Country entry (see selectors.py #country).
+    SEL_STATE_DROPDOWN, SEL_CITY_DROPDOWN, SEL_PINCODE_DROPDOWN,
     SEL_DRIVER_ADDRESS, SEL_CHARGES_FILED,
     # Workshop
-    SEL_WORKSHOP_NAME, SEL_WORKSHOP_ESTIMATE_AMT, SEL_WORKSHOP_GST,
+    SEL_WORKSHOP_NAME, SEL_WORKSHOP_ESTIMATE_AMT,
+    SEL_WORKSHOP_ESTIMATE_DATE_LABEL, SEL_WORKSHOP_GST,
     # Next
     SEL_BASIC_DETAILS_NEXT,
 )
@@ -61,7 +69,9 @@ from app.portals.oic.automation.ui_utils import (
     click_primeng_radio,
     select_primeng_dropdown,
     fill_primeng_inputnumber,
+    fill_mui_datepicker,
 )
+from app.portals.oic.automation.date_formatter import format_oic_date
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PUBLIC API
@@ -82,6 +92,15 @@ async def fill_basic_details(
     """
     section = "Basic Details"
     log.info(f"📝 Starting {section} — 6 subsections on single page")
+
+    # ── F6: Load automation defaults ONCE here and pass down. ────────────────
+    # load_automation_defaults() does raw JSON I/O on every call (no caching).
+    # Calling it once at the entry point avoids redundant file reads during the
+    # per-claim hot path, even when automation runs across multiple claims.
+    from app.utils import load_automation_defaults as _load_defaults
+    _automation_defaults: dict = _load_defaults(
+        portal_id=getattr(claim, "portal_id", "oic")
+    )
 
     try:
         # Ensure page is loaded and stable
@@ -113,7 +132,7 @@ async def fill_basic_details(
 
         # ── 5. Driver Details ─────────────────────────────────────────────────
         log.info(f"🪪 Subsection 5/6: Driver Details")
-        await _fill_driver_details(page, claim, log, field_delay_ms)
+        await _fill_driver_details(page, claim, log, field_delay_ms, _automation_defaults)
         if stop_cb():
             return False
 
@@ -169,10 +188,11 @@ async def _fill_vehicle_details(page: Page, claim, log, delay: int):
             "Variant", log, delay
         )
 
-    # 4. Optional: Registration Date — date text input
-    if claim.date_of_registration:
-        await fill_input_with_delay(
-            page, SEL_REGISTRATION_DATE, claim.date_of_registration,
+    # 4. Optional: Registration Date — MUI DatePicker (DD-MM-YYYY)
+    _reg_date = format_oic_date(claim.date_of_registration)
+    if _reg_date:
+        await fill_mui_datepicker(
+            page, SEL_REGISTRATION_DATE_LABEL, _reg_date,
             "Registration Date", log, delay
         )
 
@@ -231,10 +251,11 @@ async def _fill_vehicle_details(page: Page, claim, log, delay: int):
                 "Unladen Weight", log, delay
             )
 
-    # 12. Optional: Road Tax Paid Upto — date text input
-    if claim.road_tax_paid_upto:
-        await fill_input_with_delay(
-            page, SEL_ROAD_TAX_PAID_UPTO, claim.road_tax_paid_upto,
+    # 12. Optional: Road Tax Paid Upto — MUI DatePicker (DD-MM-YYYY)
+    _road_tax_date = format_oic_date(claim.road_tax_paid_upto)
+    if _road_tax_date:
+        await fill_mui_datepicker(
+            page, SEL_ROAD_TAX_PAID_UPTO_LABEL, _road_tax_date,
             "Road Tax Paid Upto", log, delay
         )
 
@@ -283,10 +304,11 @@ async def _fill_vehicle_details(page: Page, claim, log, delay: int):
                 "Seating Capacity", log, delay
             )
 
-    # 18. Optional: Fitness Valid Upto — date text input
-    if claim.fitness_valid_upto:
-        await fill_input_with_delay(
-            page, SEL_FITNESS_VALID_UPTO, claim.fitness_valid_upto,
+    # 18. Optional: Fitness Valid Upto — MUI DatePicker (DD-MM-YYYY)
+    _fitness_date = format_oic_date(claim.fitness_valid_upto)
+    if _fitness_date:
+        await fill_mui_datepicker(
+            page, SEL_FITNESS_VALID_UPTO_LABEL, _fitness_date,
             "Fitness Valid Upto", log, delay
         )
 
@@ -306,10 +328,11 @@ async def _fill_vehicle_details(page: Page, claim, log, delay: int):
 
     # Row 6 ─────────────────────────────────────────────────────────────────
 
-    # 21. Optional: Permit Valid Upto — date text input
-    if claim.permit_valid_upto:
-        await fill_input_with_delay(
-            page, SEL_PERMIT_VALID_UPTO, claim.permit_valid_upto,
+    # 21. Optional: Permit Valid Upto — MUI DatePicker (DD-MM-YYYY)
+    _permit_date = format_oic_date(claim.permit_valid_upto)
+    if _permit_date:
+        await fill_mui_datepicker(
+            page, SEL_PERMIT_VALID_UPTO_LABEL, _permit_date,
             "Permit Valid Upto", log, delay
         )
 
@@ -459,7 +482,7 @@ async def _is_field_editable(page: Page, selector: str) -> bool:
 # PRIVATE — DRIVER DETAILS
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def _fill_driver_details(page: Page, claim, log, delay: int):
+async def _fill_driver_details(page: Page, claim, log, delay: int, automation_defaults: dict | None = None):
     """Fill Driver Details subsection — all 19 fields."""
 
     # Row 1 ─────────────────────────────────────────────────────────────────
@@ -471,10 +494,11 @@ async def _fill_driver_details(page: Page, claim, log, delay: int):
             "Driver Name", log, delay
         )
 
-    # 2. Date of Birth * (mandatory) — date input
-    if claim.dob_of_driver:
-        await fill_input_with_delay(
-            page, SEL_DOB_OF_DRIVER, claim.dob_of_driver,
+    # 2. Date of Birth * (mandatory) — MUI DatePicker (DD-MM-YYYY)
+    _dob = format_oic_date(claim.dob_of_driver)
+    if _dob:
+        await fill_mui_datepicker(
+            page, SEL_DOB_OF_DRIVER_LABEL, _dob,
             "Date of Birth", log, delay
         )
 
@@ -485,19 +509,21 @@ async def _fill_driver_details(page: Page, claim, log, delay: int):
             "License Type", log, delay
         )
 
-    # 4. Valid From * (mandatory) — DL issue date
-    if claim.driver_license_issue_date:
-        await fill_input_with_delay(
-            page, SEL_LICENSE_VALID_FROM, claim.driver_license_issue_date,
+    # 4. Valid From * (mandatory) — MUI DatePicker (DL issue date, DD-MM-YYYY)
+    _dl_issue = format_oic_date(claim.driver_license_issue_date)
+    if _dl_issue:
+        await fill_mui_datepicker(
+            page, SEL_LICENSE_VALID_FROM_LABEL, _dl_issue,
             "Valid From (DL Issue Date)", log, delay
         )
 
     # Row 2 ─────────────────────────────────────────────────────────────────
 
-    # 5. Valid Up To * (mandatory) — DL expiry date
-    if claim.driver_license_expiry_date:
-        await fill_input_with_delay(
-            page, SEL_LICENSE_VALID_UPTO, claim.driver_license_expiry_date,
+    # 5. Valid Up To * (mandatory) — MUI DatePicker (DL expiry date, DD-MM-YYYY)
+    _dl_expiry = format_oic_date(claim.driver_license_expiry_date)
+    if _dl_expiry:
+        await fill_mui_datepicker(
+            page, SEL_LICENSE_VALID_UPTO_LABEL, _dl_expiry,
             "Valid Up To (DL Expiry Date)", log, delay
         )
 
@@ -529,19 +555,51 @@ async def _fill_driver_details(page: Page, claim, log, delay: int):
             "Badge No.", log, delay
         )
 
-    # 10. Badge Issue Date (optional) — date input
-    if claim.badge_issue_date:
-        await fill_input_with_delay(
-            page, SEL_BADGE_ISSUE_DATE, claim.badge_issue_date,
+    # 10. Badge Issue Date (optional) — MUI DatePicker (DD-MM-YYYY)
+    _badge_date = format_oic_date(claim.badge_issue_date)
+    if _badge_date:
+        await fill_mui_datepicker(
+            page, SEL_BADGE_ISSUE_DATE_LABEL, _badge_date,
             "Badge Issue Date", log, delay
         )
 
     # 11. Is Owner Driver? (radio) — derived from name comparison
-    is_owner = _is_owner_driver(claim.driver_name, claim.registered_owner_name)
-    if is_owner:
+    #
+    # Logic: compare driver_name vs registered_owner_name (normalised, word-level).
+    # If both names match  → YES (owner is the driver)
+    # If they differ       → NO  → portal reveals "Relation of Driver" field
+    # If either is blank   → YES (safe default — most motor claims are owner-driven)
+    _is_owner = _is_owner_driver(claim.driver_name, claim.registered_owner_name)
+    log.info(
+        f"  ℹ️ [Owner Driver] driver='{claim.driver_name}' "
+        f"owner='{claim.registered_owner_name}' → {'YES' if _is_owner else 'NO'}"
+    )
+
+    if _is_owner:
         await click_primeng_radio(page, SEL_OWNER_DRIVER_YES, "Owner Driver → YES", log, delay)
     else:
         await click_primeng_radio(page, SEL_OWNER_DRIVER_NO, "Owner Driver → NO", log, delay)
+        # Wait briefly for the portal to reveal the "Relation of Driver" field
+        await asyncio.sleep(0.4)
+        # Fill "Relation of Driver" with the configurable hardcoded default.
+        # Prefer the pre-loaded defaults dict passed from fill_basic_details();
+        # fall back to a fresh load only if called standalone (e.g. from tests).
+        _defaults = automation_defaults or {}
+        _relation = str(
+            _defaults.get("driver_relation_default", "Self") or "Self"
+        ).strip()
+        try:
+            rel_loc = page.locator(SEL_RELATION_OF_DRIVER).first
+            rel_visible = await rel_loc.is_visible(timeout=3000)
+            if rel_visible:
+                await fill_input_with_delay(
+                    page, SEL_RELATION_OF_DRIVER, _relation,
+                    "Relation of Driver", log, delay
+                )
+            else:
+                log.info(f"  ℹ️ [Relation of Driver] field not visible — skipped")
+        except Exception:
+            log.info(f"  ℹ️ [Relation of Driver] field not found — skipped")
 
     # 12. Qualification (optional)
     if claim.driver_qualification:
@@ -555,11 +613,16 @@ async def _fill_driver_details(page: Page, claim, log, delay: int):
     # 13. Third Party Involved (radio) — Default NO
     await click_primeng_radio(page, SEL_TP_INVOLVED_NO, "Third Party Involved → NO", log, delay)
 
-    # 14. Country * (mandatory) — Always fill "INDIA"
-    await fill_input_with_delay(
-        page, SEL_COUNTRY, "INDIA",
-        "Country", log, delay
-    )
+    # 14. Country — read-only/pre-filled by portal; skip filling
+    # NOTE: The OIC portal pre-populates Country as "INDIA" and makes it
+    # read-only. To re-enable if the portal changes behaviour:
+    #   1. Uncomment the block below.
+    #   2. Add SEL_COUNTRY back to the import from selectors (see line ~51).
+    # await fill_input_with_delay(
+    #     page, "#country", "INDIA",
+    #     "Country", log, delay
+    # )
+    log.info("  ℹ️ [Country] → pre-filled by portal (read-only) — skipped")
 
     # 15. State * (mandatory) — PrimeNG dropdown
     state = _extract_state(claim.driver_city_state)
@@ -580,12 +643,21 @@ async def _fill_driver_details(page: Page, claim, log, delay: int):
     # Row 5 ─────────────────────────────────────────────────────────────────
 
     # 17. Pincode * (mandatory) — PrimeNG dropdown
+    # NOTE: Pincode options load dynamically after State & City are selected.
+    # We use a dedicated helper that waits for the dropdown to populate before
+    # attempting to match the 6-digit code.
+    #
+    # F4 — Explicit settle delay: Angular triggers an async XHR after City
+    # selection to fetch pincodes for the chosen city. The dropdown transitions
+    # through disabled → enabled once the XHR resolves. Without this sleep the
+    # _select_pincode_dropdown poll can start while the DOM update is still
+    # in-flight, causing the first few p-disabled checks to be unreliable.
+    # 800 ms gives Angular one full change-detection cycle (typically ~400 ms)
+    # plus a safety margin, without adding significant wall-clock cost.
+    await asyncio.sleep(0.8)
     pincode = claim.driver_pin_code or _extract_pin_code(claim.driver_address or claim.place_of_survey or "")
     if pincode:
-        await select_primeng_dropdown(
-            page, SEL_PINCODE_DROPDOWN, pincode,
-            "Pincode", log, delay
-        )
+        await _select_pincode_dropdown(page, SEL_PINCODE_DROPDOWN, pincode, log, delay)
 
     # 18. Address * (mandatory) — textarea
     address = claim.driver_address or claim.place_of_survey or ""
@@ -630,7 +702,31 @@ async def _fill_workshop_details(page: Page, claim, log, delay: int):
                 "Workshop Estimate Amount", log, delay
             )
 
-    # 3. GST Number (optional)
+    # 3. Workshop Estimate Date — MUI DatePicker (DD-MM-YYYY)
+    #    The portal field has a dynamic id (e.g. :r3g:), so we locate it
+    #    by its visible label text using fill_mui_datepicker().
+    #
+    #    F2 — Normalise raw date BEFORE passing to fill_mui_datepicker.
+    #    Excel can store dates as ISO strings ("2026-05-27"), serial floats
+    #    (44977.0), slash-separated strings ("27/05/2026"), or plain text.
+    #    fill_mui_datepicker internally calls format_date_for_mui() which now
+    #    delegates to date_formatter.py, but only if the value it receives is
+    #    already a string the formatter recognises. By calling format_oic_date()
+    #    here we guarantee the value is always "DD-MM-YYYY" before hand-off.
+    _est_date = format_oic_date(claim.workshop_estimate_date)
+    if _est_date:
+        await fill_mui_datepicker(
+            page,
+            SEL_WORKSHOP_ESTIMATE_DATE_LABEL,   # "Workshop Estimate Date"
+            _est_date,
+            "Workshop Estimate Date",
+            log,
+            delay_ms=delay,
+        )
+    else:
+        log.info("  ℹ️ [Workshop Estimate Date] not found in Excel — skipped")
+
+    # 4. GST Number (optional)
     if claim.gst_number:
         await fill_input_with_delay(
             page, SEL_WORKSHOP_GST, claim.gst_number,
@@ -672,6 +768,133 @@ async def _click_next_button(page: Page, log) -> bool:
     except Exception as e:
         log.error(f"  ❌ Next button click failed: {e}")
         return False
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PRIVATE — PINCODE DROPDOWN HELPER
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _select_pincode_dropdown(
+    page: Page,
+    selector: str,
+    pincode: str,
+    log,
+    delay: int,
+) -> None:
+    """
+    Select a pincode from the OIC PrimeNG dropdown.
+
+    The pincode dropdown is state-dependent: options only populate after
+    State and City dropdowns are filled. This helper:
+
+      1. Strips the raw pincode to a clean 6-digit string.
+      2. Waits (up to 6 s) for the dropdown container to become enabled
+         (i.e., not .p-disabled).
+      3. Opens the dropdown and waits for options to appear.
+      4. Matches by checking if the option text *starts with* the 6-digit
+         code (portal may display "110001 - South Delhi" etc.).
+      5. Falls back to substring matching if no prefix match found.
+      6. Logs a clear warning if no match could be selected.
+    """
+    label = "Pincode"
+
+    # Normalise — keep only digits, must be exactly 6 to be a valid Indian pincode
+    raw_digits = re.sub(r"\D", "", str(pincode))
+    if not raw_digits:
+        log.warning(f"  ⚠️ [Pincode] blank value — skipping")
+        return
+    if len(raw_digits) != 6:
+        log.warning(
+            f"  ⚠️ [Pincode] '{pincode}' → extracted '{raw_digits}' "
+            f"({len(raw_digits)} digits, need exactly 6) — skipping"
+        )
+        return
+    pin6 = raw_digits
+
+    try:
+        # ── 1. Wait for dropdown container to be enabled ──────────────────────
+        # After City is selected Angular re-enables the pincode dropdown.
+        # Poll up to 6 s (20 × 300 ms).
+        dropdown = page.locator(selector).first
+        enabled = False
+        for _ in range(20):
+            await asyncio.sleep(0.3)
+            try:
+                is_disabled = await dropdown.evaluate(
+                    "el => el.classList.contains('p-disabled') || "
+                    "!!el.closest('.p-disabled')"
+                )
+                if not is_disabled:
+                    enabled = True
+                    break
+            except Exception:
+                pass
+
+        if not enabled:
+            log.warning(f"  ⚠️ [Pincode] dropdown still disabled after waiting — skipping")
+            return
+
+        # ── 2. Open the dropdown ──────────────────────────────────────────────
+        await dropdown.wait_for(state="visible", timeout=5000)
+        await dropdown.scroll_into_view_if_needed()
+        await dropdown.click()
+
+        # ── 3. Wait for options to populate ──────────────────────────────────
+        panel = page.locator(".p-dropdown-panel:visible, .p-overlay:visible")
+        items = panel.locator(".p-dropdown-item, li[role='option']")
+
+        count = 0
+        for _ in range(15):  # poll up to 4.5 s (15 × 300 ms)
+            await asyncio.sleep(0.3)
+            count = await items.count()
+            if count > 0:
+                first_txt = (await items.first.inner_text()).strip().lower()
+                if "loading" not in first_txt and "fetching" not in first_txt:
+                    break
+
+        if count == 0:
+            await page.keyboard.press("Escape")
+            log.warning(f"  ⚠️ [Pincode] dropdown opened but no options loaded — skipping")
+            return
+
+        # ── 4. Match: prefix match first, substring fallback ─────────────────
+        matched = False
+
+        # Pass 1: option text starts with the 6-digit pincode
+        for i in range(count):
+            item_txt = (await items.nth(i).inner_text()).strip()
+            if item_txt.startswith(pin6):
+                await items.nth(i).click()
+                matched = True
+                log.field_selected(label, item_txt) if hasattr(log, "field_selected") else \
+                    log.info(f"  ✅ [Pincode] selected → '{item_txt}'")
+                break
+
+        # Pass 2: substring match
+        if not matched:
+            for i in range(count):
+                item_txt = (await items.nth(i).inner_text()).strip()
+                if pin6 in item_txt:
+                    await items.nth(i).click()
+                    matched = True
+                    log.field_selected(label, item_txt) if hasattr(log, "field_selected") else \
+                        log.info(f"  ✅ [Pincode] selected → '{item_txt}'")
+                    break
+
+        if not matched:
+            await page.keyboard.press("Escape")
+            if hasattr(log, "field_failed"):
+                log.field_failed(label, f"No match for '{pin6}' in {count} options")
+            else:
+                log.warning(f"  ⚠️ [Pincode] no match for '{pin6}' ({count} options)")
+
+    except Exception as exc:
+        if hasattr(log, "field_failed"):
+            log.field_failed(label, str(exc))
+        else:
+            log.error(f"  ❌ [Pincode] error: {exc}")
+
+    await asyncio.sleep(delay / 1000.0)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

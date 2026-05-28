@@ -342,6 +342,16 @@
     "col_offset": 1,
     "_mandatory": true
   },
+  "workshop_estimate_date": {
+    "sheet": "ALL",
+    "search_labels": [
+      "Estimate Date", "Workshop Estimate Date", "Date of Estimate",
+      "Estimation Date", "Workshop Date", "Estimate Dt"
+    ],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": false
+  },
   "gst_number": {
     "sheet": "ALL",
     "search_labels": ["GST Number", "GST No.", "GSTIN", "GST", "gst_number"],

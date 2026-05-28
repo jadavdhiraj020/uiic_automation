@@ -6,6 +6,7 @@ import random
 from datetime import datetime
 
 from app.automation.automation_logger import AutomationLogger, _ts
+from app.portals.oic.automation.date_formatter import format_oic_date as _format_oic_date
 
 # ── JavaScript Snippets ───────────────────────────────────────────────────────
 
@@ -208,49 +209,17 @@ async def click_radio_with_delay(
 
 
 def format_date_ddmmyyyy(raw_date) -> str:
-    """Safely format any date string from Excel to DD/MM/YYYY."""
-    if not raw_date:
-        return ""
-    
-    val = str(raw_date).strip()
-    
-    # Common formats
-    for fmt in (
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%d",
-        "%d-%m-%Y %H:%M:%S",
-        "%d-%m-%Y",
-        "%d/%m/%Y",
-        "%m/%d/%Y",
-        "%d-%m-%y",
-        "%d/%m/%y",
-        "%d-%m-%y %H:%M:%S",
-        "%Y-%m-%dT%H:%M:%S",
-    ):
-        try:
-            dt = datetime.strptime(val, fmt)
-            return dt.strftime("%d/%m/%Y")
-        except ValueError:
-            pass
-            
-    # Regex fallbacks
-    m = re.search(r'(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})', val)
-    if m:
-        d, mon, y = m.groups()
-        return f"{int(d):02d}/{int(mon):02d}/{y}"
-        
-    m2 = re.search(r'(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})', val)
-    if m2:
-        y, mon, d = m2.groups()
-        return f"{int(d):02d}/{int(mon):02d}/{y}"
+    """Format any date string from Excel to DD/MM/YYYY (slash-separated).
 
-    m3 = re.search(r'(\d{1,2})[-/.](\d{1,2})[-/.](\d{2})(?!\d)', val)
-    if m3:
-        d, mon, y2 = m3.groups()
-        full_year = f"20{y2}" if int(y2) < 70 else f"19{y2}"
-        return f"{int(d):02d}/{int(mon):02d}/{full_year}"
-        
-    return val.split(" ")[0]
+    Delegates to the shared OIC date formatter service (date_formatter.py)
+    which is the single source of truth for all date parsing on this portal.
+    Output separators are converted from hyphens to slashes to match the
+    historic contract of this function (callers expect DD/MM/YYYY).
+    Returns "" when the input cannot be parsed.
+    """
+    # _format_oic_date always returns "DD-MM-YYYY" or "".
+    result = _format_oic_date(raw_date)
+    return result.replace("-", "/") if result else ""
 
 
 async def upload_file_via_input(
@@ -323,24 +292,31 @@ async def capture_error_screenshot(page: Page, context_name: str, log) -> Option
 # ── PrimeNG-Specific Helpers ─────────────────────────────────────────────────
 
 
-
 async def click_primeng_radio(
     page: Page, radio_selector: str, label: str,
     log, delay_ms: int = 250
 ):
-    """Click a PrimeNG radio button by its CSS selector (e.g. '#closeProximity1')."""
+    """Click a PrimeNG radio button using multi-strategy locator matching."""
     try:
-        loc = page.locator(radio_selector).first
-        await loc.wait_for(state="attached", timeout=5000)
+        radio = page.locator(radio_selector).first
+        await radio.wait_for(state="attached", timeout=5000)
+        
+        # 1. Ancestor label (classic PrimeNG)
+        ancestor = radio.locator("xpath=ancestor::label")
+        # 2. Sibling label (React PrimeNG, uses 'for' attribute)
+        radio_id = await radio.get_attribute("id")
+        sibling = page.locator(f"label[for='{radio_id}']") if radio_id else None
+        # 3. p-radiobutton wrapper (React synthetic event trigger)
+        wrapper = radio.locator("xpath=ancestor::div[contains(@class, 'p-radiobutton')]")
 
-        # Try clicking the parent label first (PrimeNG wraps radios in labels)
-        parent_label = loc.locator("xpath=ancestor::label")
-        if await parent_label.count() > 0:
-            await parent_label.first.scroll_into_view_if_needed()
-            await parent_label.first.click()
+        if await ancestor.count() > 0:
+            await ancestor.first.click()
+        elif sibling and await sibling.count() > 0:
+            await sibling.first.click()
+        elif await wrapper.count() > 0:
+            await wrapper.first.click()
         else:
-            await loc.scroll_into_view_if_needed()
-            await loc.click()
+            await radio.click()
 
         if isinstance(log, AutomationLogger):
             log.field_filled(label, "selected")
@@ -476,58 +452,12 @@ def format_date_for_mui(raw_date) -> str:
     """Format any date string to DD-MM-YYYY (hyphen-separated) for MUI DatePickers.
 
     The OIC MUI DatePicker expects DD-MM-YYYY with hyphens (see placeholder).
-    This is similar to format_date_ddmmyyyy but uses hyphens instead of slashes.
+
+    Delegates to the shared OIC date formatter service (date_formatter.py) which
+    is the single source of truth for all date parsing on this portal.
+    All callers of this function remain unchanged — public API is preserved.
     """
-    if not raw_date:
-        return ""
-
-    val = str(raw_date).strip()
-
-    for fmt in (
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%d",
-        "%d-%m-%Y %H:%M:%S",
-        "%d-%m-%Y",
-        "%d/%m/%Y",
-        "%m/%d/%Y",
-        "%d/%m/%Y %H:%M:%S",
-        "%d-%m-%y",
-        "%d/%m/%y",
-        "%d-%m-%y %H:%M:%S",
-        "%Y-%m-%dT%H:%M:%S",
-    ):
-        try:
-            dt = datetime.strptime(val, fmt)
-            return dt.strftime("%d-%m-%Y")
-        except ValueError:
-            pass
-
-    # Regex fallbacks
-    m = re.search(r'(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})', val)
-    if m:
-        d, mon, y = m.groups()
-        return f"{int(d):02d}-{int(mon):02d}-{y}"
-
-    m2 = re.search(r'(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})', val)
-    if m2:
-        y, mon, d = m2.groups()
-        return f"{int(d):02d}-{int(mon):02d}-{y}"
-
-    m3 = re.search(r'(\d{1,2})[-/.](\d{1,2})[-/.](\d{2})(?!\d)', val)
-    if m3:
-        d, mon, y2 = m3.groups()
-        full_year = f"20{y2}" if int(y2) < 70 else f"19{y2}"
-        return f"{int(d):02d}-{int(mon):02d}-{full_year}"
-
-    # Last-resort: take the first space-separated token
-    fallback = val.split(" ")[0]
-
-    # Validate that the result actually looks like a date (DD-MM-YYYY).
-    # If not (e.g. the raw value was "N/A", "TBD", etc.) return empty string
-    # so that fill_mui_datepicker skips the field gracefully.
-    if not re.match(r'^\d{2}-\d{2}-\d{4}$', fallback):
-        return ""
-    return fallback
+    return _format_oic_date(raw_date)
 
 
 async def fill_mui_datepicker(

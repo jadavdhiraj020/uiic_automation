@@ -508,12 +508,48 @@ class ClaimData:
             return self._validate_uiic()
 
     def _validate_oic(self) -> Tuple[List[str], List[str]]:
-        """OIC validation — claim_no, vehicle, driver, workshop details required."""
+        """
+        OIC-portal validation.
+
+        Two severity levels:
+          errors   — hard blockers; automation will NOT start until resolved
+          warnings — soft cautions; automation can proceed but output may be incomplete
+
+        Sections validated (mirrors the 4 portal steps):
+          1. Claim identity
+          2. Interim Report fields (Step 3) — validated early as they are hard errors
+          3. Vehicle details
+          4. Workshop / estimate details
+          5. Assessment of Loss financials
+        """
         errors, warnings = [], []
+
+        # ── 1. Claim identity ─────────────────────────────────────────────────
         if not self.claim_no or self.claim_no.strip() == "":
             errors.append("Claim Number is missing")
 
-        # Vehicle mandatory fields
+        # ── 2. Interim Report fields (Step 3) ─────────────────────────────────
+        # Validated early (before Vehicle details) because these fields carry a
+        # red asterisk (*) on the OIC portal — the portal will refuse to advance
+        # to Step 4 without them. Failing fast here prevents the browser session
+        # from starting only to halt silently halfway through the form.
+        if not self.date_of_survey or str(self.date_of_survey).strip() == "":
+            errors.append("Date of Survey is missing (required by OIC portal — Step 3)")
+        if not self.place_of_survey or str(self.place_of_survey).strip() == "":
+            errors.append("Place of Survey is missing (required by OIC portal — Step 3)")
+        if not self.initial_loss_amount or str(self.initial_loss_amount).strip() == "":
+            errors.append("Initial Loss Assessment Amount is missing (required by OIC portal — Step 3)")
+
+        # Optional Interim Report fields — warn so the user can investigate.
+        if not self.cause_nature_of_accident or str(self.cause_nature_of_accident).strip() == "":
+            warnings.append("Cause and Nature of Accident not found in Excel — field will be skipped")
+        if not self.mobile_no or str(self.mobile_no).strip() == "":
+            warnings.append("Claimant Mobile Number not found in Excel — optional field will be skipped")
+        if not self.email_id or str(self.email_id).strip() == "":
+            warnings.append("Claimant Email ID not found in Excel — optional field will be skipped")
+
+
+        # ── 3. Vehicle details ────────────────────────────────────────────────
         if not self.chassis_no:
             warnings.append("Chassis Number not found in Excel")
         if not self.engine_no:
@@ -539,7 +575,7 @@ class ClaimData:
         if not self.driver_license_number:
             warnings.append("Driver License Number not found in Excel")
 
-        # Workshop mandatory fields
+        # ── 4. Workshop / estimate details ────────────────────────────────────
         if not self.workshop_name:
             warnings.append("Workshop Name not found in Excel")
         if not self.workshop_estimate_amount:
@@ -554,6 +590,8 @@ class ClaimData:
             else:
                 errors.append(f"Workshop Estimate Amount '{self.workshop_estimate_amount}' is not a valid numeric amount")
 
+        if not self.workshop_estimate_date:
+            warnings.append("Workshop Estimate Date not found in Excel")
         # Invoice file check — required for assessment
         invoice_file = self.assessment_files.get("invoice", "")
         if not invoice_file or invoice_file.strip() == "":
@@ -566,7 +604,7 @@ class ClaimData:
         if not self.claim_doc_files:
             warnings.append("No claim documents found in folder")
 
-        # Assessment of Loss validations
+        # ── 5. Assessment of Loss financials ──────────────────────────────────
         try:
             inv_amt = _parse_amount_for_total(self.invoice_amount_without_gst)
             if not self.invoice_amount_without_gst or str(self.invoice_amount_without_gst).strip() == "":
@@ -839,9 +877,24 @@ class ClaimData:
             ("Charges Filed",         self.charges_filed,         False, _src("charges_filed")),
 
             # Workshop Details
-            ("Workshop Name",         self.workshop_name,         True,  _src("workshop_name")),
-            ("Estimate Amount",       self.workshop_estimate_amount, True, _src("workshop_estimate_amount")),
-            ("GST Number",            self.gst_number,            False, _src("gst_number")),
+            ("Workshop Name",         self.workshop_name,              True,  _src("workshop_name")),
+            ("Estimate Amount",        self.workshop_estimate_amount,   True,  _src("workshop_estimate_amount")),
+            ("Estimate Date",          self.workshop_estimate_date,     False, _src("workshop_estimate_date")),
+            ("GST Number",             self.gst_number,                 False, _src("gst_number")),
+
+            # ── Interim Report Details (Step 3) ─────────────────────────────
+            # These fields are filled during the portal's Interim Report step.
+            # They were previously hidden from the preview, meaning users could
+            # not verify extraction before running automation.
+            ("Date of Survey",        self.date_of_survey,             True,  _src("date_of_survey")),
+            ("Place of Survey",       self.place_of_survey,            True,  _src("place_of_survey")),
+            ("Surveyor Apptd Date",   self.date_of_allotment,          False, _src("date_of_allotment")),
+            ("Initial Loss Amt (₹)",  self.initial_loss_amount,        True,  _src("initial_loss_amount")),
+            ("Cause of Accident",     self.cause_nature_of_accident,   False, _src("cause_nature_of_accident")),
+            ("Claimant Mobile",       self.mobile_no,                  False, _src("mobile_no")),
+            ("Claimant Email",        self.email_id,                   False, _src("email_id")),
+            ("Submission Date",       self.expected_completion_date or self.date_of_survey, False,
+                                      _src("expected_completion_date") or _src("date_of_survey")),
 
             # Invoice Details
             ("Workshop Inv No",       self.workshop_invoice_no,   False, _src("workshop_invoice_no") or _src("vendor_invoice_number")),

@@ -34,6 +34,14 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
+# Microsoft Office lock files (auto-generated, never commit these)
+~$*.xlsx
+~$*.xls
+~$*.docx
+~$*.doc
+~$*.pptx
+~$*.ppt
+
 # Logs & Temporary Files
 logs/
 *.log
