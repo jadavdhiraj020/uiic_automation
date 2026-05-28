@@ -22,6 +22,10 @@
       "satisfaction",
       "discharge_voucher"
     ],
+    "reinspection_report": [
+      "reinspection",
+      "re_inspection"
+    ],
     "driving_license": [
       "driving_license",
       "driving license",

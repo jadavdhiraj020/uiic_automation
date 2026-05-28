@@ -764,8 +764,8 @@ class AutomationEngine:
                     # Phase 5: Interim Report
                     self.step_cb(4, steps[4])
                     self.log.phase_banner(5, total_steps, "Interim Report")
-                    from app.portals.oic.automation.interim_report_module import fill_interim_report
-                    if not await fill_interim_report(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
+                    from app.portals.oic.automation.interim_report_module import fill_interim_report as oic_fill_interim_report
+                    if not await oic_fill_interim_report(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
                         return AutomationRunResult(False, "Phase 5 (Interim Report) failed.")
 
                     # Phase 6: Assessment of Loss

@@ -1,38 +1,11 @@
-# app/portals/oic/automation/document_upload_module.py
-"""
-document_upload_module.py — OIC Document Upload (Step 5) automation.
-
-Handles all 7 upload sections on the OIC Document Upload page:
-  1. Workshop Repair Estimate     (#fileInput0)    — REQUIRED
-  2. Discharge cum Satisfaction   (#fileInput1)    — REQUIRED
-  3. Invoice                      (#fileInput2)    — REQUIRED
-  4. Re-Inspection Report         (#fileInput3)    — OPTIONAL
-  5. Driving License (Front/Back) (#fileInput ×2)  — OPTIONAL
-  6. Photographs                  (#photographs)   — REQUIRED
-  7. Other Documents              (#otherDocument) — OPTIONAL (merged remaining)
-
-Plus:
-  - Remarks textarea (#remarks)   — REQUIRED
-  - Submit button (configurable)
-
-DESIGN:
-  - Flat page layout (no accordion/collapse). All sections visible simultaneously.
-  - File resolution: upload_doc_files → assessment_files → claim_doc_files → folder scan.
-  - Section 5 has duplicate id="fileInput"; resolved via XPath on placeholder text.
-  - Section 6 only accepts jpg/png/jpeg; file extension is validated before upload.
-  - Section 7 merges all remaining unmapped files into a single PDF at runtime.
-  - Oversized files (>5MB) are compressed using existing folder_scanner helpers.
-  - Each section is wrapped in try/except so a single failure doesn't abort the phase.
-"""
-
 from __future__ import annotations
+from app.automation.services.pdf_merge_service import PdfMergeService, MergeConfig
 
 import asyncio
 import logging
 import os
 import random
 import re
-import shutil
 import tempfile
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set
@@ -41,7 +14,6 @@ from playwright.async_api import Page
 
 from app.automation.automation_logger import AutomationLogger, _ts
 from app.data.data_model import ClaimData
-from app.data.folder_scanner import _prepare_files_for_merge
 from app.utils import load_automation_defaults
 from app.portals.oic.automation.ui_utils import (
     upload_file_via_input,
@@ -102,19 +74,9 @@ def _resolve_file(
     return None
 
 
-def _get_folder_path(data: ClaimData) -> Optional[str]:
-    """Derive the claim folder path from any known file in the data model."""
-    for pool_name in ("claim_doc_files", "assessment_files", "upload_doc_files"):
-        pool = getattr(data, pool_name, {}) or {}
-        for fpath in pool.values():
-            if fpath and os.path.isfile(fpath):
-                return os.path.dirname(fpath)
-    return None
-
-
 def _find_first_vehicle_photo(data: ClaimData) -> Optional[str]:
     """Find the first vehicle photo file (jpg/png) in the claim folder."""
-    folder = _get_folder_path(data)
+    folder = PdfMergeService.get_folder_path(data)
     if not folder or not os.path.isdir(folder):
         return None
 
@@ -190,454 +152,6 @@ def _compress_if_needed(
     except Exception as exc:
         log.warning(f"{label}: compression error ({exc}) — using original file")
         return file_path
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# OTHER DOCUMENTS MERGE (RUNTIME)
-# ══════════════════════════════════════════════════════════════════════════════
-
-def _collect_remaining_files(
-    data: ClaimData,
-    used_files: Set[str],
-) -> List[str]:
-    """
-    Collect all files from the claim folder that haven't been used in sections 1–6.
-    These will be merged into a single PDF for the "Other Documents" slot.
-    """
-    folder = _get_folder_path(data)
-    if not folder or not os.path.isdir(folder):
-        return []
-
-    _skip_files = {
-        "all_pdf_text.txt", "extracted_documents_data.md",
-        "re-inspection report format.pdf", "re-inspection report format.xlsx",
-        "claim_others_documents.pdf",
-        "claim_related_document_merged.pdf",
-        "oic_other_documents_merged.pdf",
-    }
-
-    remaining: List[str] = []
-    for fname in sorted(os.listdir(folder)):
-        full_path = os.path.join(folder, fname)
-        if not os.path.isfile(full_path):
-            continue
-
-        fname_lower = fname.lower()
-        if fname_lower in _skip_files:
-            continue
-        if fname_lower.startswith("claim_others_documents_"):
-            continue
-        if fname_lower.startswith("oic_other_documents_merged"):
-            continue
-        if fname.startswith("~$"):
-            continue
-
-        ext = Path(fname).suffix.lower()
-        if ext not in _UPLOADABLE_EXTS:
-            continue
-
-        norm_path = os.path.normpath(full_path)
-        if norm_path not in used_files:
-            remaining.append(full_path)
-
-    return remaining
-
-
-def _convert_image_to_pdf_page(img_path: str):
-    """Convert an image file to a PDF page using Pillow."""
-    from PIL import Image
-    img = Image.open(img_path)
-    if img.mode in ("RGBA", "P"):
-        img = img.convert("RGB")
-    return img
-
-
-def _validate_merged_pdf(
-    output_path: str, max_bytes: int, merged_count: int,
-    skipped_files: List[str], _log: Callable
-) -> Optional[str]:
-    """Validate merged PDF size and log results."""
-    file_size = os.path.getsize(output_path)
-    mb = file_size / (1024 * 1024)
-
-    if file_size > max_bytes:
-        if isinstance(_log, AutomationLogger):
-            _log.upload_failed("Merged PDF", f"Exceeds OIC limit ({mb:.1f}MB).")
-        else:
-            _log(f"   ❌ Merged PDF exceeds OIC limit ({mb:.1f}MB). Cannot upload.")
-        try:
-            os.remove(output_path)
-        except OSError:
-            pass
-        return None
-
-    if isinstance(_log, AutomationLogger):
-        _log.success(f"Merged PDF created: {Path(output_path).name} ({mb:.1f}MB, {merged_count} files)")
-    else:
-        _log(f"   ✅ Merged PDF created: {Path(output_path).name} ({mb:.1f}MB, {merged_count} files)")
-
-    if skipped_files:
-        if isinstance(_log, AutomationLogger):
-            _log.warning(f"Skipped {len(skipped_files)} non-mergeable files: {', '.join(skipped_files)}")
-        else:
-            _log(f"   ⏭️ Skipped {len(skipped_files)} non-mergeable files: {', '.join(skipped_files)}")
-
-    return output_path
-
-
-def _merge_with_pypdfium2(
-    file_paths, output_path, max_bytes, _log,
-    _image_exts, _pdf_exts, pdfium
-):
-    """Full PDF merge using pypdfium2 + Pillow for images."""
-    dest = pdfium.PdfDocument.new()
-    image_pdfs: List[str] = []
-    merged_count = 0
-    skipped_files: List[str] = []
-
-    try:
-        for fpath in file_paths:
-            ext = Path(fpath).suffix.lower()
-            fname = Path(fpath).name
-
-            if ext in _pdf_exts:
-                try:
-                    src = pdfium.PdfDocument(fpath)
-                    if len(src) > 0:
-                        dest.import_pages(src)
-                        merged_count += 1
-                        _log(f"✅ Merged: {fname}")
-                except Exception as e:
-                    _log(f"   ⚠️ Could not read {fname}, skipping: {e}")
-                    skipped_files.append(fname)
-
-            elif ext in _image_exts:
-                try:
-                    img = _convert_image_to_pdf_page(fpath)
-                    try:
-                        tmp_pdf = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False, prefix="_upld_img_")
-                        tmp_pdf_path = tmp_pdf.name
-                        tmp_pdf.close()
-                        img.save(tmp_pdf_path, "PDF")
-                    finally:
-                        img.close()
-                    image_pdfs.append(tmp_pdf_path)
-
-                    src = pdfium.PdfDocument(tmp_pdf_path)
-                    dest.import_pages(src)
-                    merged_count += 1
-                    _log(f"✅ Converted & merged: {fname}")
-                except Exception as e:
-                    _log(f"   ⚠️ Could not convert {fname}, skipping: {e}")
-                    skipped_files.append(fname)
-            else:
-                _log(f"   ℹ️ Skipping non-mergeable file: {fname}")
-                skipped_files.append(fname)
-
-        if merged_count == 0:
-            _log(f"   ⚠️ No files were successfully merged.")
-            return None
-
-        dest.save(output_path)
-        
-    except Exception as e:
-        _log(f"   ❌ Merge error with pypdfium2: {e}")
-        return None
-    finally:
-        for tpath in image_pdfs:
-            try:
-                os.remove(tpath)
-            except OSError:
-                pass
-
-    if not os.path.isfile(output_path):
-        _log(f"   ❌ Merged PDF was not created.")
-        return None
-
-    # Validate size
-    actual_bytes = os.path.getsize(output_path)
-    if actual_bytes > max_bytes:
-        mb = actual_bytes / (1024 * 1024)
-        max_mb = max_bytes / (1024 * 1024)
-        _log(f"   ❌ Merged PDF too large ({mb:.1f}MB). Limit is {max_mb:.1f}MB.")
-        try:
-            os.remove(output_path)
-        except OSError:
-            pass
-        return None
-
-    return output_path
-
-
-def _merge_with_pypdf2(
-    file_paths, output_path, max_bytes, _log,
-    _image_exts, _pdf_exts, PdfMerger, PdfReader
-):
-    """Full PDF merge using PyPDF2 + Pillow for images."""
-    merger = PdfMerger()
-    image_pdfs: List[str] = []
-    merged_count = 0
-    skipped_files: List[str] = []
-
-    try:
-        for fpath in file_paths:
-            ext = Path(fpath).suffix.lower()
-            fname = Path(fpath).name
-
-            if ext in _pdf_exts:
-                try:
-                    reader = PdfReader(fpath)
-                    if len(reader.pages) > 0:
-                        merger.append(fpath)
-                        merged_count += 1
-                        if isinstance(_log, AutomationLogger):
-                            _log.info(f"Added PDF: {fname} ({len(reader.pages)} pages)")
-                        else:
-                            _log(f"     📄 Added PDF: {fname} ({len(reader.pages)} pages)")
-                    else:
-                        if isinstance(_log, AutomationLogger):
-                            _log.warning(f"Empty PDF skipped: {fname}")
-                        else:
-                            _log(f"     ⚠️ Empty PDF skipped: {fname}")
-                except Exception as e:
-                    if isinstance(_log, AutomationLogger):
-                        _log.error(f"Could not read PDF {fname}: {e}")
-                    else:
-                        _log(f"     ⚠️ Could not read PDF {fname}: {e}")
-                    skipped_files.append(fname)
-
-            elif ext in _image_exts:
-                try:
-                    img = _convert_image_to_pdf_page(fpath)
-                    try:
-                        temp_pdf = tempfile.NamedTemporaryFile(
-                            suffix=".pdf", delete=False, prefix=f"img_{Path(fpath).stem}_"
-                        )
-                        img.save(temp_pdf.name, "PDF")
-                    finally:
-                        img.close()
-                    image_pdfs.append(temp_pdf.name)
-                    merger.append(temp_pdf.name)
-                    merged_count += 1
-                    _log(f"[{_ts()}]     🖼️ Converted image to PDF: {fname}")
-                except Exception as e:
-                    _log(f"[{_ts()}]     ⚠️ Could not convert image {fname}: {e}")
-                    skipped_files.append(fname)
-            else:
-                _log(f"[{_ts()}]     ⏭️ Skipping non-mergeable file: {fname} ({ext})")
-                skipped_files.append(fname)
-
-        if merged_count == 0:
-            _log(f"[{_ts()}]   ⚠️ No files could be merged into PDF.")
-            return None
-
-        merger.write(output_path)
-        merger.close()
-
-        return _validate_merged_pdf(output_path, max_bytes, merged_count, skipped_files, _log)
-
-    except Exception as e:
-        _log(f"[{_ts()}]   ❌ PDF merge failed: {e}")
-        return None
-    finally:
-        for tmp in image_pdfs:
-            try:
-                os.remove(tmp)
-            except OSError:
-                pass
-
-
-def _merge_with_pillow_fallback(
-    file_paths, output_path, max_bytes, _log, _image_exts, _pdf_exts
-):
-    """
-    Fallback merge using only Pillow.
-    - Images → converted to PDF pages and saved as multi-page PDF
-    - PDFs → if only one, just copy it; if multiple, copy first and warn
-    - Does NOT merge PDF pages from multiple PDFs (requires PyPDF2)
-    """
-    pdf_files = [f for f in file_paths if Path(f).suffix.lower() in _pdf_exts]
-    image_files = [f for f in file_paths if Path(f).suffix.lower() in _image_exts]
-    skipped = [f for f in file_paths if f not in pdf_files and f not in image_files]
-
-    for sf in skipped:
-        _log(f"[{_ts()}]     ⏭️ Skipping non-mergeable: {Path(sf).name}")
-
-    merged_count = 0
-
-    # Case 1: Only images → merge with Pillow
-    if image_files and not pdf_files:
-        images = []
-        try:
-            from PIL import Image
-            for img_path in image_files:
-                try:
-                    img = Image.open(img_path)
-                    if img.mode in ("RGBA", "P"):
-                        img = img.convert("RGB")
-                    images.append(img)
-                    merged_count += 1
-                    _log(f"[{_ts()}]     🖼️ Added image: {Path(img_path).name}")
-                except Exception as e:
-                    _log(f"[{_ts()}]     ⚠️ Could not open image {Path(img_path).name}: {e}")
-
-            if images:
-                first = images[0]
-                rest = images[1:] if len(images) > 1 else []
-                first.save(output_path, "PDF", save_all=True, append_images=rest)
-                return _validate_merged_pdf(output_path, max_bytes, merged_count, [Path(s).name for s in skipped], _log)
-        except Exception as e:
-            _log(f"[{_ts()}]   ❌ Pillow image merge failed: {e}")
-            return None
-        finally:
-            for img in images:
-                try:
-                    img.close()
-                except Exception:
-                    pass
-
-    # Case 2: Single PDF (with or without images) → just copy the PDF
-    if len(pdf_files) == 1 and not image_files:
-        try:
-            shutil.copy2(pdf_files[0], output_path)
-            merged_count = 1
-            _log(f"[{_ts()}]     📄 Copied single PDF: {Path(pdf_files[0]).name}")
-            return _validate_merged_pdf(output_path, max_bytes, merged_count, [Path(s).name for s in skipped], _log)
-        except Exception as e:
-            _log(f"[{_ts()}]   ❌ Could not copy PDF: {e}")
-            return None
-
-    # Case 3: Multiple PDFs or mix → copy first PDF only, warn about rest
-    if pdf_files:
-        try:
-            shutil.copy2(pdf_files[0], output_path)
-            merged_count = 1
-            _log(f"[{_ts()}]     📄 Copied first PDF: {Path(pdf_files[0]).name}")
-            if len(pdf_files) > 1:
-                _log(f"[{_ts()}]     ⚠️ Cannot merge {len(pdf_files)-1} additional PDFs without PyPDF2.")
-                _log(f"[{_ts()}]     ℹ️ Install PyPDF2 for full merge: pip install PyPDF2")
-            return _validate_merged_pdf(output_path, max_bytes, merged_count, [Path(s).name for s in skipped], _log)
-        except Exception as e:
-            _log(f"[{_ts()}]   ❌ Could not copy PDF: {e}")
-            return None
-
-    _log(f"[{_ts()}]   ⚠️ No mergeable files found.")
-    return None
-
-
-def merge_files_to_pdf(
-    file_paths: List[str],
-    output_path: str,
-    max_bytes: int = _DEFAULT_MAX_FILE_BYTES,
-    log: Optional[Callable] = None,
-) -> Optional[str]:
-    """
-    Merge multiple files (PDFs, images) into a single PDF.
-    Returns the output path if successful and within size limit, None otherwise.
-    """
-    if not file_paths:
-        if isinstance(log, AutomationLogger):
-            log.info("No remaining files to merge.")
-        elif log:
-            log(f"   ℹ️ No remaining files to merge.")
-        return None
-
-    def _log(msg: str) -> None:
-        if not log:
-            return
-        if isinstance(log, AutomationLogger):
-            clean_msg = re.sub(r"^\[\d{2}:\d{2}:\d{2}\]\s*", "", msg)
-            if "❌" in clean_msg or "error" in clean_msg.lower():
-                log.error(clean_msg)
-            elif "⚠️" in clean_msg or "warning" in clean_msg.lower() or "skipped" in clean_msg.lower():
-                log.warning(clean_msg)
-            elif "✅" in clean_msg or "success" in clean_msg.lower() or "created" in clean_msg.lower():
-                log.success(clean_msg)
-            else:
-                log.info(clean_msg)
-        else:
-            log(msg)
-
-    _image_exts = {".jpg", ".jpeg", ".png", ".gif", ".bmp"}
-    _pdf_exts = {".pdf"}
-
-    # ── Pre-flight: compress largest files first until total fits in limit ────
-    compression_tmps: List[str] = []
-    file_paths, compression_tmps = _prepare_files_for_merge(
-        file_paths, max_bytes, log_fn=_log
-    )
-    if not file_paths:
-        if isinstance(log, AutomationLogger):
-            log.warning("No valid files to merge after pre-flight.")
-        return None
-
-    # ── Strategy 1: pypdfium2 (Primary choice, actually installed) ───────────
-    try:
-        import pypdfium2 as pdfium
-        try:
-            return _merge_with_pypdfium2(
-                file_paths, output_path, max_bytes, _log, _image_exts, _pdf_exts, pdfium
-            )
-        finally:
-            for t in compression_tmps:
-                try: os.remove(t)
-                except OSError: pass
-    except ImportError:
-        if isinstance(log, AutomationLogger):
-            log.info("pypdfium2 not available. Trying PyPDF2...")
-        else:
-            _log(f"   ℹ️ pypdfium2 not available. Trying PyPDF2...")
-
-    # ── Strategy 2: PyPDF2 (Legacy choice) ───────────────────────────────────
-    try:
-        from PyPDF2 import PdfMerger, PdfReader
-        try:
-            return _merge_with_pypdf2(
-                file_paths, output_path, max_bytes, _log,
-                _image_exts, _pdf_exts, PdfMerger, PdfReader
-            )
-        finally:
-            for t in compression_tmps:
-                try: os.remove(t)
-                except OSError: pass
-    except ImportError:
-        if isinstance(log, AutomationLogger):
-            log.info("PyPDF2 not available. Using Pillow fallback for merge.")
-        else:
-            _log(f"   ℹ️ PyPDF2 not available. Using Pillow fallback for merge.")
-
-    # ── Strategy 3: Pillow-only fallback ──────────────────────────────────────
-    try:
-        return _merge_with_pillow_fallback(
-            file_paths, output_path, max_bytes, _log, _image_exts, _pdf_exts
-        )
-    finally:
-        for t in compression_tmps:
-            try: os.remove(t)
-            except OSError: pass
-
-
-def _merge_remaining_to_pdf(
-    files: List[str],
-    output_path: str,
-    log: AutomationLogger,
-    max_bytes: int = _DEFAULT_MAX_FILE_BYTES,
-) -> Optional[str]:
-    """
-    Merge remaining files into a single PDF. Uses local merge logic.
-    Returns the output path on success, None on failure.
-    """
-    if not files:
-        log.info("No remaining files to merge for Other Documents.")
-        return None
-
-    try:
-        result = merge_files_to_pdf(files, output_path, max_bytes=max_bytes, log=log)
-        return result
-    except Exception as exc:
-        log.error(f"Other Documents merge failed: {exc}")
-        return None
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # INDIVIDUAL SECTION HANDLERS
@@ -844,7 +358,7 @@ async def _upload_other_documents(
 
     # Failsafe: scan folder directly for claim_others_documents_*.pdf
     if not precomputed_pdf or not os.path.isfile(precomputed_pdf):
-        folder = _get_folder_path(data)
+        folder = PdfMergeService.get_folder_path(data)
         if folder and os.path.isdir(folder):
             import glob as _glob
             pattern = os.path.join(folder, "claim_others_documents_*.pdf")
@@ -897,7 +411,8 @@ async def _upload_other_documents(
 
     # ── Priority 2: Runtime merge fallback ───────────────────────────────────
     log.info("  No pre-merged PDF found — falling back to runtime merge.")
-    remaining = _collect_remaining_files(data, used_files)
+    config = MergeConfig(max_bytes=max_bytes, label="Other Documents", exclude_filenames={"all_pdf_text.txt", "extracted_documents_data.md", "re-inspection report format.pdf", "re-inspection report format.xlsx", "claim_others_documents.pdf", "claim_related_document_merged.pdf", "oic_other_documents_merged.pdf"}, exclude_prefixes={"claim_others_documents_", "oic_other_documents_merged"})
+    remaining = PdfMergeService.collect_remaining(data, used_files, config)
     if not remaining:
         log.info("  Section 7 (Other Documents): No remaining files to merge — skipping")
         return False
@@ -907,7 +422,7 @@ async def _upload_other_documents(
         f"{[Path(f).name for f in remaining[:5]]}{'...' if len(remaining) > 5 else ''}"
     )
 
-    folder = _get_folder_path(data)
+    folder = PdfMergeService.get_folder_path(data)
     if folder:
         output_path = os.path.join(folder, "oic_other_documents_merged.pdf")
     else:
@@ -915,7 +430,7 @@ async def _upload_other_documents(
         tmp.close()
         output_path = tmp.name
 
-    merged_path = _merge_remaining_to_pdf(remaining, output_path, log, max_bytes=max_bytes)
+    merged_path = PdfMergeService.merge(remaining, output_path, config, log=log)
     if not merged_path or not os.path.isfile(merged_path):
         log.warning("  Section 7 (Other Documents): Merge failed — skipping")
         return False
@@ -1140,3 +655,22 @@ async def fill_document_upload_section(
         log.error(f"Document Upload failed: {exc}")
         await capture_error_screenshot(page, "document_upload", log)
         return False
+
+
+def _collect_remaining_files(data: ClaimData, used_files: Set[str]) -> List[str]:
+    config = MergeConfig(
+        max_bytes=15 * 1024 * 1024,
+        label="Other Documents",
+        exclude_filenames={
+            "all_pdf_text.txt",
+            "extracted_documents_data.md",
+            "re-inspection report format.pdf",
+            "re-inspection report format.xlsx",
+            "claim_others_documents.pdf",
+            "claim_related_document_merged.pdf",
+            "oic_other_documents_merged.pdf"
+        },
+        exclude_prefixes={"claim_others_documents_", "oic_other_documents_merged"}
+    )
+    return PdfMergeService.collect_remaining(data, used_files, config)
+

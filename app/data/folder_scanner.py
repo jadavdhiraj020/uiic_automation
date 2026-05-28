@@ -346,7 +346,7 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
 
     # Prefer a user-provided reinspection PDF, if present, before any Excel extraction.
     user_reinspection_pdf: Optional[str] = None
-    reinspection_keywords = assessment_map.get("reinspection_report", [])
+    reinspection_keywords = assessment_map.get("reinspection_report", []) or upload_map.get("reinspection_report", [])
     for fname in sorted(os.listdir(folder_path)):
         full_path = os.path.join(folder_path, fname)
         if not os.path.isfile(full_path):
@@ -359,11 +359,18 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
             break
 
     if user_reinspection_pdf:
-        result.assessment_files["reinspection_report"] = user_reinspection_pdf
-        logger.info(
-            "Assessment file [reinspection_report]: %s (user-provided PDF, skipping extraction)",
-            Path(user_reinspection_pdf).name,
-        )
+        if "reinspection_report" in upload_map:
+            result.upload_doc_files["reinspection_report"] = user_reinspection_pdf
+            logger.info(
+                "Upload doc file [reinspection_report]: %s (user-provided PDF, skipping extraction)",
+                Path(user_reinspection_pdf).name,
+            )
+        else:
+            result.assessment_files["reinspection_report"] = user_reinspection_pdf
+            logger.info(
+                "Assessment file [reinspection_report]: %s (user-provided PDF, skipping extraction)",
+                Path(user_reinspection_pdf).name,
+            )
 
     # Collect files starting with "other" for sequential Other 1/2/3 assignment
     other_files: List[str] = []
@@ -388,9 +395,13 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
 
         # ── Handle our generated subset excel/pdf directly ────────────────────────
         if fname_lower in ["re-inspection report format.xlsx", "re-inspection report format.pdf"]:
-            if os.path.exists(full_path) and "reinspection_report" not in result.assessment_files:
-                result.assessment_files["reinspection_report"] = full_path
-                logger.info(f"Assessment file [reinspection_report]: {fname} (previously generated)")
+            if os.path.exists(full_path) and "reinspection_report" not in result.assessment_files and "reinspection_report" not in result.upload_doc_files:
+                if "reinspection_report" in upload_map:
+                    result.upload_doc_files["reinspection_report"] = full_path
+                    logger.info(f"Upload doc file [reinspection_report]: {fname} (previously generated)")
+                else:
+                    result.assessment_files["reinspection_report"] = full_path
+                    logger.info(f"Assessment file [reinspection_report]: {fname} (previously generated)")
             continue
 
         # ── Excel file ────────────────────────────────────────────────────────
@@ -413,10 +424,11 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
                 logger.info("Excel found: %s", fname)
 
                 # ── Auto-extract Sheet 7 for Re-Inspection Report ─────────────
-                if "reinspection_report" in result.assessment_files:
+                if "reinspection_report" in result.assessment_files or "reinspection_report" in result.upload_doc_files:
+                    existing_path = result.assessment_files.get("reinspection_report") or result.upload_doc_files.get("reinspection_report")
                     logger.info(
                         "Reinspection report already available (%s); skipping extraction from Excel.",
-                        Path(result.assessment_files["reinspection_report"]).name,
+                        Path(existing_path).name,
                     )
                 else:
                     # Try to find an existing generated report first
@@ -430,8 +442,12 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
 
                     # If we successfully created/found a report, assign it!
                     if spot_path and os.path.exists(spot_path):
-                        result.assessment_files["reinspection_report"] = spot_path
-                        logger.info("Assessment file [reinspection_report]: %s", spot_path)
+                        if "reinspection_report" in upload_map:
+                            result.upload_doc_files["reinspection_report"] = spot_path
+                            logger.info("Upload doc file [reinspection_report]: %s", spot_path)
+                        else:
+                            result.assessment_files["reinspection_report"] = spot_path
+                            logger.info("Assessment file [reinspection_report]: %s", spot_path)
                     else:
                         logger.warning(
                             "Could not resolve reinspection_report from user PDF, existing generated files, or Excel extraction."
@@ -740,6 +756,7 @@ def _compress_pdf_for_upload(pdf_path: str, output_path: str, target_dpi: int = 
                     pil_img = pil_img.convert("RGB")
                 # Pillow saves RGB PDFs with DCT (JPEG) compression internally
                 tf = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False, prefix=f"_cmp{i}_")
+                tf.close()
                 pil_img.save(tf.name, "PDF")
                 page_tmps.append(tf.name)
                 dest.import_pages(pdfium.PdfDocument(tf.name))
@@ -905,178 +922,14 @@ def _prepare_files_for_merge(
 def _merge_claim_related_pdf(
     file_paths: List[str],
     output_path: str,
-    max_bytes: int = 15 * 1024 * 1024,  # 15 MB portal limit
+    max_bytes: int = 15 * 1024 * 1024,
 ) -> Optional[str]:
     """
-    Lightweight PDF merge used at scan time (no AutomationLogger dependency).
-    Pre-flight: sum sizes; compress largest-first until within 15 MB limit.
-    Priority: pypdfium2 full merge → PyPDF2 → Pillow copy.
-    Returns output_path on success, None on failure.
+    Compatibility wrapper delegating to PdfMergeService.
     """
-    if not file_paths:
-        return None
-
-
-    _image_exts = {".jpg", ".jpeg", ".png", ".gif", ".bmp"}
-    _pdf_exts = {".pdf"}
-
-    # Remove previous output
-    if os.path.exists(output_path):
-        try:
-            os.remove(output_path)
-        except OSError:
-            pass
-
-    # ── Pre-flight: compress largest files first until total fits in 15 MB ────
-    file_paths, compression_tmps = _prepare_files_for_merge(
-        file_paths, max_bytes, log_fn=logger.info
-    )
-    if not file_paths:
-        return None
-
-    image_tmps: List[str] = []
-
-    # ── Strategy 1: pypdfium2 (Primary choice, actually installed) ───────────
-
-    try:
-        import pypdfium2 as pdfium
-        dest = pdfium.PdfDocument.new()
-        count = 0
-        for fp in file_paths:
-            ext = Path(fp).suffix.lower()
-            if ext in _pdf_exts:
-                try:
-                    src = pdfium.PdfDocument(fp)
-                    if len(src) > 0:
-                        dest.import_pages(src)
-                        count += 1
-                except Exception as e:
-                    logger.warning("claim_related merge: skipping unreadable PDF %s: %s", Path(fp).name, e)
-            elif ext in _image_exts:
-                try:
-                    from PIL import Image  # type: ignore
-                    img = Image.open(fp)
-                    if img.mode in ("RGBA", "P"):
-                        img = img.convert("RGB")
-                    tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False, prefix="_crd_img_")
-                    img.save(tmp.name, "PDF")
-                    image_tmps.append(tmp.name)
-                    src = pdfium.PdfDocument(tmp.name)
-                    dest.import_pages(src)
-                    count += 1
-                except Exception as e:
-                    logger.warning("claim_related merge: skipping image %s: %s", Path(fp).name, e)
-            else:
-                logger.info("claim_related merge: skipping non-mergeable %s", Path(fp).name)
-
-        if count == 0:
-            return None
-
-        dest.save(output_path)
-    except ImportError:
-        logger.info("pypdfium2 not available; using PyPDF2/Pillow fallback.")
-        # ── Strategy 2: PyPDF2 / Pillow ──────────────────────────────────────────
-        try:
-            from PyPDF2 import PdfMerger, PdfReader  # type: ignore
-            merger = PdfMerger()
-            count = 0
-            for fp in file_paths:
-                ext = Path(fp).suffix.lower()
-                if ext in _pdf_exts:
-                    try:
-                        r = PdfReader(fp)
-                        if r.pages:
-                            merger.append(fp)
-                            count += 1
-                    except Exception as e:
-                        logger.warning("claim_related merge: skipping unreadable PDF %s: %s", Path(fp).name, e)
-                elif ext in _image_exts:
-                    try:
-                        from PIL import Image  # type: ignore
-                        img = Image.open(fp)
-                        if img.mode in ("RGBA", "P"):
-                            img = img.convert("RGB")
-                        tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False, prefix="_crd_img_")
-                        img.save(tmp.name, "PDF")
-                        image_tmps.append(tmp.name)
-                        merger.append(tmp.name)
-                        count += 1
-                    except Exception as e:
-                        logger.warning("claim_related merge: skipping image %s: %s", Path(fp).name, e)
-                else:
-                    logger.info("claim_related merge: skipping non-mergeable %s", Path(fp).name)
-    
-            if count == 0:
-                merger.close()
-                return None
-    
-            merger.write(output_path)
-            merger.close()
-        except ImportError:
-            logger.info("PyPDF2 not available; using Pillow fallback for claim_related merge.")
-            # ── Strategy 3: Pillow images → single PDF ───────────────────────────
-            images = []
-            import shutil
-            pdf_files = [f for f in file_paths if Path(f).suffix.lower() in _pdf_exts]
-            img_files = [f for f in file_paths if Path(f).suffix.lower() in _image_exts]
-            if img_files and not pdf_files:
-                try:
-                    from PIL import Image  # type: ignore
-                    for ip in img_files:
-                        try:
-                            im = Image.open(ip)
-                            if im.mode in ("RGBA", "P"):
-                                im = im.convert("RGB")
-                            images.append(im)
-                        except Exception as e:
-                            logger.warning("claim_related merge: image open failed %s: %s", Path(ip).name, e)
-                    if not images:
-                        return None
-                    images[0].save(output_path, "PDF", save_all=True, append_images=images[1:])
-                except Exception as e:
-                    logger.error("claim_related merge Pillow fallback failed: %s", e)
-                    return None
-            elif pdf_files:
-                try:
-                    shutil.copy2(pdf_files[0], output_path)
-                    if len(pdf_files) > 1:
-                        logger.warning("claim_related merge: copied only first PDF (pypdfium2 needed for full merge).")
-                except Exception as e:
-                    logger.error("claim_related merge copy failed: %s", e)
-                    return None
-            else:
-                return None
-    finally:
-        for t in image_tmps + compression_tmps:
-            try:
-                os.remove(t)
-            except OSError:
-                pass
-
-    # Validate size
-    if not os.path.isfile(output_path):
-        return None
-    sz = os.path.getsize(output_path)
-    if sz > max_bytes:
-        logger.error(
-            "claim_related merge: merged PDF %.1fMB exceeds 15MB limit. File removed.",
-            sz / (1024 * 1024),
-        )
-        try:
-            os.remove(output_path)
-        except OSError:
-            pass
-        return None
-
-    logger.info(
-        "claim_related merge: %s created (%.1fMB)",
-        Path(output_path).name,
-        sz / (1024 * 1024),
-    )
-    return output_path
-
-
-
+    from app.automation.services.pdf_merge_service import PdfMergeService, MergeConfig
+    config = MergeConfig(max_bytes=max_bytes, label="Pre-merge Claim Related")
+    return PdfMergeService.merge(file_paths, output_path, config, log=logger.info)
 
 
 def _log_scan_summary(result: FolderScanResult, claim_map: Dict[str, str]) -> None:
