@@ -229,6 +229,6 @@ register_portal(PortalInfo(
     url="https://orientalinsurance.org.in/",
     config_subdir="config",
     description="Oriental Insurance Company — Portal",
-    requires_document_merge=False,  # OIC accepts individual document slots
+    requires_document_merge=True,   # OIC: pre-merge leftover files at scan time (used by Section 7 Other Documents)
 ))
 

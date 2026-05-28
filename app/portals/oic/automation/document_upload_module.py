@@ -800,7 +800,6 @@ async def _upload_photographs(
     upload_path = _compress_if_needed(photo_path, "Photographs", log)
 
     try:
-        photo_input = page.locator(S.SEL_UPLOAD_PHOTOGRAPHS).first
         await asyncio.sleep(random.uniform(0.3, 0.7))
 
         success = await upload_file_via_input(
@@ -830,18 +829,84 @@ async def _upload_other_documents(
     used_files: Set[str],
     max_bytes: int = _DEFAULT_MAX_FILE_BYTES,
 ) -> bool:
-    """Handle Section 7: Other Documents (merge remaining files)."""
+    """Handle Section 7: Other Documents.
+
+    Priority:
+      1. Use pre-merged PDF from folder scan time (claim_related_merged_pdf on
+         scan_result, or claim_others_documents_*.pdf glob in the claim folder).
+      2. Fall back to runtime merge of remaining unmatched files.
+    """
     log.info("▸ Section 7: Other Documents")
 
+    # ── Priority 1: Use pre-merged PDF from scan time ─────────────────────────
+    scan_result = getattr(data, "_scan_result", None)
+    precomputed_pdf = getattr(scan_result, "claim_related_merged_pdf", None) if scan_result else None
+
+    # Failsafe: scan folder directly for claim_others_documents_*.pdf
+    if not precomputed_pdf or not os.path.isfile(precomputed_pdf):
+        folder = _get_folder_path(data)
+        if folder and os.path.isdir(folder):
+            import glob as _glob
+            pattern = os.path.join(folder, "claim_others_documents_*.pdf")
+            found = sorted(_glob.glob(pattern))
+            if found:
+                precomputed_pdf = found[-1]  # use the latest timestamped file
+                log.info(f"  Found pre-merged PDF via glob: {Path(precomputed_pdf).name}")
+            else:
+                # Also check legacy name without timestamp
+                legacy = os.path.join(folder, "claim_others_documents.pdf")
+                if os.path.isfile(legacy):
+                    precomputed_pdf = legacy
+                    log.info(f"  Found pre-merged PDF (legacy): {Path(precomputed_pdf).name}")
+
+    if precomputed_pdf and os.path.isfile(precomputed_pdf):
+        precomputed_files = getattr(scan_result, "claim_related_files", None) if scan_result else None
+        n = len(precomputed_files) if precomputed_files else "?"
+        mb = os.path.getsize(precomputed_pdf) / (1024 * 1024)
+        log.success(
+            f"  Using pre-merged PDF from scan: {Path(precomputed_pdf).name} "
+            f"({n} source file(s), {mb:.1f}MB)"
+        )
+        upload_path = _compress_if_needed(
+            precomputed_pdf, "Other Documents (pre-merged)", log, limit_bytes=max_bytes
+        )
+        # Track so _collect_remaining_files won't re-include this file
+        used_files.add(os.path.normpath(precomputed_pdf))
+
+        try:
+            await asyncio.sleep(random.uniform(0.3, 0.7))
+            success = await upload_file_via_input(
+                page,
+                file_input_selector=S.SEL_UPLOAD_OTHER_DOCS,
+                file_path=upload_path,
+                label="Section 7 (Other Documents)",
+                log=log,
+            )
+            if success:
+                log.success(
+                    f"  Section 7 (Other Documents): uploaded pre-merged PDF "
+                    f"({n} source files, {os.path.getsize(upload_path) / (1024 * 1024):.1f} MB)"
+                )
+            else:
+                log.warning("  Section 7 (Other Documents): upload failed")
+            await dismiss_portal_popup(page, log, max_wait_s=2.0, context="Other Documents")
+            return success
+        except Exception as exc:
+            log.error(f"  Section 7 (Other Documents): upload error: {exc}")
+            return False
+
+    # ── Priority 2: Runtime merge fallback ───────────────────────────────────
+    log.info("  No pre-merged PDF found — falling back to runtime merge.")
     remaining = _collect_remaining_files(data, used_files)
     if not remaining:
         log.info("  Section 7 (Other Documents): No remaining files to merge — skipping")
         return False
 
-    log.info(f"  Found {len(remaining)} remaining file(s) for merge: "
-             f"{[Path(f).name for f in remaining[:5]]}{'...' if len(remaining) > 5 else ''}")
+    log.info(
+        f"  Found {len(remaining)} remaining file(s) for merge: "
+        f"{[Path(f).name for f in remaining[:5]]}{'...' if len(remaining) > 5 else ''}"
+    )
 
-    # Create temp output for merged PDF
     folder = _get_folder_path(data)
     if folder:
         output_path = os.path.join(folder, "oic_other_documents_merged.pdf")

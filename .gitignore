@@ -47,11 +47,11 @@ app/portals/newindia/config/settings.json
 .env
 
 # User claim folders & uploaded documents
-automationfolderuploading/
-*.xlsx
-*.xls
-*.pdf
-*.jpg
-*.jpeg
-*.png
-*.puc
+# automationfolderuploading/
+# *.xlsx
+# *.xls
+# *.pdf
+# *.jpg
+# *.jpeg
+# *.png
+# *.puc
