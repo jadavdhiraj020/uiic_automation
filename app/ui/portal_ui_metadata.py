@@ -376,6 +376,25 @@ _OIC_METADATA = PortalUiMetadata(
                 "Cause of Accident",
             ],
         ),
+        FieldGroup(
+            "assessment_of_loss",
+            "Assessment of Loss",
+            [
+                "Inv Amt Without GST (₹)",
+                "Invoice GST Amt (₹)",
+                "Voluntary Excess (₹)",
+                "Imposed Excess (₹)",
+                "Salvage Amount (₹)",
+                "Traveling Expenses (₹)",
+                "Professional Fee (₹)",
+                "Daily Allowance (₹)",
+                "Photo Charges (₹)",
+                "Surveyor License No",
+                "License Expiry Date",
+                "OICL GST Number",
+                "Surveyor Other Exp (₹)",
+            ],
+        ),
     ],
 )
 
