@@ -15,7 +15,6 @@ Then clicks "Save and Next" to advance to Document Upload.
 from __future__ import annotations
 
 import asyncio
-import random
 from typing import Callable
 
 from playwright.async_api import Page
@@ -43,7 +42,7 @@ async def fill_assessment_of_loss(
     *,
     log: AutomationLogger,
     stop_cb: Callable[[], bool],
-    field_delay_ms: int = 150,
+    field_delay_ms: int = 30,
 ) -> bool:
     """Fill the complete Assessment of Loss form (Step 4) on the OIC portal.
 
@@ -150,7 +149,7 @@ async def _fill_invoice_section(page: Page, claim, defaults, log: AutomationLogg
     # Click Add Invoice +
     log.info("   Clicking 'Add Invoice +' button")
     await page.locator(S.SEL_LOSS_ADD_INV_BTN).click()
-    await asyncio.sleep(1.0) # wait for addition / transition
+    await asyncio.sleep(0.3) # wait for addition / transition
 
 
 async def _fill_excess_section(page: Page, claim, defaults, log: AutomationLogger, delay: int):
@@ -181,30 +180,59 @@ async def _fill_excess_section(page: Page, claim, defaults, log: AutomationLogge
 
 async def _add_and_fill_excess(page: Page, excess_type: str, amount_val: str, log: AutomationLogger, delay: int):
     log.info(f"   Adding excess: {excess_type} with amount {amount_val}")
-    
-    # 1. Select excess type in dropdown
-    await select_primeng_dropdown(page, S.SEL_LOSS_EXCESS_DROPDOWN, excess_type, "Excess Dropdown", log, delay_ms=delay)
-    
+
+    # ── Portal label mapping ─────────────────────────────────────────────
+    # The OIC portal uses specific label text for each excess amount input.
+    # Our internal names (from Excel) don't always match the portal labels:
+    #   "Imposed Excess"   → portal label: "Imposed Excess Amount"
+    #   "Voluntary Excess"  → portal label: "Voluntarily Excess Amount"  (typo in portal)
+    #   "Compulsory Excess" → portal label: "Compulsory Excess Amount"   (always present)
+    _PORTAL_LABEL_MAP = {
+        "Imposed Excess":    "Imposed Excess",
+        "Voluntary Excess":  "Voluntarily Excess",
+        "Compulsory Excess": "Compulsory Excess",
+    }
+    portal_label = _PORTAL_LABEL_MAP.get(excess_type, excess_type)
+
+    # 1. Select excess type in dropdown (use portal_label for correct match)
+    await select_primeng_dropdown(page, S.SEL_LOSS_EXCESS_DROPDOWN, portal_label, "Excess Dropdown", log, delay_ms=delay)
+
     # 2. Click Add Excess + button
     log.info(f"   Clicking 'Add Excess +' for {excess_type}")
     await page.locator(S.SEL_LOSS_ADD_EXCESS_BTN).click()
-    await asyncio.sleep(0.8) # Wait for accordion / dynamic subsection to appear
-    
-    # 3. Locate the new input field by its label (Imposed Excess or Voluntary Excess)
-    input_locator = page.locator("span.p-float-label", has=page.locator("label", has_text=excess_type)).locator("input").first
-    
+    await asyncio.sleep(0.3)  # Wait for accordion / dynamic subsection to appear
+
+    # 3. Locate the new input field by its portal label text.
+    #    All excess inputs share id="amount", so we MUST locate by the
+    #    surrounding <label> text to target the correct one.
+    input_locator = page.locator(
+        "span.p-float-label",
+        has=page.locator("label", has_text=portal_label),
+    ).locator("input").first
+
     # Wait for the input to be visible and type value
-    await input_locator.wait_for(state="visible", timeout=5000)
+    try:
+        await input_locator.wait_for(state="visible", timeout=5000)
+    except Exception:
+        # Fallback: try finding by exact label text match
+        log.warning(f"   Label '{portal_label}' not found via has_text. Trying text= selector...")
+        input_locator = page.locator(
+            f"span.p-float-label:has(label:text-is('{portal_label} Amount'))"
+        ).locator("input").first
+        await input_locator.wait_for(state="visible", timeout=5000)
+
     await input_locator.scroll_into_view_if_needed()
     await input_locator.focus()
-    await input_locator.fill("")
-    for char in str(amount_val):
-        await input_locator.type(char, delay=random.randint(15, 35))
-        
+    await input_locator.fill(str(amount_val))
+
     # Dispatch change events
-    await input_locator.evaluate("el => { el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); el.dispatchEvent(new Event('blur', { bubbles: true })); }")
+    await input_locator.evaluate(
+        "el => { el.dispatchEvent(new Event('input', { bubbles: true })); "
+        "el.dispatchEvent(new Event('change', { bubbles: true })); "
+        "el.dispatchEvent(new Event('blur', { bubbles: true })); }"
+    )
     log.info(f"   Successfully filled {excess_type} with amount {amount_val}")
-    await asyncio.sleep(0.3)
+    await asyncio.sleep(0.1)
 
 
 async def _fill_salvage_section(page: Page, claim, defaults, log: AutomationLogger, delay: int):
@@ -246,12 +274,25 @@ async def _fill_survey_charges(page: Page, claim, defaults, log: AutomationLogge
         log.info("   OICL GST Number is empty/not found (optional) — skipping")
 
     # 5. Expenses Subsection
+    # Internal Excel field names → portal dropdown/accordion label text.
+    # The OIC portal uses slightly different text in its accordion headers:
+    #   "Daily Allowances" → portal: "Daily Allowance"  (no trailing 's')
+    #   "Photo Charges"    → portal: "Photo Charge"     (no trailing 's')
+    #   "Other Expenses"   → portal: "Others"           (completely different)
+    _EXPENSE_PORTAL_LABEL_MAP = {
+        "Traveling Expenses": "Traveling Expenses",
+        "Professional Fee":   "Professional Fee",
+        "Daily Allowances":   "Daily Allowance",
+        "Photo Charges":      "Photo Charge",
+        "Other Expenses":     "Others",
+    }
+
     exp_map = {
         "Traveling Expenses": getattr(claim, "traveling_expenses", "0"),
-        "Professional Fee": getattr(claim, "professional_fee", "0"),
-        "Daily Allowances": getattr(claim, "daily_allowance", "0"),
-        "Photo Charges": getattr(claim, "photo_charges", "0"),
-        "Other Expenses": getattr(claim, "surveyor_other_expenses", "0")
+        "Professional Fee":   getattr(claim, "professional_fee", "0"),
+        "Daily Allowances":   getattr(claim, "daily_allowance", "0"),
+        "Photo Charges":      getattr(claim, "photo_charges", "0"),
+        "Other Expenses":     getattr(claim, "surveyor_other_expenses", "0"),
     }
 
     desc_val = defaults.get("expense_description", "conveyance")
@@ -263,58 +304,69 @@ async def _fill_survey_charges(page: Page, claim, defaults, log: AutomationLogge
             amt = 0
 
         if amt > 0:
-            log.info(f"   Adding expense: {expense_name} with amount {amt}")
-            
-            # Select dropdown value
-            await select_primeng_dropdown(page, S.SEL_LOSS_EXPENSES_DROPDOWN, expense_name, "Expenses Dropdown", log, delay_ms=delay)
-            
+            portal_label = _EXPENSE_PORTAL_LABEL_MAP.get(expense_name, expense_name)
+            log.info(f"   Adding expense: {expense_name} (portal: '{portal_label}') with amount {amt}")
+
+            # Select dropdown using portal label (avoids mismatches like "Others" vs "Other Expenses")
+            await select_primeng_dropdown(page, S.SEL_LOSS_EXPENSES_DROPDOWN, portal_label, "Expenses Dropdown", log, delay_ms=delay)
+
             # Click Add Expenses +
             await page.locator(S.SEL_LOSS_ADD_EXPENSES_BTN).click()
-            await asyncio.sleep(0.8) # Wait for dynamic section/accordion tab to render
-            
-            # Fill dynamic accordion section
-            await _fill_dynamic_expense_accordion(page, expense_name, str(amt), desc_val, log, delay)
+            await asyncio.sleep(0.3)  # Wait for dynamic section/accordion tab to render
+
+            # Fill dynamic accordion section using portal label for the tab locator
+            await _fill_dynamic_expense_accordion(page, portal_label, str(amt), desc_val, log, delay)
 
 
-async def _fill_dynamic_expense_accordion(page: Page, expense_name: str, amount_val: str, desc_val: str, log: AutomationLogger, delay: int):
-    log.info(f"   Expanding and filling dynamic subsection for: {expense_name}")
-    
-    # Locate the accordion tab containing the expense name in its header
-    tab_locator = page.locator(".p-accordion-tab", has=page.locator(".p-accordion-header", has_text=expense_name))
+async def _fill_dynamic_expense_accordion(
+    page: Page,
+    portal_label: str,  # Portal accordion header text (e.g. 'Daily Allowance', 'Others')
+    amount_val: str,
+    desc_val: str,
+    log: AutomationLogger,
+    delay: int,
+):
+    log.info(f"   Expanding and filling dynamic subsection for: {portal_label}")
+
+    # Locate the accordion tab by its portal header text.
+    # Use .last because new tabs are appended — the last one is the one just added.
+    tab_locator = page.locator(
+        ".p-accordion-tab",
+        has=page.locator(".p-accordion-header", has_text=portal_label),
+    ).last
     await tab_locator.wait_for(state="visible", timeout=5000)
-    
-    # Expand tab if it's collapsed (doesn't have active class)
+
+    # Expand tab if collapsed
     class_attr = await tab_locator.get_attribute("class") or ""
     if "p-accordion-tab-active" not in class_attr:
-        log.info(f"   Accordion tab for {expense_name} is collapsed. Expanding.")
+        log.info(f"   Accordion tab for '{portal_label}' is collapsed — expanding")
         await tab_locator.locator(".p-accordion-header-link").click()
-        await asyncio.sleep(0.5) # Wait for transition animation
-        
-    # Locate description and amount input elements inside the tab
-    desc_input = tab_locator.locator("input#description, input[name='itemDesc']").first
-    amt_input = tab_locator.locator("input[name='amount'], input[name='itemAmount'], #itemAmount input").first
-    
+        await asyncio.sleep(0.2)  # Wait for expand animation
+
+    # Locate description and amount inputs inside the expanded tab content
+    content = tab_locator.locator(".p-accordion-content").first
+    await content.wait_for(state="visible", timeout=5000)
+
+    desc_input = content.locator("input#description, input[name='itemDesc']").first
+    amt_input = content.locator("input[name='amount'], input[name='itemAmount'], #itemAmount input").first
+
     # Fill description
     await desc_input.wait_for(state="visible", timeout=5000)
     await desc_input.scroll_into_view_if_needed()
     await desc_input.focus()
-    await desc_input.fill("")
-    for char in str(desc_val):
-        await desc_input.type(char, delay=random.randint(15, 35))
+    await desc_input.fill(str(desc_val))
     await desc_input.evaluate("el => { el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); el.dispatchEvent(new Event('blur', { bubbles: true })); }")
-    log.field_filled(f"{expense_name} Description", desc_val)
-    
+    log.field_filled(f"{portal_label} Description", desc_val)
+
     # Fill amount
     await amt_input.wait_for(state="visible", timeout=5000)
     await amt_input.scroll_into_view_if_needed()
     await amt_input.focus()
-    await amt_input.fill("")
-    for char in str(amount_val):
-        await amt_input.type(char, delay=random.randint(15, 35))
+    await amt_input.fill(str(amount_val))
     await amt_input.evaluate("el => { el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); el.dispatchEvent(new Event('blur', { bubbles: true })); }")
-    log.field_filled(f"{expense_name} Amount", amount_val)
-    
-    await asyncio.sleep(0.3)
+    log.field_filled(f"{portal_label} Amount", amount_val)
+
+    await asyncio.sleep(0.1)
 
 
 async def _fill_recommendation_declaration(page: Page, claim, defaults, log: AutomationLogger, delay: int):
@@ -326,11 +378,8 @@ async def _fill_recommendation_declaration(page: Page, claim, defaults, log: Aut
     await rec_box.wait_for(state="visible", timeout=5000)
     await rec_box.scroll_into_view_if_needed()
     await rec_box.focus()
-    await rec_box.fill("")
-    for char in str(rec_val):
-        await rec_box.type(char, delay=random.randint(15, 35))
+    await rec_box.fill(str(rec_val))
     await rec_box.evaluate("el => { el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); }")
-    log.field_filled("Final Recommendation", rec_val)
 
     # 2. Declaration Checkbox (always checked)
     dec_box = page.locator(S.SEL_LOSS_DECLARATION)

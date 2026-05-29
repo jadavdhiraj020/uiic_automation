@@ -119,21 +119,40 @@ _JS_CLICK_RADIO = r"""
 
 # ── Python Helpers ────────────────────────────────────────────────────────────
 
+def _get_oic_fill_settings():
+    """Retrieve dynamic fill settings (instant fill vs typing speed) from OIC defaults."""
+    try:
+        from app.utils import load_automation_defaults
+        defaults = load_automation_defaults(portal_id="oic")
+        instant_fill = str(defaults.get("instant_fill", "Yes")).strip().upper() == "YES"
+        try:
+            typing_delay = int(str(defaults.get("typing_delay_ms", "25")).strip())
+            typing_delay = max(0, min(typing_delay, 1000))  # Sanitize to valid range
+        except ValueError:
+            typing_delay = 25
+        return instant_fill, typing_delay
+    except Exception:
+        return True, 25
+
+
 async def fill_input_with_delay(
     page: Page, selector: str, value: str, label: str,
-    log, delay_ms: int = 250
+    log, delay_ms: int = 30
 ):
-    """Angular-aware text fill with snappy typing and configurable delay."""
+    """Angular-aware instant or typed text fill with configurable inter-field delay."""
     try:
         await page.wait_for_selector(selector, state="visible", timeout=5000)
         
-        # Simulating snappy, medium-paced human-like typing using delays of (15, 35) ms
         locator = page.locator(selector).first
         await locator.focus()
-        await locator.fill("")
         
-        for char in str(value):
-            await locator.type(char, delay=random.randint(15, 35))
+        instant_fill, typing_delay = _get_oic_fill_settings()
+        if instant_fill:
+            await locator.fill(str(value))
+        else:
+            await locator.fill("")
+            for char in str(value):
+                await locator.type(char, delay=typing_delay)
             
         # Trigger Angular changes and event dispatches to settle state
         await page.evaluate(_JS_FILL, [selector, str(value)])
@@ -153,7 +172,7 @@ async def fill_input_with_delay(
 
 async def select_dropdown_with_delay(
     page: Page, selector: str, value: str, label: str,
-    log, delay_ms: int = 250
+    log, delay_ms: int = 30
 ):
     """Standard <select> dropdown helper with 3-pass matching and configurable delay."""
     try:
@@ -181,7 +200,7 @@ async def select_dropdown_with_delay(
 
 async def click_radio_with_delay(
     page: Page, name: str, value: str, label: str,
-    log, delay_ms: int = 250
+    log, delay_ms: int = 30
 ):
     """Click radio via label with delay."""
     try:
@@ -294,7 +313,7 @@ async def capture_error_screenshot(page: Page, context_name: str, log) -> Option
 
 async def click_primeng_radio(
     page: Page, radio_selector: str, label: str,
-    log, delay_ms: int = 250
+    log, delay_ms: int = 30
 ):
     """Click a PrimeNG radio button using multi-strategy locator matching."""
     try:
@@ -333,7 +352,7 @@ async def click_primeng_radio(
 
 async def select_primeng_dropdown(
     page: Page, dropdown_selector: str, value: str, label: str,
-    log, delay_ms: int = 400
+    log, delay_ms: int = 80
 ):
     """Select a value in a PrimeNG <p-dropdown> component."""
     try:
@@ -410,7 +429,7 @@ async def select_primeng_dropdown(
 
 async def fill_primeng_inputnumber(
     page: Page, selector: str, value: str, label: str,
-    log, delay_ms: int = 250
+    log, delay_ms: int = 30
 ):
     """Fill a PrimeNG <p-inputnumber> component (which nests an <input> inside)."""
     try:
@@ -423,11 +442,14 @@ async def fill_primeng_inputnumber(
         await inner_input.wait_for(state="visible", timeout=5000)
         await inner_input.scroll_into_view_if_needed()
         await inner_input.focus()
-        await inner_input.fill("")
 
-        # Type value with human-like delay
-        for char in str(value):
-            await inner_input.type(char, delay=random.randint(15, 35))
+        instant_fill, typing_delay = _get_oic_fill_settings()
+        if instant_fill:
+            await inner_input.fill(str(value))
+        else:
+            await inner_input.fill("")
+            for char in str(value):
+                await inner_input.type(char, delay=typing_delay)
 
         # Trigger change events
         await inner_input.evaluate("el => { el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); el.dispatchEvent(new Event('blur', { bubbles: true })); }")
@@ -462,7 +484,7 @@ def format_date_for_mui(raw_date) -> str:
 
 async def fill_mui_datepicker(
     page: Page, label_text: str, value: str, label: str,
-    log, delay_ms: int = 250
+    log, delay_ms: int = 30
 ) -> bool:
     """Fill a Material UI DatePicker by locating it via its visible label text.
 
@@ -501,19 +523,21 @@ async def fill_mui_datepicker(
         await input_el.wait_for(state="visible", timeout=3000)
         await input_el.scroll_into_view_if_needed()
 
-        # 3. Triple-click to select all existing text, then type the new date
+        # 3. Triple-click and clear any pre-existing value to avoid appending onto pre-filled date masks
         await input_el.click(click_count=3)
-        await asyncio.sleep(0.15)
+        await asyncio.sleep(0.05)
         await input_el.fill("")
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
 
-        # Type date with human-like delay
+        # 4. Type date at max speed (delay=0) or low delay if typed simulation is preferred
+        instant_fill, typing_delay = _get_oic_fill_settings()
+        datepicker_delay = 0 if instant_fill else max(5, typing_delay // 2)
         for char in formatted:
-            await input_el.type(char, delay=random.randint(15, 35))
+            await input_el.type(char, delay=datepicker_delay)
 
         # 4. Close any calendar popup and blur
         await page.keyboard.press("Escape")
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
         await page.keyboard.press("Tab")
 
         if isinstance(log, AutomationLogger):
@@ -537,29 +561,29 @@ async def fill_mui_datepicker(
 
 async def fill_textarea_primeng(
     page: Page, selector: str, value: str, label: str,
-    log, delay_ms: int = 250
+    log, delay_ms: int = 30
 ) -> None:
-    """Fill a PrimeNG textarea (<textarea> element) with human-like typing.
+    """Fill a PrimeNG textarea (<textarea> element) with instant fill or typed simulation.
 
     PrimeNG textareas are plain <textarea> elements (not <input>).  This helper:
       1. Waits for the element to be visible.
-      2. Focuses and clears existing content.
-      3. Types character-by-character with a realistic per-key delay.
-      4. Dispatches input / change / blur events so the framework registers the
+      2. Focuses and clears/fills based on instant vs typed settings.
+      3. Dispatches input / change / blur events so the framework registers the
          change (same pattern as fill_input_with_delay for <input> elements).
-
-    This is the centralised replacement for any module-local _fill_textarea
-    helpers — all new code should call this function instead.
     """
     try:
         locator = page.locator(selector).first
         await locator.wait_for(state="visible", timeout=5000)
         await locator.scroll_into_view_if_needed()
         await locator.focus()
-        await locator.fill("")
 
-        for char in str(value):
-            await locator.type(char, delay=random.randint(15, 35))
+        instant_fill, typing_delay = _get_oic_fill_settings()
+        if instant_fill:
+            await locator.fill(str(value))
+        else:
+            await locator.fill("")
+            for char in str(value):
+                await locator.type(char, delay=typing_delay)
 
         # Dispatch change events so the Angular/PrimeNG framework registers the value
         await locator.evaluate(
@@ -572,11 +596,11 @@ async def fill_textarea_primeng(
         if isinstance(log, AutomationLogger):
             log.field_filled(label, str(value)[:60])
         else:
-            log(f"[{_ts()}]   \u2705 [{label}] filled \u2192 '{str(value)[:60]}'")
+            log(f"[{_ts()}]   ✅ [{label}] filled → '{str(value)[:60]}'")
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.field_failed(label, str(e))
         else:
-            log(f"[{_ts()}]   \u26a0\ufe0f [{label}] error: {e}")
+            log(f"[{_ts()}]   ⚠️ [{label}] error: {e}")
 
     await asyncio.sleep(delay_ms / 1000.0)

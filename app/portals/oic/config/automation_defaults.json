@@ -2,6 +2,8 @@
   "_comment": "Basic user-facing automation defaults for OIC. These are business values, not selectors, waits, retries, or upload internals.",
   "unknown_claim_type_default": "CASHLESS",
   "eager_folder_ocr": false,
+  "instant_fill": "Yes",
+  "typing_delay_ms": "25",
 
   "_comment_basic": "Hardcoded defaults for Basic Details (Step 2). Surveyors can change these via Settings UI.",
   "driver_relation_default": "Self",

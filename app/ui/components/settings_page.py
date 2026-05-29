@@ -168,11 +168,14 @@ class SettingsPage(QWidget):
             ],
             "oic": [
                 ("unknown_claim_type_default", "Unknown Payment Default", "Claim Search claim type fallback", "claimtype"),
+                ("driver_relation_default",    "Relation of Driver",      "Driver Details — filled when Is Owner Driver = NO", "text"),
                 ("gst_type", "GST Type", "Invoice Section GST dropdown fallback", "gsttype"),
                 ("survey_gst_applicable", "Survey GST Applicable", "Survey Charges GST dropdown fallback", "yesno"),
                 ("expense_description", "Expense Description", "Default description for all expense types", "text"),
                 ("final_recommendation", "Final Recommendation", "Default surveyor recommendation text", "text"),
                 ("declaration_checked", "Declaration Checked", "Auto-check declaration checkbox default", "yesno"),
+                ("instant_fill",               "Instant Form Filling",    "Fill fields instantly (faster) or type slowly", "yesno"),
+                ("typing_delay_ms",            "Typing Delay (ms)",       "Delay per character when typing (used if not instant fill)", "text"),
             ],
         }
         return rows_by_portal.get(self._portal_id, rows_by_portal["uiic"])

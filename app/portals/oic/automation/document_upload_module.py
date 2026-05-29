@@ -187,7 +187,7 @@ async def _upload_section(
     # Locate and upload (no scroll on hidden input)
     try:
         file_input = page.locator(selector).first
-        await asyncio.sleep(random.uniform(0.3, 0.7))
+        await asyncio.sleep(0.15)
 
         success = await upload_file_via_input(
             page,
@@ -236,7 +236,7 @@ async def _upload_driving_license(
     # Front side
     try:
         front_input = page.locator(S.SEL_UPLOAD_DL_FRONT).first
-        await asyncio.sleep(random.uniform(0.3, 0.6))
+        await asyncio.sleep(0.15)
 
         front_ok = await upload_file_via_input(
             page,
@@ -254,12 +254,12 @@ async def _upload_driving_license(
         log.warning(f"  DL Front Side: error: {exc}")
 
     await dismiss_portal_popup(page, log, max_wait_s=1.5, context="DL Front")
-    await asyncio.sleep(random.uniform(0.5, 1.0))
+    await asyncio.sleep(0.3)
 
     # Back side (same file)
     try:
         back_input = page.locator(S.SEL_UPLOAD_DL_BACK).first
-        await asyncio.sleep(random.uniform(0.3, 0.6))
+        await asyncio.sleep(0.15)
 
         back_ok = await upload_file_via_input(
             page,
@@ -314,7 +314,7 @@ async def _upload_photographs(
     upload_path = _compress_if_needed(photo_path, "Photographs", log)
 
     try:
-        await asyncio.sleep(random.uniform(0.3, 0.7))
+        await asyncio.sleep(0.15)
 
         success = await upload_file_via_input(
             page,
@@ -388,7 +388,7 @@ async def _upload_other_documents(
         used_files.add(os.path.normpath(precomputed_pdf))
 
         try:
-            await asyncio.sleep(random.uniform(0.3, 0.7))
+            await asyncio.sleep(0.15)
             success = await upload_file_via_input(
                 page,
                 file_input_selector=S.SEL_UPLOAD_OTHER_DOCS,
@@ -440,7 +440,7 @@ async def _upload_other_documents(
 
     try:
         other_input = page.locator(S.SEL_UPLOAD_OTHER_DOCS).first
-        await asyncio.sleep(random.uniform(0.3, 0.7))
+        await asyncio.sleep(0.15)
 
         success = await upload_file_via_input(
             page,
@@ -470,7 +470,7 @@ async def _fill_remarks(
     page: Page,
     log: AutomationLogger,
     remarks_text: str,
-    delay_ms: int = 150,
+    delay_ms: int = 30,
 ) -> bool:
     """Fill the remarks textarea (required field)."""
     log.info("▸ Filling Remarks")
@@ -478,14 +478,9 @@ async def _fill_remarks(
     try:
         remarks = page.locator(S.SEL_UPLOAD_REMARKS).first
         await remarks.scroll_into_view_if_needed()
-        await asyncio.sleep(0.3)
         await remarks.wait_for(state="visible", timeout=5000)
         await remarks.focus()
-        await remarks.fill("")
-
-        # Type character-by-character for human-like behavior
-        for char in str(remarks_text):
-            await remarks.type(char, delay=random.randint(15, 35))
+        await remarks.fill(str(remarks_text))
 
         # Dispatch events for Angular/PrimeNG binding
         await remarks.evaluate(
@@ -555,7 +550,7 @@ async def fill_document_upload_section(
     *,
     log: AutomationLogger,
     stop_cb: Callable[[], bool],
-    field_delay_ms: int = 150,
+    field_delay_ms: int = 30,
 ) -> bool:
     """
     Fill the complete Document Upload form (Step 5) on the OIC portal.
@@ -603,7 +598,7 @@ async def fill_document_upload_section(
             )
             if required and not success:
                 required_failures.append(f"Section {section_num} ({label})")
-            await asyncio.sleep(random.uniform(0.5, 1.2))
+            await asyncio.sleep(0.3)
 
         if required_failures:
             log.error(f"Required uploads failed: {', '.join(required_failures)}")
@@ -614,21 +609,21 @@ async def fill_document_upload_section(
 
         # ── Section 5: Driving License ────────────────────────────────────────
         await _upload_driving_license(page, claim, log, section_used)
-        await asyncio.sleep(random.uniform(0.5, 1.0))
+        await asyncio.sleep(0.3)
 
         if stop_cb():
             return False
 
         # ── Section 6: Photographs ────────────────────────────────────────────
         await _upload_photographs(page, claim, log, section_used)
-        await asyncio.sleep(random.uniform(0.5, 1.0))
+        await asyncio.sleep(0.3)
 
         if stop_cb():
             return False
 
         # ── Section 7: Other Documents (merge remaining) ──────────────────────
         await _upload_other_documents(page, claim, log, section_used, max_bytes=max_file_bytes)
-        await asyncio.sleep(random.uniform(0.5, 1.0))
+        await asyncio.sleep(0.3)
 
         if stop_cb():
             return False

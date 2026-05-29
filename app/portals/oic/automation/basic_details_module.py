@@ -70,6 +70,8 @@ from app.portals.oic.automation.ui_utils import (
     select_primeng_dropdown,
     fill_primeng_inputnumber,
     fill_mui_datepicker,
+    capture_error_screenshot,
+    _get_oic_fill_settings,
 )
 from app.portals.oic.automation.date_formatter import format_oic_date
 
@@ -83,7 +85,7 @@ async def fill_basic_details(
     *,
     log: AutomationLogger,
     stop_cb: Callable[[], bool],
-    field_delay_ms: int = 150,
+    field_delay_ms: int = 30,
 ) -> bool:
     """
     Fill the complete Basic Details form (Step 2) on the OIC portal.
@@ -741,33 +743,108 @@ async def _fill_workshop_details(page: Page, claim, log, delay: int):
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def _click_next_button(page: Page, log) -> bool:
-    """Click the Next button to advance from Basic Details."""
-    try:
-        # Try multiple selector strategies
-        for selector in [
-            SEL_BASIC_DETAILS_NEXT,
-            "button:has-text('Next')",
-            "button.p-button:has-text('Next')",
-            "button[type='button']:has-text('Next')",
-        ]:
-            loc = page.locator(selector).first
-            if await loc.is_visible():
-                await loc.scroll_into_view_if_needed()
-                await asyncio.sleep(0.3)
-                await loc.click()
-                log.info("  ✅ Next button clicked.")
-                await asyncio.sleep(1.5)  # Wait for page transition
+    """Click the Next button to advance from Basic Details to Interim Report.
 
-                # Verify navigation happened (URL or step indicator change)
-                await page.wait_for_load_state("domcontentloaded", timeout=10000)
+    Strategy (mirrors interim_report_module._click_next_button):
+      1. Try selectors in priority order until one is visible & clickable.
+      2. After clicking, verify the page actually transitioned by checking:
+         - Strategy A: URL changed (most reliable)
+         - Strategy B: An Interim Report heading appeared in the DOM
+      3. If neither fired, the page likely stayed on Step 2 due to a
+         validation error (e.g. empty "Relationship of Driver").  Scan for
+         visible .error-message elements, log them, take a screenshot,
+         and return False — so automation stops immediately instead of
+         cascading into 15+ timeout errors on the next step.
+
+    Returns True on success, False on failure.
+    """
+    candidates = [
+        SEL_BASIC_DETAILS_NEXT,
+        "button:has-text('Next')",
+        "button.p-button:has-text('Next')",
+        "button[type='button']:has-text('Next')",
+    ]
+
+    # Capture URL before clicking so we can detect navigation.
+    url_before = page.url
+
+    for selector in candidates:
+        try:
+            loc = page.locator(selector).first
+            if not await loc.is_visible():
+                continue
+
+            await loc.scroll_into_view_if_needed()
+            await asyncio.sleep(0.3)
+            await loc.click()
+            log.info("  ✅ Next button clicked — waiting for page transition...")
+
+            # ── Post-click verification ──────────────────────────────────
+            transitioned = False
+
+            # Strategy A: URL changed (most reliable)
+            try:
+                await page.wait_for_function(
+                    "url => window.location.href !== url",
+                    arg=url_before,
+                    timeout=8000,
+                )
+                transitioned = True
+            except Exception:
+                pass
+
+            # Strategy B: An Interim Report heading appeared in DOM
+            if not transitioned:
+                try:
+                    await page.wait_for_selector(
+                        "text='Interim Report'",
+                        state="visible",
+                        timeout=5000,
+                    )
+                    transitioned = True
+                except Exception:
+                    pass
+
+            if transitioned:
+                log.info("  ✅ Page transitioned to Interim Report (Step 3)")
                 return True
 
-        log.warning("  ⚠️ Next button not found with any selector strategy.")
-        return False
+            # ── Transition failed — likely form validation error ─────────
+            # Scan the page for visible .error-message elements and log them
+            # so the user knows exactly which field(s) blocked progression.
+            error_msgs = []
+            try:
+                error_locs = page.locator(".error-message:visible")
+                count = await error_locs.count()
+                for i in range(min(count, 10)):  # Cap at 10 to avoid spam
+                    txt = (await error_locs.nth(i).inner_text()).strip()
+                    if txt:
+                        error_msgs.append(txt)
+            except Exception:
+                pass
 
-    except Exception as e:
-        log.error(f"  ❌ Next button click failed: {e}")
-        return False
+            if error_msgs:
+                log.warning(
+                    f"  ⚠️ Next clicked but page did not transition — "
+                    f"{len(error_msgs)} validation error(s) found:"
+                )
+                for msg in error_msgs:
+                    log.warning(f"     • {msg}")
+            else:
+                log.warning(
+                    "  ⚠️ Next clicked but page did not transition — "
+                    "possible validation error on Basic Details form"
+                )
+
+            await capture_error_screenshot(page, "basic_details_next_no_transition", log)
+            return False
+
+        except Exception:
+            continue  # Try next selector
+
+    log.warning("  ⚠️ Next button not found with any selector strategy.")
+    await capture_error_screenshot(page, "basic_details_next_not_found", log)
+    return False
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1140,8 +1217,14 @@ async def _fill_year_picker(page: Page, selector: str, year: str, label: str, lo
         inner = page.locator(f"{selector} input").first
         if await inner.is_visible():
             await inner.focus()
-            await inner.fill("")
-            await inner.type(str(year), delay=30)
+            
+            instant_fill, typing_delay = _get_oic_fill_settings()
+            if instant_fill:
+                await inner.fill(str(year))
+            else:
+                await inner.fill("")
+                await inner.type(str(year), delay=typing_delay)
+
             await inner.evaluate(
                 "el => { el.dispatchEvent(new Event('input', {bubbles:true})); "
                 "el.dispatchEvent(new Event('change', {bubbles:true})); "

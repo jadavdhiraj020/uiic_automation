@@ -859,6 +859,7 @@ class ClaimData:
 
             # Driver Details (all 19 fields)
             ("Driver Name",           self.driver_name,           True,  _src("driver_name")),
+            ("Registered Owner Name", self.registered_owner_name, False, _src("registered_owner_name")),
             ("Date of Birth",         self.dob_of_driver,         True,  _src("dob_of_driver")),
             ("License Type",          self.license_type_of_driver,True,  _src("license_type_of_driver")),
             ("Valid From (DL Issue)",  self.driver_license_issue_date, True, _src("driver_license_issue_date")),

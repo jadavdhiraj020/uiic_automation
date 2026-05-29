@@ -129,7 +129,8 @@ SEL_OWNER_DRIVER_YES = "#ownerDriver1"
 SEL_OWNER_DRIVER_NO = "#ownerDriver2"
 # Relation of Driver: appears only when Is Owner Driver = NO.
 # Hardcoded default is "Self" (see automation_defaults.json → driver_relation_default).
-SEL_RELATION_OF_DRIVER = "#relationOfDriver"
+# NOTE: The OIC portal has a typo in the id attribute ("Ralationship" instead of "Relationship").
+SEL_RELATION_OF_DRIVER = "#driverRalationship"
 SEL_QUALIFICATION = "#qualification"
 SEL_TP_INVOLVED_YES = "#thirdPartyInvolved1"
 SEL_TP_INVOLVED_NO = "#thirdPartyInvolved2"
@@ -145,7 +146,8 @@ SEL_WORKSHOP_NAME = "#workshopName"
 SEL_WORKSHOP_ESTIMATE_AMT = "#workshopEstimateAmount"
 # Workshop Estimate Date uses a MUI DatePicker with dynamic ID.
 # We locate it by its visible label text (see fill_mui_datepicker in ui_utils.py).
-SEL_WORKSHOP_ESTIMATE_DATE_LABEL = "Workshop Estimate Date"
+# Using a partial match 'Workshop Estim' ensures compatibility if the website typo 'Workshop Estimiate Date' is ever corrected.
+SEL_WORKSHOP_ESTIMATE_DATE_LABEL = "Workshop Estim"
 SEL_WORKSHOP_GST = "#gstNumber"
 
 # --- BASIC DETAILS: NEXT BUTTON ---

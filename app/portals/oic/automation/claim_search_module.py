@@ -25,7 +25,7 @@ from playwright.async_api import Page
 from app.automation.automation_logger import AutomationLogger, _ts
 from app.data.data_model import ClaimData
 from app.portals.oic.automation import popup_service
-from app.portals.oic.automation.ui_utils import capture_error_screenshot
+from app.portals.oic.automation.ui_utils import capture_error_screenshot, fill_input_with_delay
 from app.utils import load_automation_defaults
 
 logger = logging.getLogger(__name__)
@@ -57,7 +57,7 @@ async def fill_claim_search(
     claim: ClaimData,
     log,
     stop_cb: Callable[[], bool] = lambda: False,
-    field_delay_ms: int = 150,
+    field_delay_ms: int = 30,
 ) -> bool:
     """
     Fill the Generate Assessment search form (Step 1):
@@ -130,17 +130,10 @@ async def fill_claim_search(
     _log_info(f"⌨️ [Typing] Entering Claim Number: '{claim_no}'...")
 
     try:
-        claim_input = page.locator("#claimNumber")
-        await claim_input.wait_for(state="visible", timeout=5000)
-        await claim_input.click()
-        await asyncio.sleep(0.2)
-
-        # Clear any existing value and type with human-like delay
-        await claim_input.fill("")
-        await claim_input.type(claim_no, delay=25)
-        await asyncio.sleep(0.3)
+        await fill_input_with_delay(page, "#claimNumber", claim_no, "Claim Number", log, delay_ms=field_delay_ms)
 
         # Verify the input value
+        claim_input = page.locator("#claimNumber").first
         actual_val = await claim_input.input_value()
         if actual_val.strip() == claim_no:
             _log_success(f"Claim Number filled → '{claim_no}'")

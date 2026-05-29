@@ -48,7 +48,7 @@ async def fill_interim_report(
     *,
     log: AutomationLogger,
     stop_cb: Callable[[], bool],
-    field_delay_ms: int = 150,
+    field_delay_ms: int = 30,
 ) -> bool:
     """Fill the complete Interim Report form (Step 3) on the OIC portal.
 
@@ -364,7 +364,8 @@ async def _click_next_button(page, log) -> bool:
             try:
                 # Strategy A: URL changed (most reliable)
                 await page.wait_for_function(
-                    f"() => window.location.href !== '{url_before}'",
+                    "url => window.location.href !== url",
+                    arg=url_before,
                     timeout=8000,
                 )
                 transitioned = True
