@@ -229,9 +229,10 @@ SEL_EXPENSE_AMT_INPUT = "input[name='amount']"
 # --- RECOMMENDATION & DECLARATION ---
 SEL_LOSS_FINAL_REC = "textarea#finalRecommendation"
 SEL_LOSS_DECLARATION = "input#declaration1, input[name='surveyorDeclaration']"
+SEL_LOSS_DECLARATION_LABEL = "label[for='declaration1']"
 
 # --- NAVIGATION ---
-SEL_LOSS_SAVE_AND_NEXT_BTN = "button[aria-label='Save and Next']"
+SEL_LOSS_SAVE_AND_NEXT_BTN = "button[aria-label='Next'], button[aria-label='Save and Next']"
 
 
 # ============================================================================

@@ -30,6 +30,7 @@ from app.portals.oic.automation.ui_utils import (
     fill_mui_datepicker,
     select_primeng_dropdown,
     capture_error_screenshot,
+    _get_oic_fill_settings,
 )
 from app.portals.oic.automation import selectors as S
 
@@ -85,13 +86,13 @@ async def fill_assessment_of_loss(
         if stop_cb():
             log.warning("Stop requested before Survey Charges Section.")
             return False
-        await _fill_survey_charges(page, claim, defaults, log, delay)
+        expenses_filled = await _fill_survey_charges(page, claim, defaults, log, delay)
 
         # 5. Final Recommendation & Declaration Section
         if stop_cb():
             log.warning("Stop requested before Final Recommendation & Declaration Section.")
             return False
-        await _fill_recommendation_declaration(page, claim, defaults, log, delay)
+        await _fill_recommendation_declaration(page, claim, defaults, log, delay, expenses_filled=expenses_filled)
 
         # 6. Save and Next Button Flow
         if stop_cb():
@@ -200,7 +201,7 @@ async def _add_and_fill_excess(page: Page, excess_type: str, amount_val: str, lo
     # 2. Click Add Excess + button
     log.info(f"   Clicking 'Add Excess +' for {excess_type}")
     await page.locator(S.SEL_LOSS_ADD_EXCESS_BTN).click()
-    await asyncio.sleep(0.3)  # Wait for accordion / dynamic subsection to appear
+    await asyncio.sleep(0.5)  # Wait for accordion / dynamic subsection to appear and mount
 
     # 3. Locate the new input field by its portal label text.
     #    All excess inputs share id="amount", so we MUST locate by the
@@ -223,7 +224,16 @@ async def _add_and_fill_excess(page: Page, excess_type: str, amount_val: str, lo
 
     await input_locator.scroll_into_view_if_needed()
     await input_locator.focus()
-    await input_locator.fill(str(amount_val))
+
+    # PrimeNG components use custom event handlers that do not bind properly
+    # with direct page.fill() under instant_fill. We must type character-by-character
+    # to trigger all internal value/mask formatting listeners.
+    instant_fill, typing_delay = _get_oic_fill_settings()
+    delay_to_use = 5 if instant_fill else typing_delay
+
+    await input_locator.fill("")
+    for char in str(amount_val):
+        await input_locator.type(char, delay=delay_to_use)
 
     # Dispatch change events
     await input_locator.evaluate(
@@ -244,7 +254,7 @@ async def _fill_salvage_section(page: Page, claim, defaults, log: AutomationLogg
     await fill_primeng_inputnumber(page, S.SEL_LOSS_SALVAGE_AMT_INPUT, salvage_amt, "Salvage Amount", log, delay_ms=delay)
 
 
-async def _fill_survey_charges(page: Page, claim, defaults, log: AutomationLogger, delay: int):
+async def _fill_survey_charges(page: Page, claim, defaults, log: AutomationLogger, delay: int) -> bool:
     log.info("▸ Filling Survey Charges Section")
 
     # 1. Is Survey GST Applicable (always choose NO)
@@ -296,6 +306,7 @@ async def _fill_survey_charges(page: Page, claim, defaults, log: AutomationLogge
     }
 
     desc_val = defaults.get("expense_description", "conveyance")
+    expenses_filled = False
 
     for expense_name, raw_amt in exp_map.items():
         try:
@@ -304,6 +315,7 @@ async def _fill_survey_charges(page: Page, claim, defaults, log: AutomationLogge
             amt = 0
 
         if amt > 0:
+            expenses_filled = True
             portal_label = _EXPENSE_PORTAL_LABEL_MAP.get(expense_name, expense_name)
             log.info(f"   Adding expense: {expense_name} (portal: '{portal_label}') with amount {amt}")
 
@@ -316,6 +328,8 @@ async def _fill_survey_charges(page: Page, claim, defaults, log: AutomationLogge
 
             # Fill dynamic accordion section using portal label for the tab locator
             await _fill_dynamic_expense_accordion(page, portal_label, str(amt), desc_val, log, delay)
+
+    return expenses_filled
 
 
 async def _fill_dynamic_expense_accordion(
@@ -369,39 +383,73 @@ async def _fill_dynamic_expense_accordion(
     await asyncio.sleep(0.1)
 
 
-async def _fill_recommendation_declaration(page: Page, claim, defaults, log: AutomationLogger, delay: int):
+async def _fill_recommendation_declaration(
+    page: Page,
+    claim,
+    defaults,
+    log: AutomationLogger,
+    delay: int,
+    expenses_filled: bool,
+):
     log.info("▸ Filling Final Recommendation & Declaration")
 
     # 1. Final Recommendation (text, default agree)
-    rec_val = defaults.get("final_recommendation", "agree")
-    rec_box = page.locator(S.SEL_LOSS_FINAL_REC)
-    await rec_box.wait_for(state="visible", timeout=5000)
-    await rec_box.scroll_into_view_if_needed()
-    await rec_box.focus()
-    await rec_box.fill(str(rec_val))
-    await rec_box.evaluate("el => { el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); }")
+    # Only fill if one or more surveyor expenses are filled, otherwise skip it
+    if expenses_filled:
+        rec_val = defaults.get("final_recommendation", "agree")
+        log.info(f"   Surveyor expenses filled → populating Final Recommendation: '{rec_val}'")
+        rec_box = page.locator(S.SEL_LOSS_FINAL_REC)
+        await rec_box.wait_for(state="visible", timeout=5000)
+        await rec_box.scroll_into_view_if_needed()
+        await rec_box.focus()
+        await rec_box.fill(str(rec_val))
+        await rec_box.evaluate("el => { el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); }")
+    else:
+        log.info("   No surveyor expenses filled → skipping Final Recommendation field")
 
-    # 2. Declaration Checkbox (always checked)
-    dec_box = page.locator(S.SEL_LOSS_DECLARATION)
-    await dec_box.wait_for(state="visible", timeout=5000)
-    await dec_box.scroll_into_view_if_needed()
-    is_checked = await dec_box.is_checked()
+    # 2. Declaration Checkbox (always checked/enabled)
+    dec_input = page.locator(S.SEL_LOSS_DECLARATION)
+    await dec_input.wait_for(state="attached", timeout=5000)
+    
+    is_checked = await dec_input.is_checked()
     if not is_checked:
-        log.info("   Declaration checkbox is not checked. Checking it now...")
+        log.info("   Declaration checkbox is not checked. Checking/enabling it now...")
+        clicked_successfully = False
+
         try:
-            await dec_box.click(timeout=3000)
-        except Exception as click_err:
-            log.warning(f"   Standard click failed on declaration checkbox: {click_err}. Retrying with JS fallback.")
-            await dec_box.evaluate("el => { el.click(); el.dispatchEvent(new Event('change', { bubbles: true })); }")
-        
+            # 1. Try robust label click first
+            dec_label = page.locator(S.SEL_LOSS_DECLARATION_LABEL)
+            await dec_label.wait_for(state="visible", timeout=3000)
+            await dec_label.scroll_into_view_if_needed()
+            await dec_label.click(timeout=3000)
+            clicked_successfully = True
+            log.info("   Successfully clicked declaration checkbox label")
+        except Exception as label_err:
+            log.warning(f"   Robust label click failed or timed out: {label_err}. Trying standard input click fallback.")
+
+        if not clicked_successfully:
+            try:
+                # 2. Fallback to standard input element click
+                await dec_input.scroll_into_view_if_needed()
+                await dec_input.click(timeout=3000)
+                clicked_successfully = True
+                log.info("   Successfully clicked declaration checkbox input directly")
+            except Exception as input_err:
+                log.warning(f"   Input click fallback failed: {input_err}. Forcing checked state via JS.")
+
+        # 3. Ultimate fallback: Force check state using JS evaluation
+        if not clicked_successfully:
+            await dec_input.evaluate("el => { el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); }")
+            log.info("   Forced checked state on declaration checkbox via JS evaluation")
+
         # Verify checked state
         await asyncio.sleep(0.3)
-        is_checked_now = await dec_box.is_checked()
+        is_checked_now = await dec_input.is_checked()
         if not is_checked_now:
-            log.warning("   Declaration checkbox still not checked. Forcing state via JS.")
-            await dec_box.evaluate("el => { el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); }")
+            log.warning("   Declaration checkbox still not checked. Forcing checked state via JS.")
+            await dec_input.evaluate("el => { el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); }")
     else:
-        log.info("   Declaration checkbox is already checked")
+        log.info("   Declaration checkbox is already checked (enabled)")
 
 
 async def _click_save_and_next_button(page: Page, log: AutomationLogger) -> bool:

@@ -443,13 +443,15 @@ async def fill_primeng_inputnumber(
         await inner_input.scroll_into_view_if_needed()
         await inner_input.focus()
 
+        # PrimeNG components use custom event handlers that do not bind properly
+        # with direct page.fill() under instant_fill. We must type character-by-character
+        # to trigger all internal value/mask formatting listeners.
         instant_fill, typing_delay = _get_oic_fill_settings()
-        if instant_fill:
-            await inner_input.fill(str(value))
-        else:
-            await inner_input.fill("")
-            for char in str(value):
-                await inner_input.type(char, delay=typing_delay)
+        delay_to_use = 5 if instant_fill else typing_delay
+
+        await inner_input.fill("")
+        for char in str(value):
+            await inner_input.type(char, delay=delay_to_use)
 
         # Trigger change events
         await inner_input.evaluate("el => { el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); el.dispatchEvent(new Event('blur', { bubbles: true })); }")
