@@ -163,6 +163,7 @@ class ClaimData:
 
     # ── Internal Metadata ─────────────────────────────────────────────────────
     portal_id: str = "uiic"            # The portal this data was extracted for
+    source_excel_path: str = ""        # Path to the main source Excel file
     _excel_logs: List[str] = field(default_factory=list)
     _excel_coords: Dict[str, str] = field(default_factory=dict)
 

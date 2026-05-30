@@ -629,7 +629,14 @@ async def fill_document_upload_section(
             return False
 
         # ── Remarks ───────────────────────────────────────────────────────────
-        remarks_text = defaults.get("upload_remarks", "okay")
+        _REMARKS_MIN_LEN = 10
+        remarks_text = defaults.get("upload_remarks", "Documents verified and uploaded.")
+        if len(remarks_text) < _REMARKS_MIN_LEN:
+            log.warning(
+                f"upload_remarks is too short ({len(remarks_text)} chars, min {_REMARKS_MIN_LEN}). "
+                "Using safe fallback. Please update it in Settings → Automation Defaults."
+            )
+            remarks_text = "Documents verified and uploaded."
         await _fill_remarks(page, log, remarks_text, delay_ms=field_delay_ms)
 
         if stop_cb():

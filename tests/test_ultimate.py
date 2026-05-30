@@ -6561,74 +6561,198 @@ class TestOicHardening:
 
 
 class TestOicAssessmentOfLossFlow:
-    """Regression checks for OIC Assessment of Loss portal order dependencies."""
+    """Behavioral regression tests for OIC Assessment of Loss portal helpers.
 
-    def test_glass_item_fill_order_matches_portal_trace(self):
-        """Glass accordion fields should be filled in the observed OIC portal order."""
-        import inspect
-        from app.portals.oic.automation.assessment_of_loss_module import _fill_glass_item_in_invoice
+    All tests use AsyncMock / monkeypatch to exercise runtime call paths.
+    No inspect.getsource() -- tests remain valid after any refactor or rename.
+    """
 
-        source = inspect.getsource(_fill_glass_item_in_invoice)
-        ordered_markers = [
-            'await _type_in(item_sub_type_input, "labour", "Item Sub Type")',
-            'await _select_dropdown_option_from_locator(page, side_code_dropdown, "TOP", "Side Description", log, delay)',
-            'await _type_in_inputnumber(item_amt_input, "100", "Item Amount")',
-            'await _select_igst_rate(page, igst_dropdown, "18%", log, delay)',
-            'await _type_in_inputnumber(est_input, "1000", "Estimated Amount")',
-            'await _type_in(hsn_input, "8512", "HSN Code")',
-        ]
-        positions = [source.index(marker) for marker in ordered_markers]
-        assert positions == sorted(positions)
+    # -- _dropdown_state -------------------------------------------------------
 
-    def test_igst_uses_exact_role_option_and_dom_state_verification(self):
-        """IGST Rate should follow the portal-recorded exact option click path."""
-        import inspect
-        from app.portals.oic.automation.assessment_of_loss_module import _select_igst_rate
-
-        source = inspect.getsource(_select_igst_rate)
-        assert 'get_by_role("option", name=str(rate_text), exact=True)' in source
-        assert "_commit_dropdown_change(dropdown_locator)" in source
-        assert "_dropdown_state_summary(state)" in source
-
-    def test_dropdown_state_reads_primeng_hidden_selected_value(self):
-        """Dropdown verification should inspect the hidden PrimeNG input/select state."""
-        import inspect
+    @pytest.mark.asyncio
+    async def test_dropdown_state_returns_dict_on_success(self):
+        """_dropdown_state should return the dict produced by page.evaluate."""
+        from unittest.mock import AsyncMock, MagicMock
         from app.portals.oic.automation.assessment_of_loss_module import _dropdown_state
 
-        source = inspect.getsource(_dropdown_state)
-        assert "selectedOptions" in source
-        assert "p-inputwrapper-filled" in source
-        assert "input[readonly]" in source
+        fake_state = {
+            "label": "18%", "hiddenInput": "18", "selectValue": "18",
+            "selectedText": "18%", "filled": True, "expanded": "false",
+        }
+        mock_locator = MagicMock()
+        mock_locator.evaluate = AsyncMock(return_value=fake_state)
 
-    def test_compulsory_excess_has_dropdown_add_fallback(self):
-        """Compulsory Excess should be added from Select Excess if the input is absent."""
-        import inspect
-        from app.portals.oic.automation.assessment_of_loss_module import _ensure_compulsory_excess_and_fill
+        result = await _dropdown_state(mock_locator)
 
-        source = inspect.getsource(_ensure_compulsory_excess_and_fill)
-        assert "Compulsory Excess field not visible; adding it from Select Excess" in source
-        assert "S.SEL_LOSS_EXCESS_DROPDOWN" in source
-        assert "_click_add_excess_button(page, log)" in source
+        assert result == fake_state
+        assert result["filled"] is True
+        assert result["label"] == "18%"
 
-    def test_add_excess_click_does_not_target_add_expenses(self):
-        """Add Excess click helper must not fall through to the Add Expenses button."""
-        import inspect
+    @pytest.mark.asyncio
+    async def test_dropdown_state_returns_empty_dict_on_error(self):
+        """_dropdown_state must return {} (not raise) when evaluate throws."""
+        from unittest.mock import AsyncMock, MagicMock
+        from app.portals.oic.automation.assessment_of_loss_module import _dropdown_state
+
+        mock_locator = MagicMock()
+        mock_locator.evaluate = AsyncMock(side_effect=RuntimeError("detached"))
+
+        result = await _dropdown_state(mock_locator)
+        assert result == {}
+
+    # -- _click_add_excess_button ----------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_click_add_excess_button_succeeds_via_js(self):
+        """When the JS evaluate path finds and clicks the button, no fallback is reached."""
+        from unittest.mock import AsyncMock, MagicMock
         from app.portals.oic.automation.assessment_of_loss_module import _click_add_excess_button
 
-        source = inspect.getsource(_click_add_excess_button)
-        assert "document.querySelector('#excess')" in source
-        assert "addexpenses" in source
-        assert "button.addNew-btn:visible" not in source
+        mock_page = MagicMock()
+        mock_page.evaluate = AsyncMock(
+            return_value={"clicked": True, "method": "scoped-exact", "text": "Add Excess +"}
+        )
+        log = MagicMock()
 
-    def test_assessment_next_waits_for_upload_specific_hidden_input(self):
-        """Assessment transition should not wait for visible file inputs."""
-        import inspect
+        await _click_add_excess_button(mock_page, log)
+
+        mock_page.evaluate.assert_awaited_once()
+        mock_page.get_by_role.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_click_add_excess_button_falls_back_to_role(self):
+        """When JS evaluate reports not-found, the Playwright role fallback is attempted."""
+        from unittest.mock import AsyncMock, MagicMock
+        from app.portals.oic.automation.assessment_of_loss_module import _click_add_excess_button
+
+        mock_page = MagicMock()
+        mock_page.evaluate = AsyncMock(
+            return_value={"clicked": False, "method": "not-found", "text": ""}
+        )
+        mock_btn = MagicMock()
+        mock_btn.last = mock_btn
+        mock_btn.wait_for = AsyncMock()
+        mock_btn.scroll_into_view_if_needed = AsyncMock()
+        mock_btn.click = AsyncMock()
+        mock_page.get_by_role = MagicMock(return_value=mock_btn)
+        log = MagicMock()
+
+        await _click_add_excess_button(mock_page, log)
+
+        mock_page.get_by_role.assert_called_once()
+        mock_btn.click.assert_awaited_once()
+
+    # -- _ensure_compulsory_excess_and_fill ------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_ensure_compulsory_excess_skips_dropdown_when_field_visible(self, monkeypatch):
+        """When the Compulsory Excess input is already visible, the dropdown add path is skipped."""
+        from unittest.mock import AsyncMock, MagicMock
+        from app.portals.oic.automation.assessment_of_loss_module import _ensure_compulsory_excess_and_fill
+
+        mock_page = MagicMock()
+        log = MagicMock()
+        mock_input = MagicMock()
+
+        find_mock = AsyncMock(return_value=mock_input)
+        monkeypatch.setattr("app.portals.oic.automation.assessment_of_loss_module._find_excess_amount_input", find_mock)
+        fill_mock = AsyncMock()
+        monkeypatch.setattr("app.portals.oic.automation.assessment_of_loss_module._fill_inputnumber_locator", fill_mock)
+        dropdown_select_mock = AsyncMock()
+        monkeypatch.setattr("app.portals.oic.automation.assessment_of_loss_module._select_dropdown_option_from_locator", dropdown_select_mock)
+        click_excess_mock = AsyncMock()
+        monkeypatch.setattr("app.portals.oic.automation.assessment_of_loss_module._click_add_excess_button", click_excess_mock)
+
+        await _ensure_compulsory_excess_and_fill(mock_page, "5000", log, 100)
+
+        fill_mock.assert_awaited_once()
+        assert fill_mock.call_args[0][2] == "5000"
+        dropdown_select_mock.assert_not_awaited()
+        click_excess_mock.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_ensure_compulsory_excess_adds_via_dropdown_when_field_absent(self, monkeypatch):
+        """When the Compulsory Excess input is absent, it must be added via the Select Excess dropdown."""
+        from unittest.mock import AsyncMock, MagicMock
+        from app.portals.oic.automation.assessment_of_loss_module import _ensure_compulsory_excess_and_fill
+
+        mock_page = MagicMock()
+        mock_page.locator = MagicMock(return_value=MagicMock())
+        mock_page.wait_for_timeout = AsyncMock()
+        log = MagicMock()
+        mock_input = MagicMock()
+
+        find_mock = AsyncMock(side_effect=[RuntimeError("not visible"), mock_input])
+        monkeypatch.setattr("app.portals.oic.automation.assessment_of_loss_module._find_excess_amount_input", find_mock)
+        fill_mock = AsyncMock()
+        monkeypatch.setattr("app.portals.oic.automation.assessment_of_loss_module._fill_inputnumber_locator", fill_mock)
+        dropdown_select_mock = AsyncMock()
+        monkeypatch.setattr("app.portals.oic.automation.assessment_of_loss_module._select_dropdown_option_from_locator", dropdown_select_mock)
+        click_excess_mock = AsyncMock()
+        monkeypatch.setattr("app.portals.oic.automation.assessment_of_loss_module._click_add_excess_button", click_excess_mock)
+
+        await _ensure_compulsory_excess_and_fill(mock_page, "3000", log, 100)
+
+        dropdown_select_mock.assert_awaited_once()
+        click_excess_mock.assert_awaited_once()
+        fill_mock.assert_awaited_once()
+        assert fill_mock.call_args[0][2] == "3000"
+
+    # -- _click_save_and_next_button -------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_save_and_next_returns_true_on_successful_transition(self):
+        """_click_save_and_next_button should return True when the upload selector attaches."""
+        from unittest.mock import AsyncMock, MagicMock
         from app.portals.oic.automation.assessment_of_loss_module import _click_save_and_next_button
 
-        source = inspect.getsource(_click_save_and_next_button)
-        assert "S.SEL_UPLOAD_WORKSHOP_ESTIMATE" in source
-        assert 'state="attached"' in source
-        assert '"input[type=\'file\']"' not in source
+        mock_page = MagicMock()
+        mock_btn = MagicMock()
+        mock_btn.wait_for = AsyncMock()
+        mock_btn.scroll_into_view_if_needed = AsyncMock()
+        mock_btn.click = AsyncMock()
+        mock_page.locator = MagicMock(return_value=mock_btn)
+        mock_page.wait_for_selector = AsyncMock(return_value=None)
+        log = MagicMock()
+
+        result = await _click_save_and_next_button(mock_page, log)
+
+        assert result is True
+        mock_btn.click.assert_awaited_once()
+        call_kwargs = mock_page.wait_for_selector.call_args[1]
+        assert call_kwargs.get("state") == "attached"
+
+    @pytest.mark.asyncio
+    async def test_save_and_next_returns_false_on_timeout(self, monkeypatch):
+        """_click_save_and_next_button should return False and log error when transition times out."""
+        from unittest.mock import AsyncMock, MagicMock
+        from app.portals.oic.automation.assessment_of_loss_module import _click_save_and_next_button
+
+        mock_page = MagicMock()
+        mock_btn = MagicMock()
+        mock_btn.wait_for = AsyncMock()
+        mock_btn.scroll_into_view_if_needed = AsyncMock()
+        mock_btn.click = AsyncMock()
+        mock_page.locator = MagicMock(return_value=mock_btn)
+        mock_page.wait_for_selector = AsyncMock(side_effect=TimeoutError("timeout"))
+        mock_page.evaluate = AsyncMock(return_value=[])
+        log = MagicMock()
+
+        monkeypatch.setattr(
+            "app.portals.oic.automation.assessment_of_loss_module._log_assessment_transition_blockers",
+            AsyncMock(),
+        )
+        monkeypatch.setattr(
+            "app.portals.oic.automation.assessment_of_loss_module.capture_error_screenshot",
+            AsyncMock(),
+        )
+
+        result = await _click_save_and_next_button(mock_page, log)
+
+        assert result is False
+        log.error.assert_called()
+
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # OIC BASIC DETAILS — Business Logic Helper Tests
@@ -7629,7 +7753,10 @@ class TestOicDocumentUploadSection:
         from app.utils import load_automation_defaults
         defaults = load_automation_defaults(portal_id="oic")
         assert "upload_remarks" in defaults, "upload_remarks not in defaults"
-        assert defaults["upload_remarks"] == "okay"
+        assert len(defaults["upload_remarks"]) >= 10, (
+            f"upload_remarks default must be at least 10 chars, got: {defaults['upload_remarks']!r}"
+        )
+        assert defaults["upload_remarks"] == "Documents verified and uploaded."
         assert "auto_submit_documents" in defaults
         assert defaults["auto_submit_documents"] is False
 

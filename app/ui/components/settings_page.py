@@ -165,6 +165,7 @@ class SettingsPage(QWidget):
                 ("account_type", "Account Type", "NEFT account type fallback", "text"),
                 ("relationship_with_insured", "Relationship With Insured", "Driver details fallback", "text"),
                 ("reinspection_required", "Reinspection Required", "Claim Assessment dropdown", "yesno"),
+                ("table_boundary_keyword", "Table Boundary Keyword", "End-of-table marker(s) in Excel. Separate multiple with | (e.g. 'sub total|grand total')", "text"),
             ],
             "oic": [
                 ("unknown_claim_type_default", "Unknown Payment Default", "Claim Search claim type fallback", "claimtype"),
@@ -174,6 +175,13 @@ class SettingsPage(QWidget):
                 ("expense_description", "Expense Description", "Default description for all expense types", "text"),
                 ("final_recommendation", "Final Recommendation", "Default surveyor recommendation text", "text"),
                 ("declaration_checked", "Declaration Checked", "Auto-check declaration checkbox default", "yesno"),
+                ("item_side_description", "Item Side Description", "Invoice item side (FRONT/REAR/LEFT/RIGHT/TOP)", "sidecode"),
+                ("item_igst_rate",       "Item IGST Rate",       "IGST % for invoice spare parts & labour",  "igstrate"),
+                ("item_hsn_code",        "Spare Parts HSN Code", "HSN code for spare parts (default 8512)",  "text"),
+                ("labour_hsn_code",      "Labour HSN Code",      "HSN code for labour charges (default 8729)", "text"),
+                ("labour_estimated_amount", "Labour Estimated Amt", "Default estimated amount for labour rows", "text"),
+                ("table_boundary_keyword", "Table Boundary Keyword", "End-of-table marker(s) in Excel. Separate multiple with | (e.g. 'sub total|grand total')", "text"),
+                ("upload_remarks",          "Upload Remarks",          "Remarks text filled on Document Upload step (min 10 chars)", "remarks"),
                 ("instant_fill",               "Instant Form Filling",    "Fill fields instantly (faster) or type slowly", "yesno"),
                 ("typing_delay_ms",            "Typing Delay (ms)",       "Delay per character when typing (used if not instant fill)", "text"),
             ],
@@ -280,13 +288,17 @@ class SettingsPage(QWidget):
             self.defaults_table.setItem(i, 0, label_item)
 
             raw_value = str(defaults.get(key, ""))
-            if kind in {"yesno", "claimtype", "gsttype"}:
+            if kind in {"yesno", "claimtype", "gsttype", "sidecode", "igstrate"}:
                 value_widget = SafeComboBox()
                 value_widget.setObjectName("embeddedCombo")
                 if kind == "yesno":
                     value_widget.addItems(["Yes", "No"])
                 elif kind == "gsttype":
                     value_widget.addItems(["IGST", "CGST/SGST"])
+                elif kind == "sidecode":
+                    value_widget.addItems(["FRONT", "REAR", "LEFT", "RIGHT", "TOP"])
+                elif kind == "igstrate":
+                    value_widget.addItems(["0%", "5%", "12%", "18%", "28%"])
                 else:
                     value_widget.addItems(["CASHLESS", "REIMBURSEMENT"])
                 idx = value_widget.findText(raw_value, Qt.MatchFlag.MatchFixedString)
@@ -429,6 +441,7 @@ class SettingsPage(QWidget):
 
             # Automation Defaults Save
             defaults = load_automation_defaults(portal_id=self._portal_id)
+            _remarks_min_len = 10  # minimum character count enforced for 'remarks' kind fields
             for r in range(self.defaults_table.rowCount()):
                 key_item = self.defaults_table.item(r, 0)
                 if not key_item:
@@ -441,7 +454,17 @@ class SettingsPage(QWidget):
                     defaults[key] = widget.currentText().strip()
                 else:
                     value_item = self.defaults_table.item(r, 1)
-                    defaults[key] = value_item.text().strip() if value_item else ""
+                    raw = value_item.text().strip() if value_item else ""
+                    # Validate 'remarks' kind: must be at least _remarks_min_len characters
+                    if key == "upload_remarks" and len(raw) < _remarks_min_len:
+                        if value_item:
+                            self.defaults_table.setCurrentItem(value_item)
+                            self.defaults_table.scrollToItem(value_item)
+                        raise ValueError(
+                            f"Upload Remarks must be at least {_remarks_min_len} characters "
+                            f"(currently {len(raw)}). Please enter a longer remark."
+                        )
+                    defaults[key] = raw
             save_automation_defaults(defaults, portal_id=self._portal_id)
 
             # Field Mapping Save

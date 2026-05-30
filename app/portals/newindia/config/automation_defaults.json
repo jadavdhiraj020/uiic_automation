@@ -13,5 +13,6 @@
   "account_type": "Savings",
   "relationship_with_insured": "Self",
   "reinspection_required": "No",
+  "table_boundary_keyword": "sub total",
   "eager_folder_ocr": false
 }

@@ -25,9 +25,15 @@
   "expense_description": "conveyance",
   "final_recommendation": "agree",
   "declaration_checked": "Yes",
+  "item_side_description": "FRONT",
+  "item_igst_rate": "18%",
+  "item_hsn_code": "8512",
+  "labour_hsn_code": "8729",
+  "labour_estimated_amount": "100000",
+  "table_boundary_keyword": "sub total",
 
   "_comment_upload": "Hardcoded defaults for Document Upload (Step 5).",
-  "upload_remarks": "okay",
+  "upload_remarks": "Documents verified and uploaded.",
   "auto_submit_documents": false,
   "upload_max_file_bytes": 5242880
 }

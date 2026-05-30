@@ -87,6 +87,7 @@ class ClaimFolderService:
             claim.assessment_files = scan_result.assessment_files
             claim.upload_doc_files = scan_result.upload_doc_files
             claim._scan_result = scan_result
+            claim.source_excel_path = scan_result.excel_path or ""
 
             # SSOT is now fully isolated and calculated directly within excel_reader.py
 
@@ -124,6 +125,48 @@ class ClaimFolderService:
                             logs.append("⚠️  Auto-generation skipped: no parts/labour data found in main Excel")
                     except Exception as gen_exc:
                         logs.append(f"⚠️  Auto-generation of assessment Excel failed: {gen_exc}")
+
+            # ── Auto-generate OIC assessment Excel (Website 3) ──
+            if self.portal_id == "oic" and scan_result.excel_path:
+                is_oic_auto_generated = False
+                if "oic_assessment_excel" in claim.assessment_files:
+                    oic_fpath = claim.assessment_files["oic_assessment_excel"]
+                    if os.path.basename(oic_fpath).startswith("auto_oic_assessment"):
+                        is_oic_auto_generated = True
+
+                try:
+                    # Remove old auto-generated file if re-scanning
+                    if is_oic_auto_generated:
+                        try:
+                            old_oic_path = claim.assessment_files["oic_assessment_excel"]
+                            if os.path.exists(old_oic_path):
+                                os.remove(old_oic_path)
+                            oic_audit_path = old_oic_path.replace(".xlsx", "_audit.txt")
+                            if os.path.exists(oic_audit_path):
+                                os.remove(oic_audit_path)
+                        except Exception as rm_exc:
+                            logger.warning(f"Failed to remove old OIC auto-generated Excel/audit: {rm_exc}")
+
+                    from app.data.oic_assessment_generator import generate_oic_assessment
+                    from app.utils import load_automation_defaults as _load_defaults
+                    oic_defaults = _load_defaults(portal_id="oic")
+                    # Resolve to absolute path to prevent os.path.dirname returning ""
+                    # if scan_result.excel_path has no directory component.
+                    _abs_excel = os.path.abspath(scan_result.excel_path)
+                    _oic_output_dir = os.path.dirname(_abs_excel)
+                    logger.debug("OIC generation: source=%s, output_dir=%s", _abs_excel, _oic_output_dir)
+                    oic_generated_path = generate_oic_assessment(
+                        _abs_excel,
+                        _oic_output_dir,
+                        oic_defaults,
+                    )
+                    if oic_generated_path:
+                        claim.assessment_files["oic_assessment_excel"] = oic_generated_path
+                        logs.append(f"🔧 OIC Auto-generated: {Path(oic_generated_path).name} from {Path(scan_result.excel_path).name}")
+                    else:
+                        logs.append("⚠️  OIC auto-generation skipped: no parts/labour data found in main Excel")
+                except Exception as gen_exc:
+                    logs.append(f"⚠️  OIC auto-generation of assessment Excel failed: {gen_exc}")
 
             if stop_cb and stop_cb():
                 return ClaimFolderProcessResult(False, scan_result, claim, ["⚠️ Scan cancelled."], "Cancelled")

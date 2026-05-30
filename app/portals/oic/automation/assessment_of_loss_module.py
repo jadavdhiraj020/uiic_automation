@@ -3,7 +3,7 @@
 assessment_of_loss_module.py — OIC Assessment of Loss (Step 4) automation.
 
 Fills the subsections of the Assessment of Loss form:
-  1. Invoice Section
+  1. Invoice Section (with Excel-driven Spare Parts & Labour items)
   2. Excess Section
   3. Salvage Charges Section
   4. Survey Charges Section
@@ -15,14 +15,16 @@ Then clicks "Save and Next" to advance to Document Upload.
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
-from typing import Callable
+from typing import Callable, List
 
 from playwright.async_api import Page
 
 from app.automation.automation_logger import AutomationLogger
 from app.utils import load_automation_defaults
 from app.data.data_model import _parse_amount_for_total
+from app.data.oic_assessment_generator import generate_oic_assessment, read_oic_assessment
 
 from app.portals.oic.automation.ui_utils import (
     fill_input_with_delay,
@@ -36,7 +38,9 @@ from app.portals.oic.automation.ui_utils import (
 from app.portals.oic.automation import selectors as S
 
 
+
 # ── Public API ───────────────────────────────────────────────────────────────
+
 
 async def fill_assessment_of_loss(
     page: Page,
@@ -153,44 +157,185 @@ async def _fill_invoice_section(page: Page, claim, defaults, log: AutomationLogg
     await page.locator(S.SEL_LOSS_ADD_INV_BTN).click()
     await asyncio.sleep(0.5)  # wait for invoice row + Item Type dropdown to appear
 
-    # TEMPORARY: portal requires at least one item row inside the invoice before
-    # allowing navigation to the next step.  Fill a hard-coded Glass/labour item.
-    await _fill_glass_item_in_invoice(page, log, delay)
-
+    # Fill invoice items from Excel (Spare Parts + Labour Charges)
+    await _fill_invoice_items(page, claim, defaults, log, delay)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TEMPORARY WORKAROUND
-# The OIC portal blocks navigation to the next step unless at least one item
-# row is present inside the invoice accordion.  We always inject a single
-# hard-coded "Glass / labour" row with the minimal values the portal accepts.
-# Values used here are NOT loaded from Excel or any model field — they are
-# intentional portal placeholders so the form can be submitted.
+# PRODUCTION: OIC Assessment Excel → Re-read → Portal Fill
+#
+# 1. Generates auto_oic_assessment.xlsx from the source Excel
+# 2. Re-reads the generated Excel (source of truth)
+# 3. Fills invoice items row-by-row into the OIC portal accordion
+#
+# Processing order: Glass → Plastic → Metallic Parts → Labour Charges
+# New items appear at the TOP of the accordion (newest = .first).
 # ─────────────────────────────────────────────────────────────────────────────
-async def _fill_glass_item_in_invoice(page: Page, log: AutomationLogger, delay: int) -> None:
-    """
-    TEMPORARY: Fill a single Glass/labour item row inside the invoice section.
 
-    Step-by-step portal flow (observed from live DOM / screenshots):
-      1.  Select "Glass" from the Item Type dropdown that appears after
-          clicking "Add Invoice +".
-      2.  Click the orange "Add Item +" button.
-      3.  The accordion auto-opens.  Fill the editable fields:
-          • Item Sub Type  : "labour"   (#itemSubType)
-          • Side Description: "TOP"    (#sideCode  — PrimeNG dropdown)
-          • Item Amount    : 100        (name="itemAmount")       <-- Safe InputNumber clear/type
-          • IGST Rate      : "18%"     (#igstRate  — PrimeNG dropdown)
-          • Estimated Amount: 1000     (name="estimatedAmount")  <-- Safe InputNumber clear/type
-          • HSN Code       : "8512"   (#hsnCode)
-    """
-    log.info("   [TEMP] Filling Glass item row inside invoice accordion")
 
-    # ── 1. Select Item Type = "Glass" ────────────────────────────────────────
-    # BUG-FIX: select_primeng_dropdown(page, broad_selector) always resolved
-    # to the FIRST p-dropdown on the page — the GST Type dropdown (2 options).
-    # Fix: use JavaScript to find the p-dropdown whose nearest container label
-    # says "Item Type" (but NOT "Sub Type"), then click it to open the overlay.
-    log.info("   [TEMP] Opening Item Type dropdown via JS label scan")
+async def _type_in_text(
+    locator, value: str, label: str, char_delay: int,
+    log: AutomationLogger, item_label: str,
+) -> None:
+    """Clear + type character-by-character for plain text inputs.
+
+    Dispatches input/change/blur events so PrimeNG bindings fire correctly.
+    """
+    await locator.wait_for(state="visible", timeout=5000)
+    await locator.scroll_into_view_if_needed()
+    await locator.focus()
+    await locator.fill("")
+    for ch in str(value):
+        await locator.press_sequentially(ch, delay=char_delay)
+    await locator.evaluate(
+        "el => { "
+        "el.dispatchEvent(new Event('input',  { bubbles: true })); "
+        "el.dispatchEvent(new Event('change', { bubbles: true })); "
+        "el.dispatchEvent(new Event('blur',   { bubbles: true })); "
+        "}"
+    )
+    log.info(f"   [{item_label}] {label} = '{value}'")
+    await asyncio.sleep(0.1)
+
+
+async def _type_in_inputnumber_field(
+    page: Page, locator, value: str, label: str, char_delay: int,
+    log: AutomationLogger, item_label: str,
+) -> None:
+    """Clear + type for PrimeNG InputNumber fields.
+
+    Uses triple-click + Ctrl+A + Delete to clear, then types character-by-character.
+    """
+    await locator.wait_for(state="visible", timeout=5000)
+    await locator.scroll_into_view_if_needed()
+    await locator.focus()
+    await locator.click(click_count=3)
+    await asyncio.sleep(0.1)
+    await page.keyboard.press("Control+a")
+    await page.keyboard.press("Delete")
+    await asyncio.sleep(0.1)
+    for ch in str(value):
+        await locator.press_sequentially(ch, delay=char_delay)
+    await locator.evaluate(
+        "el => { "
+        "el.dispatchEvent(new Event('input',  { bubbles: true })); "
+        "el.dispatchEvent(new Event('change', { bubbles: true })); "
+        "el.dispatchEvent(new Event('blur',   { bubbles: true })); "
+        "}"
+    )
+    log.info(f"   [{item_label}] {label} = '{value}' ✅")
+    await asyncio.sleep(0.15)
+
+
+async def _fill_invoice_items(page: Page, claim, defaults: dict, log: AutomationLogger, delay: int) -> None:
+    """Fill all invoice items from the OIC assessment Excel (Spare Parts + Labour Charges).
+
+    Steps:
+      1. Reuse pre-generated auto_oic_assessment.xlsx if available (from folder scan),
+         otherwise generate it now from the source Excel
+      2. Re-read the generated Excel (source of truth for portal filling)
+      3. Group rows by Item Type and fill portal in order: Glass → Plastic → Metal → Labour
+    """
+    import os
+
+    # ── 1. Resolve or generate OIC assessment Excel ───────────────────────────
+    # Prefer pre-generated file from folder scanning (avoids duplicate generation)
+    pre_generated = getattr(claim, "assessment_files", {}).get("oic_assessment_excel", "")
+    if pre_generated and os.path.isfile(pre_generated):
+        oic_excel_path = pre_generated
+        log.info(f"   Using pre-generated OIC assessment Excel: {os.path.basename(oic_excel_path)}")
+    else:
+        # Fallback: generate now (e.g. folder scan was skipped or file was deleted)
+        source_excel = getattr(claim, "source_excel_path", "")
+        if not source_excel:
+            log.error("   source_excel_path is empty — cannot extract parts/labour data")
+            raise ValueError("source_excel_path is not set on claim object")
+
+        output_folder = os.path.dirname(source_excel)
+        log.info(f"   No pre-generated OIC Excel found — generating from: {source_excel}")
+
+        try:
+            oic_excel_path = generate_oic_assessment(source_excel, output_folder, defaults)
+        except FileNotFoundError as e:
+            log.error(f"   Source Excel not found: {e}")
+            raise
+
+        if not oic_excel_path:
+            log.error("   No parts or labour data found in source Excel — generation returned None")
+            raise ValueError("No spare parts or labour rows found in source Excel")
+
+        log.info(f"   Generated OIC assessment Excel: {os.path.basename(oic_excel_path)}")
+
+    # ── 2. Re-read from generated Excel (source of truth) ─────────────────────
+    log.info(f"   Re-reading OIC assessment Excel for portal filling...")
+    try:
+        oic_rows = read_oic_assessment(oic_excel_path)
+    except FileNotFoundError as e:
+        log.error(f"   Generated OIC Excel not found: {e}")
+        raise
+
+    if not oic_rows:
+        log.error("   OIC assessment Excel has no data rows — cannot fill invoice items")
+        raise ValueError("No data rows found in generated OIC assessment Excel")
+
+    log.info(f"   Re-read {len(oic_rows)} rows from OIC assessment Excel")
+
+    # ── 3. Group by Item Type and fill portal (Glass → Plastic → Metal → Labour) ──
+    items_filled = 0
+
+    # Portal fill order: Glass first, then Plastic, then Metallic Parts, then Labour Charge
+    _FILL_ORDER = ["Glass", "Plastic", "Metallic Parts", "Labour Charge"]
+
+    for item_type_text in _FILL_ORDER:
+        type_rows = [r for r in oic_rows if r["item_type"] == item_type_text]
+        if not type_rows:
+            continue
+
+        log.info(f"   ── Processing {len(type_rows)} {item_type_text} items ──")
+
+        for idx, row in enumerate(type_rows, 1):
+            log.info(
+                f"   [{item_type_text} {idx}/{len(type_rows)}] "
+                f"'{row['item_sub_type']}' amt={row['item_amount']} est={row['estimated_amount']}"
+            )
+
+            await _create_and_fill_item(
+                page, log, delay,
+                item_type_text=item_type_text,
+                sub_type=row["item_sub_type"],
+                side_description=row["side_description"],
+                item_amount=row["item_amount"],
+                igst_rate=row["igst_rate"],
+                estimated_amount=row["estimated_amount"],
+                hsn_code=row["hsn_code"],
+                item_label=f"{item_type_text} #{idx}",
+            )
+            items_filled += 1
+
+    log.info(f"   ✅ Successfully filled {items_filled} invoice items from OIC assessment Excel")
+
+
+async def _create_and_fill_item(
+    page: Page,
+    log: AutomationLogger,
+    delay: int,
+    *,
+    item_type_text: str,
+    sub_type: str,
+    side_description: str,
+    item_amount: str,
+    igst_rate: str,
+    estimated_amount: str,
+    hsn_code: str,
+    item_label: str,
+) -> None:
+    """Create a single invoice item: select Item Type, click Add Item+, fill fields.
+
+    The portal stacks new items at the TOP of the accordion, so the newest
+    item is always the FIRST .p-accordion-tab.
+    """
+    # ── 1. Select Item Type dropdown ──────────────────────────────────────────
+    log.info(f"   [{item_label}] Selecting Item Type = '{item_type_text}'")
     item_type_opened = await page.evaluate("""
         () => {
             const allDropdowns = document.querySelectorAll('.p-dropdown');
@@ -209,12 +354,10 @@ async def _fill_glass_item_in_invoice(page: Page, log: AutomationLogger, delay: 
             return false;
         }
     """)
-    await asyncio.sleep(0.4)  # wait for overlay panel to open
+    await asyncio.sleep(0.4)
 
     if not item_type_opened:
-        log.warning("   [TEMP] JS label scan could not open Item Type dropdown — trying Playwright fallback")
-        # Playwright fallback: the placeholder text of an unselected PrimeNG
-        # dropdown is the label text rendered in span.p-dropdown-label
+        log.warning(f"   [{item_label}] JS label scan could not open Item Type dropdown — trying Playwright fallback")
         item_type_dd = page.locator(
             "div.p-dropdown:has(span.p-dropdown-label:text-is('Item Type'))"
         ).first
@@ -222,11 +365,11 @@ async def _fill_glass_item_in_invoice(page: Page, log: AutomationLogger, delay: 
         await item_type_dd.click()
         await asyncio.sleep(0.4)
 
-    # With the overlay open, pick the "Glass" option
+    # Pick the matching option from the overlay
     panel = page.locator(".p-dropdown-panel:visible, .p-overlay:visible").last
     items = panel.locator(".p-dropdown-item, li[role='option']")
 
-    # Poll until options load (portal may lazy-load them)
+    # Poll until options load
     for _ in range(10):
         count = await items.count()
         if count > 0:
@@ -237,26 +380,24 @@ async def _fill_glass_item_in_invoice(page: Page, log: AutomationLogger, delay: 
 
     count = await items.count()
     matched = False
+    search = item_type_text.strip().lower()
     for i in range(count):
-        txt = (await items.nth(i).inner_text()).strip().lower()
-        if "glass" in txt:
+        txt = (await items.nth(i).inner_text()).strip()
+        if txt.strip().lower() == search or search in txt.strip().lower():
             await items.nth(i).click()
             matched = True
-            log.info(f"   [TEMP] Item Type = 'Glass' (matched '{txt}' from {count} options)")
+            log.info(f"   [{item_label}] Item Type = '{txt}' ✓")
             break
 
     if not matched:
         await page.keyboard.press("Escape")
-        log.warning(f"   [TEMP] Could not find 'Glass' in {count} Item Type options — continuing anyway")
+        log.error(f"   [{item_label}] Could not find '{item_type_text}' in {count} Item Type options")
+        raise RuntimeError(f"Item Type '{item_type_text}' not found in dropdown")
 
     await asyncio.sleep(0.3)
 
-    # ── 2. Click "Add Item +" button ─────────────────────────────────────────
-    # BUG-FIX: div.input-section.large-box intercepts pointer events causing a
-    # 30 s timeout.  Strategy:
-    #   a) force=True bypasses Playwright's interception guard.
-    #   b) JS .click() as ultimate fallback.
-    log.info("   [TEMP] Clicking 'Add Item +' button (force + JS fallback)")
+    # ── 2. Click "Add Item +" button ──────────────────────────────────────────
+    log.info(f"   [{item_label}] Clicking 'Add Item +'")
     add_item_btn = page.locator(
         "button[aria-label='Add Item +'], "
         "button:has-text('Add Item +')"
@@ -266,10 +407,10 @@ async def _fill_glass_item_in_invoice(page: Page, log: AutomationLogger, delay: 
     try:
         await add_item_btn.wait_for(state="attached", timeout=5000)
         await add_item_btn.scroll_into_view_if_needed()
-        await add_item_btn.click(force=True)  # bypasses the interception overlay
+        await add_item_btn.click(force=True)
         clicked = True
     except Exception as btn_err:
-        log.warning(f"   [TEMP] force click failed ({btn_err}) — using JS fallback")
+        log.warning(f"   [{item_label}] force click failed ({btn_err}) — using JS fallback")
 
     if not clicked:
         result = await page.evaluate("""
@@ -282,104 +423,56 @@ async def _fill_glass_item_in_invoice(page: Page, log: AutomationLogger, delay: 
             }
         """)
         if result:
-            log.info("   [TEMP] Add Item + clicked via JS evaluate")
+            log.info(f"   [{item_label}] Add Item + clicked via JS")
         else:
-            log.warning("   [TEMP] Add Item + button not found via JS — accordion may still open")
+            raise RuntimeError(f"[{item_label}] Add Item + button not found")
 
-    await asyncio.sleep(0.6)  # wait for the accordion tab to mount and auto-expand
+    await asyncio.sleep(0.6)  # wait for accordion tab to mount
 
-    # ── 3. Locate the accordion that was just added ───────────────────────────
-    # The accordion header contains "Glass" (item description) so we can scope
-    # all subsequent locators to this tab to avoid conflicts if multiple rows
-    # exist in future runs.
-    glass_tab = page.locator(
-        ".p-accordion-tab",
-        has=page.locator(".p-accordion-header", has_text="Glass"),
-    ).last
-    await glass_tab.wait_for(state="visible", timeout=6000)
+    # ── 3. Locate the FIRST accordion tab (newest item, appears at TOP) ──────
+    item_tab = page.locator(".p-accordion-tab").first
+    await item_tab.wait_for(state="visible", timeout=6000)
 
-    # Expand the accordion if it is collapsed (portal auto-opens it, but guard
-    # against timing edge-cases).
-    class_attr = await glass_tab.get_attribute("class") or ""
+    # Expand if collapsed
+    class_attr = await item_tab.get_attribute("class") or ""
     if "p-accordion-tab-active" not in class_attr:
-        log.info("   [TEMP] Glass accordion is collapsed — expanding it")
-        await glass_tab.locator(".p-accordion-header-link").click()
+        log.info(f"   [{item_label}] Accordion is collapsed — expanding")
+        await item_tab.locator(".p-accordion-header-link, .p-accordion-header").first.click()
         await asyncio.sleep(0.3)
 
-    content = glass_tab.locator(".p-accordion-content").first
+    content = item_tab.locator(".p-accordion-content").first
     await content.wait_for(state="visible", timeout=5000)
 
+    # ── 4. Fill fields inside the accordion ───────────────────────────────────
     instant_fill, typing_delay = _get_oic_fill_settings()
     char_delay = 5 if instant_fill else typing_delay
 
-    async def _type_in(locator, value: str, label: str):
-        """Clear + type character-by-character so PrimeNG listeners fire (safe for plain text inputs)."""
-        await locator.wait_for(state="visible", timeout=5000)
-        await locator.scroll_into_view_if_needed()
-        await locator.focus()
-        await locator.fill("")
-        for ch in str(value):
-            await locator.press_sequentially(ch, delay=char_delay)
-        await locator.evaluate(
-            "el => { "
-            "el.dispatchEvent(new Event('input',  { bubbles: true })); "
-            "el.dispatchEvent(new Event('change', { bubbles: true })); "
-            "el.dispatchEvent(new Event('blur',   { bubbles: true })); "
-            "}"
-        )
-        log.info(f"   [TEMP] {label} = '{value}'")
-        await asyncio.sleep(0.1)
-
-    async def _type_in_inputnumber(locator, value: str, label: str):
-        """Clear + type safely for PrimeNG InputNumbers without using fill("")."""
-        await locator.wait_for(state="visible", timeout=5000)
-        await locator.scroll_into_view_if_needed()
-        await locator.focus()
-        await locator.click(click_count=3)
-        await asyncio.sleep(0.1)
-        await page.keyboard.press("Control+a")
-        await page.keyboard.press("Delete")
-        await asyncio.sleep(0.1)
-        for ch in str(value):
-            await locator.press_sequentially(ch, delay=char_delay)
-        await locator.evaluate(
-            "el => { "
-            "el.dispatchEvent(new Event('input',  { bubbles: true })); "
-            "el.dispatchEvent(new Event('change', { bubbles: true })); "
-            "el.dispatchEvent(new Event('blur',   { bubbles: true })); "
-            "}"
-        )
-        log.info(f"   [TEMP] {label} = '{value}' ✅")
-        await asyncio.sleep(0.15)
-
-    # ── 3a. Item Sub Type (#itemSubType) — Plain text input ───────────────────
+    # 4a. Item Sub Type (#itemSubType) — Plain text input
     item_sub_type_input = content.locator("input#itemSubType, input[name='itemSubType']").first
-    await _type_in(item_sub_type_input, "labour", "Item Sub Type")
+    await _type_in_text(item_sub_type_input, sub_type, "Item Sub Type", char_delay, log, item_label)
 
-    # ── 3b. Side Description (#sideCode) — PrimeNG dropdown ───────────────────
+    # 4b. Side Description (#sideCode) — PrimeNG dropdown
     side_code_dropdown = content.locator("#sideCode.p-dropdown, div#sideCode").first
-    await _select_dropdown_option_from_locator(page, side_code_dropdown, "TOP", "Side Description", log, delay)
+    await _select_dropdown_option_from_locator(page, side_code_dropdown, side_description, "Side Description", log, delay)
 
-    # ── 3c. Item Amount (name="itemAmount") — PrimeNG InputNumber ─────────────
+    # 4c. Item Amount (name="itemAmount") — PrimeNG InputNumber
     item_amt_input = content.locator("input[name='itemAmount'], #itemAmount input").first
-    await _type_in_inputnumber(item_amt_input, "100", "Item Amount")
+    await _type_in_inputnumber_field(page, item_amt_input, item_amount, "Item Amount", char_delay, log, item_label)
 
-    # ── 3d. IGST Rate (#igstRate) — PrimeNG dropdown ─────────────────────────
-    # Scope to active tab content to prevent selecting outer/duplicated dropdowns.
-    log.info("   [TEMP] Selecting IGST Rate = '18%'")
+    # 4d. IGST Rate (#igstRate) — PrimeNG dropdown
     igst_dropdown = content.locator("#igstRate.p-dropdown, div#igstRate").first
-    await _select_igst_rate(page, igst_dropdown, "18%", log, delay)
+    await _select_igst_rate(page, igst_dropdown, igst_rate, log, delay)
 
-    # ── 3e. Estimated Amount (name="estimatedAmount") — PrimeNG InputNumber ──
+    # 4e. Estimated Amount (name="estimatedAmount") — PrimeNG InputNumber
     est_input = content.locator("input[name='estimatedAmount'], #estimatedAmount input").first
-    await _type_in_inputnumber(est_input, "1000", "Estimated Amount")
+    await _type_in_inputnumber_field(page, est_input, estimated_amount, "Estimated Amount", char_delay, log, item_label)
 
-    # ── 3f. HSN Code (#hsnCode) — Plain text input ───────────────────────────
+    # 4f. HSN Code (#hsnCode) — Plain text input
     hsn_input = content.locator("input#hsnCode, input[name='hsnCode']").first
-    await _type_in(hsn_input, "8512", "HSN Code")
+    await _type_in_text(hsn_input, hsn_code, "HSN Code", char_delay, log, item_label)
 
     await asyncio.sleep(0.3)
-    log.info("   [TEMP] Glass item row filled successfully")
+    log.info(f"   [{item_label}] ✅ Item filled successfully")
 
 
 async def _select_dropdown_option_from_locator(
@@ -1000,49 +1093,53 @@ async def _fill_recommendation_declaration(
     else:
         log.info("   No surveyor expenses filled → skipping Final Recommendation field")
 
-    # 2. Declaration Checkbox (always checked/enabled)
-    dec_input = page.locator(S.SEL_LOSS_DECLARATION)
-    await dec_input.wait_for(state="attached", timeout=5000)
-    
-    is_checked = await dec_input.is_checked()
-    if not is_checked:
-        log.info("   Declaration checkbox is not checked. Checking/enabling it now...")
-        clicked_successfully = False
-
-        try:
-            # 1. Try robust label click first
-            dec_label = page.locator(S.SEL_LOSS_DECLARATION_LABEL)
-            await dec_label.wait_for(state="visible", timeout=3000)
-            await dec_label.scroll_into_view_if_needed()
-            await dec_label.click(timeout=3000)
-            clicked_successfully = True
-            log.info("   Successfully clicked declaration checkbox label")
-        except Exception as label_err:
-            log.warning(f"   Robust label click failed or timed out: {label_err}. Trying standard input click fallback.")
-
-        if not clicked_successfully:
-            try:
-                # 2. Fallback to standard input element click
-                await dec_input.scroll_into_view_if_needed()
-                await dec_input.click(timeout=3000)
-                clicked_successfully = True
-                log.info("   Successfully clicked declaration checkbox input directly")
-            except Exception as input_err:
-                log.warning(f"   Input click fallback failed: {input_err}. Forcing checked state via JS.")
-
-        # 3. Ultimate fallback: Force check state using JS evaluation
-        if not clicked_successfully:
-            await dec_input.evaluate("el => { el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); }")
-            log.info("   Forced checked state on declaration checkbox via JS evaluation")
-
-        # Verify checked state
-        await asyncio.sleep(0.3)
-        is_checked_now = await dec_input.is_checked()
-        if not is_checked_now:
-            log.warning("   Declaration checkbox still not checked. Forcing checked state via JS.")
-            await dec_input.evaluate("el => { el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); }")
+    # 2. Declaration Checkbox (checked per declaration_checked setting)
+    declaration_setting = defaults.get("declaration_checked", "Yes")
+    if declaration_setting.strip().lower() != "yes":
+        log.info(f"   Declaration checkbox skipped per settings (declaration_checked='{declaration_setting}')")
     else:
-        log.info("   Declaration checkbox is already checked (enabled)")
+        dec_input = page.locator(S.SEL_LOSS_DECLARATION)
+        await dec_input.wait_for(state="attached", timeout=5000)
+
+        is_checked = await dec_input.is_checked()
+        if not is_checked:
+            log.info("   Declaration checkbox is not checked. Checking/enabling it now...")
+            clicked_successfully = False
+
+            try:
+                # 1. Try robust label click first
+                dec_label = page.locator(S.SEL_LOSS_DECLARATION_LABEL)
+                await dec_label.wait_for(state="visible", timeout=3000)
+                await dec_label.scroll_into_view_if_needed()
+                await dec_label.click(timeout=3000)
+                clicked_successfully = True
+                log.info("   Successfully clicked declaration checkbox label")
+            except Exception as label_err:
+                log.warning(f"   Robust label click failed or timed out: {label_err}. Trying standard input click fallback.")
+
+            if not clicked_successfully:
+                try:
+                    # 2. Fallback to standard input element click
+                    await dec_input.scroll_into_view_if_needed()
+                    await dec_input.click(timeout=3000)
+                    clicked_successfully = True
+                    log.info("   Successfully clicked declaration checkbox input directly")
+                except Exception as input_err:
+                    log.warning(f"   Input click fallback failed: {input_err}. Forcing checked state via JS.")
+
+            # 3. Ultimate fallback: Force check state using JS evaluation
+            if not clicked_successfully:
+                await dec_input.evaluate("el => { el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); }")
+                log.info("   Forced checked state on declaration checkbox via JS evaluation")
+
+            # Verify checked state
+            await asyncio.sleep(0.3)
+            is_checked_now = await dec_input.is_checked()
+            if not is_checked_now:
+                log.warning("   Declaration checkbox still not checked. Forcing checked state via JS.")
+                await dec_input.evaluate("el => { el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); }")
+        else:
+            log.info("   Declaration checkbox is already checked (enabled)")
 
 
 async def _click_save_and_next_button(page: Page, log: AutomationLogger) -> bool:
