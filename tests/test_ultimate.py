@@ -6559,6 +6559,77 @@ class TestOicHardening:
         assert "Invoice Amount Without GST is missing" in errors
         assert "Invoice GST Amount is missing" in errors
 
+
+class TestOicAssessmentOfLossFlow:
+    """Regression checks for OIC Assessment of Loss portal order dependencies."""
+
+    def test_glass_item_fill_order_matches_portal_trace(self):
+        """Glass accordion fields should be filled in the observed OIC portal order."""
+        import inspect
+        from app.portals.oic.automation.assessment_of_loss_module import _fill_glass_item_in_invoice
+
+        source = inspect.getsource(_fill_glass_item_in_invoice)
+        ordered_markers = [
+            'await _type_in(item_sub_type_input, "labour", "Item Sub Type")',
+            'await _select_dropdown_option_from_locator(page, side_code_dropdown, "TOP", "Side Description", log, delay)',
+            'await _type_in_inputnumber(item_amt_input, "100", "Item Amount")',
+            'await _select_igst_rate(page, igst_dropdown, "18%", log, delay)',
+            'await _type_in_inputnumber(est_input, "1000", "Estimated Amount")',
+            'await _type_in(hsn_input, "8512", "HSN Code")',
+        ]
+        positions = [source.index(marker) for marker in ordered_markers]
+        assert positions == sorted(positions)
+
+    def test_igst_uses_exact_role_option_and_dom_state_verification(self):
+        """IGST Rate should follow the portal-recorded exact option click path."""
+        import inspect
+        from app.portals.oic.automation.assessment_of_loss_module import _select_igst_rate
+
+        source = inspect.getsource(_select_igst_rate)
+        assert 'get_by_role("option", name=str(rate_text), exact=True)' in source
+        assert "_commit_dropdown_change(dropdown_locator)" in source
+        assert "_dropdown_state_summary(state)" in source
+
+    def test_dropdown_state_reads_primeng_hidden_selected_value(self):
+        """Dropdown verification should inspect the hidden PrimeNG input/select state."""
+        import inspect
+        from app.portals.oic.automation.assessment_of_loss_module import _dropdown_state
+
+        source = inspect.getsource(_dropdown_state)
+        assert "selectedOptions" in source
+        assert "p-inputwrapper-filled" in source
+        assert "input[readonly]" in source
+
+    def test_compulsory_excess_has_dropdown_add_fallback(self):
+        """Compulsory Excess should be added from Select Excess if the input is absent."""
+        import inspect
+        from app.portals.oic.automation.assessment_of_loss_module import _ensure_compulsory_excess_and_fill
+
+        source = inspect.getsource(_ensure_compulsory_excess_and_fill)
+        assert "Compulsory Excess field not visible; adding it from Select Excess" in source
+        assert "S.SEL_LOSS_EXCESS_DROPDOWN" in source
+        assert "_click_add_excess_button(page, log)" in source
+
+    def test_add_excess_click_does_not_target_add_expenses(self):
+        """Add Excess click helper must not fall through to the Add Expenses button."""
+        import inspect
+        from app.portals.oic.automation.assessment_of_loss_module import _click_add_excess_button
+
+        source = inspect.getsource(_click_add_excess_button)
+        assert "document.querySelector('#excess')" in source
+        assert "addexpenses" in source
+        assert "button.addNew-btn:visible" not in source
+
+    def test_assessment_next_waits_for_upload_specific_hidden_input(self):
+        """Assessment transition should not wait for visible file inputs."""
+        import inspect
+        from app.portals.oic.automation.assessment_of_loss_module import _click_save_and_next_button
+
+        source = inspect.getsource(_click_save_and_next_button)
+        assert "S.SEL_UPLOAD_WORKSHOP_ESTIMATE" in source
+        assert 'state="attached"' in source
+        assert '"input[type=\'file\']"' not in source
+
 # ══════════════════════════════════════════════════════════════════════════════
 # OIC BASIC DETAILS — Business Logic Helper Tests
 # ══════════════════════════════════════════════════════════════════════════════

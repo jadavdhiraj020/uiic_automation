@@ -904,6 +904,7 @@ class ClaimData:
             # Assessment of Loss Details
             ("Inv Amt Without GST (₹)", self.invoice_amount_without_gst, True, _src("invoice_amount_without_gst")),
             ("Invoice GST Amt (₹)",   self.invoice_gst_amount,    True,  _src("invoice_gst_amount")),
+            ("Compulsory Excess (₹)", self.compulsory_excess,     False, _src("compulsory_excess")),
             ("Voluntary Excess (₹)",  self.voluntary_excess,      False, _src("voluntary_excess")),
             ("Imposed Excess (₹)",    self.imposed_excess,        False, _src("imposed_excess")),
             ("Salvage Amount (₹)",     self.salvage_amount,        False, _src("salvage_amount")),

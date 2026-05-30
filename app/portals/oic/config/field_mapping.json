@@ -490,6 +490,19 @@
     "row_offset": 0,
     "col_offset": 1
   },
+  "compulsory_excess": {
+    "sheet": "ALL",
+    "search_labels": [
+      "compulsory_excess",
+      "Compulsory Excess",
+      "Less Compulsory Excess",
+      "Compulsory Excess Amount",
+      "compulsory excess",
+      "Comp Excess"
+    ],
+    "row_offset": 0,
+    "col_offset": 1
+  },
   "salvage_amount": {
     "sheet": "ALL",
     "search_labels": ["salvage_amount", "Salvage Amount", "salvage amount", "LESS SALVAGE VALUE", "Less Salvage Value"],

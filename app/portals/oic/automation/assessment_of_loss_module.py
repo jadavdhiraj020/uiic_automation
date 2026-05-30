@@ -15,6 +15,7 @@ Then clicks "Save and Next" to advance to Document Upload.
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Callable
 
 from playwright.async_api import Page
@@ -150,13 +151,641 @@ async def _fill_invoice_section(page: Page, claim, defaults, log: AutomationLogg
     # Click Add Invoice +
     log.info("   Clicking 'Add Invoice +' button")
     await page.locator(S.SEL_LOSS_ADD_INV_BTN).click()
-    await asyncio.sleep(0.3) # wait for addition / transition
+    await asyncio.sleep(0.5)  # wait for invoice row + Item Type dropdown to appear
+
+    # TEMPORARY: portal requires at least one item row inside the invoice before
+    # allowing navigation to the next step.  Fill a hard-coded Glass/labour item.
+    await _fill_glass_item_in_invoice(page, log, delay)
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TEMPORARY WORKAROUND
+# The OIC portal blocks navigation to the next step unless at least one item
+# row is present inside the invoice accordion.  We always inject a single
+# hard-coded "Glass / labour" row with the minimal values the portal accepts.
+# Values used here are NOT loaded from Excel or any model field — they are
+# intentional portal placeholders so the form can be submitted.
+# ─────────────────────────────────────────────────────────────────────────────
+async def _fill_glass_item_in_invoice(page: Page, log: AutomationLogger, delay: int) -> None:
+    """
+    TEMPORARY: Fill a single Glass/labour item row inside the invoice section.
+
+    Step-by-step portal flow (observed from live DOM / screenshots):
+      1.  Select "Glass" from the Item Type dropdown that appears after
+          clicking "Add Invoice +".
+      2.  Click the orange "Add Item +" button.
+      3.  The accordion auto-opens.  Fill the editable fields:
+          • Item Sub Type  : "labour"   (#itemSubType)
+          • Side Description: "TOP"    (#sideCode  — PrimeNG dropdown)
+          • Item Amount    : 100        (name="itemAmount")       <-- Safe InputNumber clear/type
+          • IGST Rate      : "18%"     (#igstRate  — PrimeNG dropdown)
+          • Estimated Amount: 1000     (name="estimatedAmount")  <-- Safe InputNumber clear/type
+          • HSN Code       : "8512"   (#hsnCode)
+    """
+    log.info("   [TEMP] Filling Glass item row inside invoice accordion")
+
+    # ── 1. Select Item Type = "Glass" ────────────────────────────────────────
+    # BUG-FIX: select_primeng_dropdown(page, broad_selector) always resolved
+    # to the FIRST p-dropdown on the page — the GST Type dropdown (2 options).
+    # Fix: use JavaScript to find the p-dropdown whose nearest container label
+    # says "Item Type" (but NOT "Sub Type"), then click it to open the overlay.
+    log.info("   [TEMP] Opening Item Type dropdown via JS label scan")
+    item_type_opened = await page.evaluate("""
+        () => {
+            const allDropdowns = document.querySelectorAll('.p-dropdown');
+            for (const dd of allDropdowns) {
+                const container = dd.closest('.input-section')
+                               || dd.closest('span.p-float-label')
+                               || dd.parentElement;
+                if (!container) continue;
+                const text = (container.textContent || '').toLowerCase();
+                // Must contain "item type" but must NOT be the "item sub type" field
+                if (text.includes('item type') && !text.includes('sub type')) {
+                    dd.click();
+                    return true;
+                }
+            }
+            return false;
+        }
+    """)
+    await asyncio.sleep(0.4)  # wait for overlay panel to open
+
+    if not item_type_opened:
+        log.warning("   [TEMP] JS label scan could not open Item Type dropdown — trying Playwright fallback")
+        # Playwright fallback: the placeholder text of an unselected PrimeNG
+        # dropdown is the label text rendered in span.p-dropdown-label
+        item_type_dd = page.locator(
+            "div.p-dropdown:has(span.p-dropdown-label:text-is('Item Type'))"
+        ).first
+        await item_type_dd.scroll_into_view_if_needed()
+        await item_type_dd.click()
+        await asyncio.sleep(0.4)
+
+    # With the overlay open, pick the "Glass" option
+    panel = page.locator(".p-dropdown-panel:visible, .p-overlay:visible").last
+    items = panel.locator(".p-dropdown-item, li[role='option']")
+
+    # Poll until options load (portal may lazy-load them)
+    for _ in range(10):
+        count = await items.count()
+        if count > 0:
+            first_text = (await items.first.inner_text()).strip().lower()
+            if "loading" not in first_text and "fetching" not in first_text:
+                break
+        await asyncio.sleep(0.3)
+
+    count = await items.count()
+    matched = False
+    for i in range(count):
+        txt = (await items.nth(i).inner_text()).strip().lower()
+        if "glass" in txt:
+            await items.nth(i).click()
+            matched = True
+            log.info(f"   [TEMP] Item Type = 'Glass' (matched '{txt}' from {count} options)")
+            break
+
+    if not matched:
+        await page.keyboard.press("Escape")
+        log.warning(f"   [TEMP] Could not find 'Glass' in {count} Item Type options — continuing anyway")
+
+    await asyncio.sleep(0.3)
+
+    # ── 2. Click "Add Item +" button ─────────────────────────────────────────
+    # BUG-FIX: div.input-section.large-box intercepts pointer events causing a
+    # 30 s timeout.  Strategy:
+    #   a) force=True bypasses Playwright's interception guard.
+    #   b) JS .click() as ultimate fallback.
+    log.info("   [TEMP] Clicking 'Add Item +' button (force + JS fallback)")
+    add_item_btn = page.locator(
+        "button[aria-label='Add Item +'], "
+        "button:has-text('Add Item +')"
+    ).first
+
+    clicked = False
+    try:
+        await add_item_btn.wait_for(state="attached", timeout=5000)
+        await add_item_btn.scroll_into_view_if_needed()
+        await add_item_btn.click(force=True)  # bypasses the interception overlay
+        clicked = True
+    except Exception as btn_err:
+        log.warning(f"   [TEMP] force click failed ({btn_err}) — using JS fallback")
+
+    if not clicked:
+        result = await page.evaluate("""
+            () => {
+                const btn = document.querySelector(
+                    "button[aria-label='Add Item +'], button.add-item, button.addNew-btn"
+                );
+                if (btn) { btn.click(); return true; }
+                return false;
+            }
+        """)
+        if result:
+            log.info("   [TEMP] Add Item + clicked via JS evaluate")
+        else:
+            log.warning("   [TEMP] Add Item + button not found via JS — accordion may still open")
+
+    await asyncio.sleep(0.6)  # wait for the accordion tab to mount and auto-expand
+
+    # ── 3. Locate the accordion that was just added ───────────────────────────
+    # The accordion header contains "Glass" (item description) so we can scope
+    # all subsequent locators to this tab to avoid conflicts if multiple rows
+    # exist in future runs.
+    glass_tab = page.locator(
+        ".p-accordion-tab",
+        has=page.locator(".p-accordion-header", has_text="Glass"),
+    ).last
+    await glass_tab.wait_for(state="visible", timeout=6000)
+
+    # Expand the accordion if it is collapsed (portal auto-opens it, but guard
+    # against timing edge-cases).
+    class_attr = await glass_tab.get_attribute("class") or ""
+    if "p-accordion-tab-active" not in class_attr:
+        log.info("   [TEMP] Glass accordion is collapsed — expanding it")
+        await glass_tab.locator(".p-accordion-header-link").click()
+        await asyncio.sleep(0.3)
+
+    content = glass_tab.locator(".p-accordion-content").first
+    await content.wait_for(state="visible", timeout=5000)
+
+    instant_fill, typing_delay = _get_oic_fill_settings()
+    char_delay = 5 if instant_fill else typing_delay
+
+    async def _type_in(locator, value: str, label: str):
+        """Clear + type character-by-character so PrimeNG listeners fire (safe for plain text inputs)."""
+        await locator.wait_for(state="visible", timeout=5000)
+        await locator.scroll_into_view_if_needed()
+        await locator.focus()
+        await locator.fill("")
+        for ch in str(value):
+            await locator.press_sequentially(ch, delay=char_delay)
+        await locator.evaluate(
+            "el => { "
+            "el.dispatchEvent(new Event('input',  { bubbles: true })); "
+            "el.dispatchEvent(new Event('change', { bubbles: true })); "
+            "el.dispatchEvent(new Event('blur',   { bubbles: true })); "
+            "}"
+        )
+        log.info(f"   [TEMP] {label} = '{value}'")
+        await asyncio.sleep(0.1)
+
+    async def _type_in_inputnumber(locator, value: str, label: str):
+        """Clear + type safely for PrimeNG InputNumbers without using fill("")."""
+        await locator.wait_for(state="visible", timeout=5000)
+        await locator.scroll_into_view_if_needed()
+        await locator.focus()
+        await locator.click(click_count=3)
+        await asyncio.sleep(0.1)
+        await page.keyboard.press("Control+a")
+        await page.keyboard.press("Delete")
+        await asyncio.sleep(0.1)
+        for ch in str(value):
+            await locator.press_sequentially(ch, delay=char_delay)
+        await locator.evaluate(
+            "el => { "
+            "el.dispatchEvent(new Event('input',  { bubbles: true })); "
+            "el.dispatchEvent(new Event('change', { bubbles: true })); "
+            "el.dispatchEvent(new Event('blur',   { bubbles: true })); "
+            "}"
+        )
+        log.info(f"   [TEMP] {label} = '{value}' ✅")
+        await asyncio.sleep(0.15)
+
+    # ── 3a. Item Sub Type (#itemSubType) — Plain text input ───────────────────
+    item_sub_type_input = content.locator("input#itemSubType, input[name='itemSubType']").first
+    await _type_in(item_sub_type_input, "labour", "Item Sub Type")
+
+    # ── 3b. Side Description (#sideCode) — PrimeNG dropdown ───────────────────
+    side_code_dropdown = content.locator("#sideCode.p-dropdown, div#sideCode").first
+    await _select_dropdown_option_from_locator(page, side_code_dropdown, "TOP", "Side Description", log, delay)
+
+    # ── 3c. Item Amount (name="itemAmount") — PrimeNG InputNumber ─────────────
+    item_amt_input = content.locator("input[name='itemAmount'], #itemAmount input").first
+    await _type_in_inputnumber(item_amt_input, "100", "Item Amount")
+
+    # ── 3d. IGST Rate (#igstRate) — PrimeNG dropdown ─────────────────────────
+    # Scope to active tab content to prevent selecting outer/duplicated dropdowns.
+    log.info("   [TEMP] Selecting IGST Rate = '18%'")
+    igst_dropdown = content.locator("#igstRate.p-dropdown, div#igstRate").first
+    await _select_igst_rate(page, igst_dropdown, "18%", log, delay)
+
+    # ── 3e. Estimated Amount (name="estimatedAmount") — PrimeNG InputNumber ──
+    est_input = content.locator("input[name='estimatedAmount'], #estimatedAmount input").first
+    await _type_in_inputnumber(est_input, "1000", "Estimated Amount")
+
+    # ── 3f. HSN Code (#hsnCode) — Plain text input ───────────────────────────
+    hsn_input = content.locator("input#hsnCode, input[name='hsnCode']").first
+    await _type_in(hsn_input, "8512", "HSN Code")
+
+    await asyncio.sleep(0.3)
+    log.info("   [TEMP] Glass item row filled successfully")
+
+
+async def _select_dropdown_option_from_locator(
+    page: Page,
+    dropdown_locator,
+    option_text: str,
+    label: str,
+    log: AutomationLogger,
+    delay: int,
+    *,
+    attempts: int = 3,
+) -> None:
+    search = str(option_text).strip().lower()
+    last_count = 0
+
+    for attempt in range(1, attempts + 1):
+        await dropdown_locator.wait_for(state="visible", timeout=5000)
+        await dropdown_locator.scroll_into_view_if_needed()
+        await dropdown_locator.click(force=True)
+
+        panel = page.locator(".p-dropdown-panel:visible, .p-overlay:visible").last
+        items = panel.locator(".p-dropdown-item, li[role='option']")
+
+        for _ in range(12):
+            await asyncio.sleep(0.25)
+            last_count = await items.count()
+            if last_count == 0:
+                continue
+            first_text = (await items.first.inner_text()).strip().lower()
+            if (
+                "loading" not in first_text
+                and "fetching" not in first_text
+                and not (last_count == 1 and "no result" in first_text)
+            ):
+                break
+
+        for i in range(last_count):
+            item = items.nth(i)
+            item_text = (await item.inner_text()).strip()
+            item_search = item_text.lower()
+            if search == item_search or search in item_search or item_search in search:
+                await item.click()
+                await asyncio.sleep(0.3)
+                await _commit_dropdown_change(dropdown_locator)
+                if await _dropdown_has_value(dropdown_locator, option_text):
+                    if hasattr(log, "field_selected"):
+                        log.field_selected(label, item_text)
+                    else:
+                        log.info(f"   {label} selected -> '{item_text}'")
+                    state = await _dropdown_state(dropdown_locator)
+                    log.info(f"   {label} state -> {_dropdown_state_summary(state)}")
+                    await asyncio.sleep(delay / 1000.0)
+                    return
+                state = await _dropdown_state(dropdown_locator)
+                log.warning(
+                    f"   {label}: clicked '{item_text}' but value did not stick; "
+                    f"{_dropdown_state_summary(state)}; retrying"
+                )
+                break
+
+        await page.keyboard.press("Escape")
+        if attempt < attempts:
+            log.warning(
+                f"   {label}: option '{option_text}' not available yet "
+                f"({last_count} options); retrying"
+            )
+            await asyncio.sleep(0.4)
+
+    raise RuntimeError(f"{label}: option '{option_text}' not found in {last_count} dropdown options")
+
+
+async def _select_igst_rate(page: Page, dropdown_locator, rate_text: str, log: AutomationLogger, delay: int) -> None:
+    """Select OIC Glass-row IGST using the portal-recorded exact option flow."""
+    last_error = None
+    for attempt in range(1, 4):
+        try:
+            await dropdown_locator.wait_for(state="visible", timeout=5000)
+            await dropdown_locator.scroll_into_view_if_needed()
+            await dropdown_locator.click(force=True)
+
+            option = page.get_by_role("option", name=str(rate_text), exact=True).last
+            await option.wait_for(state="visible", timeout=3500)
+            await option.click()
+            await asyncio.sleep(0.35)
+            await _commit_dropdown_change(dropdown_locator)
+
+            if await _dropdown_has_value(dropdown_locator, rate_text):
+                if hasattr(log, "field_selected"):
+                    log.field_selected("IGST Rate", rate_text)
+                else:
+                    log.info(f"   IGST Rate selected -> '{rate_text}'")
+                state = await _dropdown_state(dropdown_locator)
+                log.info(f"   IGST Rate state -> {_dropdown_state_summary(state)}")
+                await asyncio.sleep(delay / 1000.0)
+                return
+
+            state = await _dropdown_state(dropdown_locator)
+            log.warning(
+                f"   IGST Rate: exact option click did not stick on attempt {attempt}; "
+                f"{_dropdown_state_summary(state)}"
+            )
+        except Exception as exc:
+            last_error = exc
+            log.warning(f"   IGST Rate: exact role selection attempt {attempt} failed ({exc})")
+
+        try:
+            await page.keyboard.press("Escape")
+        except Exception:
+            pass
+        await asyncio.sleep(0.4)
+
+    log.warning(f"   IGST Rate: exact role flow failed; trying generic dropdown fallback ({last_error})")
+    await _select_dropdown_option_from_locator(page, dropdown_locator, rate_text, "IGST Rate", log, delay)
+    await _commit_dropdown_change(dropdown_locator)
+    if not await _dropdown_has_value(dropdown_locator, rate_text):
+        state = await _dropdown_state(dropdown_locator)
+        raise RuntimeError(f"IGST Rate: '{rate_text}' not selected after fallback; {_dropdown_state_summary(state)}")
+
+
+async def _commit_dropdown_change(dropdown_locator) -> None:
+    await dropdown_locator.evaluate(
+        """root => {
+            const nodes = [
+                root,
+                root.querySelector("input[readonly]"),
+                root.querySelector("select")
+            ].filter(Boolean);
+            for (const node of nodes) {
+                node.dispatchEvent(new Event('input', { bubbles: true }));
+                node.dispatchEvent(new Event('change', { bubbles: true }));
+                node.dispatchEvent(new Event('blur', { bubbles: true }));
+            }
+        }"""
+    )
+
+
+async def _dropdown_state(dropdown_locator) -> dict:
+    try:
+        return await dropdown_locator.evaluate(
+            """root => {
+                const label = root.querySelector('.p-dropdown-label, span[data-pc-section="input"]');
+                const hiddenInput = root.querySelector('input[readonly]');
+                const select = root.querySelector('select');
+                const expandedNode = root.querySelector('[aria-expanded]');
+                const selected = select && select.selectedOptions && select.selectedOptions.length
+                    ? select.selectedOptions[0]
+                    : null;
+                return {
+                    label: (label && label.textContent || '').trim(),
+                    hiddenInput: (hiddenInput && hiddenInput.value || '').trim(),
+                    selectValue: (select && select.value || '').trim(),
+                    selectedText: (selected && selected.textContent || '').trim(),
+                    filled: root.classList.contains('p-inputwrapper-filled'),
+                    expanded: expandedNode ? (expandedNode.getAttribute('aria-expanded') || '') : ''
+                };
+            }"""
+        )
+    except Exception:
+        return {}
+
+
+def _dropdown_state_summary(state: dict) -> str:
+    return (
+        f"label='{state.get('label', '')}', "
+        f"hidden='{state.get('hiddenInput', '')}', "
+        f"selected='{state.get('selectedText', '')}', "
+        f"value='{state.get('selectValue', '')}', "
+        f"filled={state.get('filled', False)}"
+    )
+
+
+async def _dropdown_has_value(dropdown_locator, expected_text: str) -> bool:
+    expected = str(expected_text).strip().lower()
+    state = await _dropdown_state(dropdown_locator)
+    for value in state.values():
+        if expected and expected in str(value).strip().lower():
+            return True
+
+    probes = [
+        ".p-dropdown-label",
+        "span[data-pc-section='input']",
+        "input[readonly]",
+        "select",
+    ]
+    for selector in probes:
+        try:
+            probe = dropdown_locator.locator(selector).first
+            if await probe.count() == 0:
+                continue
+            text = ""
+            try:
+                text = (await probe.inner_text(timeout=500)).strip()
+            except Exception:
+                pass
+            if not text:
+                try:
+                    text = (await probe.input_value(timeout=500)).strip()
+                except Exception:
+                    pass
+            if expected and expected in text.lower():
+                return True
+        except Exception:
+            continue
+    return False
+
+
+async def _fill_inputnumber_locator(page: Page, input_locator, value: str, label: str, log: AutomationLogger, delay: int) -> None:
+    await input_locator.wait_for(state="visible", timeout=8000)
+    await input_locator.scroll_into_view_if_needed()
+    await input_locator.focus()
+    await input_locator.click(click_count=3)
+    await asyncio.sleep(0.1)
+    await input_locator.press("Control+a")
+    await input_locator.press("Delete")
+    await asyncio.sleep(0.1)
+
+    instant_fill, typing_delay = _get_oic_fill_settings()
+    delay_to_use = 5 if instant_fill else typing_delay
+    for ch in str(value):
+        await input_locator.press_sequentially(ch, delay=delay_to_use)
+
+    await input_locator.evaluate(
+        "el => { "
+        "el.dispatchEvent(new Event('input',  { bubbles: true })); "
+        "el.dispatchEvent(new Event('change', { bubbles: true })); "
+        "el.dispatchEvent(new Event('blur',   { bubbles: true })); }"
+    )
+    await asyncio.sleep(0.2)
+
+    actual_value = await input_locator.input_value()
+    clean_actual = actual_value.replace(",", "").replace("₹", "").strip() if actual_value else ""
+    expected = str(value)
+    if not clean_actual or clean_actual != expected:
+        log.warning(f"   {label}: keyboard entry did not stick, applying native value setter")
+        await input_locator.evaluate(
+            """(el, expectedValue) => {
+                const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                    window.HTMLInputElement.prototype, 'value'
+                ).set;
+                nativeInputValueSetter.call(el, expectedValue);
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                el.dispatchEvent(new Event('blur', { bubbles: true }));
+            }""",
+            expected,
+        )
+
+    log.info(f"   {label} = {value} ✅")
+    await asyncio.sleep(delay / 1000.0)
+
+
+async def _click_add_excess_button(page: Page, log: AutomationLogger) -> None:
+    clicked_info = await page.evaluate("""
+        () => {
+            const normalize = (text) => (text || '').replace(/\\s+/g, '').toLowerCase();
+            const isVisible = (el) => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+            const isEnabled = (el) => !el.disabled && el.getAttribute('aria-disabled') !== 'true';
+            const isAddExcess = (button) => {
+                const text = normalize(button.textContent);
+                const aria = normalize(button.getAttribute('aria-label'));
+                return (text.includes('addexcess') || aria.includes('addexcess'))
+                    && !text.includes('addexpenses')
+                    && !aria.includes('addexpenses');
+            };
+            const chooseVisible = (buttons) => buttons.find(
+                (button) => isVisible(button) && isEnabled(button) && isAddExcess(button)
+            );
+            const excessDropdown = document.querySelector('#excess');
+            if (excessDropdown) {
+                let root = excessDropdown.closest('.input-section') || excessDropdown.parentElement;
+                for (let depth = 0; root && depth < 8; depth += 1, root = root.parentElement) {
+                    const buttons = Array.from(root.querySelectorAll('button'));
+                    const exact = chooseVisible(buttons);
+                    if (exact) {
+                        exact.click();
+                        return { clicked: true, method: 'scoped-exact', text: exact.textContent || exact.getAttribute('aria-label') || '' };
+                    }
+                    const visibleEnabled = buttons.filter((button) => isVisible(button) && isEnabled(button));
+                    if (visibleEnabled.length === 1 && depth <= 3) {
+                        visibleEnabled[0].click();
+                        return { clicked: true, method: 'scoped-single', text: visibleEnabled[0].textContent || visibleEnabled[0].getAttribute('aria-label') || '' };
+                    }
+                }
+            }
+            const globalExact = chooseVisible(Array.from(document.querySelectorAll('button')));
+            if (globalExact) {
+                globalExact.click();
+                return { clicked: true, method: 'global-exact', text: globalExact.textContent || globalExact.getAttribute('aria-label') || '' };
+            }
+            return { clicked: false, method: 'not-found', text: '' };
+        }
+    """)
+    if clicked_info.get("clicked"):
+        log.info(
+            f"   Add Excess + clicked ({clicked_info.get('method')}: "
+            f"{str(clicked_info.get('text') or '').strip()})"
+        )
+        await asyncio.sleep(0.8)
+        return
+
+    try:
+        add_btn = page.get_by_role("button", name=re.compile(r"^\s*Add\s+Excess\s*\+\s*$", re.IGNORECASE)).last
+        await add_btn.wait_for(state="visible", timeout=3000)
+        await add_btn.scroll_into_view_if_needed()
+        await add_btn.click(force=True)
+        log.info("   Add Excess + clicked via role fallback")
+    except Exception as btn_err:
+        log.warning(f"   Add Excess + role fallback failed ({btn_err}); trying selector fallback")
+        clicked = await page.evaluate("""
+            () => {
+                const normalize = (text) => (text || '').replace(/\\s+/g, '').toLowerCase();
+                const btn = Array.from(document.querySelectorAll("button[aria-label='Add Excess +'], button")).find((candidate) => {
+                    const text = normalize(candidate.textContent);
+                    const aria = normalize(candidate.getAttribute('aria-label'));
+                    const visible = !!(candidate.offsetWidth || candidate.offsetHeight || candidate.getClientRects().length);
+                    const disabled = candidate.disabled || candidate.getAttribute('aria-disabled') === 'true';
+                    return visible && !disabled
+                        && (text.includes('addexcess') || aria.includes('addexcess'))
+                        && !text.includes('addexpenses')
+                        && !aria.includes('addexpenses');
+                });
+                if (!btn) return false;
+                btn.click();
+                return true;
+            }
+        """)
+        if not clicked:
+            raise RuntimeError("Add Excess + button not found")
+        log.info("   Add Excess + clicked via JS")
+    await asyncio.sleep(0.8)
+
+
+async def _find_excess_amount_input(page: Page, portal_label: str, timeout: int = 2500):
+    await _expand_excess_accordion_if_needed(page, portal_label)
+    locators = [
+        page.locator(
+            "div.input-section",
+            has=page.locator("label", has_text=portal_label),
+        ).locator("input.p-inputnumber-input, input[name='amount']").last,
+        page.locator(
+            "span.p-float-label",
+            has=page.locator("label", has_text=portal_label),
+        ).locator("input.p-inputnumber-input, input[name='amount'], input").last,
+        page.locator(
+            f"span.p-float-label:has(label:text-is('{portal_label} Amount'))"
+        ).locator("input.p-inputnumber-input, input[name='amount'], input").last,
+    ]
+
+    for locator in locators:
+        try:
+            await locator.wait_for(state="visible", timeout=timeout)
+            return locator
+        except Exception:
+            continue
+    raise RuntimeError(f"{portal_label} amount input not visible")
+
+
+async def _expand_excess_accordion_if_needed(page: Page, portal_label: str) -> None:
+    tab = page.locator(
+        ".p-accordion-tab",
+        has=page.locator(".p-accordion-header", has_text=re.compile(portal_label, re.IGNORECASE)),
+    ).last
+    try:
+        await tab.wait_for(state="visible", timeout=1000)
+    except Exception:
+        return
+    class_attr = await tab.get_attribute("class") or ""
+    if "p-accordion-tab-active" not in class_attr:
+        await tab.locator(".p-accordion-header-link, .p-accordion-header").first.click()
+        await asyncio.sleep(0.3)
+
+
+async def _ensure_compulsory_excess_and_fill(page: Page, amount_val: str, log: AutomationLogger, delay: int) -> None:
+    portal_label = "Compulsory Excess"
+    try:
+        input_locator = await _find_excess_amount_input(page, portal_label, timeout=1500)
+        log.info("   Compulsory Excess field already visible")
+    except Exception:
+        log.info("   Compulsory Excess field not visible; adding it from Select Excess")
+        await _select_dropdown_option_from_locator(
+            page,
+            page.locator(S.SEL_LOSS_EXCESS_DROPDOWN).first,
+            portal_label,
+            "Excess Dropdown",
+            log,
+            delay,
+        )
+        await _click_add_excess_button(page, log)
+        await page.wait_for_timeout(700)
+        input_locator = await _find_excess_amount_input(page, portal_label, timeout=6000)
+
+    await _fill_inputnumber_locator(page, input_locator, amount_val, "Compulsory Excess Amount", log, delay)
 
 
 async def _fill_excess_section(page: Page, claim, defaults, log: AutomationLogger, delay: int):
     log.info("▸ Filling Excess Section")
 
-    # Check Excel for imposed excess and voluntary excess.
+    try:
+        comp_val = _parse_amount_for_total(getattr(claim, "compulsory_excess", "0"))
+    except ValueError:
+        comp_val = 0
+
+    log.info(f"   Filling Compulsory Excess Amount = {comp_val}")
+    await _ensure_compulsory_excess_and_fill(page, str(comp_val), log, delay)
+
+    # ── Imposed & Voluntary Excess (added via Select Excess dropdown + Add Excess+) ──
     try:
         imp_val = _parse_amount_for_total(getattr(claim, "imposed_excess", "0"))
     except ValueError:
@@ -182,12 +811,6 @@ async def _fill_excess_section(page: Page, claim, defaults, log: AutomationLogge
 async def _add_and_fill_excess(page: Page, excess_type: str, amount_val: str, log: AutomationLogger, delay: int):
     log.info(f"   Adding excess: {excess_type} with amount {amount_val}")
 
-    # ── Portal label mapping ─────────────────────────────────────────────
-    # The OIC portal uses specific label text for each excess amount input.
-    # Our internal names (from Excel) don't always match the portal labels:
-    #   "Imposed Excess"   → portal label: "Imposed Excess Amount"
-    #   "Voluntary Excess"  → portal label: "Voluntarily Excess Amount"  (typo in portal)
-    #   "Compulsory Excess" → portal label: "Compulsory Excess Amount"   (always present)
     _PORTAL_LABEL_MAP = {
         "Imposed Excess":    "Imposed Excess",
         "Voluntary Excess":  "Voluntarily Excess",
@@ -195,54 +818,24 @@ async def _add_and_fill_excess(page: Page, excess_type: str, amount_val: str, lo
     }
     portal_label = _PORTAL_LABEL_MAP.get(excess_type, excess_type)
 
-    # 1. Select excess type in dropdown (use portal_label for correct match)
-    await select_primeng_dropdown(page, S.SEL_LOSS_EXCESS_DROPDOWN, portal_label, "Excess Dropdown", log, delay_ms=delay)
+    # 1. Select excess type in dropdown
+    await _select_dropdown_option_from_locator(
+        page,
+        page.locator(S.SEL_LOSS_EXCESS_DROPDOWN).first,
+        portal_label,
+        "Excess Dropdown",
+        log,
+        delay,
+    )
 
     # 2. Click Add Excess + button
     log.info(f"   Clicking 'Add Excess +' for {excess_type}")
-    await page.locator(S.SEL_LOSS_ADD_EXCESS_BTN).click()
-    await asyncio.sleep(0.5)  # Wait for accordion / dynamic subsection to appear and mount
+    await _click_add_excess_button(page, log)
 
     # 3. Locate the new input field by its portal label text.
-    #    All excess inputs share id="amount", so we MUST locate by the
-    #    surrounding <label> text to target the correct one.
-    input_locator = page.locator(
-        "span.p-float-label",
-        has=page.locator("label", has_text=portal_label),
-    ).locator("input").first
-
-    # Wait for the input to be visible and type value
-    try:
-        await input_locator.wait_for(state="visible", timeout=5000)
-    except Exception:
-        # Fallback: try finding by exact label text match
-        log.warning(f"   Label '{portal_label}' not found via has_text. Trying text= selector...")
-        input_locator = page.locator(
-            f"span.p-float-label:has(label:text-is('{portal_label} Amount'))"
-        ).locator("input").first
-        await input_locator.wait_for(state="visible", timeout=5000)
-
-    await input_locator.scroll_into_view_if_needed()
-    await input_locator.focus()
-
-    # PrimeNG components use custom event handlers that do not bind properly
-    # with direct page.fill() under instant_fill. We must type character-by-character
-    # to trigger all internal value/mask formatting listeners.
-    instant_fill, typing_delay = _get_oic_fill_settings()
-    delay_to_use = 5 if instant_fill else typing_delay
-
-    await input_locator.fill("")
-    for char in str(amount_val):
-        await input_locator.press_sequentially(char, delay=delay_to_use)
-
-    # Dispatch change events
-    await input_locator.evaluate(
-        "el => { el.dispatchEvent(new Event('input', { bubbles: true })); "
-        "el.dispatchEvent(new Event('change', { bubbles: true })); "
-        "el.dispatchEvent(new Event('blur', { bubbles: true })); }"
-    )
+    input_locator = await _find_excess_amount_input(page, portal_label, timeout=6000)
+    await _fill_inputnumber_locator(page, input_locator, amount_val, f"{excess_type} Amount", log, delay)
     log.info(f"   Successfully filled {excess_type} with amount {amount_val}")
-    await asyncio.sleep(0.1)
 
 
 async def _fill_salvage_section(page: Page, claim, defaults, log: AutomationLogger, delay: int):
@@ -462,10 +1055,79 @@ async def _click_save_and_next_button(page: Page, log: AutomationLogger) -> bool
     # Wait until "Document Upload" section/tab is active/visible
     log.info("   Waiting for 'Document Upload' section to load...")
     try:
-        # Wait for file input or something unique to the Document Upload section
-        await page.wait_for_selector("input[type='file']", state="visible", timeout=15000)
+        # OIC upload controls are hidden <input type=file> elements; attachment
+        # of the first upload-specific input is the reliable transition signal.
+        await page.wait_for_selector(S.SEL_UPLOAD_WORKSHOP_ESTIMATE, state="attached", timeout=15000)
         log.success("   Document Upload section successfully loaded")
         return True
     except Exception as e:
         log.error(f"   Transition to Document Upload failed or timed out: {e}")
+        await _log_assessment_transition_blockers(page, log)
+        await capture_error_screenshot(page, "assessment_next_no_transition", log)
         return False
+
+
+async def _collect_visible_validation_messages(page: Page, limit: int = 12) -> list[str]:
+    messages: list[str] = []
+    seen: set[str] = set()
+    selectors = (
+        ".error-message:visible, "
+        ".error-messageSeverity:visible, "
+        ".p-error:visible, "
+        ".p-message-error:visible, "
+        ".p-toast-message-error:visible, "
+        "[role='alert']:visible"
+    )
+    try:
+        locs = page.locator(selectors)
+        count = await locs.count()
+        for i in range(min(count, limit)):
+            txt = (await locs.nth(i).inner_text()).strip()
+            txt = re.sub(r"\s+", " ", txt)
+            if txt and txt not in seen:
+                messages.append(txt)
+                seen.add(txt)
+    except Exception:
+        pass
+    return messages
+
+
+async def _log_assessment_transition_blockers(page: Page, log: AutomationLogger) -> None:
+    messages = await _collect_visible_validation_messages(page)
+    if messages:
+        log.warning(f"   Assessment validation messages after Save and Next ({len(messages)}):")
+        for msg in messages:
+            log.warning(f"     - {msg}")
+    else:
+        log.warning("   No visible validation message found after Save and Next.")
+
+    try:
+        glass_tab = page.locator(
+            ".p-accordion-tab",
+            has=page.locator(".p-accordion-header", has_text="Glass"),
+        ).last
+        igst_dropdown = glass_tab.locator("#igstRate.p-dropdown, div#igstRate").first
+        if await igst_dropdown.count():
+            state = await _dropdown_state(igst_dropdown)
+            log.warning(f"   IGST Rate at Save/Next failure -> {_dropdown_state_summary(state)}")
+    except Exception:
+        pass
+
+    try:
+        excess_snapshot = await page.evaluate(
+            """() => {
+                const rows = [];
+                for (const label of Array.from(document.querySelectorAll('label'))) {
+                    const text = (label.textContent || '').trim();
+                    if (!/excess amount/i.test(text)) continue;
+                    const root = label.closest('.input-section') || label.closest('.p-float-label') || label.parentElement;
+                    const input = root && root.querySelector('input');
+                    rows.push(`${text}: ${input && input.value ? input.value : ''}`.trim());
+                }
+                return rows;
+            }"""
+        )
+        if excess_snapshot:
+            log.warning(f"   Excess amount snapshot -> {'; '.join(excess_snapshot)}")
+    except Exception:
+        pass

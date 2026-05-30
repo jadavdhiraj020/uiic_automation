@@ -382,6 +382,7 @@ _OIC_METADATA = PortalUiMetadata(
             [
                 "Inv Amt Without GST (₹)",
                 "Invoice GST Amt (₹)",
+                "Compulsory Excess (₹)",
                 "Voluntary Excess (₹)",
                 "Imposed Excess (₹)",
                 "Salvage Amount (₹)",
