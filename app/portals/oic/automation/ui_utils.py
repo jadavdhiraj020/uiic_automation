@@ -152,7 +152,7 @@ async def fill_input_with_delay(
         else:
             await locator.fill("")
             for char in str(value):
-                await locator.type(char, delay=typing_delay)
+                await locator.press_sequentially(char, delay=typing_delay)
             
         # Trigger Angular changes and event dispatches to settle state
         await page.evaluate(_JS_FILL, [selector, str(value)])
@@ -451,7 +451,7 @@ async def fill_primeng_inputnumber(
 
         await inner_input.fill("")
         for char in str(value):
-            await inner_input.type(char, delay=delay_to_use)
+            await inner_input.press_sequentially(char, delay=delay_to_use)
 
         # Trigger change events
         await inner_input.evaluate("el => { el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); el.dispatchEvent(new Event('blur', { bubbles: true })); }")
@@ -535,7 +535,7 @@ async def fill_mui_datepicker(
         instant_fill, typing_delay = _get_oic_fill_settings()
         datepicker_delay = 0 if instant_fill else max(5, typing_delay // 2)
         for char in formatted:
-            await input_el.type(char, delay=datepicker_delay)
+            await input_el.press_sequentially(char, delay=datepicker_delay)
 
         # 4. Close any calendar popup and blur
         await page.keyboard.press("Escape")
@@ -585,7 +585,7 @@ async def fill_textarea_primeng(
         else:
             await locator.fill("")
             for char in str(value):
-                await locator.type(char, delay=typing_delay)
+                await locator.press_sequentially(char, delay=typing_delay)
 
         # Dispatch change events so the Angular/PrimeNG framework registers the value
         await locator.evaluate(

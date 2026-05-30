@@ -797,7 +797,7 @@ async def _click_next_button(page: Page, log) -> bool:
             if not transitioned:
                 try:
                     await page.wait_for_selector(
-                        "text='Interim Report'",
+                        "text=Interim Report",
                         state="visible",
                         timeout=5000,
                     )
@@ -1223,7 +1223,7 @@ async def _fill_year_picker(page: Page, selector: str, year: str, label: str, lo
                 await inner.fill(str(year))
             else:
                 await inner.fill("")
-                await inner.type(str(year), delay=typing_delay)
+                await inner.press_sequentially(str(year), delay=typing_delay)
 
             await inner.evaluate(
                 "el => { el.dispatchEvent(new Event('input', {bubbles:true})); "

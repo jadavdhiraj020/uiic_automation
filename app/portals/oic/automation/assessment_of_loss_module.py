@@ -233,7 +233,7 @@ async def _add_and_fill_excess(page: Page, excess_type: str, amount_val: str, lo
 
     await input_locator.fill("")
     for char in str(amount_val):
-        await input_locator.type(char, delay=delay_to_use)
+        await input_locator.press_sequentially(char, delay=delay_to_use)
 
     # Dispatch change events
     await input_locator.evaluate(

@@ -376,7 +376,7 @@ async def _click_next_button(page, log) -> bool:
                 # Strategy B: A Step-4 heading / breadcrumb appeared in DOM
                 try:
                     await page.wait_for_selector(
-                        "text='Assessment of Loss'",
+                        "text=Assessment of Loss",
                         state="visible",
                         timeout=5000,
                     )
