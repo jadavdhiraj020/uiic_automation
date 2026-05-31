@@ -269,7 +269,12 @@ hiddenimports.extend(
         "app.portals.oic.automation",
         "app.portals.oic.automation.login_module",
         "app.portals.oic.automation.navigation_module",
+        # NOTE: 'claim_assessment_module' kept for back-compat but the real
+        # assessment module is 'assessment_of_loss_module' — both listed.
         "app.portals.oic.automation.claim_assessment_module",
+        "app.portals.oic.automation.assessment_of_loss_module",
+        "app.portals.oic.automation.interim_report_module",
+        "app.portals.oic.automation.date_formatter",
         "app.portals.oic.automation.document_upload_module",
         "app.portals.oic.automation.popup_service",
         "app.portals.oic.automation.ui_utils",
@@ -277,6 +282,16 @@ hiddenimports.extend(
         "app.portals.oic.automation.basic_details_module",
         "app.portals.oic.automation.claim_search_module",
         "app.portals.oic.automation.selectors",
+        # ── app.data — Excel extraction and OIC assessment generation ─────────
+        # These are imported at runtime by the OIC portal engine but PyInstaller
+        # cannot detect them through dynamic import chains.
+        "app.data",
+        "app.data.oic_assessment_generator",
+        "app.data.excel_parts_extractor",
+        "app.data.excel_reader",
+        "app.data.assessment_generator",
+        "app.data.data_model",
+        "app.data.folder_scanner",
         # ── UI service layer (lazy-imported inside main_window event handlers)
         "app.ui.services",
         # ── Automation service layer (if it contains dynamically loaded code)

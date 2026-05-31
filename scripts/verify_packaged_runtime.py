@@ -156,6 +156,14 @@ def verify(dist_dir: Path) -> list[str]:
          "app.portals.newindia package marker"),
         ("app/ui/components/__init__.py",
          "app.ui.components package marker"),
+        # ── OIC portal — added for EXE vs local parity ──────────────────────
+        ("app/portals/oic/__init__.py",
+         "app.portals.oic package marker"),
+        ("app/portals/oic/automation/__init__.py",
+         "app.portals.oic.automation package marker"),
+        # ── app.data — Excel extraction and OIC assessment generation ────────
+        ("app/data/__init__.py",
+         "app.data package marker (OIC Excel extractor + assessment generator)"),
     ]
     # The source tree is the CWD when this script runs in CI (repo root).
     import pathlib as _pathlib

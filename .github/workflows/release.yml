@@ -132,7 +132,50 @@ jobs:
           Write-Host "ZIP:     $zip_name"
         shell: pwsh
 
-      # ─── 8. Build EXE with PyInstaller ──────────────────────────────────
+      # ─── 8. Verify OIC module imports (EXE vs local parity check) ───────
+      - name: Verify OIC module imports (pre-build parity check)
+        run: |
+          Write-Host "Checking all OIC automation + data modules are importable..."
+          $modules = @(
+            "app.portals.oic.automation",
+            "app.portals.oic.automation.login_module",
+            "app.portals.oic.automation.navigation_module",
+            "app.portals.oic.automation.assessment_of_loss_module",
+            "app.portals.oic.automation.interim_report_module",
+            "app.portals.oic.automation.date_formatter",
+            "app.portals.oic.automation.document_upload_module",
+            "app.portals.oic.automation.popup_service",
+            "app.portals.oic.automation.ui_utils",
+            "app.portals.oic.automation.workflow_module",
+            "app.portals.oic.automation.basic_details_module",
+            "app.portals.oic.automation.claim_search_module",
+            "app.portals.oic.automation.selectors",
+            "app.data",
+            "app.data.oic_assessment_generator",
+            "app.data.excel_parts_extractor",
+            "app.data.excel_reader",
+            "app.data.assessment_generator",
+            "app.data.data_model",
+            "app.data.folder_scanner"
+          )
+          $failed = @()
+          foreach ($mod in $modules) {
+            $result = python -c "import $mod; print('OK: $mod')" 2>&1
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "  FAIL: $mod -- $result" -ForegroundColor Red
+              $failed += $mod
+            } else {
+              Write-Host "  OK:   $mod"
+            }
+          }
+          if ($failed.Count -gt 0) {
+            Write-Error "OIC parity check FAILED — $($failed.Count) module(s) not importable:`n$($failed -join ', ')`nThese modules will cause ModuleNotFoundError in the EXE at runtime."
+            exit 1
+          }
+          Write-Host "OIC parity check PASSED — all $($modules.Count) modules importable." -ForegroundColor Green
+        shell: pwsh
+
+      # ─── 9. Build EXE with PyInstaller ──────────────────────────────────
       - name: Build Windows EXE
         run: |
           $env:PLAYWRIGHT_BROWSERS_PATH = "${{ github.workspace }}\build_assets\ms-playwright"
