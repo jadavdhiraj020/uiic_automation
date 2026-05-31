@@ -9,22 +9,22 @@ Parts header row: 100
 Parts confidence: 100%
 Parts matched: sn, part_desc, estimated, metal, plastic, glass
 Parts missing: -
-Parts row 101: added 'fut Bumper' billed=1210.93 assessed=1210.93 hsn=8512
-Parts row 102: added 'fender LH' billed=992.18 assessed=992.18 hsn=8512
-Parts row 103: added 'fut Door LH' billed=500.0 assessed=500.0 hsn=8512
-Parts row 104: added 'Rear Door LH' billed=5.0 assessed=5.0 hsn=8512
-Parts row 105: added 'Quter Panel LH' billed=5.0 assessed=5.0 hsn=8512
-Parts row 106: added 'Rear Bumper' billed=4.0 assessed=4.0 hsn=8512
-Parts row 107: added 'fender RH' billed=5.0 assessed=5.0 hsn=8512
-Parts row 108: added 'fut Door RH' billed=4.0 assessed=4.0 hsn=8512
-Parts row 109: added 'Rear Door RH' billed=4.0 assessed=4.0 hsn=8512
-Parts row 110: added 'Quter Panel RH' billed=5.0 assessed=5.0 hsn=8512
-Parts row 111: added 'Side minor RH' billed=4.0 assessed=4.0 hsn=8512
-Parts row 112: added 'Side mirror LH' billed=5.0 assessed=5.0 hsn=8512
-Parts row 113: added 'feet Bumper Bubt' billed=4.0 assessed=4.0 hsn=8512
-Parts row 114: added 'Flood' billed=5.0 assessed=5.0 hsn=8512
-Parts row 115: added 'Carbone Cheye Accedator' billed=4.0 assessed=4.0 hsn=8512
-Parts row 116: added 'UNIT HEAD LAMP LH' billed=4.0 assessed=4.0 hsn=8512
+Parts row 101: added 'fut Bumper' material=metal billed=1210.93 assessed=1210.93 hsn=8512
+Parts row 102: added 'fender LH' material=metal billed=992.18 assessed=992.18 hsn=8512
+Parts row 103: added 'fut Door LH' material=plastic billed=500.0 assessed=500.0 hsn=8512
+Parts row 104: added 'Rear Door LH' material=plastic billed=5.0 assessed=5.0 hsn=8512
+Parts row 105: added 'Quter Panel LH' material=plastic billed=5.0 assessed=5.0 hsn=8512
+Parts row 106: added 'Rear Bumper' material=plastic billed=4.0 assessed=4.0 hsn=8512
+Parts row 107: added 'fender RH' material=glass billed=5.0 assessed=5.0 hsn=8512
+Parts row 108: added 'fut Door RH' material=plastic billed=4.0 assessed=4.0 hsn=8512
+Parts row 109: added 'Rear Door RH' material=plastic billed=4.0 assessed=4.0 hsn=8512
+Parts row 110: added 'Quter Panel RH' material=glass billed=5.0 assessed=5.0 hsn=8512
+Parts row 111: added 'Side minor RH' material=glass billed=4.0 assessed=4.0 hsn=8512
+Parts row 112: added 'Side mirror LH' material=plastic billed=5.0 assessed=5.0 hsn=8512
+Parts row 113: added 'feet Bumper Bubt' material=plastic billed=4.0 assessed=4.0 hsn=8512
+Parts row 114: added 'Flood' material=glass billed=5.0 assessed=5.0 hsn=8512
+Parts row 115: added 'Carbone Cheye Accedator' material=plastic billed=4.0 assessed=4.0 hsn=8512
+Parts row 116: added 'UNIT HEAD LAMP LH' material=plastic billed=4.0 assessed=4.0 hsn=8512
 Parts row 117: skipped likely labour row 'LABOUR CHARGE ACCIDENTAL'
 Parts row 118: skipped blank part name
 Parts row 119: skipped blank part name
@@ -44,17 +44,17 @@ Parts row 132: skipped blank part name
 Parts row 133: skipped blank part name
 Parts row 134: skipped blank part name
 Parts row 135: skipped blank part name
-Parts row 136: stopped at subtotal/total boundary
+Parts row 136: stopped at boundary 'sub total'
 Labour header row: 156
-Labour confidence: 82%
+Labour confidence: 90%
 Labour matched: sn, labour_desc, rr, denting, cw
-Labour missing: painting, alignment, estimated
-Labour row 157: added 'aaa' billed=5.0 assessed=5.0 hsn=8729
-Labour row 158: added 'bbb' billed=5.0 assessed=5.0 hsn=8729
-Labour row 159: added 'ccc' billed=5.0 assessed=5.0 hsn=8729
+Labour missing: estimated
+Labour row 157: added 'aaa' column=rr billed=5.0 assessed=5.0 hsn=8729
+Labour row 158: added 'bbb' column=denting billed=5.0 assessed=5.0 hsn=8729
+Labour row 159: added 'ccc' column=cw billed=5.0 assessed=5.0 hsn=8729
 Labour row 160: skipped blank labour name
 Labour row 161: skipped blank labour name
-Labour row 162: stopped at subtotal/total boundary
+Labour row 162: stopped at boundary 'sub total'
 
 Result
 Output Excel: C:/Users/jadav/Coding/Automation/UIIC/uiic_automation/AAA\auto_primary_assessment.xlsx
