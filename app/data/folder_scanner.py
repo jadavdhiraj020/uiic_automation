@@ -44,7 +44,7 @@ def _join_export_path(folder_path: str, filename: str) -> str:
     return os.path.join(folder_path, filename)
 
 
-def get_doc_mapping_tuple(portal_id: str = "uiic") -> Tuple[Dict[str, List[str]], Dict[str, List[str]], List[str], List[str], Dict[str, List[str]]]:
+def get_doc_mapping_tuple(portal_id: str = "uiic") -> Tuple[Dict[str, List[str]], Dict[str, List[str]], List[str], List[str], Dict[str, List[str]], List[str]]:
     """Load doc_mapping.json from app settings and return tuple."""
     from app.utils import load_doc_mapping
     raw = load_doc_mapping(portal_id=portal_id)
@@ -55,7 +55,9 @@ def get_doc_mapping_tuple(portal_id: str = "uiic") -> Tuple[Dict[str, List[str]]
     upload_map = raw.get("document_upload_tab", {})
     # Remove _comment key from upload_map if present
     upload_map = {k: v for k, v in upload_map.items() if not k.startswith("_")}
-    return claim_map, assessment_map, other_slots, expected_docs, upload_map
+    main_excel_keywords = raw.get("main_excel_keywords", [])
+    return claim_map, assessment_map, other_slots, expected_docs, upload_map, main_excel_keywords
+
 
 
 import re
@@ -301,7 +303,7 @@ def _extract_sheet_for_reinspection(full_path: str, folder_path: str, sheet_inde
 def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
     # 1. Load keywords from doc_mapping.json
     result = FolderScanResult()
-    claim_map, assessment_map, other_slots, expected_docs, upload_map = get_doc_mapping_tuple(portal_id=portal_id)
+    claim_map, assessment_map, other_slots, expected_docs, upload_map, main_excel_keywords = get_doc_mapping_tuple(portal_id=portal_id)
     result.expected_docs = expected_docs
 
     if not os.path.isdir(folder_path):
@@ -379,6 +381,62 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
     # Collect files starting with "other" for sequential Other 1/2/3 assignment
     other_files: List[str] = []
 
+    # ── Pre-scan for the main data Excel file ───────────────────────────────
+    excel_candidates = []
+    for fname in sorted(os.listdir(folder_path)):
+        full_path = os.path.join(folder_path, fname)
+        if not os.path.isfile(full_path):
+            continue
+        ext = Path(fname).suffix.lower()
+        if ext not in _EXCEL_EXTENSIONS:
+            continue
+        if fname in _SKIP_FILES:
+            continue
+        fname_lower = fname.lower()
+        if fname_lower == "claim_others_documents.pdf" or fname_lower.startswith("claim_others_documents_"):
+            continue
+        if fname_lower in ["re-inspection report format.xlsx", "re-inspection report format.pdf"]:
+            continue
+
+        # Exclude Excels that match an assessment keyword (e.g. reinspection_report, estimate, etc.)
+        fname_norm = fname.lower().replace("-", "_").replace(" ", "_")
+        assessment_key = _match_keyword(fname_norm, assessment_map)
+        if assessment_key:
+            continue
+
+        excel_candidates.append(full_path)
+
+    # Now select the main Excel from candidate list using strict keyword priority
+    main_excel_path = None
+    _main_excel_matched_by_keyword = False
+
+    if excel_candidates:
+        if main_excel_keywords:
+            # Look for keywords in strict order of user configuration
+            for keyword in main_excel_keywords:
+                keyword_lower = keyword.lower()
+                for cand in excel_candidates:
+                    cand_name_lower = Path(cand).name.lower()
+                    if keyword_lower in cand_name_lower:
+                        main_excel_path = cand
+                        _main_excel_matched_by_keyword = True
+                        logger.info("Main Excel matched by keyword '%s': %s", keyword, Path(cand).name)
+                        break
+                if main_excel_path:
+                    break
+
+            if not main_excel_path:
+                logger.warning(
+                    "Keywords configured %s but no candidate Excel matched. Skipping Excel processing as requested.",
+                    main_excel_keywords
+                )
+        else:
+            # No keywords configured -> auto-pick the first Excel candidate
+            main_excel_path = excel_candidates[0]
+            logger.info("No keywords configured. Auto-picked first Excel candidate: %s", Path(main_excel_path).name)
+
+    _main_excel_norm = os.path.normcase(os.path.normpath(main_excel_path)) if main_excel_path else None
+
     for fname in sorted(os.listdir(folder_path)):
         if fname in _SKIP_FILES:
             result.skipped_files.append((os.path.join(folder_path, fname), "Ignored system file"))
@@ -422,10 +480,11 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
                     result.skipped_files.append((full_path, f"Duplicate assessment mapping [{assessment_key}]"))
                 continue
 
-            # ── Otherwise treat as the main data Excel ─────────────────────
-            if result.excel_path is None:
+            # ── Otherwise treat as candidate for main Excel ────────────────
+            _full_path_norm = os.path.normcase(os.path.normpath(full_path))
+            if _main_excel_norm and _full_path_norm == _main_excel_norm:
                 result.excel_path = full_path
-                logger.info("Excel found: %s", fname)
+                logger.info("Excel found (main): %s", fname)
 
                 # ── Auto-extract Sheet 7 for Re-Inspection Report ─────────────
                 if "reinspection_report" in result.assessment_files or "reinspection_report" in result.upload_doc_files:
@@ -457,9 +516,14 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
                             "Could not resolve reinspection_report from user PDF, existing generated files, or Excel extraction."
                         )
             else:
-                logger.warning("Multiple Excel files found. Keeping first: %s", result.excel_path)
-                result.skipped_files.append((full_path, "Multiple Excel files found"))
+                if main_excel_keywords:
+                    logger.info("Skipped Excel file (not the main data Excel): %s", fname)
+                    result.skipped_files.append((full_path, "Multiple Excel files found — not the main data Excel"))
+                else:
+                    logger.info("Skipped Excel file (multiple found): %s", fname)
+                    result.skipped_files.append((full_path, "Multiple Excel files found"))
             continue
+
 
         # ── Non-document files ────────────────────────────────────────────────
         if ext not in _DOC_EXTENSIONS:

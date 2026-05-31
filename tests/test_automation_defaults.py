@@ -150,7 +150,7 @@ def test_primary_assessment_low_confidence_header_is_skipped(tmp_path):
     output_path = generate_primary_assessment(str(source_path), str(tmp_path))
 
     assert output_path is None
-    audit_path = tmp_path / "auto_primary_assessment_audit.txt"
+    audit_path = tmp_path / "primary_assessment_skipped_audit.txt"
     assert audit_path.exists()
     audit_text = audit_path.read_text(encoding="utf-8")
     assert "Parts confidence:" in audit_text

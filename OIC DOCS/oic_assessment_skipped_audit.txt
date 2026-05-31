@@ -1,0 +1,19 @@
+OIC Assessment Generation Audit
+Source Excel: C:\Users\jadav\Coding\Automation\UIIC\uiic_automation\OIC DOCS\auto_oic_assessment.xlsx
+Parts HSN: 8512
+Labour HSN: 8729
+
+Parts & Labour Extraction Audit
+Source Excel: C:\Users\jadav\Coding\Automation\UIIC\uiic_automation\OIC DOCS\auto_oic_assessment.xlsx
+Source Sheet: OIC_Assessment_Data
+
+Parts header: not found
+Labour header: not found
+
+── Summary ──
+Parts rows: 0
+Labour rows: 0
+Total rows: 0
+
+Result
+No parts or labour data found. Excel generation skipped.

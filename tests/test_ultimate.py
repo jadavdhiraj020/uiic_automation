@@ -92,6 +92,39 @@ from app.automation.engine import _setting_bool, _setting_int
 CONFIG_DIR = os.path.join(PROJECT_ROOT, "app", "config")
 
 
+# ── speed_up_sleep fixture ────────────────────────────────────────────────────
+# Replaces asyncio.sleep with a zero-delay yield for ALL tests in this file.
+#
+# Design notes:
+#   • NOT autouse=True — instead applied at module level via pytestmark below.
+#   • This is intentional: all tests in test_ultimate.py are pure unit/mock
+#     tests with NO real browser or Playwright involvement. No test relies on
+#     actual wall-clock delays.
+#   • If real browser integration tests are added later, move them to a
+#     separate file (e.g. test_browser_integration.py) so this fixture does
+#     NOT apply to them automatically.
+#   • The original asyncio.sleep is preserved and captured before patching
+#     so a 0-delay yield still gives the event loop a chance to run.
+# ─────────────────────────────────────────────────────────────────────────────
+@pytest.fixture()
+def speed_up_sleep(monkeypatch):
+    """Zero out asyncio.sleep delays for fast unit test execution.
+
+    Applied module-wide via pytestmark. Do NOT use autouse=True here —
+    see design notes above.
+    """
+    original_sleep = asyncio.sleep
+
+    async def fast_sleep(delay=0):  # noqa: ARG001
+        await original_sleep(0)    # give event loop a turn, skip wall-clock wait
+
+    monkeypatch.setattr("asyncio.sleep", fast_sleep)
+
+
+# Apply to every test in this file (all are unit/mock tests — safe to do so).
+pytestmark = pytest.mark.usefixtures("speed_up_sleep")
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # 1. JUNK DETECTION — _is_junk
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1609,6 +1642,72 @@ class TestFolderScanner:
         assert len(lines) >= 2
         assert any("data.xlsx" in l for l in lines)
 
+    def test_main_excel_keywords_priority(self):
+        from app.data.folder_scanner import scan_folder
+        import tempfile
+        import os
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create multiple Excel candidates
+            dummy_path = os.path.join(tmpdir, "dummy.xlsx")
+            auto_path = os.path.join(tmpdir, "auto_oic_assessment.xlsx")
+            
+            with open(dummy_path, "w") as f:
+                f.write("mock dummy xlsx")
+            with open(auto_path, "w") as f:
+                f.write("mock auto xlsx")
+
+            # Mock load_doc_mapping to return dummy/main keywords
+            with patch("app.utils.load_doc_mapping") as mock_load:
+                mock_load.return_value = {
+                    "main_excel_keywords": ["dummy", "main"],
+                    "claim_documents_tab": {},
+                    "claim_assessment_tab": {},
+                    "document_upload_tab": {},
+                    "expected_claim_docs": [],
+                    "other_slots": []
+                }
+                
+                result = scan_folder(tmpdir)
+                
+                # Should prioritize dummy.xlsx over auto_oic_assessment.xlsx based on keyword priority
+                assert result.excel_path == dummy_path
+                # Check that auto_oic_assessment.xlsx is marked as skipped
+                skipped_paths = [f[0] for f in result.skipped_files]
+                assert auto_path in skipped_paths
+
+    def test_main_excel_keywords_unmatched_warning(self):
+        from app.data.folder_scanner import scan_folder
+        import tempfile
+        import os
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create an Excel that does NOT match any keyword
+            other_path = os.path.join(tmpdir, "other.xlsx")
+            with open(other_path, "w") as f:
+                f.write("mock other xlsx")
+
+            # Mock load_doc_mapping to return keywords that won't match "other.xlsx"
+            with patch("app.utils.load_doc_mapping") as mock_load:
+                mock_load.return_value = {
+                    "main_excel_keywords": ["dummy", "main"],
+                    "claim_documents_tab": {},
+                    "claim_assessment_tab": {},
+                    "document_upload_tab": {},
+                    "expected_claim_docs": [],
+                    "other_slots": []
+                }
+                
+                result = scan_folder(tmpdir)
+                
+                # Since keyword "dummy" or "main" is configured but no excel matched, excel_path should remain None (warning issued)
+                assert result.excel_path is None
+                # other.xlsx should be listed as skipped
+                skipped_paths = [f[0] for f in result.skipped_files]
+                assert other_path in skipped_paths
+
     def test_scan_nonexistent_folder(self):
         from app.data.folder_scanner import scan_folder
 
@@ -1676,7 +1775,7 @@ class TestFolderScanner:
     def test_load_doc_mapping(self):
         from app.data.folder_scanner import get_doc_mapping_tuple
 
-        claim_map, assessment_map, other_slots, expected_docs, upload_map = get_doc_mapping_tuple()
+        claim_map, assessment_map, other_slots, expected_docs, upload_map, _ = get_doc_mapping_tuple()
         assert isinstance(claim_map, dict)
         assert isinstance(assessment_map, dict)
         assert isinstance(other_slots, list)
@@ -1685,7 +1784,7 @@ class TestFolderScanner:
     def test_doc_mapping_other_slots(self):
         from app.data.folder_scanner import get_doc_mapping_tuple
 
-        _, _, other_slots, _, _ = get_doc_mapping_tuple()
+        _, _, other_slots, _, _, _ = get_doc_mapping_tuple()
         assert len(other_slots) >= 3, "Need at least 3 Other slots"
 
 
@@ -5959,9 +6058,23 @@ class TestDerivedFields:
 class TestChequeExtractorRealDiagnostic:
     """Verify ChequeExtractor OCR against a real cheque image in the AAA folder."""
 
-    def test_sc26_real_cheque_diagnostic(self):
+    def test_sc26_real_cheque_diagnostic(self, monkeypatch):
         import os
         from app.portals.newindia.automation.ocr_helper import ChequeExtractor
+
+        # Mock OCR output to avoid loading PaddleOCR models during test, making it extremely fast
+        monkeypatch.setattr(
+            "app.portals.newindia.automation.ocr_helper.ensure_ocr_ready",
+            lambda: True
+        )
+        monkeypatch.setattr(
+            "app.portals.newindia.automation.ocr_helper.run_shared_ocr",
+            lambda image_path, cls=True: [[
+                [ [[10, 10], [100, 10], [100, 30], [10, 30]], ("HDFC0000001", 0.99) ],
+                [ [[10, 50], [200, 50], [200, 70], [10, 70]], ("A/C NO: 123456789012345", 0.98) ],
+                [ [[10, 100], [150, 100], [150, 120], [10, 120]], ("SAVINGS ACCOUNT", 0.95) ]
+            ]]
+        )
 
         # Locate the real cheque in AAA folder
         cheque_path = os.path.join(PROJECT_ROOT, "AAA", "cancel_check.jpeg")
@@ -6337,7 +6450,8 @@ class TestOicLogin:
             "portal_url": "https://orientalinsurance.org.in/",
             "username": "OIC_USER",
             "password": "OIC_PASSWORD",
-            "captcha_max_retries": 2
+            "captcha_max_retries": 2,
+            "manual_login_timeout_s": 0
         }
         log = MagicMock()
         result = await do_login(mock_page, settings, log)
@@ -7442,6 +7556,7 @@ class TestProductionGradeRobustness:
         monkeypatch.setattr(os.path, "getsize", lambda x: 1024)
 
         service = DocumentUploadService(mock_page, log_cb=lambda x: None)
+        service.dismiss_upload_popup = AsyncMock(return_value=True)
         success = await service.select_doc_and_set_file(
             row_index=0, doc_label="Survey Report", file_path="survey.pdf", timeout_ms=100
         )

@@ -232,6 +232,15 @@ class SettingsPage(QWidget):
     def _build_doc_mapping_tab(self):
         s = QScrollArea(); s.setWidgetResizable(True); s.setFrameShape(QFrame.Shape.NoFrame)
         w = QWidget(); l = QVBoxLayout(w); l.setContentsMargins(32, 24, 32, 24)
+        
+        # Main Excel Keywords field
+        excel_label = QLabel("Main Excel Keywords (Filename keywords to identify the main claim data Excel)")
+        excel_label.setObjectName("settingsFieldLabel")
+        l.addWidget(excel_label)
+        self.inp_main_excel_keywords = ChipLineEdit()
+        l.addWidget(self.inp_main_excel_keywords)
+        l.addSpacing(16)
+        
         search, self.doc_search_input = _search_row(
             "Filter documents by section, portal type, or filename keyword...",
             self._filter_doc_table,
@@ -355,6 +364,7 @@ class SettingsPage(QWidget):
 
         # Doc Mapping
         dm = load_doc_mapping(portal_id=self._portal_id)
+        self.inp_main_excel_keywords.setText(" | ".join(dm.get("main_excel_keywords", [])))
         rows = []
         for sk in ("claim_documents_tab", "claim_assessment_tab"):
             sec = dm.get(sk, {})
@@ -509,6 +519,7 @@ class SettingsPage(QWidget):
             dm["claim_assessment_tab"] = ad
             if ud:
                 dm["document_upload_tab"] = ud
+            dm["main_excel_keywords"] = [k.strip() for k in self.inp_main_excel_keywords.text().split("|") if k.strip()]
             save_doc_mapping(dm, portal_id=self._portal_id)
 
             self.append_log("\u2705  Settings saved.")

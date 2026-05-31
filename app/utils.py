@@ -251,10 +251,14 @@ def _merge_doc_mapping(base: dict[str, Any], user: dict[str, Any]) -> dict[str, 
             merged[key] = section
         elif key in merged:
             if isinstance(base_value, list) and isinstance(value, list):
-                merged[key] = [v for v in value if v in base_value]
+                if key in ["main_excel_keywords", "expected_claim_docs", "other_slots"]:
+                    merged[key] = value
+                else:
+                    merged[key] = [v for v in value if v in base_value]
             else:
                 merged[key] = value
     return merged
+
 
 
 def load_doc_mapping(portal_id: Optional[str] = None) -> dict[str, Any]:

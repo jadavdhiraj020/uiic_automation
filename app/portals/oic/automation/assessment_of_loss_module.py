@@ -173,58 +173,168 @@ async def _fill_invoice_section(page: Page, claim, defaults, log: AutomationLogg
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# PRODUCTION-GRADE FIELD FILLERS
+#
+# Design goals:
+#   • Read-back verify after every fill — re-attempt if value didn't stick
+#   • Native React/PrimeNG setter fallback for InputNumber (triple-click,
+#     Ctrl+A+Delete, press_sequentially, then Object.getOwnPropertyDescriptor)
+#   • Screenshot + DOM state dump on any field failure
+#   • Max 3 attempts per field; raise with rich context after exhaustion
+# ─────────────────────────────────────────────────────────────────────────────
+
+
 async def _type_in_text(
     locator, value: str, label: str, char_delay: int,
     log: AutomationLogger, item_label: str,
+    *,
+    max_attempts: int = 3,
 ) -> None:
     """Clear + type character-by-character for plain text inputs.
 
-    Dispatches input/change/blur events so PrimeNG bindings fire correctly.
+    Dispatches input/change/blur events so PrimeNG bindings fire.
+    Read-back verifies the value stuck; retries up to *max_attempts* times.
     """
-    await locator.wait_for(state="visible", timeout=5000)
-    await locator.scroll_into_view_if_needed()
-    await locator.focus()
-    await locator.fill("")
-    for ch in str(value):
-        await locator.press_sequentially(ch, delay=char_delay)
-    await locator.evaluate(
-        "el => { "
-        "el.dispatchEvent(new Event('input',  { bubbles: true })); "
-        "el.dispatchEvent(new Event('change', { bubbles: true })); "
-        "el.dispatchEvent(new Event('blur',   { bubbles: true })); "
-        "}"
+    expected = str(value)
+    last_actual = ""
+    for attempt in range(1, max_attempts + 1):
+        await locator.wait_for(state="visible", timeout=5000)
+        await locator.scroll_into_view_if_needed()
+        await locator.focus()
+        # Full clear: Ctrl+A then Delete, then explicit .fill('')
+        # Use try-catch in JS so elements that do not support .select()
+        # (e.g. custom PrimeNG wrappers) do not crash the retry loop.
+        await locator.evaluate("el => { try { el.select(); } catch (_) {} }")
+        await locator.fill("")
+        await asyncio.sleep(0.05)
+        for ch in expected:
+            await locator.press_sequentially(ch, delay=char_delay)
+        await locator.evaluate(
+            "el => { "
+            "el.dispatchEvent(new Event('input',  { bubbles: true })); "
+            "el.dispatchEvent(new Event('change', { bubbles: true })); "
+            "el.dispatchEvent(new Event('blur',   { bubbles: true })); "
+            "}"
+        )
+        await asyncio.sleep(0.1)
+        # ── Read-back verify ──────────────────────────────────────────────────
+        try:
+            last_actual = (await locator.input_value(timeout=1000)).strip()
+        except Exception:
+            last_actual = ""
+        if last_actual == expected:
+            log.info(f"   [{item_label}] {label} = '{value}' ✅ (attempt {attempt})")
+            return
+        log.warning(
+            f"   [{item_label}] {label}: expected '{expected}' got '{last_actual}' "
+            f"(attempt {attempt}/{max_attempts}) — retrying"
+        )
+        await asyncio.sleep(0.2 * attempt)
+
+    raise RuntimeError(
+        f"[{item_label}] {label}: value '{expected}' did not stick after "
+        f"{max_attempts} attempts (last read-back: '{last_actual}')"
     )
-    log.info(f"   [{item_label}] {label} = '{value}'")
-    await asyncio.sleep(0.1)
 
 
 async def _type_in_inputnumber_field(
     page: Page, locator, value: str, label: str, char_delay: int,
     log: AutomationLogger, item_label: str,
+    *,
+    max_attempts: int = 3,
 ) -> None:
     """Clear + type for PrimeNG InputNumber fields.
 
-    Uses triple-click + Ctrl+A + Delete to clear, then types character-by-character.
+    Strategy (in order):
+      1. Triple-click → Ctrl+A → Delete → press_sequentially
+      2. Dispatch input/change/blur events
+      3. Read-back verify (strips commas and currency symbols)
+      4. On mismatch: apply native React HTMLInputElement value setter as fallback
+      5. Retry the whole sequence up to *max_attempts* times
     """
-    await locator.wait_for(state="visible", timeout=5000)
-    await locator.scroll_into_view_if_needed()
-    await locator.focus()
-    await locator.click(click_count=3)
-    await asyncio.sleep(0.1)
-    await page.keyboard.press("Control+a")
-    await page.keyboard.press("Delete")
-    await asyncio.sleep(0.1)
-    for ch in str(value):
-        await locator.press_sequentially(ch, delay=char_delay)
-    await locator.evaluate(
-        "el => { "
-        "el.dispatchEvent(new Event('input',  { bubbles: true })); "
-        "el.dispatchEvent(new Event('change', { bubbles: true })); "
-        "el.dispatchEvent(new Event('blur',   { bubbles: true })); "
-        "}"
+    expected = str(value)
+    last_actual = ""
+
+    for attempt in range(1, max_attempts + 1):
+        await locator.wait_for(state="visible", timeout=5000)
+        await locator.scroll_into_view_if_needed()
+        await locator.focus()
+
+        # ── Clear: triple-click then Ctrl+A + Delete ──────────────────────────
+        await locator.click(click_count=3)
+        await asyncio.sleep(0.08)
+        await page.keyboard.press("Control+a")
+        await page.keyboard.press("Delete")
+        await asyncio.sleep(0.08)
+
+        # ── Type character-by-character ───────────────────────────────────────
+        for ch in expected:
+            await locator.press_sequentially(ch, delay=char_delay)
+
+        # ── Fire React/PrimeNG change events ─────────────────────────────────
+        await locator.evaluate(
+            "el => { "
+            "el.dispatchEvent(new Event('input',  { bubbles: true })); "
+            "el.dispatchEvent(new Event('change', { bubbles: true })); "
+            "el.dispatchEvent(new Event('blur',   { bubbles: true })); "
+            "}"
+        )
+        await asyncio.sleep(0.15)
+
+        # ── Read-back verify ──────────────────────────────────────────────────
+        try:
+            raw = await locator.input_value(timeout=1000)
+            last_actual = raw.replace(",", "").replace("₹", "").strip() if raw else ""
+        except Exception:
+            last_actual = ""
+
+        if last_actual == expected:
+            log.info(f"   [{item_label}] {label} = '{value}' ✅ (attempt {attempt})")
+            return
+
+        # ── Fallback: native React HTMLInputElement setter ────────────────────
+        log.warning(
+            f"   [{item_label}] {label}: keyboard entry got '{last_actual}' "
+            f"(expected '{expected}') — applying native React setter (attempt {attempt})"
+        )
+        await locator.evaluate(
+            """(el, val) => {
+                const setter = Object.getOwnPropertyDescriptor(
+                    window.HTMLInputElement.prototype, 'value'
+                ).set;
+                setter.call(el, val);
+                el.dispatchEvent(new Event('input',  { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                el.dispatchEvent(new Event('blur',   { bubbles: true }));
+            }""",
+            expected,
+        )
+        await asyncio.sleep(0.15)
+
+        # ── Re-verify after native setter ─────────────────────────────────────
+        try:
+            raw = await locator.input_value(timeout=1000)
+            last_actual = raw.replace(",", "").replace("₹", "").strip() if raw else ""
+        except Exception:
+            last_actual = ""
+
+        if last_actual == expected:
+            log.info(
+                f"   [{item_label}] {label} = '{value}' ✅ via native setter (attempt {attempt})"
+            )
+            return
+
+        log.warning(
+            f"   [{item_label}] {label}: still '{last_actual}' after native setter "
+            f"(attempt {attempt}/{max_attempts})"
+        )
+        await asyncio.sleep(0.3 * attempt)
+
+    raise RuntimeError(
+        f"[{item_label}] {label}: value '{expected}' did not stick after "
+        f"{max_attempts} attempts (last read-back: '{last_actual}')"
     )
-    log.info(f"   [{item_label}] {label} = '{value}' ✅")
-    await asyncio.sleep(0.15)
 
 
 async def _fill_invoice_items(page: Page, claim, defaults: dict, log: AutomationLogger, delay: int) -> None:
@@ -285,6 +395,7 @@ async def _fill_invoice_items(page: Page, claim, defaults: dict, log: Automation
 
     # Portal fill order: Glass first, then Plastic, then Metallic Parts, then Labour Charge
     _FILL_ORDER = ["Glass", "Plastic", "Metallic Parts", "Labour Charge"]
+    _FILL_ORDER_SET = set(_FILL_ORDER)
 
     for item_type_text in _FILL_ORDER:
         type_rows = [r for r in oic_rows if r["item_type"] == item_type_text]
@@ -312,6 +423,27 @@ async def _fill_invoice_items(page: Page, claim, defaults: dict, log: Automation
             )
             items_filled += 1
 
+    # ── Detect & warn on unmapped item types (silent data loss prevention) ─────
+    # Any row whose item_type is not in the known fill list is skipped by the
+    # loop above. Surface them clearly so the operator knows nothing was lost silently.
+    skipped_rows = [
+        r for r in oic_rows if r["item_type"] not in _FILL_ORDER_SET
+    ]
+    if skipped_rows:
+        unknown_types = sorted({r["item_type"] for r in skipped_rows})
+        log.warning(
+            f"   ⚠️  {len(skipped_rows)} row(s) were NOT filled because their item_type is "
+            f"not in the known list {_FILL_ORDER}. "
+            f"Unknown types found: {unknown_types}. "
+            f"Check the OIC assessment Excel for unexpected item type labels."
+        )
+        for r in skipped_rows:
+            log.warning(
+                f"      Skipped row → item_type='{r['item_type']}' "
+                f"sub_type='{r.get('item_sub_type', '')}' "
+                f"amount={r.get('item_amount', '')} hsn={r.get('hsn_code', '')}"
+            )
+
     log.info(f"   ✅ Successfully filled {items_filled} invoice items from OIC assessment Excel")
 
 
@@ -331,72 +463,120 @@ async def _create_and_fill_item(
 ) -> None:
     """Create a single invoice item: select Item Type, click Add Item+, fill fields.
 
+    Production-grade design:
+      • Item Type dropdown: JS scan + Playwright fallback + tight wait-until-loaded loop
+      • Add Item + button: Playwright force-click + JS fallback
+      • Accordion: expand with class-attr detection + content wait
+      • Every field fill: retry + read-back verify (see _type_in_text /
+        _type_in_inputnumber_field / _select_dropdown_option_from_locator /
+        _select_igst_rate for details)
+      • On any field exception: screenshot + full DOM state dump, then re-raise
+        with rich context info
+
     The portal stacks new items at the TOP of the accordion, so the newest
     item is always the FIRST .p-accordion-tab.
     """
-    # ── 1. Select Item Type dropdown ──────────────────────────────────────────
-    log.info(f"   [{item_label}] Selecting Item Type = '{item_type_text}'")
-    item_type_opened = await page.evaluate("""
-        () => {
-            const allDropdowns = document.querySelectorAll('.p-dropdown');
-            for (const dd of allDropdowns) {
-                const container = dd.closest('.input-section')
-                               || dd.closest('span.p-float-label')
-                               || dd.parentElement;
-                if (!container) continue;
-                const text = (container.textContent || '').toLowerCase();
-                // Must contain "item type" but must NOT be the "item sub type" field
-                if (text.includes('item type') && !text.includes('sub type')) {
-                    dd.click();
-                    return true;
-                }
-            }
-            return false;
-        }
-    """)
-    await asyncio.sleep(0.4)
 
-    if not item_type_opened:
-        log.warning(f"   [{item_label}] JS label scan could not open Item Type dropdown — trying Playwright fallback")
-        item_type_dd = page.locator(
-            "div.p-dropdown:has(span.p-dropdown-label:text-is('Item Type'))"
-        ).first
-        await item_type_dd.scroll_into_view_if_needed()
-        await item_type_dd.click()
+    # ─────────────────────────────────────────────────────────────────────────
+    # STEP 1 — Select Item Type dropdown
+    # ─────────────────────────────────────────────────────────────────────────
+    log.info(f"   [{item_label}] Selecting Item Type = '{item_type_text}'")
+    _MAX_ITEM_TYPE_ATTEMPTS = 3
+    _item_type_selected = False
+
+    for _it_attempt in range(1, _MAX_ITEM_TYPE_ATTEMPTS + 1):
+        # Try JS label scan first (fastest, most reliable)
+        item_type_opened = await page.evaluate("""
+            () => {
+                const allDropdowns = document.querySelectorAll('.p-dropdown');
+                for (const dd of allDropdowns) {
+                    const container = dd.closest('.input-section')
+                                   || dd.closest('span.p-float-label')
+                                   || dd.parentElement;
+                    if (!container) continue;
+                    const text = (container.textContent || '').toLowerCase();
+                    // Must contain "item type" but NOT "item sub type"
+                    if (text.includes('item type') && !text.includes('sub type')) {
+                        dd.click();
+                        return true;
+                    }
+                }
+                return false;
+            }
+        """)
         await asyncio.sleep(0.4)
 
-    # Pick the matching option from the overlay
-    panel = page.locator(".p-dropdown-panel:visible, .p-overlay:visible").last
-    items = panel.locator(".p-dropdown-item, li[role='option']")
+        if not item_type_opened:
+            log.warning(
+                f"   [{item_label}] JS label scan could not open Item Type dropdown "
+                f"(attempt {_it_attempt}) — trying Playwright fallback"
+            )
+            try:
+                item_type_dd = page.locator(
+                    "div.p-dropdown:has(span.p-dropdown-label:text-is('Item Type')), "
+                    "div.p-dropdown:has(span.p-dropdown-label:has-text('Select'))"
+                ).first
+                await item_type_dd.scroll_into_view_if_needed()
+                await item_type_dd.click(force=True)
+                await asyncio.sleep(0.4)
+            except Exception as _dd_err:
+                log.warning(f"   [{item_label}] Playwright DD fallback failed: {_dd_err}")
 
-    # Poll until options load
-    for _ in range(10):
+        # ── Wait until options are loaded (not 'loading' / empty) ─────────────
+        panel = page.locator(".p-dropdown-panel:visible, .p-overlay:visible").last
+        items = panel.locator(".p-dropdown-item, li[role='option']")
+        _opts_ready = False
+        for _poll in range(15):          # up to 4.5 s
+            count = await items.count()
+            if count > 0:
+                first_text = (await items.first.inner_text()).strip().lower()
+                if "loading" not in first_text and "fetching" not in first_text:
+                    _opts_ready = True
+                    break
+            await asyncio.sleep(0.3)
+
+        if not _opts_ready:
+            log.warning(
+                f"   [{item_label}] Item Type options never loaded "
+                f"(attempt {_it_attempt}/{_MAX_ITEM_TYPE_ATTEMPTS})"
+            )
+            await page.keyboard.press("Escape")
+            await asyncio.sleep(0.4 * _it_attempt)
+            continue
+
         count = await items.count()
-        if count > 0:
-            first_text = (await items.first.inner_text()).strip().lower()
-            if "loading" not in first_text and "fetching" not in first_text:
+        search = item_type_text.strip().lower()
+        for i in range(count):
+            txt = (await items.nth(i).inner_text()).strip()
+            if txt.strip().lower() == search or search in txt.strip().lower():
+                await items.nth(i).click()
+                await asyncio.sleep(0.35)
+                _item_type_selected = True
+                log.info(f"   [{item_label}] Item Type = '{txt}' ✓ (attempt {_it_attempt})")
                 break
-        await asyncio.sleep(0.3)
 
-    count = await items.count()
-    matched = False
-    search = item_type_text.strip().lower()
-    for i in range(count):
-        txt = (await items.nth(i).inner_text()).strip()
-        if txt.strip().lower() == search or search in txt.strip().lower():
-            await items.nth(i).click()
-            matched = True
-            log.info(f"   [{item_label}] Item Type = '{txt}' ✓")
+        if _item_type_selected:
             break
 
-    if not matched:
         await page.keyboard.press("Escape")
-        log.error(f"   [{item_label}] Could not find '{item_type_text}' in {count} Item Type options")
-        raise RuntimeError(f"Item Type '{item_type_text}' not found in dropdown")
+        log.warning(
+            f"   [{item_label}] Item Type '{item_type_text}' not found in {count} options "
+            f"(attempt {_it_attempt}/{_MAX_ITEM_TYPE_ATTEMPTS})"
+        )
+        await asyncio.sleep(0.5 * _it_attempt)
+
+    if not _item_type_selected:
+        await capture_error_screenshot(page, f"item_type_fail_{item_label}", log)
+        raise RuntimeError(
+            f"[{item_label}] Item Type '{item_type_text}' not found after "
+            f"{_MAX_ITEM_TYPE_ATTEMPTS} attempts"
+        )
 
     await asyncio.sleep(0.3)
 
-    # ── 2. Click "Add Item +" button ──────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # STEP 2 — Click "Add Item +" button
+    # ─────────────────────────────────────────────────────────────────────────
     log.info(f"   [{item_label}] Clicking 'Add Item +'")
     add_item_btn = page.locator(
         "button[aria-label='Add Item +'], "
@@ -409,6 +589,7 @@ async def _create_and_fill_item(
         await add_item_btn.scroll_into_view_if_needed()
         await add_item_btn.click(force=True)
         clicked = True
+        log.info(f"   [{item_label}] Add Item + clicked via Playwright")
     except Exception as btn_err:
         log.warning(f"   [{item_label}] force click failed ({btn_err}) — using JS fallback")
 
@@ -419,57 +600,125 @@ async def _create_and_fill_item(
                     "button[aria-label='Add Item +'], button.add-item, button.addNew-btn"
                 );
                 if (btn) { btn.click(); return true; }
+                // Broader fallback: any visible button whose text contains 'Add Item'
+                for (const b of document.querySelectorAll('button')) {
+                    const t = (b.textContent || '').replace(/\\s+/g, '').toLowerCase();
+                    if (t.includes('additem') && !b.disabled) { b.click(); return true; }
+                }
                 return false;
             }
         """)
         if result:
-            log.info(f"   [{item_label}] Add Item + clicked via JS")
+            log.info(f"   [{item_label}] Add Item + clicked via JS fallback")
         else:
+            await capture_error_screenshot(page, f"add_item_btn_fail_{item_label}", log)
             raise RuntimeError(f"[{item_label}] Add Item + button not found")
 
-    await asyncio.sleep(0.6)  # wait for accordion tab to mount
+    await asyncio.sleep(0.7)  # wait for accordion tab to mount
 
-    # ── 3. Locate the FIRST accordion tab (newest item, appears at TOP) ──────
+    # ─────────────────────────────────────────────────────────────────────────
+    # STEP 3 — Locate the FIRST accordion tab (newest item, appears at TOP)
+    # ─────────────────────────────────────────────────────────────────────────
     item_tab = page.locator(".p-accordion-tab").first
-    await item_tab.wait_for(state="visible", timeout=6000)
+    await item_tab.wait_for(state="visible", timeout=8000)
 
-    # Expand if collapsed
-    class_attr = await item_tab.get_attribute("class") or ""
-    if "p-accordion-tab-active" not in class_attr:
-        log.info(f"   [{item_label}] Accordion is collapsed — expanding")
+    # Expand if collapsed — poll class attr to confirm it is active
+    for _exp_poll in range(5):
+        class_attr = await item_tab.get_attribute("class") or ""
+        if "p-accordion-tab-active" in class_attr:
+            break
+        log.info(f"   [{item_label}] Accordion is collapsed — expanding (poll {_exp_poll + 1})")
         await item_tab.locator(".p-accordion-header-link, .p-accordion-header").first.click()
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.35)
 
     content = item_tab.locator(".p-accordion-content").first
-    await content.wait_for(state="visible", timeout=5000)
+    await content.wait_for(state="visible", timeout=6000)
 
-    # ── 4. Fill fields inside the accordion ───────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # STEP 4 — Fill all fields inside the accordion
+    # Each fill is wrapped in a try/except that captures screenshot + DOM state
+    # before re-raising so the caller gets full diagnostic context.
+    # ─────────────────────────────────────────────────────────────────────────
     instant_fill, typing_delay = _get_oic_fill_settings()
     char_delay = 5 if instant_fill else typing_delay
 
+    async def _field_fail(field_name: str, exc: Exception) -> None:
+        """Capture screenshot + DOM field state, then re-raise with context."""
+        log.error(f"   [{item_label}] ✗ {field_name} failed: {exc}")
+        await capture_error_screenshot(page, f"item_field_fail_{item_label}_{field_name}", log)
+        # Dump visible field states inside the accordion for diagnosis
+        try:
+            dom_state = await content.evaluate("""
+                el => {
+                    const result = {};
+                    el.querySelectorAll('input, select, textarea').forEach(inp => {
+                        const id = inp.id || inp.name || inp.type || '?';
+                        result[id] = inp.value;
+                    });
+                    el.querySelectorAll('.p-dropdown').forEach(dd => {
+                        const label = dd.querySelector('.p-dropdown-label');
+                        const id = dd.id || '?';
+                        result['dropdown:' + id] = label ? label.textContent.trim() : '?';
+                    });
+                    return result;
+                }
+            """)
+            log.error(f"   [{item_label}] DOM field state at failure: {dom_state}")
+        except Exception as _dump_err:
+            log.warning(f"   [{item_label}] DOM dump failed: {_dump_err}")
+        raise RuntimeError(
+            f"[{item_label}] Field '{field_name}' failed: {exc}"
+        ) from exc
+
     # 4a. Item Sub Type (#itemSubType) — Plain text input
-    item_sub_type_input = content.locator("input#itemSubType, input[name='itemSubType']").first
-    await _type_in_text(item_sub_type_input, sub_type, "Item Sub Type", char_delay, log, item_label)
+    try:
+        item_sub_type_input = content.locator("input#itemSubType, input[name='itemSubType']").first
+        await _type_in_text(
+            item_sub_type_input, sub_type, "Item Sub Type", char_delay, log, item_label
+        )
+    except Exception as _e:
+        await _field_fail("Item Sub Type", _e)
 
     # 4b. Side Description (#sideCode) — PrimeNG dropdown
-    side_code_dropdown = content.locator("#sideCode.p-dropdown, div#sideCode").first
-    await _select_dropdown_option_from_locator(page, side_code_dropdown, side_description, "Side Description", log, delay)
+    try:
+        side_code_dropdown = content.locator("#sideCode.p-dropdown, div#sideCode").first
+        await _select_dropdown_option_from_locator(
+            page, side_code_dropdown, side_description, "Side Description", log, delay
+        )
+    except Exception as _e:
+        await _field_fail("Side Description", _e)
 
     # 4c. Item Amount (name="itemAmount") — PrimeNG InputNumber
-    item_amt_input = content.locator("input[name='itemAmount'], #itemAmount input").first
-    await _type_in_inputnumber_field(page, item_amt_input, item_amount, "Item Amount", char_delay, log, item_label)
+    try:
+        item_amt_input = content.locator("input[name='itemAmount'], #itemAmount input").first
+        await _type_in_inputnumber_field(
+            page, item_amt_input, item_amount, "Item Amount", char_delay, log, item_label
+        )
+    except Exception as _e:
+        await _field_fail("Item Amount", _e)
 
-    # 4d. IGST Rate (#igstRate) — PrimeNG dropdown
-    igst_dropdown = content.locator("#igstRate.p-dropdown, div#igstRate").first
-    await _select_igst_rate(page, igst_dropdown, igst_rate, log, delay)
+    # 4d. IGST Rate (#igstRate) — PrimeNG dropdown (prod-grade with full retry)
+    try:
+        igst_dropdown = content.locator("#igstRate.p-dropdown, div#igstRate").first
+        await _select_igst_rate(page, igst_dropdown, igst_rate, log, delay)
+    except Exception as _e:
+        await _field_fail("IGST Rate", _e)
 
     # 4e. Estimated Amount (name="estimatedAmount") — PrimeNG InputNumber
-    est_input = content.locator("input[name='estimatedAmount'], #estimatedAmount input").first
-    await _type_in_inputnumber_field(page, est_input, estimated_amount, "Estimated Amount", char_delay, log, item_label)
+    try:
+        est_input = content.locator("input[name='estimatedAmount'], #estimatedAmount input").first
+        await _type_in_inputnumber_field(
+            page, est_input, estimated_amount, "Estimated Amount", char_delay, log, item_label
+        )
+    except Exception as _e:
+        await _field_fail("Estimated Amount", _e)
 
     # 4f. HSN Code (#hsnCode) — Plain text input
-    hsn_input = content.locator("input#hsnCode, input[name='hsnCode']").first
-    await _type_in_text(hsn_input, hsn_code, "HSN Code", char_delay, log, item_label)
+    try:
+        hsn_input = content.locator("input#hsnCode, input[name='hsnCode']").first
+        await _type_in_text(hsn_input, hsn_code, "HSN Code", char_delay, log, item_label)
+    except Exception as _e:
+        await _field_fail("HSN Code", _e)
 
     await asyncio.sleep(0.3)
     log.info(f"   [{item_label}] ✅ Item filled successfully")
@@ -545,8 +794,94 @@ async def _select_dropdown_option_from_locator(
 
 
 async def _select_igst_rate(page: Page, dropdown_locator, rate_text: str, log: AutomationLogger, delay: int) -> None:
-    """Select OIC Glass-row IGST using the portal-recorded exact option flow."""
+    """Select OIC Glass-row IGST using the robust React Fiber trigger as primary, with a fallback to exact option click flow."""
     last_error = None
+
+    # 1. Primary Attempt: Programmatic React Fiber Trigger
+    try:
+        log.info(f"   IGST Rate: attempting programmatic React Fiber state trigger for '{rate_text}'")
+        
+        result = await dropdown_locator.evaluate(
+            """(dropdown, targetRate) => {
+                if (!dropdown) return { success: false, error: 'Element not found' };
+                
+                const search = targetRate.trim().toLowerCase();
+                const searchClean = search.replace('%', '');
+                
+                function findMatchingOption(options) {
+                    if (!Array.isArray(options)) return null;
+                    return options.find(o => {
+                        if (!o) return false;
+                        const label = String(o.desc || o.label || o.value || o).trim().toLowerCase();
+                        const labelClean = label.replace('%', '');
+                        return label === search || labelClean === searchClean;
+                    });
+                }
+                
+                // Try __reactProps first
+                const propKey = Object.keys(dropdown).find(k => k.startsWith('__reactProps'));
+                if (propKey && dropdown[propKey]) {
+                    const props = dropdown[propKey];
+                    const matched = findMatchingOption(props.options);
+                    if (matched && typeof props.onChange === 'function') {
+                        props.onChange({
+                            value: matched,
+                            target: { name: 'igstRate', value: matched },
+                            originalEvent: new Event('change')
+                        });
+                        return { success: true, method: 'reactProps', matched };
+                    }
+                }
+                
+                // Try __reactFiber traversal
+                const fiberKey = Object.keys(dropdown).find(k => k.startsWith('__reactFiber'));
+                if (fiberKey) {
+                    let curr = dropdown[fiberKey];
+                    while (curr) {
+                        if (curr.memoizedProps && typeof curr.memoizedProps.onChange === 'function') {
+                            const matched = findMatchingOption(curr.memoizedProps.options);
+                            if (matched) {
+                                curr.memoizedProps.onChange({
+                                    value: matched,
+                                    target: { name: 'igstRate', value: matched },
+                                    originalEvent: new Event('change')
+                                });
+                                return { success: true, method: 'reactFiber', matched };
+                            }
+                        }
+                        curr = curr.return;
+                    }
+                }
+                
+                return { success: false, error: 'React properties or matching option not found' };
+            }""",
+            rate_text
+        )
+        
+        if result.get("success"):
+            log.info(f"   IGST Rate: programmatic trigger succeeded using {result.get('method')} for '{rate_text}'")
+            await _commit_dropdown_change(dropdown_locator)
+            
+            # Verify if value stuck
+            if await _dropdown_has_value(dropdown_locator, rate_text):
+                if hasattr(log, "field_selected"):
+                    log.field_selected("IGST Rate", rate_text)
+                else:
+                    log.info(f"   IGST Rate selected -> '{rate_text}'")
+                state = await _dropdown_state(dropdown_locator)
+                log.info(f"   IGST Rate state -> {_dropdown_state_summary(state)}")
+                await asyncio.sleep(delay / 1000.0)
+                return
+            else:
+                log.warning("   IGST Rate: programmatic trigger executed but verification failed; falling back to UI click flow")
+        else:
+            log.warning(f"   Programmatic trigger failed: {result.get('error')}; falling back to UI click flow")
+            
+    except Exception as exc:
+        log.warning(f"   IGST Rate: programmatic trigger failed with exception ({exc}); falling back to UI click flow")
+
+    # 2. Secondary Attempt: UI Click Fallback
+    log.info("   IGST Rate: using fallback physical UI click selection flow")
     for attempt in range(1, 4):
         try:
             await dropdown_locator.wait_for(state="visible", timeout=5000)
