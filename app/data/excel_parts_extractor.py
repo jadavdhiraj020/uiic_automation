@@ -43,41 +43,56 @@ class HeaderDetection:
 
 def _clean_numeric(val) -> Optional[float]:
     """
-    Strip commas, whitespace, and placeholder text from a cell value.
+    Strip commas, currency symbols, whitespace, and placeholder text from a cell value.
     Returns a clean float, or None if the value is empty/invalid.
+
+    Handles:
+      - Commas in thousands (e.g. "1,500")
+      - Indian Rupee symbol variants: '₹ 1,500', 'Rs. 850', 'Rs 200'
     """
     if val is None:
         return None
-    cleaned = str(val).strip().replace(",", "")
+    cleaned = str(val).strip()
+    # Strip currency symbols before any other processing
+    cleaned = cleaned.replace("₹", "").replace("Rs.", "").replace("Rs", "").strip()
+    cleaned = cleaned.replace(",", "")
     if not cleaned or cleaned.lower() in ("na", "n.a.", "-", "nil", "none", "n/a", ""):
         return None
     try:
         return float(cleaned)
     except ValueError:
+        logger.warning("_clean_numeric: could not parse %r as a number — skipping", val)
         return None
 
 
-def _is_summary_row(text: str) -> bool:
-    """Return True if the text looks like a summary/total row that should be skipped.
+# Pre-compiled word-boundary pattern used by _is_summary_row.
+# ALL keywords use \b so partial matches inside legitimate part names are
+# never flagged (e.g. 'Total Quartz Oil' → contains 'total' as substring but
+# "Total" IS a standalone word here — that row IS a summary row).
+# False-positives like 'bonnet' (contains 'net'), 'Xtax' (contains 'tax'),
+# 'subtlety' (starts with 'sub') etc. are avoided because \b requires a
+# word boundary on BOTH sides of the match.
+_SUMMARY_ROW_RE = __import__('re').compile(
+    r'\b(?:total|subtotal|sub\s+total|summary|less|add|salvage'
+    r'|depreciation|imposed|gst|cgst|sgst|tax|net)\b'
+)
 
-    Uses word-boundary regex for 'net' to avoid false-positive matches on
-    legitimate part names like 'bonnet', 'cabinet', 'magnet'.
+
+def _is_summary_row(text: str) -> bool:
+    """Return True if *text* looks like a summary / total row that should be skipped.
+
+    Uses a single pre-compiled word-boundary regex so that ALL keywords are
+    matched only as complete words.  This prevents false-positive skips of
+    legitimate part names such as:
+      - 'Total Quartz Oil'  (contains 'total' but IS a summary row — correct)
+      - 'bonnet'            (contains 'net'   — NOT a summary row — correct)
+      - 'Xtax bearing'      (contains 'tax'   — NOT a summary row — correct)
+      - 'Fuel additive'     (contains 'add'   — NOT a summary row — correct)
     """
-    import re as _re
     lower = text.lower()
-    skip_keywords = [
-        "total", "subtotal", "sub total", "summary", "less:", "add:",
-        "salvage", "depreciation", "imposed", "gst", "cgst",
-        "sgst", "tax",
-    ]
-    if any(kw in lower for kw in skip_keywords):
-        return True
     if "%" in lower:
         return True
-    # Word-boundary match for 'net' to avoid false positives (bonnet, cabinet, etc.)
-    if _re.search(r'\bnet\b', lower):
-        return True
-    return False
+    return bool(_SUMMARY_ROW_RE.search(lower))
 
 
 def _header_confidence(matched_keys: List[str], required_keys: List[str], expected_keys: List[str]) -> int:

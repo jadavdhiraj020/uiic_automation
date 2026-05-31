@@ -15,21 +15,21 @@ Missing: -
 Parts row 101: added 'fut Bumper' material=metal billed=1210.93 assessed=1210.93 hsn=8512
 Parts row 102: added 'fender LH' material=metal billed=992.18 assessed=992.18 hsn=8512
 Parts row 103: added 'fut Door LH' material=plastic billed=500.0 assessed=500.0 hsn=8512
-Parts row 104: added 'Rear Door LH' material=plastic billed=5.0 assessed=5.0 hsn=8512
-Parts row 105: added 'Quter Panel LH' material=plastic billed=5.0 assessed=5.0 hsn=8512
-Parts row 106: added 'Rear Bumper' material=plastic billed=4.0 assessed=4.0 hsn=8512
-Parts row 107: added 'fender RH' material=glass billed=5.0 assessed=5.0 hsn=8512
-Parts row 108: added 'fut Door RH' material=plastic billed=4.0 assessed=4.0 hsn=8512
-Parts row 109: added 'Rear Door RH' material=plastic billed=4.0 assessed=4.0 hsn=8512
-Parts row 110: added 'Quter Panel RH' material=glass billed=5.0 assessed=5.0 hsn=8512
-Parts row 111: added 'Side minor RH' material=glass billed=4.0 assessed=4.0 hsn=8512
-Parts row 112: added 'Side mirror LH' material=plastic billed=5.0 assessed=5.0 hsn=8512
-Parts row 113: added 'feet Bumper Bubt' material=plastic billed=4.0 assessed=4.0 hsn=8512
-Parts row 114: added 'Flood' material=glass billed=5.0 assessed=5.0 hsn=8512
-Parts row 115: added 'Carbone Cheye Accedator' material=plastic billed=4.0 assessed=4.0 hsn=8512
-Parts row 116: added 'UNIT HEAD LAMP LH' material=plastic billed=4.0 assessed=4.0 hsn=8512
+Parts row 104: added 'Rear Door LH' material=glass billed=5.0 assessed=5.0 hsn=8512
+Parts row 105: skipped no metal/plastic/glass amount for 'Quter Panel LH'
+Parts row 106: skipped no metal/plastic/glass amount for 'Rear Bumper'
+Parts row 107: skipped no metal/plastic/glass amount for 'fender RH'
+Parts row 108: skipped no metal/plastic/glass amount for 'fut Door RH'
+Parts row 109: skipped no metal/plastic/glass amount for 'Rear Door RH'
+Parts row 110: skipped no metal/plastic/glass amount for 'Quter Panel RH'
+Parts row 111: skipped no metal/plastic/glass amount for 'Side minor RH'
+Parts row 112: skipped no metal/plastic/glass amount for 'Side mirror LH'
+Parts row 113: skipped no metal/plastic/glass amount for 'feet Bumper Bubt'
+Parts row 114: skipped no metal/plastic/glass amount for 'Flood'
+Parts row 115: skipped no metal/plastic/glass amount for 'Carbone Cheye Accedator'
+Parts row 116: skipped no metal/plastic/glass amount for 'UNIT HEAD LAMP LH'
 Parts row 117: skipped likely labour row 'LABOUR CHARGE ACCIDENTAL'
-Parts row 118: added 'jumper' material=plastic billed=500.0 assessed=500.0 hsn=8512
+Parts row 118: skipped no metal/plastic/glass amount for 'jumper'
 Parts row 119: skipped blank part name
 Parts row 120: skipped blank part name
 Parts row 121: skipped blank part name
@@ -47,165 +47,7 @@ Parts row 132: skipped blank part name
 Parts row 133: skipped blank part name
 Parts row 134: skipped blank part name
 Parts row 135: skipped blank part name
-Parts row 136: skipped blank part name
-Parts row 137: skipped summary row '% ADD GST (9%CGST+9%SGST)'
-Parts row 138: skipped blank part name
-Parts row 139: skipped blank part name
-Parts row 140: skipped summary row '% OF METAL & 50% OF PLASTIC'
-Parts row 141: skipped blank part name
-Parts row 142: skipped blank part name
-Parts row 143: skipped blank part name
-Parts row 144: skipped blank part name
-Parts row 145: skipped blank part name
-Parts row 146: skipped blank part name
-Parts row 147: skipped blank part name
-Parts row 148: skipped blank part name
-Parts row 149: skipped blank part name
-Parts row 150: skipped blank part name
-Parts row 151: skipped blank part name
-Parts row 152: skipped blank part name
-Parts row 153: skipped blank part name
-Parts row 154: skipped blank part name
-Parts row 155: skipped blank part name
-Parts row 156: skipped no metal/plastic/glass amount for 'DESCRIPTION'
-Parts row 157: skipped no metal/plastic/glass amount for 'aaa'
-Parts row 158: added 'bbb' material=metal billed=5.0 assessed=5.0 hsn=8512
-Parts row 159: added 'ccc' material=plastic billed=5.0 assessed=5.0 hsn=8512
-Parts row 160: skipped blank part name
-Parts row 161: skipped blank part name
-Parts row 162: skipped blank part name
-Parts row 163: skipped blank part name
-Parts row 164: skipped blank part name
-Parts row 165: skipped blank part name
-Parts row 166: skipped blank part name
-Parts row 167: skipped blank part name
-Parts row 168: skipped blank part name
-Parts row 169: skipped summary row '% ADD GST (9%CGST+9%SGST)'
-Parts row 170: skipped blank part name
-Parts row 171: skipped blank part name
-Parts row 172: skipped blank part name
-Parts row 173: skipped blank part name
-Parts row 174: skipped blank part name
-Parts row 175: skipped blank part name
-Parts row 176: skipped blank part name
-Parts row 177: skipped blank part name
-Parts row 178: skipped blank part name
-Parts row 179: skipped blank part name
-Parts row 180: skipped blank part name
-Parts row 181: skipped blank part name
-Parts row 182: skipped blank part name
-Parts row 183: skipped blank part name
-Parts row 184: skipped blank part name
-Parts row 185: skipped blank part name
-Parts row 186: skipped blank part name
-Parts row 187: skipped blank part name
-Parts row 188: skipped no metal/plastic/glass amount for 'Chassis Number'
-Parts row 189: skipped blank part name
-Parts row 190: skipped no metal/plastic/glass amount for 'Engine Number'
-Parts row 191: skipped blank part name
-Parts row 192: skipped no metal/plastic/glass amount for 'PAYMENT MADE IN THE FAVOUR OF REPAIRER'
-Parts row 193: skipped blank part name
-Parts row 194: skipped no metal/plastic/glass amount for 'CASHLESS CLAIM'
-Parts row 195: skipped blank part name
-Parts row 196: skipped blank part name
-Parts row 197: skipped blank part name
-Parts row 198: added 'Claim number' material=metal billed=3.501023126039e+19 assessed=3.501023126039e+19 hsn=8512
-Parts row 199: skipped blank part name
-Parts row 200: skipped blank part name
-Parts row 201: skipped blank part name
-Parts row 202: skipped no metal/plastic/glass amount for 'servey address'
-Parts row 203: skipped blank part name
-Parts row 204: skipped blank part name
-Parts row 205: skipped blank part name
-Parts row 206: skipped blank part name
-Parts row 207: skipped blank part name
-Parts row 208: skipped blank part name
-Parts row 209: skipped blank part name
-Parts row 210: skipped blank part name
-Parts row 211: skipped blank part name
-Parts row 212: skipped blank part name
-Parts row 213: skipped blank part name
-Parts row 214: skipped blank part name
-Parts row 215: skipped blank part name
-Parts row 216: skipped blank part name
-Parts row 217: skipped blank part name
-Parts row 218: skipped blank part name
-Parts row 219: skipped blank part name
-Parts row 220: skipped blank part name
-Parts row 221: skipped blank part name
-Parts row 222: skipped blank part name
-Parts row 223: skipped blank part name
-Parts row 224: skipped blank part name
-Parts row 225: skipped blank part name
-Parts row 226: skipped blank part name
-Parts row 227: skipped blank part name
-Parts row 228: skipped blank part name
-Parts row 229: skipped blank part name
-Parts row 230: skipped blank part name
-Parts row 231: skipped blank part name
-Parts row 232: skipped blank part name
-Parts row 233: skipped blank part name
-Parts row 234: skipped blank part name
-Parts row 235: skipped blank part name
-Parts row 236: skipped blank part name
-Parts row 237: skipped blank part name
-Parts row 238: skipped blank part name
-Parts row 239: skipped blank part name
-Parts row 240: skipped blank part name
-Parts row 241: skipped blank part name
-Parts row 242: skipped blank part name
-Parts row 243: skipped blank part name
-Parts row 244: skipped blank part name
-Parts row 245: skipped blank part name
-Parts row 246: skipped blank part name
-Parts row 247: skipped blank part name
-Parts row 248: skipped blank part name
-Parts row 249: skipped blank part name
-Parts row 250: skipped blank part name
-Parts row 251: skipped blank part name
-Parts row 252: skipped blank part name
-Parts row 253: skipped blank part name
-Parts row 254: skipped blank part name
-Parts row 255: skipped blank part name
-Parts row 256: skipped blank part name
-Parts row 257: skipped blank part name
-Parts row 258: skipped blank part name
-Parts row 259: skipped no metal/plastic/glass amount for 'Date of Registration/isurance'
-Parts row 260: skipped no metal/plastic/glass amount for 'Date of Accident'
-Parts row 261: skipped blank part name
-Parts row 262: skipped blank part name
-Parts row 263: skipped blank part name
-Parts row 264: skipped blank part name
-Parts row 265: skipped blank part name
-Parts row 266: skipped blank part name
-Parts row 267: skipped blank part name
-Parts row 268: skipped blank part name
-Parts row 269: skipped blank part name
-Parts row 270: skipped blank part name
-Parts row 271: skipped blank part name
-Parts row 272: skipped blank part name
-Parts row 273: skipped blank part name
-Parts row 274: skipped blank part name
-Parts row 275: skipped blank part name
-Parts row 276: skipped blank part name
-Parts row 277: skipped blank part name
-Parts row 278: skipped blank part name
-Parts row 279: skipped blank part name
-Parts row 280: skipped blank part name
-Parts row 281: skipped blank part name
-Parts row 282: skipped blank part name
-Parts row 283: skipped blank part name
-Parts row 284: skipped blank part name
-Parts row 285: skipped blank part name
-Parts row 286: skipped blank part name
-Parts row 287: skipped blank part name
-Parts row 288: skipped blank part name
-Parts row 289: skipped blank part name
-Parts row 290: skipped blank part name
-Parts row 291: skipped blank part name
-Parts row 292: skipped blank part name
-Parts row 293: skipped blank part name
-Parts row 294: skipped blank part name
+Parts row 136: stopped at boundary 'sub total'
 
 ── Labour Charges ──
 Header row: 156
@@ -217,175 +59,25 @@ Labour row 158: added 'bbb' column=denting billed=5.0 assessed=5.0 hsn=8729
 Labour row 159: added 'ccc' column=cw billed=5.0 assessed=5.0 hsn=8729
 Labour row 160: skipped blank labour name
 Labour row 161: skipped blank labour name
-Labour row 162: skipped blank labour name
-Labour row 163: skipped blank labour name
-Labour row 164: skipped blank labour name
-Labour row 165: skipped blank labour name
-Labour row 166: skipped blank labour name
-Labour row 167: skipped blank labour name
-Labour row 168: skipped blank labour name
-Labour row 169: skipped summary row '% ADD GST (9%CGST+9%SGST)'
-Labour row 170: skipped blank labour name
-Labour row 171: skipped blank labour name
-Labour row 172: skipped blank labour name
-Labour row 173: skipped blank labour name
-Labour row 174: skipped blank labour name
-Labour row 175: skipped blank labour name
-Labour row 176: skipped blank labour name
-Labour row 177: skipped blank labour name
-Labour row 178: skipped blank labour name
-Labour row 179: skipped blank labour name
-Labour row 180: skipped blank labour name
-Labour row 181: skipped blank labour name
-Labour row 182: skipped blank labour name
-Labour row 183: skipped blank labour name
-Labour row 184: skipped blank labour name
-Labour row 185: skipped blank labour name
-Labour row 186: skipped blank labour name
-Labour row 187: skipped blank labour name
-Labour row 188: skipped no valid labour amount for 'Chassis Number'
-Labour row 189: skipped blank labour name
-Labour row 190: skipped no valid labour amount for 'Engine Number'
-Labour row 191: skipped blank labour name
-Labour row 192: skipped no valid labour amount for 'PAYMENT MADE IN THE FAVOUR OF REPAIRER'
-Labour row 193: skipped blank labour name
-Labour row 194: skipped no valid labour amount for 'CASHLESS CLAIM'
-Labour row 195: skipped blank labour name
-Labour row 196: skipped blank labour name
-Labour row 197: skipped blank labour name
-Labour row 198: combined multiple labour columns (rr, denting) for 'Claim number' - summed to 7.002046252078e+19
-Labour row 198: added 'Claim number' column=rr billed=7.002046252078e+19 assessed=7.002046252078e+19 hsn=8729
-Labour row 199: skipped blank labour name
-Labour row 200: skipped blank labour name
-Labour row 201: skipped blank labour name
-Labour row 202: skipped no valid labour amount for 'servey address'
-Labour row 203: skipped blank labour name
-Labour row 204: skipped blank labour name
-Labour row 205: skipped blank labour name
-Labour row 206: skipped blank labour name
-Labour row 207: skipped blank labour name
-Labour row 208: skipped blank labour name
-Labour row 209: skipped blank labour name
-Labour row 210: skipped blank labour name
-Labour row 211: skipped blank labour name
-Labour row 212: skipped blank labour name
-Labour row 213: skipped blank labour name
-Labour row 214: skipped blank labour name
-Labour row 215: skipped blank labour name
-Labour row 216: skipped blank labour name
-Labour row 217: skipped blank labour name
-Labour row 218: skipped blank labour name
-Labour row 219: skipped blank labour name
-Labour row 220: skipped blank labour name
-Labour row 221: skipped blank labour name
-Labour row 222: skipped blank labour name
-Labour row 223: skipped blank labour name
-Labour row 224: skipped blank labour name
-Labour row 225: skipped blank labour name
-Labour row 226: skipped blank labour name
-Labour row 227: skipped blank labour name
-Labour row 228: skipped blank labour name
-Labour row 229: skipped blank labour name
-Labour row 230: skipped blank labour name
-Labour row 231: skipped blank labour name
-Labour row 232: skipped blank labour name
-Labour row 233: skipped blank labour name
-Labour row 234: skipped blank labour name
-Labour row 235: skipped blank labour name
-Labour row 236: skipped blank labour name
-Labour row 237: skipped blank labour name
-Labour row 238: skipped blank labour name
-Labour row 239: skipped blank labour name
-Labour row 240: skipped blank labour name
-Labour row 241: skipped blank labour name
-Labour row 242: skipped blank labour name
-Labour row 243: skipped blank labour name
-Labour row 244: skipped blank labour name
-Labour row 245: skipped blank labour name
-Labour row 246: skipped blank labour name
-Labour row 247: skipped blank labour name
-Labour row 248: skipped blank labour name
-Labour row 249: skipped blank labour name
-Labour row 250: skipped blank labour name
-Labour row 251: skipped blank labour name
-Labour row 252: skipped blank labour name
-Labour row 253: skipped blank labour name
-Labour row 254: skipped blank labour name
-Labour row 255: skipped blank labour name
-Labour row 256: skipped blank labour name
-Labour row 257: skipped blank labour name
-Labour row 258: skipped blank labour name
-Labour row 259: skipped no valid labour amount for 'Date of Registration/isurance'
-Labour row 260: skipped no valid labour amount for 'Date of Accident'
-Labour row 261: skipped blank labour name
-Labour row 262: skipped blank labour name
-Labour row 263: skipped blank labour name
-Labour row 264: skipped blank labour name
-Labour row 265: skipped blank labour name
-Labour row 266: skipped blank labour name
-Labour row 267: skipped blank labour name
-Labour row 268: skipped blank labour name
-Labour row 269: skipped blank labour name
-Labour row 270: skipped blank labour name
-Labour row 271: skipped blank labour name
-Labour row 272: skipped blank labour name
-Labour row 273: skipped blank labour name
-Labour row 274: skipped blank labour name
-Labour row 275: skipped blank labour name
-Labour row 276: skipped blank labour name
-Labour row 277: skipped blank labour name
-Labour row 278: skipped blank labour name
-Labour row 279: skipped blank labour name
-Labour row 280: skipped blank labour name
-Labour row 281: skipped blank labour name
-Labour row 282: skipped blank labour name
-Labour row 283: skipped blank labour name
-Labour row 284: skipped blank labour name
-Labour row 285: skipped blank labour name
-Labour row 286: skipped blank labour name
-Labour row 287: skipped blank labour name
-Labour row 288: skipped blank labour name
-Labour row 289: skipped blank labour name
-Labour row 290: skipped blank labour name
-Labour row 291: skipped blank labour name
-Labour row 292: skipped blank labour name
-Labour row 293: skipped blank labour name
-Labour row 294: skipped blank labour name
+Labour row 162: stopped at boundary 'sub total'
 
 ── Summary ──
-Parts rows: 20
-Labour rows: 4
-Total rows: 24
+Parts rows: 4
+Labour rows: 3
+Total rows: 7
 
 ── OIC Row Details ──
   1. [Metallic Parts] fut Bumper | amt=1210.93 est=1560 hsn=8512
   2. [Metallic Parts] fender LH | amt=992.18 est=1480 hsn=8512
   3. [Plastic] fut Door LH | amt=500 est=8570 hsn=8512
-  4. [Plastic] Rear Door LH | amt=5 est=8861 hsn=8512
-  5. [Plastic] Quter Panel LH | amt=5 est=9110 hsn=8512
-  6. [Plastic] Rear Bumper | amt=4 est=3030 hsn=8512
-  7. [Glass] fender RH | amt=5 est=1560 hsn=8512
-  8. [Plastic] fut Door RH | amt=4 est=8570 hsn=8512
-  9. [Plastic] Rear Door RH | amt=4 est=9110 hsn=8512
-  10. [Glass] Quter Panel RH | amt=5 est=8861 hsn=8512
-  11. [Glass] Side minor RH | amt=4 est=2270 hsn=8512
-  12. [Plastic] Side mirror LH | amt=5 est=2270 hsn=8512
-  13. [Plastic] feet Bumper Bubt | amt=4 est=302 hsn=8512
-  14. [Glass] Flood | amt=5 est=3560 hsn=8512
-  15. [Plastic] Carbone Cheye Accedator | amt=4 est=70000 hsn=8512
-  16. [Plastic] UNIT HEAD LAMP LH | amt=4 est=100 hsn=8512
-  17. [Plastic] jumper | amt=500 est=150 hsn=8512
-  18. [Metallic Parts] bbb | amt=5 est=0 hsn=8512
-  19. [Plastic] ccc | amt=5 est=0 hsn=8512
-  20. [Metallic Parts] Claim number | amt=35010231260389998592 est=35010231260389998592 hsn=8512
-  21. [Labour Charge] aaa | amt=5 est=100000 hsn=8729
-  22. [Labour Charge] bbb | amt=5 est=100000 hsn=8729
-  23. [Labour Charge] ccc | amt=5 est=100000 hsn=8729
-  24. [Labour Charge] Claim number | amt=70020462520779997184 est=100000 hsn=8729
+  4. [Glass] Rear Door LH | amt=5 est=8861 hsn=8512
+  5. [Labour Charge] aaa | amt=5 est=100000 hsn=8729
+  6. [Labour Charge] bbb | amt=5 est=100000 hsn=8729
+  7. [Labour Charge] ccc | amt=5 est=100000 hsn=8729
 
 ── Summary ──
 Output Excel: C:\Users\jadav\Coding\Automation\UIIC\uiic_automation\OIC DOCS\auto_oic_assessment.xlsx
 Audit File: C:\Users\jadav\Coding\Automation\UIIC\uiic_automation\OIC DOCS\auto_oic_assessment_audit.txt
-Parts rows: 20
-Labour rows: 4
-Total rows: 24
+Parts rows: 4
+Labour rows: 3
+Total rows: 7

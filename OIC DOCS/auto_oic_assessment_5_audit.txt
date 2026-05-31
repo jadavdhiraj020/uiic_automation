@@ -1,10 +1,10 @@
 OIC Assessment Generation Audit
-Source Excel: C:\Users\jadav\Coding\Automation\UIIC\uiic_automation\OIC DOCS\dummy.xlsx
+Source Excel: OIC DOCS\dummy.xlsx
 Parts HSN: 8512
 Labour HSN: 8729
 
 Parts & Labour Extraction Audit
-Source Excel: C:\Users\jadav\Coding\Automation\UIIC\uiic_automation\OIC DOCS\dummy.xlsx
+Source Excel: OIC DOCS\dummy.xlsx
 Source Sheet: Sheet1
 
 ── Spare Parts ──
@@ -76,8 +76,8 @@ Total rows: 7
   7. [Labour Charge] ccc | amt=5 est=100000 hsn=8729
 
 ── Summary ──
-Output Excel: C:\Users\jadav\Coding\Automation\UIIC\uiic_automation\OIC DOCS\auto_oic_assessment_1.xlsx
-Audit File: C:\Users\jadav\Coding\Automation\UIIC\uiic_automation\OIC DOCS\auto_oic_assessment_1_audit.txt
+Output Excel: OIC DOCS\auto_oic_assessment_5.xlsx
+Audit File: OIC DOCS\auto_oic_assessment_5_audit.txt
 Parts rows: 4
 Labour rows: 3
 Total rows: 7

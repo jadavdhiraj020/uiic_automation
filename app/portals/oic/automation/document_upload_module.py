@@ -40,6 +40,24 @@ _UPLOAD_SECTIONS = [
     # Section 7 (Other Docs) handled separately
 ]
 
+# ── Other-Documents merge exclusion lists (single source of truth) ────────────
+# Files that must NEVER be included when building the 'Other Documents' bundle,
+# regardless of which merge path (pre-merged priority or runtime fallback) is
+# taken.  Update here only — both call sites reference these constants.
+_OTHER_DOCS_EXCLUDE_FILENAMES: frozenset = frozenset({
+    "all_pdf_text.txt",
+    "extracted_documents_data.md",
+    "re-inspection report format.pdf",
+    "re-inspection report format.xlsx",
+    "claim_others_documents.pdf",
+    "claim_related_document_merged.pdf",
+    "oic_other_documents_merged.pdf",
+})
+_OTHER_DOCS_EXCLUDE_PREFIXES: frozenset = frozenset({
+    "claim_others_documents_",
+    "oic_other_documents_merged",
+})
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FILE RESOLUTION
@@ -119,7 +137,7 @@ def _compress_if_needed(
     if file_size <= limit_bytes:
         return file_path
 
-    from app.data.folder_scanner import _compress_pdf_for_upload, _compress_image_for_upload
+    from app.automation.services.document_utils import _compress_pdf_for_upload, _compress_image_for_upload
 
     ext = Path(file_path).suffix.lower()
     size_kb = file_size / 1024
@@ -411,7 +429,12 @@ async def _upload_other_documents(
 
     # ── Priority 2: Runtime merge fallback ───────────────────────────────────
     log.info("  No pre-merged PDF found — falling back to runtime merge.")
-    config = MergeConfig(max_bytes=max_bytes, label="Other Documents", exclude_filenames={"all_pdf_text.txt", "extracted_documents_data.md", "re-inspection report format.pdf", "re-inspection report format.xlsx", "claim_others_documents.pdf", "claim_related_document_merged.pdf", "oic_other_documents_merged.pdf"}, exclude_prefixes={"claim_others_documents_", "oic_other_documents_merged"})
+    config = MergeConfig(
+        max_bytes=max_bytes,
+        label="Other Documents",
+        exclude_filenames=_OTHER_DOCS_EXCLUDE_FILENAMES,
+        exclude_prefixes=_OTHER_DOCS_EXCLUDE_PREFIXES,
+    )
     remaining = PdfMergeService.collect_remaining(data, used_files, config)
     if not remaining:
         log.info("  Section 7 (Other Documents): No remaining files to merge — skipping")
@@ -663,16 +686,8 @@ def _collect_remaining_files(data: ClaimData, used_files: Set[str]) -> List[str]
     config = MergeConfig(
         max_bytes=15 * 1024 * 1024,
         label="Other Documents",
-        exclude_filenames={
-            "all_pdf_text.txt",
-            "extracted_documents_data.md",
-            "re-inspection report format.pdf",
-            "re-inspection report format.xlsx",
-            "claim_others_documents.pdf",
-            "claim_related_document_merged.pdf",
-            "oic_other_documents_merged.pdf"
-        },
-        exclude_prefixes={"claim_others_documents_", "oic_other_documents_merged"}
+        exclude_filenames=_OTHER_DOCS_EXCLUDE_FILENAMES,
+        exclude_prefixes=_OTHER_DOCS_EXCLUDE_PREFIXES,
     )
     return PdfMergeService.collect_remaining(data, used_files, config)
 

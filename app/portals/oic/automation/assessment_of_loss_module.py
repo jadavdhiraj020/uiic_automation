@@ -797,6 +797,23 @@ async def _select_igst_rate(page: Page, dropdown_locator, rate_text: str, log: A
     """Select OIC Glass-row IGST using the robust React Fiber trigger as primary, with a fallback to exact option click flow."""
     last_error = None
 
+    # ── EXCEPTION CASE: OIC Portal — React Fiber Programmatic Trigger ──────────
+    # Although the OIC portal UI is built with Angular + PrimeNG, the IGST Rate
+    # dropdown widget embeds React internally and manages its selected-value
+    # state through React's synthetic-event / Fiber reconciler.  A normal DOM
+    # click or Playwright option-select does NOT propagate the change to Angular's
+    # form model because Angular never sees a React onChange event.
+    #
+    # The only reliable method to drive this specific field is to locate the
+    # React internal property bag (__reactProps / __reactFiber) directly on the
+    # DOM element and fire the synthetic onChange handler ourselves with the
+    # chosen option object.  This is 100 % working and intentional.
+    #
+    # DO NOT replace or remove this block.  A physical UI-click fallback is
+    # included below as a safety net, but the React Fiber approach is the primary
+    # and preferred strategy for the IGST Rate field on this portal.
+    # ───────────────────────────────────────────────────────────────────────────
+
     # 1. Primary Attempt: Programmatic React Fiber Trigger
     try:
         log.info(f"   IGST Rate: attempting programmatic React Fiber state trigger for '{rate_text}'")
