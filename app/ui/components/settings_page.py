@@ -183,7 +183,7 @@ class SettingsPage(QWidget):
                 ("table_boundary_keyword", "Table Boundary Keyword", "End-of-table marker(s) in Excel. Separate multiple with | (e.g. 'sub total|grand total')", "text"),
                 ("upload_remarks",          "Upload Remarks",          "Remarks text filled on Document Upload step (min 10 chars)", "remarks"),
                 ("instant_fill",               "Instant Form Filling",    "Fill fields instantly (faster) or type slowly", "yesno"),
-                ("typing_delay_ms",            "Typing Delay (ms)",       "Delay per character when typing (used if not instant fill)", "text"),
+                ("typing_delay_ms",            "Typing Delay (ms)",       "Delay per character when typing, 0–999 ms (used if not instant fill)", "spinbox"),
             ],
         }
         return rows_by_portal.get(self._portal_id, rows_by_portal["uiic"])
@@ -317,6 +317,17 @@ class SettingsPage(QWidget):
                     value_widget.addItem(raw_value)
                     value_widget.setCurrentText(raw_value)
                 self.defaults_table.setCellWidget(i, 1, value_widget)
+            elif kind == "spinbox":
+                spin = SafeSpinBox()
+                spin.setObjectName("embeddedSpin")
+                spin.setRange(0, 999)
+                spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+                spin.setSuffix(" ms")
+                try:
+                    spin.setValue(int(str(raw_value).strip()))
+                except (ValueError, TypeError):
+                    spin.setValue(25)  # safe fallback default
+                self.defaults_table.setCellWidget(i, 1, spin)
             else:
                 value_item = QTableWidgetItem(raw_value)
                 self.defaults_table.setItem(i, 1, value_item)
@@ -460,20 +471,50 @@ class SettingsPage(QWidget):
                 if not key:
                     continue
                 widget = self.defaults_table.cellWidget(r, 1)
+                # SpinBox kind: read integer value directly, no text parsing needed
+                if isinstance(widget, QSpinBox):
+                    defaults[key] = str(widget.value())
+                    continue
                 if isinstance(widget, QComboBox):
                     defaults[key] = widget.currentText().strip()
                 else:
                     value_item = self.defaults_table.item(r, 1)
                     raw = value_item.text().strip() if value_item else ""
-                    # Validate 'remarks' kind: must be at least _remarks_min_len characters
+
+                    def _scroll_to_error(vi=value_item):
+                        if vi:
+                            self.defaults_table.setCurrentItem(vi)
+                            self.defaults_table.scrollToItem(vi)
+
+                    # ── Validate: Upload Remarks minimum length ───────────────
                     if key == "upload_remarks" and len(raw) < _remarks_min_len:
-                        if value_item:
-                            self.defaults_table.setCurrentItem(value_item)
-                            self.defaults_table.scrollToItem(value_item)
+                        _scroll_to_error()
                         raise ValueError(
                             f"Upload Remarks must be at least {_remarks_min_len} characters "
                             f"(currently {len(raw)}). Please enter a longer remark."
                         )
+
+                    # ── Validate: Table Boundary Keyword ─────────────────────
+                    # Must be a non-blank text keyword (e.g. "sub total").
+                    # Typing "Yes" or "No" here is a common mistake — the field
+                    # looks like a boolean in the table but it is a text keyword.
+                    if key == "table_boundary_keyword":
+                        if not raw:
+                            _scroll_to_error()
+                            raise ValueError(
+                                "Table Boundary Keyword cannot be empty.\n"
+                                "Enter the text that marks the end of the parts/labour table "
+                                "in your Excel (e.g. 'sub total')."
+                            )
+                        if raw.lower() in {"yes", "no", "true", "false"}:
+                            _scroll_to_error()
+                            raise ValueError(
+                                f"Table Boundary Keyword is set to '{raw}' which looks like a "
+                                "Yes/No answer — but this field expects a text keyword from "
+                                "your Excel (e.g. 'sub total' or 'grand total').\n"
+                                "Please correct the value before saving."
+                            )
+
                     defaults[key] = raw
             save_automation_defaults(defaults, portal_id=self._portal_id)
 
