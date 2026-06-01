@@ -1,5 +1,5 @@
 import asyncio
-from typing import Callable
+from typing import Callable, Optional
 from playwright.async_api import Page
 import re
 from datetime import datetime
@@ -141,7 +141,7 @@ _JS_TRIGGER_CHANGE = r"""
 
 async def fill_input_with_delay(
     page: Page, selector: str, value: str, label: str,
-    log, delay_ms: int = 600
+    log, delay_ms: int = 600, source: Optional[str] = None
 ):
     """Angular-aware text fill with configurable post-fill delay."""
     try:
@@ -149,7 +149,10 @@ async def fill_input_with_delay(
         res = await page.evaluate(_JS_FILL, [selector, str(value)])
         if res and res.get("ok"):
             if isinstance(log, AutomationLogger):
-                log.field_filled(label, value)
+                kwargs = {}
+                if source is not None:
+                    kwargs["source"] = source
+                log.field_filled(label, value, **kwargs)
             else:
                 log(f"[{_ts()}]   ✅ [{label}] filled → '{str(value)[:60]}'")
         else:
@@ -168,7 +171,7 @@ async def fill_input_with_delay(
 
 async def select_dropdown_with_delay(
     page: Page, selector: str, value: str, label: str,
-    log, delay_ms: int = 600
+    log, delay_ms: int = 600, source: Optional[str] = None
 ):
     """Standard <select> dropdown helper with 3-pass matching and configurable delay."""
     try:
@@ -176,7 +179,10 @@ async def select_dropdown_with_delay(
         res = await page.evaluate(_JS_SELECT, [selector, str(value)])
         if res and res.get("ok"):
             if isinstance(log, AutomationLogger):
-                log.field_selected(label, res.get("text"))
+                kwargs = {}
+                if source is not None:
+                    kwargs["source"] = source
+                log.field_selected(label, res.get("text"), **kwargs)
             else:
                 log(f"[{_ts()}]   ✅ [{label}] selected → '{res.get('text')}'")
         else:
@@ -196,7 +202,7 @@ async def select_dropdown_with_delay(
 
 async def click_radio_with_delay(
     page: Page, name: str, value: str, label: str,
-    log, delay_ms: int = 600
+    log, delay_ms: int = 600, source: Optional[str] = None
 ):
     """Click radio via label with delay."""
     try:
@@ -205,7 +211,10 @@ async def click_radio_with_delay(
             already = res.get("already", False)
             msg = f"'{value}'" + (" (already set)" if already else "")
             if isinstance(log, AutomationLogger):
-                log.field_filled(label, msg)
+                kwargs = {}
+                if source is not None:
+                    kwargs["source"] = source
+                log.field_filled(label, msg, **kwargs)
             else:
                 log(f"[{_ts()}]   {'✔' if already else '✅'} [{label}] → {msg}")
         else:

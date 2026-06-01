@@ -44,7 +44,7 @@ async def _ensure_yes(page: Page, name: str, label: str,
             else:
                 log(f"   ✔  [{label}] already YES")
             return
-        await click_radio_with_delay(page, name, "Y", label, log, delay_ms)
+        await click_radio_with_delay(page, name, "Y", label, log, delay_ms, source="Default")
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"[{label}] toggle error: {str(e)[:100]}")
@@ -94,6 +94,7 @@ async def fill_quick_update_details(
     defaults = load_automation_defaults(portal_id=getattr(claim_data, "portal_id", "newindia"))
 
     if isinstance(log, AutomationLogger):
+        log._section = "Quick Update"
         log.info("Starting Quick Update Details phase...")
         log.indent()
     elif log:
@@ -130,20 +131,20 @@ async def fill_quick_update_details(
             available = await page.evaluate(_JS_DATE_VALUES)
             if date_of_survey in (available or []):
                 await click_radio_with_delay(page, "dateOfSurveyRadio", date_of_survey,
-                                   "Date of Survey", log, field_delay_ms)
+                                   "Date of Survey", log, field_delay_ms, source="Excel")
             else:
                 if isinstance(log, AutomationLogger):
                     log.info("Target date not in radio options; selecting 'Others' for manual input.")
                 else:
                     log("  Not in options — selecting 'Others'")
                 await click_radio_with_delay(page, "dateOfSurveyRadio", "Others",
-                                   "Date of Survey (Others)", log, field_delay_ms)
+                                   "Date of Survey (Others)", log, field_delay_ms, source="Default")
                 await asyncio.sleep(0.8)
                 try:
                     await page.wait_for_selector('input[name="dateOfSurvey"]',
                                                  state="visible", timeout=5000)
                     await fill_input_with_delay(page, 'input[name="dateOfSurvey"]',
-                                   date_of_survey, "Date (manual)", log, field_delay_ms)
+                                   date_of_survey, "Date (manual)", log, field_delay_ms, source="Excel")
                 except Exception as de:
                     if isinstance(log, AutomationLogger):
                         log.error(f"Manual date input failed: {str(de)[:100]}")
@@ -154,6 +155,9 @@ async def fill_quick_update_details(
                 log.error(f"Date selection process failed: {str(e)[:100]}")
             else:
                 log(f"  ⚠️  Date error: {e}")
+    else:
+        if isinstance(log, AutomationLogger):
+            log.field_skipped("Date of Survey", reason="Missing from Excel")
 
     await asyncio.sleep(0.5)
     if stop_cb(): return False
@@ -172,7 +176,11 @@ async def fill_quick_update_details(
         else:
             log(f"Time of Survey: {n_time}")
         await fill_input_with_delay(page, 'input[name="timeOfSurvey"]',
-                       n_time, "Time of Survey", log, field_delay_ms)
+                       n_time, "Time of Survey", log, field_delay_ms, source="Excel")
+    else:
+        if isinstance(log, AutomationLogger):
+            log.field_skipped("Time of Survey", reason="Missing from Excel")
+
     await asyncio.sleep(0.4)
     if stop_cb(): return False
 
@@ -184,7 +192,11 @@ async def fill_quick_update_details(
         else:
             log(f"Place of Survey: {place}")
         await fill_input_with_delay(page, 'textarea[name="placeOfSurvey"]',
-                       place, "Place of Survey", log, field_delay_ms)
+                       place, "Place of Survey", log, field_delay_ms, source="Excel")
+    else:
+        if isinstance(log, AutomationLogger):
+            log.field_skipped("Place of Survey", reason="Missing from Excel")
+
     await asyncio.sleep(0.4)
     if stop_cb(): return False
 
@@ -221,6 +233,7 @@ async def fill_quick_update_details(
     if stop_cb(): return False
 
     # ── 11. Remarks ──────────────────────────────────────────────────────────
+    remarks_source = "Excel" if (getattr(claim_data, "remarks", "") or getattr(claim_data, "surveyor_observation", "")) else "Default"
     remarks = (
         getattr(claim_data, "remarks", "")
         or getattr(claim_data, "surveyor_observation", "")
@@ -230,7 +243,7 @@ async def fill_quick_update_details(
         log.info(f"Filling Remarks: {remarks[:50]}...")
     else:
         log(f"Remarks: {remarks[:80]}")
-    await fill_input_with_delay(page, 'textarea[name="remarks"]', remarks, "Remarks", log, field_delay_ms)
+    await fill_input_with_delay(page, 'textarea[name="remarks"]', remarks, "Remarks", log, field_delay_ms, source=remarks_source)
     await asyncio.sleep(0.4)
     if stop_cb(): return False
 
@@ -242,7 +255,11 @@ async def fill_quick_update_details(
             log.info(f"Filling Mobile No: {mobile}")
         else:
             log(f"Mobile No: {mobile}")
-        await fill_input_with_delay(page, 'input[name="mobileNo"]', mobile, "Mobile No", log, field_delay_ms)
+        await fill_input_with_delay(page, 'input[name="mobileNo"]', mobile, "Mobile No", log, field_delay_ms, source="Excel")
+    else:
+        if isinstance(log, AutomationLogger):
+            log.field_skipped("Mobile No", reason="Missing from Excel")
+
     await asyncio.sleep(0.4)
     if stop_cb(): return False
 
@@ -253,7 +270,11 @@ async def fill_quick_update_details(
             log.info(f"Filling Email ID: {email}")
         else:
             log(f"Email ID: {email}")
-        await fill_input_with_delay(page, 'input[name="emailId"]', email, "Email ID", log, field_delay_ms)
+        await fill_input_with_delay(page, 'input[name="emailId"]', email, "Email ID", log, field_delay_ms, source="Excel")
+    else:
+        if isinstance(log, AutomationLogger):
+            log.field_skipped("Email ID", reason="Missing from Excel")
+
     await asyncio.sleep(0.4)
     if stop_cb(): return False
 
@@ -264,7 +285,11 @@ async def fill_quick_update_details(
         else:
             log(f"Expected Date of Repair (= Survey Date): {date_of_survey}")
         await fill_input_with_delay(page, 'input[name="expectedDateOfRepair"]',
-                       date_of_survey, "Expected Date of Repair", log, field_delay_ms)
+                       date_of_survey, "Expected Date of Repair", log, field_delay_ms, source="Excel")
+    else:
+        if isinstance(log, AutomationLogger):
+            log.field_skipped("Expected Date of Repair", reason="Date of Survey missing")
+
     await asyncio.sleep(0.4)
 
     if isinstance(log, AutomationLogger):

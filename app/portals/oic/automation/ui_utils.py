@@ -137,7 +137,7 @@ def _get_oic_fill_settings():
 
 async def fill_input_with_delay(
     page: Page, selector: str, value: str, label: str,
-    log, delay_ms: int = 30
+    log, delay_ms: int = 30, source: Optional[str] = None
 ):
     """Angular-aware instant or typed text fill with configurable inter-field delay."""
     try:
@@ -158,7 +158,10 @@ async def fill_input_with_delay(
         await page.evaluate(_JS_FILL, [selector, str(value)])
         
         if isinstance(log, AutomationLogger):
-            log.field_filled(label, value)
+            kwargs = {}
+            if source is not None:
+                kwargs["source"] = source
+            log.field_filled(label, value, **kwargs)
         else:
             log(f"[{_ts()}]   ✅ [{label}] filled → '{str(value)[:60]}'")
     except Exception as e:
@@ -172,7 +175,7 @@ async def fill_input_with_delay(
 
 async def select_dropdown_with_delay(
     page: Page, selector: str, value: str, label: str,
-    log, delay_ms: int = 30
+    log, delay_ms: int = 30, source: Optional[str] = None
 ):
     """Standard <select> dropdown helper with 3-pass matching and configurable delay."""
     try:
@@ -180,7 +183,10 @@ async def select_dropdown_with_delay(
         res = await page.evaluate(_JS_SELECT, [selector, str(value)])
         if res and res.get("ok"):
             if isinstance(log, AutomationLogger):
-                log.field_selected(label, res.get("text"))
+                kwargs = {}
+                if source is not None:
+                    kwargs["source"] = source
+                log.field_selected(label, res.get("text"), **kwargs)
             else:
                 log(f"[{_ts()}]   ✅ [{label}] selected → '{res.get('text')}'")
         else:
@@ -200,7 +206,7 @@ async def select_dropdown_with_delay(
 
 async def click_radio_with_delay(
     page: Page, name: str, value: str, label: str,
-    log, delay_ms: int = 30
+    log, delay_ms: int = 30, source: Optional[str] = None
 ):
     """Click radio via label with delay."""
     try:
@@ -209,7 +215,10 @@ async def click_radio_with_delay(
             already = res.get("already", False)
             msg = f"'{value}'" + (" (already set)" if already else "")
             if isinstance(log, AutomationLogger):
-                log.field_filled(label, msg)
+                kwargs = {}
+                if source is not None:
+                    kwargs["source"] = source
+                log.field_filled(label, msg, **kwargs)
             else:
                 log(f"[{_ts()}]   {'✔' if already else '✅'} [{label}] → {msg}")
         else:
@@ -313,7 +322,7 @@ async def capture_error_screenshot(page: Page, context_name: str, log) -> Option
 
 async def click_primeng_radio(
     page: Page, radio_selector: str, label: str,
-    log, delay_ms: int = 30
+    log, delay_ms: int = 30, source: Optional[str] = None
 ):
     """Click a PrimeNG radio button using multi-strategy locator matching."""
     try:
@@ -338,7 +347,10 @@ async def click_primeng_radio(
             await radio.click()
 
         if isinstance(log, AutomationLogger):
-            log.field_filled(label, "selected")
+            kwargs = {}
+            if source is not None:
+                kwargs["source"] = source
+            log.field_filled(label, "selected", **kwargs)
         else:
             log(f"[{_ts()}]   ✅ [{label}] → selected")
     except Exception as e:
@@ -352,7 +364,7 @@ async def click_primeng_radio(
 
 async def select_primeng_dropdown(
     page: Page, dropdown_selector: str, value: str, label: str,
-    log, delay_ms: int = 80
+    log, delay_ms: int = 80, source: Optional[str] = None
 ):
     """Select a value in a PrimeNG <p-dropdown> component."""
     try:
@@ -390,7 +402,10 @@ async def select_primeng_dropdown(
                 await items.nth(i).click()
                 matched = True
                 if isinstance(log, AutomationLogger):
-                    log.field_selected(label, value)
+                    kwargs = {}
+                    if source is not None:
+                        kwargs["source"] = source
+                    log.field_selected(label, value, **kwargs)
                 else:
                     log(f"[{_ts()}]   ✅ [{label}] selected → '{value}'")
                 break
@@ -405,7 +420,10 @@ async def select_primeng_dropdown(
                     matched = True
                     actual = await items.nth(i).inner_text()
                     if isinstance(log, AutomationLogger):
-                        log.field_selected(label, actual.strip())
+                        kwargs = {}
+                        if source is not None:
+                            kwargs["source"] = source
+                        log.field_selected(label, actual.strip(), **kwargs)
                     else:
                         log(f"[{_ts()}]   ✅ [{label}] selected → '{actual.strip()}'")
                     break
@@ -429,7 +447,7 @@ async def select_primeng_dropdown(
 
 async def fill_primeng_inputnumber(
     page: Page, selector: str, value: str, label: str,
-    log, delay_ms: int = 30
+    log, delay_ms: int = 30, source: Optional[str] = None
 ):
     """Fill a PrimeNG <p-inputnumber> component (which nests an <input> inside)."""
     try:
@@ -457,7 +475,10 @@ async def fill_primeng_inputnumber(
         await inner_input.evaluate("el => { el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); el.dispatchEvent(new Event('blur', { bubbles: true })); }")
 
         if isinstance(log, AutomationLogger):
-            log.field_filled(label, value)
+            kwargs = {}
+            if source is not None:
+                kwargs["source"] = source
+            log.field_filled(label, value, **kwargs)
         else:
             log(f"[{_ts()}]   ✅ [{label}] filled → '{str(value)[:60]}'")
     except Exception as e:
@@ -486,7 +507,7 @@ def format_date_for_mui(raw_date) -> str:
 
 async def fill_mui_datepicker(
     page: Page, label_text: str, value: str, label: str,
-    log, delay_ms: int = 30
+    log, delay_ms: int = 30, source: Optional[str] = None
 ) -> bool:
     """Fill a Material UI DatePicker by locating it via its visible label text.
 
@@ -543,7 +564,10 @@ async def fill_mui_datepicker(
         await page.keyboard.press("Tab")
 
         if isinstance(log, AutomationLogger):
-            log.field_filled(label, formatted)
+            kwargs = {}
+            if source is not None:
+                kwargs["source"] = source
+            log.field_filled(label, formatted, **kwargs)
         else:
             log(f"[{_ts()}]   ✅ [{label}] filled → '{formatted}'")
         return True
@@ -563,7 +587,7 @@ async def fill_mui_datepicker(
 
 async def fill_textarea_primeng(
     page: Page, selector: str, value: str, label: str,
-    log, delay_ms: int = 30
+    log, delay_ms: int = 30, source: Optional[str] = None
 ) -> None:
     """Fill a PrimeNG textarea (<textarea> element) with instant fill or typed simulation.
 
@@ -596,7 +620,10 @@ async def fill_textarea_primeng(
         )
 
         if isinstance(log, AutomationLogger):
-            log.field_filled(label, str(value)[:60])
+            kwargs = {}
+            if source is not None:
+                kwargs["source"] = source
+            log.field_filled(label, str(value)[:60], **kwargs)
         else:
             log(f"[{_ts()}]   ✅ [{label}] filled → '{str(value)[:60]}'")
     except Exception as e:

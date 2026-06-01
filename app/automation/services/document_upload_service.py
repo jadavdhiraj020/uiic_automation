@@ -414,7 +414,7 @@ class DocumentUploadService:
         for idx, (doc_type, file_path) in enumerate(queue):
             fname = os.path.basename(file_path) if file_path else "[no file]"
             if isinstance(self.log, AutomationLogger):
-                self.log.info(f"Uploading [{idx+1}/{len(queue)}]: {doc_type} -> {fname}")
+                self.log.upload_start(doc_type, fname)
             else:
                 self.log(f"\n  [{idx+1}/{len(queue)}] '{doc_type}' → {fname}")
             panel = await self.get_upload_panel()
@@ -431,7 +431,7 @@ class DocumentUploadService:
                     after_count = await panel.locator('select[name^="docType"]').count()
                     if not added and after_count == 0:
                         if isinstance(self.log, AutomationLogger):
-                            self.log.error(f"Could not add first row — skipping '{doc_type}'")
+                            self.log.upload_failed(doc_type, "Could not add first row")
                         else:
                             self.log(f"    ❌ Could not add first row — skipping '{doc_type}'")
                         logger.error("PLUS button failed for first upload row (doc: %s)", doc_type)
@@ -454,7 +454,7 @@ class DocumentUploadService:
                 after_count = await panel.locator('select[name^="docType"]').count()
                 if not added or after_count <= before_count:
                     if isinstance(self.log, AutomationLogger):
-                        self.log.error(f"Could not add row — skipping '{doc_type}'")
+                        self.log.upload_failed(doc_type, "Could not add row via PLUS click")
                     else:
                         self.log(f"    ❌ Could not add row — skipping '{doc_type}'")
                     logger.error("PLUS button failed for row %d (doc: %s)", idx, doc_type)
@@ -470,7 +470,7 @@ class DocumentUploadService:
                     if ok:
                         await self.wait_after_upload(row_idx, wait_timeout_ms)
                         if isinstance(self.log, AutomationLogger):
-                            self.log.success(f"Uploaded: {fname}")
+                            self.log.upload_attached(doc_type, fname)
                         else:
                             self.log(f"    ✅ Uploaded: {fname}")
                         logger.info("Upload OK: [%s] → %s", doc_type, fname)
@@ -478,14 +478,14 @@ class DocumentUploadService:
                         uploaded_rows.append((row_idx, doc_type, file_path))
                     else:
                         if isinstance(self.log, AutomationLogger):
-                            self.log.error(f"Upload FAILED for: {fname}")
+                            self.log.upload_failed(doc_type, "Dropdown selection or file upload failed")
                         else:
                             self.log(f"    ❌ Upload FAILED for: {fname}")
                         logger.error("Upload FAILED: [%s] → %s — dropdown or file set failed", doc_type, fname)
                         upload_results.append((doc_type, fname, "FAILED", "Dropdown selection or file upload failed"))
                 except Exception as e:
                     if isinstance(self.log, AutomationLogger):
-                        self.log.error(f"Upload error: {str(e)[:80]}")
+                        self.log.upload_failed(doc_type, f"Exception: {str(e)[:80]}")
                     else:
                         self.log(f"    ❌ Upload error: {str(e)[:80]}")
                     logger.error("Upload exception: [%s] → %s — %s", doc_type, fname, str(e)[:120])

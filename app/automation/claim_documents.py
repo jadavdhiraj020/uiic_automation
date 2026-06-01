@@ -168,6 +168,7 @@ def _build_queue(claim: ClaimData, log) -> List[Tuple[str, Optional[str]]]:
         fname = os.path.basename(file_path) if file_path else "?"
         if not file_path or not os.path.isfile(file_path):
             if isinstance(log, AutomationLogger):
+                log.document_mapped(doc_type, fname, status="File Not Found", source="Folder Scan")
                 log.warning(f"File not found: {fname} (type '{doc_type}')")
             else:
                 log(f"  ⚠️  Not found: {fname} → type '{doc_type}' will be skipped")
@@ -177,6 +178,7 @@ def _build_queue(claim: ClaimData, log) -> List[Tuple[str, Optional[str]]]:
 
         mb = os.path.getsize(file_path) / (1024 * 1024)
         if isinstance(log, AutomationLogger):
+            log.document_mapped(doc_type, fname, status="Matched Successfully", source="Folder Scan")
             size_tag = " [LARGE]" if mb > MAX_FILE_MB else ""
             log.info(f"Queueing: [{doc_type}] → {fname} ({mb:.1f}MB){size_tag}")
         else:
@@ -194,6 +196,7 @@ async def fill_claim_documents(page, claim: ClaimData, log_cb, settings: dict = 
     """Main orchestrator for the Claim Documents tab."""
     log = log_cb
     if isinstance(log, AutomationLogger):
+        log.section = "Claim Documents"
         log.section_start("PHASE 4: CLAIM DOCUMENTS")
     else:
         log("\n" + "="*60 + "\nPHASE 4: CLAIM DOCUMENTS\n" + "="*60)

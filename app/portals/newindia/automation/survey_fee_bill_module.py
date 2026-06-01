@@ -351,6 +351,7 @@ async def fill_survey_fee_bill(
 
     _structured = isinstance(log, AutomationLogger)
     if _structured:
+        log._section = "Survey Fee Bill"
         log.info("Starting Survey Fee Bill phase...")
         log.indent()
     else:
@@ -376,6 +377,7 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
     doc_path = _find_survey_fee_bill_document(data)
     if not doc_path:
         if _structured:
+            log.field_skipped("Survey Fee Bill Document", reason="No PDF available in scan")
             log.warning(
                 "Survey Fee Bill PDF not found in claim directories "
                 "(expected: final_invoice.pdf or invoice.pdf). "
@@ -389,6 +391,7 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
             )
     else:
         if _structured:
+            log.document_mapped("Survey Fee Bill", os.path.basename(doc_path), "Matched Successfully")
             log.info(f"Survey Fee Bill document located: {doc_path}")
         else:
             import os as _os
@@ -422,7 +425,7 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
     try:
         sel = 'select#isInvoiceInNameOfNIA'
         invoice_in_company = str(defaults.get("invoice_in_company_name", "Yes") or "Yes")
-        await select_dropdown_with_delay(page, sel, invoice_in_company, "Invoice in NIA Name", log, field_delay_ms)
+        await select_dropdown_with_delay(page, sel, invoice_in_company, "Invoice in NIA Name", log, field_delay_ms, source="Default")
     except Exception as e:
         if _structured:
             log.error(f"Invoice NIA Name dropdown error: {str(e)[:100]}")
@@ -438,9 +441,10 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
         if val:
             val = str(val).strip()
             sel = 'input#surveyorFeeInvoiceNumber'
-            await fill_input_with_delay(page, sel, val, "SFB Invoice Number", log, field_delay_ms)
+            await fill_input_with_delay(page, sel, val, "SFB Invoice Number", log, field_delay_ms, source="Excel")
         else:
             if _structured:
+                log.field_skipped("SFB Invoice Number", reason="Missing from Excel")
                 log.warning("Surveyor Fee Invoice Number missing — field is mandatory!")
             else:
                 log("   ⚠️ Surveyor Fee Invoice Number missing from data (mandatory).")
@@ -459,9 +463,10 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
         if val:
             val = str(val).strip()
             sel = 'input[name="surveyorFeeInvoiceDate"]'
-            await fill_input_with_delay(page, sel, val, "SFB Invoice Date", log, field_delay_ms)
+            await fill_input_with_delay(page, sel, val, "SFB Invoice Date", log, field_delay_ms, source="Excel")
         else:
             if _structured:
+                log.field_skipped("SFB Invoice Date", reason="Missing from Excel")
                 log.warning("Surveyor Fee Invoice Date missing — field is mandatory!")
             else:
                 log("   ⚠️ Surveyor Fee Invoice Date missing from data (mandatory).")
@@ -501,11 +506,12 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
             return False
         try:
             val = photo_charges_default if attr_name == "photo_charges" else str(getattr(data, attr_name, '') or '').strip()
+            src = "Default" if attr_name == "photo_charges" else "Excel"
             if val and val != "0":
-                await fill_input_with_delay(page, selector, val, label, log, field_delay_ms)
+                await fill_input_with_delay(page, selector, val, label, log, field_delay_ms, source=src)
             else:
                 if _structured:
-                    log.info(f"{label} is 0 or empty; skipping.")
+                    log.field_skipped(label, reason="Missing from Excel" if not val else "Value is 0")
                 else:
                     log(f"   ℹ️ [{label}] = 0 or empty. Skipping.")
         except Exception as e:
@@ -535,7 +541,7 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
     try:
         sel = 'select#isGSTApplicable'
         gst_applicable = str(defaults.get("gst_applicable", "Yes") or "Yes")
-        await select_dropdown_with_delay(page, sel, gst_applicable, "GST Applicable", log, field_delay_ms)
+        await select_dropdown_with_delay(page, sel, gst_applicable, "GST Applicable", log, field_delay_ms, source="Default")
     except Exception as e:
         if _structured:
             log.error(f"GST Applicable dropdown error: {str(e)[:100]}")
@@ -584,6 +590,9 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
             log("   ── Section: Document Upload ──")
 
         try:
+            if _structured:
+                log.upload_start("Survey Fee Bill Document", os.path.basename(doc_path))
+            
             await upload_file_via_input(
                 page,
                 file_input_selector='input#uploadDigSig',

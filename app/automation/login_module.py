@@ -181,17 +181,23 @@ async def _try_login_with_captcha(page, username, password, captcha_text, log):
     await page.locator(SEL_USERNAME).fill("")
     await asyncio.sleep(0.3)
     await page.locator(SEL_USERNAME).fill(username)
+    if isinstance(log, AutomationLogger):
+        log.raw(f"[{log._portal_tag}][Login]\nUsername Entered")
     await asyncio.sleep(0.4)
 
     await page.locator(SEL_PASSWORD).fill("")
     await asyncio.sleep(0.25)
     await page.locator(SEL_PASSWORD).fill(password)
+    if isinstance(log, AutomationLogger):
+        log.raw(f"[{log._portal_tag}][Login]\nPassword Entered")
     await asyncio.sleep(0.4)
 
     captcha_input = page.locator(SEL_CAPTCHA_IN).first
     await captcha_input.fill("")
     await asyncio.sleep(0.2)
     await captcha_input.fill(captcha_text)
+    if isinstance(log, AutomationLogger):
+        log.raw(f"[{log._portal_tag}][Login]\nCaptcha Entered")
     await asyncio.sleep(0.6)
 
     for btn_sel in SEL_LOGIN_BTN.split(", "):
@@ -200,6 +206,7 @@ async def _try_login_with_captcha(page, username, password, captcha_text, log):
             if await btn.is_visible(timeout=1500):
                 await btn.click()
                 if isinstance(log, AutomationLogger):
+                    log.raw(f"[{log._portal_tag}][Login]\nLogin Button Clicked")
                     log.info("Clicked login button")
                 else:
                     log("  Clicked login button")
@@ -208,6 +215,7 @@ async def _try_login_with_captcha(page, username, password, captcha_text, log):
             continue
 
     if isinstance(log, AutomationLogger):
+        log.raw(f"[{log._portal_tag}][Login]\nLogin Button Not Found")
         log.error("Login button not found.")
     else:
         log("  Login button not found.")
@@ -224,6 +232,9 @@ async def do_login(
     Navigate to the portal and perform login.
     Returns True on success, False otherwise.
     """
+    if isinstance(log, AutomationLogger):
+        log.section = "Login"
+
     portal_url = settings["portal_url"]
     username = settings["username"]
     password = settings["password"]
@@ -234,6 +245,7 @@ async def do_login(
     page.on("dialog", lambda dialog: asyncio.create_task(_accept_dialog(dialog, log)))
 
     if isinstance(log, AutomationLogger):
+        log.raw(f"[{log._portal_tag}][Login]\nLoading Login Page")
         log.info("Navigating to portal...")
         log.indent()
     else:
@@ -245,11 +257,13 @@ async def do_login(
     try:
         await page.locator(SEL_USERNAME).wait_for(state="visible", timeout=12000)
         if isinstance(log, AutomationLogger):
+            log.raw(f"[{log._portal_tag}][Login]\nLogin Page Loaded")
             log.success("Login page loaded successfully")
         else:
             log("  ✅ Login page loaded successfully")
     except Exception as exc:
         if isinstance(log, AutomationLogger):
+            log.raw(f"[{log._portal_tag}][Login]\nLogin Page Load Failed")
             log.error(f"Login page did not load: {exc}")
             log.outdent()
         else:
@@ -262,12 +276,14 @@ async def do_login(
             return False
 
         if isinstance(log, AutomationLogger):
+            log.raw(f"[{log._portal_tag}][Login]\nAttempt {attempt}/{max_retries}")
             log.info(f"Login Attempt {attempt}/{max_retries}")
             log.indent()
         else:
             log(f"\n  🔄 Attempt {attempt}/{max_retries}")
             
         if isinstance(log, AutomationLogger):
+            log.raw(f"[{log._portal_tag}][Login]\nCaptcha OCR Started")
             log.wait("Reading CAPTCHA from canvas")
         else:
             log("    📷 Reading CAPTCHA from canvas...")
@@ -277,6 +293,7 @@ async def do_login(
             captcha_text = solve_captcha_from_bytes(img_bytes)
         except Exception as exc:
             if isinstance(log, AutomationLogger):
+                log.raw(f"[{log._portal_tag}][Login]\nCaptcha Capture Failed")
                 log.error(f"CAPTCHA screenshot error: {exc}")
             else:
                 log(f"    ⚠️  CAPTCHA screenshot error: {exc}")
@@ -289,11 +306,13 @@ async def do_login(
             init_error = get_ocr_init_error()
             if init_error:
                 if isinstance(log, AutomationLogger):
+                    log.raw(f"[{log._portal_tag}][Login]\nOCR Engine Initialization Failed")
                     log.error(f"OCR ENGINE FAILED: {init_error}")
                 else:
                     log(f"⚠️ OCR ENGINE FAILED: {init_error}")
             else:
                 if isinstance(log, AutomationLogger):
+                    log.raw(f"[{log._portal_tag}][Login]\nCaptcha Unreadable")
                     log.warning("CAPTCHA unreadable. Refreshing...")
                 else:
                     log(f"CAPTCHA unreadable (OCR returned empty/short text). Refreshing...")
@@ -302,6 +321,7 @@ async def do_login(
             continue
 
         if isinstance(log, AutomationLogger):
+            log.raw(f"[{log._portal_tag}][Login]\nCaptcha Value Extracted: {captcha_text}")
             log.info(f"CAPTCHA text: '{captcha_text}'")
         else:
             log(f"    🔑 CAPTCHA text: '{captcha_text}'")
@@ -315,6 +335,7 @@ async def do_login(
         clicked = await _try_login_with_captcha(page, username, password, captcha_text, log)
         if not clicked:
             if isinstance(log, AutomationLogger):
+                log.raw(f"[{log._portal_tag}][Login]\nLogin Click Failed")
                 log.error(f"Could not click login button on attempt {attempt}")
             else:
                 log(f"    ⚠️  Could not click login button on attempt {attempt}")
@@ -332,6 +353,7 @@ async def do_login(
         login_ok, outcome = await _wait_for_login_outcome(page, log)
         if login_ok:
             if isinstance(log, AutomationLogger):
+                log.raw(f"[{log._portal_tag}][Login]\nLogin Successful")
                 log.success("Login successful!")
                 log.info(f"Signal: {outcome}")
             else:
@@ -347,12 +369,14 @@ async def do_login(
         err = outcome.strip()
         if err:
             if isinstance(log, AutomationLogger):
+                log.raw(f"[{log._portal_tag}][Login]\nLogin Failed\nReason: {err[:140]}")
                 log.error(f"Login failed: {err[:140]}")
             else:
                 log(f"    ❌ Login failed: {err[:140]}")
                 
             if "password" in err.lower() and "captcha" not in err.lower():
                 if isinstance(log, AutomationLogger):
+                    log.raw(f"[{log._portal_tag}][Login]\nWrong Password stopping retries")
                     log.error("Wrong password detected — stopping retries")
                 else:
                     log("    ❌ Wrong password detected — stopping retries")
@@ -374,6 +398,7 @@ async def do_login(
         if isinstance(log, AutomationLogger): log.outdent()
 
     if isinstance(log, AutomationLogger):
+        log.raw(f"[{log._portal_tag}][Login]\nLogin Failed (Attempts Exhausted)")
         log.error(f"Login failed after {max_retries} attempts")
         log.outdent()
     else:

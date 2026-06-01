@@ -582,6 +582,7 @@ async def fill_document_upload_section(
 
     Returns True on success, False on critical failure or stop.
     """
+    log._section = "Document Upload"
     log.section_start("Document Upload")
 
     defaults = load_automation_defaults(portal_id="oic")

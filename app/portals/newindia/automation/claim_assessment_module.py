@@ -181,6 +181,7 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_c
 
     _using_structured_log = isinstance(log, AutomationLogger)
     if _using_structured_log:
+        log._section = "Claim Assessment Details"
         log.info("Starting Claim Assessment Details phase...")
         log.indent()
     else:
@@ -224,7 +225,7 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
     try:
         sel = 'select[data-ng-model*="isPaymentInvoice"]'
         invoice_in_company = str(defaults.get("invoice_in_company_name", "Yes") or "Yes")
-        await select_dropdown_with_delay(page, sel, invoice_in_company, "Payment Invoice NIA", log, field_delay_ms)
+        await select_dropdown_with_delay(page, sel, invoice_in_company, "Payment Invoice NIA", log, field_delay_ms, source="Default")
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Payment Invoice dropdown error: {str(e)[:100]}")
@@ -248,10 +249,10 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
         if val:
             val = str(val).strip()
             sel = 'input[data-ng-model*="vendorTaxInvoiceDate"]'
-            await fill_input_with_delay(page, sel, val, "Invoice Date", log, field_delay_ms)
+            await fill_input_with_delay(page, sel, val, "Invoice Date", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("Vendor Invoice Date missing from data.")
+                log.field_skipped("Invoice Date", reason="Missing from Excel")
             else:
                 log(f"   ⚠️ Vendor/Tax Invoice Date missing (Not extracted from PDF).")
     except Exception as e:
@@ -268,10 +269,10 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
         if val:
             val = str(val).strip()
             sel = 'input[data-ng-model*="vendorTaxInvoiceNumber"]'
-            await fill_input_with_delay(page, sel, val, "Invoice Number", log, field_delay_ms)
+            await fill_input_with_delay(page, sel, val, "Invoice Number", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("Vendor Invoice Number missing from data.")
+                log.field_skipped("Invoice Number", reason="Missing from Excel")
             else:
                 log(f"   ⚠️ Vendor/Tax Invoice Number missing (Not extracted from PDF).")
     except Exception as e:
@@ -286,6 +287,7 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
     # SECTION 1 — PRIMARY ASSESSMENT
     # ══════════════════════════════════════════════════════════════════════════
     if isinstance(log, AutomationLogger):
+        log._section = "Primary Assessment"
         log.info("Section 1: Primary Assessment")
         log.indent()
     else:
@@ -295,7 +297,7 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
     # Field 1: Primary Assessment dropdown → ALWAYS "Yes"
     try:
         sel = 'select[name="Is there any primary estimate"]'
-        await select_dropdown_with_delay(page, sel, "Yes", "Primary Assessment", log, field_delay_ms)
+        await select_dropdown_with_delay(page, sel, "Yes", "Primary Assessment", log, field_delay_ms, source="Calculated")
         await asyncio.sleep(1.5)  # Wait for conditional sections to appear
     except Exception as e:
         if isinstance(log, AutomationLogger):
@@ -308,6 +310,9 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
     # Field 2: Attach Assessment Excel
     assessment_path = data.assessment_files.get("assessment_excel", "")
     if assessment_path:
+        import os
+        if isinstance(log, AutomationLogger):
+            log.upload_start("Assessment Excel", os.path.basename(assessment_path))
         await upload_file_via_input(
             page,
             file_input_selector='input#chooseFilePrim',
@@ -338,72 +343,15 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
                 log(f"   ⚠️ Primary Assessment Excel upload failed: {str(ue)[:100]}")
     else:
         if isinstance(log, AutomationLogger):
-            log.warning("No Primary Assessment Excel found.")
+            log.field_skipped("Assessment Excel", reason="File not found in folder scan")
         else:
             log(f"   ⚠️ No assessment Excel file found in folder (expected: assessment.xlsx / primary_assessment.xlsx).")
 
     if stop_cb(): return False
 
-    # Field 3: Garage Bill dropdown → ALWAYS "Garage Bill" (COMMENTED OUT BY USER REQUEST)
-    # try:
-    #     sel = 'select#pDocTypeOCR'
-    #     await select_dropdown_with_delay(page, sel, "Garage Bill", "Bill Type Dropdown", log, field_delay_ms)
-    # except Exception as e:
-    #     if isinstance(log, AutomationLogger):
-    #         log.error(f"Bill Type dropdown error: {str(e)[:100]}")
-    #     else:
-    #         log(f"   ⚠️ Error selecting Garage Bill: {e}")
-    # 
-    # if stop_cb(): return False
-    # 
-    # # Field 4: Attach Garage Bill (Invoice)
-    # invoice_path = data.assessment_files.get("invoice", "")
-    # if invoice_path:
-    #     await upload_file_via_input(
-    #         page,
-    #         file_input_selector='input#priOcr',
-    #         file_path=invoice_path,
-    #         label="Garage Bill PDF",
-    #         log=log,
-    #     )
-    #     try:
-    #         pop_btn = page.locator("button[data-ng-click*=\"uploadToOcr\"][data-ng-click*=\"'P'\"]").first
-    #         await pop_btn.wait_for(state="visible", timeout=5000)
-    #         
-    #         # Wait for button to be enabled (Angular digest cycles)
-    #         for _ in range(12):
-    #             if not await pop_btn.is_disabled():
-    #                 break
-    #             await asyncio.sleep(0.5)
-    #             
-    #         if isinstance(log, AutomationLogger):
-    #             log.info("Clicking Populate Data button for Garage Bill...")
-    #         else:
-    #             log("   ℹ️ Clicking Populate Data button for Garage Bill...")
-    #         await pop_btn.click()
-    #         # Wait for OCR populate modal to appear and dismiss it (handles variable 5 to 15+ seconds wait time)
-    #         await dismiss_portal_popup(page, log, max_wait_s=25.0, context="Primary OCR")
-    #         await asyncio.sleep(1.0)
-    #         
-    #         if isinstance(log, AutomationLogger):
-    #             log.success("Garage Bill OCR Data Populated successfully.")
-    #         else:
-    #             log("   ✅ Garage Bill OCR Data Populated successfully.")
-    #     except Exception as pe:
-    #         if isinstance(log, AutomationLogger):
-    #             log.error(f"Garage Bill OCR populate failed: {str(pe)[:100]}")
-    #         else:
-    #             log(f"   ⚠️ Garage Bill OCR populate failed: {str(pe)[:100]}")
-    # else:
-    #     if isinstance(log, AutomationLogger):
-    #         log.warning("No Garage Bill PDF found.")
-    #     else:
-    #         log(f"   ⚠️ No invoice file found in folder (expected: invoice.pdf / final_invoice.pdf).")
-
-    if stop_cb(): return False
-
     if isinstance(log, AutomationLogger):
         log.outdent()
+        log._section = "Supplementary Assessment"
         log.info("Section 2: Supplementary Assessment")
         log.indent()
     else:
@@ -415,7 +363,7 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
 
     try:
         sel = 'select[name*="Is there any supplementary estimate"]'
-        await select_dropdown_with_delay(page, sel, supp_value, "Supplementary Estimate", log, field_delay_ms)
+        await select_dropdown_with_delay(page, sel, supp_value, "Supplementary Estimate", log, field_delay_ms, source="Calculated")
         await asyncio.sleep(1.5)
     except Exception as e:
         if isinstance(log, AutomationLogger):
@@ -429,6 +377,9 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
         # Attach Supplementary Estimate Excel
         estimate_path = data.assessment_files.get("estimate_excel", "")
         if estimate_path:
+            import os
+            if isinstance(log, AutomationLogger):
+                log.upload_start("Supp Estimate Excel", os.path.basename(estimate_path))
             await upload_file_via_input(
                 page,
                 file_input_selector='input#chooseFileSup',
@@ -459,35 +410,12 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
                     log(f"   ⚠️ Supp Assessment Excel upload failed: {str(ue)[:100]}")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("Estimate Excel missing for supplementary phase.")
+                log.field_skipped("Supp Estimate Excel", reason="Estimate Excel missing for supplementary phase")
             else:
                 log(f"   ⚠️ Supplementary Estimate set to Yes but no estimate Excel found.")
 
         if stop_cb(): return False
 
-        # Attach Supplementary Garage Bill (COMMENTED OUT BY USER REQUEST)
-        # estimate_inv_path = data.assessment_files.get("estimate_invoice", "")
-        # if estimate_inv_path:
-        #     sel = 'select#sDocTypeOCR'
-        #     await select_dropdown_with_delay(page, sel, "Garage Bill", "Supp Bill Type", log, field_delay_ms)
-        # 
-        #     await upload_file_via_input(
-        #         page,
-        #         file_input_selector='input#supOcr',
-        #         file_path=estimate_inv_path,
-        #         label="Supp Garage Bill",
-        #         log=log,
-        #     )
-        #     await dismiss_portal_popup(page, log, max_wait_s=2.0, context="Supp Garage Bill Attach")
-        #     if isinstance(log, AutomationLogger):
-        #         log.info("Supplementary Garage Bill attached; skipping Populate Data by design.")
-        #     else:
-        #         log("   ℹ️ Supplementary Garage Bill attached; skipping Populate Data.")
-        # else:
-        #     if isinstance(log, AutomationLogger):
-        #         log.info("No supplementary invoice found; skipping (Optional).")
-        #     else:
-        #         log(f"   ℹ️ No estimate invoice file found (optional). Skipping.")
     else:
         if isinstance(log, AutomationLogger):
             log.info("Supplementary estimate skipped.")
@@ -498,6 +426,7 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
 
     if isinstance(log, AutomationLogger):
         log.outdent()
+        log._section = "Painting Charges"
         log.info("Section 3: Painting Charges")
         log.indent()
     else:
@@ -529,12 +458,15 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
             else:
                 dropdown_val = raw_val
 
+            if isinstance(log, AutomationLogger):
+                log.field_mapped("Painting Work Details", "Excel Painting Details", raw_val)
+
             sel = 'select[name*="Painting work details"]'
-            await select_dropdown_with_delay(page, sel, dropdown_val, "Painting Work Details", log, field_delay_ms)
+            await select_dropdown_with_delay(page, sel, dropdown_val, "Painting Work Details", log, field_delay_ms, source="Excel")
             await asyncio.sleep(1.0)  # Wait for painting table to update
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("Painting details missing from data.")
+                log.field_skipped("Painting Work Details", reason="Missing from Excel")
             else:
                 log(f"   ⚠️ Painting Work Details not found in ClaimData. Skipping.")
     except Exception as e:
@@ -547,6 +479,7 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
 
     if isinstance(log, AutomationLogger):
         log.outdent()
+        log._section = "Delivery Order Details"
         log.info("Section 4: Delivery Order Details")
         log.indent()
     else:
@@ -558,10 +491,10 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
         val = str(getattr(data, 'net_salvage', '') or '').strip()
         if val and val != "0":
             sel = 'input#netSlavage'
-            await fill_input_with_delay(page, sel, val, "Net Salvage", log, field_delay_ms)
+            await fill_input_with_delay(page, sel, val, "Net Salvage", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.info("Net Salvage is 0 or empty; skipping.")
+                log.field_skipped("Net Salvage", reason="Missing from Excel" if not val else "Value is 0")
             else:
                 log(f"   ℹ️ Net Salvage = 0 or empty. Skipping.")
     except Exception as e:
@@ -595,10 +528,10 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
         val = str(getattr(data, 'less_other_deductions', '') or '').strip()
         if val and val != "0":
             sel = 'input#lessOtherDeductions'
-            await fill_input_with_delay(page, sel, val, "Other Deductions", log, field_delay_ms)
+            await fill_input_with_delay(page, sel, val, "Other Deductions", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.info("Other Deductions is 0 or empty; skipping.")
+                log.field_skipped("Other Deductions", reason="Missing from Excel" if not val else "Value is 0")
             else:
                 log(f"   ℹ️ Less Any Other Deductions = 0 or empty. Skipping.")
     except Exception as e:
@@ -620,10 +553,10 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
         val = str(getattr(data, 'towing_additional_charges', '') or '').strip()
         if val and val != "0":
             sel = 'input#towingCharges'
-            await fill_input_with_delay(page, sel, val, "Towing Charges", log, field_delay_ms)
+            await fill_input_with_delay(page, sel, val, "Towing Charges", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.info("Towing Charges is 0 or empty; skipping.")
+                log.field_skipped("Towing Charges", reason="Missing from Excel" if not val else "Value is 0")
             else:
                 log(f"   ℹ️ Towing Charges = 0 or empty. Skipping.")
     except Exception as e:
@@ -639,10 +572,10 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
         val = str(getattr(data, 'additional_towing_charges', '') or '').strip()
         if val and val != "0":
             sel = 'input#additionalTowingCharges'
-            await fill_input_with_delay(page, sel, val, "Addl Towing", log, field_delay_ms)
+            await fill_input_with_delay(page, sel, val, "Addl Towing", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.info("Additional Towing is 0 or empty; skipping.")
+                log.field_skipped("Addl Towing", reason="Missing from Excel" if not val else "Value is 0")
             else:
                 log(f"   ℹ️ Additional Towing Charges = 0 or empty. Skipping.")
     except Exception as e:
@@ -657,7 +590,7 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
     try:
         sel = 'select#whetherReinspectionRequired'
         reinspection_required = str(defaults.get("reinspection_required", "No") or "No")
-        await select_dropdown_with_delay(page, sel, reinspection_required, "Re-Inspection", log, field_delay_ms)
+        await select_dropdown_with_delay(page, sel, reinspection_required, "Re-Inspection", log, field_delay_ms, source="Default")
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Re-Inspection dropdown error: {str(e)[:100]}")
@@ -668,6 +601,7 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
 
     if isinstance(log, AutomationLogger):
         log.outdent()
+        log._section = "Add-On Cover Wise Assessment"
         log.info("Section 5: Add-On Cover Wise Assessment")
         log.indent()
     else:
@@ -691,20 +625,20 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
                     el = page.locator(selector).first
                     is_visible = await el.is_visible()
                     if is_visible:
-                        await fill_input_with_delay(page, selector, val.strip(), label, log, field_delay_ms)
+                        await fill_input_with_delay(page, selector, val.strip(), label, log, field_delay_ms, source="Excel")
                     else:
                         if isinstance(log, AutomationLogger):
-                            log.info(f"Field {label} not visible; skipping.")
+                            log.field_skipped(label, reason="Field not visible on page (add-on not applicable)")
                         else:
                             log(f"   ℹ️ [{label}] field not visible on page (add-on not applicable). Skipping.")
                 except Exception:
                     if isinstance(log, AutomationLogger):
-                        log.info(f"Field {label} not found; skipping.")
+                        log.field_skipped(label, reason="Field not found on page")
                     else:
                         log(f"   ℹ️ [{label}] field not found on page. Skipping.")
             else:
                 if isinstance(log, AutomationLogger):
-                    log.info(f"{label} is 0 or empty; skipping.")
+                    log.field_skipped(label, reason="Missing from Excel" if not val else "Value is 0")
                 else:
                     log(f"   ℹ️ [{label}] = 0 or empty. Skipping.")
         except Exception as e:

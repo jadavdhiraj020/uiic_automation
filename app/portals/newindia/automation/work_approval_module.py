@@ -92,6 +92,7 @@ async def fill_work_approval_details(
     if stop_cb(): return False
 
     if isinstance(log, AutomationLogger):
+        log._section = "Work Approval Details"
         log.info("Starting Work Approval Details phase...")
         log.indent()
     else:
@@ -116,6 +117,7 @@ async def _fill_work_approval_inner(
     if stop_cb(): return False
 
     if isinstance(log, AutomationLogger):
+        log._section = "Work Approval Details"
         log.info("Opening Work Approval Details section...")
     else:
         log("Opening Work Approval Details section...")
@@ -153,6 +155,7 @@ async def _fill_work_approval_inner(
         # Derive from payment context: Dealer → Cashless, otherwise Non-cashless
         payment_to_val = getattr(data, 'bank_payment_to', '') or ""
         approval_val = "Cashless approved" if "Dealer" in payment_to_val else "Non-cashless approved"
+        approval_source = "Calculated"
         if isinstance(log, AutomationLogger):
             log.info(f"Derived Approval Type from payment context: '{approval_val}'")
         else:
@@ -167,13 +170,14 @@ async def _fill_work_approval_inner(
         else:
             # Unrecognised value — pass through and let the JS substring matcher handle it
             approval_val = raw_approval
+        approval_source = "Excel"
         if isinstance(log, AutomationLogger):
             log.info(f"Normalised Approval Type: '{raw_approval}' → '{approval_val}'")
         else:
             log(f"  ℹ️ Normalised Approval Type: '{raw_approval}' → '{approval_val}'")
 
     try:
-        await select_dropdown_with_delay(page, 'select[name="Approval Type"]', approval_val, "Approval Type", log, field_delay_ms)
+        await select_dropdown_with_delay(page, 'select[name="Approval Type"]', approval_val, "Approval Type", log, field_delay_ms, source=approval_source)
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Approval Type dropdown error: {str(e)[:100]}")
@@ -191,12 +195,18 @@ async def _fill_work_approval_inner(
     
     if doc_path and os.path.exists(doc_path):
         try:
+            fname = os.path.basename(doc_path)
+            fsize = os.path.getsize(doc_path)
+            if isinstance(log, AutomationLogger):
+                log.document_mapped("Final Invoice", fname, "Matched Successfully")
+                log.upload_start("Final Invoice", fname, fsize)
+
             file_input = page.locator('input[id="workApprovalFile"][type="file"]')
             await file_input.set_input_files(doc_path)
             if isinstance(log, AutomationLogger):
-                log.upload_attached("Final Invoice", os.path.basename(doc_path))
+                log.upload_attached("Final Invoice", fname)
             else:
-                log(f"  ✅ Uploaded Final Invoice: {os.path.basename(doc_path)}")
+                log(f"  ✅ Uploaded Final Invoice: {fname}")
             await asyncio.sleep(1.0)
             
             uploaded_name = await page.locator('input[name="Work Approval Document"]').input_value()
@@ -217,7 +227,7 @@ async def _fill_work_approval_inner(
                 log(f"  ⚠️ Error uploading Final Invoice: {e}")
     else:
         if isinstance(log, AutomationLogger):
-            log.warning("No Final Invoice PDF document found; skipping.")
+            log.field_skipped("Final Invoice", reason="No matched PDF document found")
         else:
             log("  ⚠️ No Final Invoice PDF document found. Skipping upload.")
 
@@ -227,10 +237,10 @@ async def _fill_work_approval_inner(
     try:
         val = str(getattr(data, 'work_approval_date', '') or '').strip()
         if val:
-            await fill_input_with_delay(page, 'input[name="Work Approval Date"]', val, "Approval Date", log, field_delay_ms)
+            await fill_input_with_delay(page, 'input[name="Work Approval Date"]', val, "Approval Date", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("Work Approval Date missing; skipping.")
+                log.field_skipped("Approval Date", reason="Missing from Excel")
             else:
                 log("  ⚠️ Work Approval Date missing from data; skipping.")
     except Exception as e:
@@ -248,10 +258,10 @@ async def _fill_work_approval_inner(
             # Normalise to HH:MM format
             if len(val) >= 5 and ":" in val:
                 val = val[:5]
-            await fill_input_with_delay(page, 'input[name="Work Approval Time"]', val, "Approval Time", log, field_delay_ms)
+            await fill_input_with_delay(page, 'input[name="Work Approval Time"]', val, "Approval Time", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("Work Approval Time missing; skipping.")
+                log.field_skipped("Approval Time", reason="Missing from Excel")
             else:
                 log("  ⚠️ Work Approval Time missing from data; skipping.")
     except Exception as e:
@@ -305,7 +315,7 @@ async def _fill_work_approval_inner(
 
     # 6. Whether Vehicle Details are matching with policy (Always YES)
     try:
-        await select_dropdown_with_delay(page, 'select[name="Whether Vehicle Details are matching with policy ?"]', "Yes", "Matching Policy", log, field_delay_ms)
+        await select_dropdown_with_delay(page, 'select[name="Whether Vehicle Details are matching with policy ?"]', "Yes", "Matching Policy", log, field_delay_ms, source="Default")
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Policy Match dropdown error: {str(e)[:100]}")
@@ -318,10 +328,10 @@ async def _fill_work_approval_inner(
     try:
         val = str(getattr(data, 'cause_nature_of_accident', '') or '').strip()
         if val:
-            await fill_input_with_delay(page, 'textarea[name="Cause and Nature of Accident"]', val, "Nature of Accident", log, field_delay_ms)
+            await fill_input_with_delay(page, 'textarea[name="Cause and Nature of Accident"]', val, "Nature of Accident", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("Cause and Nature of Accident missing; skipping.")
+                log.field_skipped("Nature of Accident", reason="Missing from Excel")
             else:
                 log("  ⚠️ Cause and Nature of Accident missing from data; skipping.")
     except Exception as e:

@@ -33,6 +33,7 @@ async def navigate_to_claim(
     Returns Page on success, None on failure.
     """
     if isinstance(log, AutomationLogger):
+        log._section = "Navigation"
         log.info("Starting OIC Workspace navigation...")
         log.indent()
     else:

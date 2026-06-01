@@ -11,6 +11,7 @@ async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_
     if stop_cb(): return False
 
     if isinstance(log, AutomationLogger):
+        log._section = "Registration Certificate Details"
         log.info("Opening Registration Certificate Details section...")
         log.indent()
     else:
@@ -36,10 +37,10 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
             except Exception:
                 sel_to_use = 'input[data-ng-model="surveyorData.worklist.additionalDetails.refernceNo"]'
             
-            await fill_input_with_delay(page, sel_to_use, val, "Reference No", log, field_delay_ms)
+            await fill_input_with_delay(page, sel_to_use, val, "Reference No", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.info("Reference No missing; skipping.")
+                log.field_skipped("Reference No", reason="Missing from Excel")
             else:
                 log(f"   ℹ️ Reference No missing from Excel, skipping (Optional).")
     except Exception as e:
@@ -82,10 +83,10 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
     try:
         val = data.registered_owner_name
         if val:
-            await fill_input_with_delay(page, 'input[name="Registered Owner Name"]', val, "Owner Name", log, field_delay_ms)
+            await fill_input_with_delay(page, 'input[name="Registered Owner Name"]', val, "Owner Name", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("Owner Name is missing from source data.")
+                log.field_skipped("Owner Name", reason="Missing from Excel")
             else:
                 log(f"   ⚠️ Registered Owner Name missing from Excel.")
     except Exception as e:
@@ -109,11 +110,11 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
                     log.info(f"Filling Registration Number: {p1}-{p2}-{p3}-{p4}")
                 else:
                     log(f"Filling Registration Number: {p1}-{p2}-{p3}-{p4}")
-                await fill_input_with_delay(page, 'input[name="registrationNo1"]', p1, "Reg1", log, field_delay_ms)
-                await fill_input_with_delay(page, 'input[name="registrationNo2"]', p2, "Reg2", log, field_delay_ms)
+                await fill_input_with_delay(page, 'input[name="registrationNo1"]', p1, "Reg1", log, field_delay_ms, source="Excel")
+                await fill_input_with_delay(page, 'input[name="registrationNo2"]', p2, "Reg2", log, field_delay_ms, source="Excel")
                 if p3:
-                    await fill_input_with_delay(page, 'input[name="registrationNo3"]', p3, "Reg3", log, field_delay_ms)
-                await fill_input_with_delay(page, 'input[name="registrationNo4"]', p4, "Reg4", log, field_delay_ms)
+                    await fill_input_with_delay(page, 'input[name="registrationNo3"]', p3, "Reg3", log, field_delay_ms, source="Excel")
+                await fill_input_with_delay(page, 'input[name="registrationNo4"]', p4, "Reg4", log, field_delay_ms, source="Excel")
             else:
                 if isinstance(log, AutomationLogger):
                     log.warning(f"Registration format {reg_no} not supported for split-field automation.")
@@ -121,7 +122,7 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
                     log(f"   ⚠️ Regex failed to match standard format for {reg_no}. Automation skipping fields.")
         else:
             if isinstance(log, AutomationLogger):
-                log.info("Registration Number missing; skipping.")
+                log.field_skipped("Registration Number", reason="Missing from Excel")
             else:
                 log(f"   ℹ️ Vehicle Registration Number missing, skipping (Optional).")
     except Exception as e:
@@ -137,10 +138,10 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
         val = data.date_of_registration
         if val:
             formatted_date = format_date_ddmmyyyy(val)
-            await fill_input_with_delay(page, 'input[name="registrationDate"]', formatted_date, "Reg Date", log, field_delay_ms)
+            await fill_input_with_delay(page, 'input[name="registrationDate"]', formatted_date, "Reg Date", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.info("Registration Date missing; skipping.")
+                log.field_skipped("Reg Date", reason="Missing from Excel")
             else:
                 log(f"   ℹ️ Date of Registration missing, skipping (Optional).")
     except Exception as e:
@@ -155,10 +156,10 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
     try:
         val = data.engine_no
         if val:
-            await fill_input_with_delay(page, 'input[name="Engine no"]', val, "Engine No", log, field_delay_ms)
+            await fill_input_with_delay(page, 'input[name="Engine no"]', val, "Engine No", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("Engine Number is missing from source data.")
+                log.field_skipped("Engine No", reason="Missing from Excel")
             else:
                 log(f"   ⚠️ Engine Number missing from Excel.")
     except Exception as e:
@@ -173,10 +174,10 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
     try:
         val = data.chassis_no
         if val:
-            await fill_input_with_delay(page, 'input[name="Chassis no"]', val, "Chassis No", log, field_delay_ms)
+            await fill_input_with_delay(page, 'input[name="Chassis no"]', val, "Chassis No", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("Chassis Number is missing from source data.")
+                log.field_skipped("Chassis No", reason="Missing from Excel")
             else:
                 log(f"   ⚠️ Chassis Number missing from Excel.")
     except Exception as e:
@@ -203,7 +204,7 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
                 """)
                 await asyncio.sleep(field_delay_ms / 1000.0)
                 if isinstance(log, AutomationLogger):
-                    log.success("Physically Verified toggled to YES")
+                    log.field_filled("Physically Verified", "Y", source="Calculated")
                 else:
                     log(f"   ✅ Physically Verified set to YES")
     except Exception as e:
@@ -218,10 +219,10 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
     try:
         val = data.type_of_body
         if val:
-            await select_dropdown_with_delay(page, 'select[name="Type of Body"]', val, "Type of Body", log, field_delay_ms)
+            await select_dropdown_with_delay(page, 'select[name="Type of Body"]', val, "Type of Body", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("Type of Body missing from source data.")
+                log.field_skipped("Type of Body", reason="Missing from Excel")
             else:
                 log(f"   ⚠️ Type Of Body missing from Excel.")
     except Exception as e:
@@ -236,10 +237,10 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
     try:
         val = data.class_of_vehicle
         if val:
-            await fill_input_with_delay(page, 'input[name="Class of Vehicle"]', val, "Class of Vehicle", log, field_delay_ms)
+            await fill_input_with_delay(page, 'input[name="Class of Vehicle"]', val, "Class of Vehicle", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("Class of Vehicle missing from source data.")
+                log.field_skipped("Class of Vehicle", reason="Missing from Excel")
             else:
                 log(f"   ⚠️ Class of Vehicle missing from Excel.")
     except Exception as e:
@@ -254,10 +255,10 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
     try:
         val = data.pre_accident_condition
         if val:
-            await fill_input_with_delay(page, 'input[name="Pre-Accident Condition"]', val, "Condition", log, field_delay_ms)
+            await fill_input_with_delay(page, 'input[name="Pre-Accident Condition"]', val, "Condition", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("Pre-Accident Condition missing from source data.")
+                log.field_skipped("Condition", reason="Missing from Excel")
             else:
                 log(f"   ⚠️ Pre-Accident Condition missing from Excel.")
     except Exception as e:
@@ -272,10 +273,10 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
     try:
         val = data.route_area_of_operation
         if val:
-            await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.routeOfOprtn"]', val, "Route/Area", log, field_delay_ms)
+            await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.routeOfOprtn"]', val, "Route/Area", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.info("Route/Area missing; skipping.")
+                log.field_skipped("Route/Area", reason="Missing from Excel")
             else:
                 log(f"   ℹ️ Route/Area of Operation missing, skipping (Optional).")
     except Exception as e:
@@ -290,10 +291,10 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
     try:
         val = data.tax_paid_upto
         if val:
-            await fill_input_with_delay(page, 'input[name="taxPaidUpto"]', val, "Tax Paid Upto", log, field_delay_ms)
+            await fill_input_with_delay(page, 'input[name="taxPaidUpto"]', val, "Tax Paid Upto", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.info("Tax Paid Upto missing; skipping.")
+                log.field_skipped("Tax Paid Upto", reason="Missing from Excel")
             else:
                 log(f"   ℹ️ Tax Paid Upto missing, skipping (Optional).")
     except Exception as e:
@@ -308,10 +309,10 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
     try:
         val = data.rto_name
         if val:
-            await fill_input_with_delay(page, 'input[name="RTO Name"]', val, "RTO Name", log, field_delay_ms)
+            await fill_input_with_delay(page, 'input[name="RTO Name"]', val, "RTO Name", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("RTO Name missing from source data.")
+                log.field_skipped("RTO Name", reason="Missing from Excel")
             else:
                 log(f"   ⚠️ RTO Name missing from Excel.")
     except Exception as e:
@@ -327,10 +328,10 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
         val = data.transfer_date
         if val:
             formatted_date = format_date_ddmmyyyy(val)
-            await fill_input_with_delay(page, 'input[name="transferDate"]', formatted_date, "Transfer Date", log, field_delay_ms)
+            await fill_input_with_delay(page, 'input[name="transferDate"]', formatted_date, "Transfer Date", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.info("Transfer Date missing; skipping.")
+                log.field_skipped("Transfer Date", reason="Missing from Excel")
             else:
                 log(f"   ℹ️ Transfer Date missing, skipping (Optional).")
     except Exception as e:
@@ -347,7 +348,7 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
         if val:
             cleaned_val = re.sub(r'\D', '', str(val))
             if cleaned_val:
-                await fill_input_with_delay(page, 'input[name="Odometer Reading"]', cleaned_val, "Odometer Reading", log, field_delay_ms)
+                await fill_input_with_delay(page, 'input[name="Odometer Reading"]', cleaned_val, "Odometer Reading", log, field_delay_ms, source="Excel")
             else:
                 if isinstance(log, AutomationLogger):
                     log.warning(f"Odometer value '{val}' contained no digits.")
@@ -355,7 +356,7 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
                     log(f"   ⚠️ Odometer value '{val}' contained no digits. Skipping.")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("Odometer Reading missing from source data.")
+                log.field_skipped("Odometer Reading", reason="Missing from Excel")
             else:
                 log(f"   ⚠️ Odometer Reading missing from Excel.")
     except Exception as e:
@@ -370,10 +371,10 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
     try:
         val = data.vehicle_color
         if val:
-            await fill_input_with_delay(page, 'input[name="Vehicle Color"]', val, "Color", log, field_delay_ms)
+            await fill_input_with_delay(page, 'input[name="Vehicle Color"]', val, "Color", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("Vehicle Color missing from source data.")
+                log.field_skipped("Color", reason="Missing from Excel")
             else:
                 log(f"   ⚠️ Vehicle Color missing from Excel.")
     except Exception as e:
@@ -388,10 +389,10 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
     try:
         val = data.vehicle_color_type
         if val:
-            await fill_input_with_delay(page, 'input[name="Vehicle Color Type"]', val, "Color Type", log, field_delay_ms)
+            await fill_input_with_delay(page, 'input[name="Vehicle Color Type"]', val, "Color Type", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("Color Type missing from source data.")
+                log.field_skipped("Color Type", reason="Missing from Excel")
             else:
                 log(f"   ⚠️ Vehicle Color Type missing from Excel.")
     except Exception as e:
@@ -423,10 +424,10 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
                 except Exception:
                     sel_to_use = _veh_sel 
 
-            await select_dropdown_with_delay(page, sel_to_use, val, "Type of Vehicle", log, field_delay_ms)
+            await select_dropdown_with_delay(page, sel_to_use, val, "Type of Vehicle", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("Type of Vehicle missing from source data.")
+                log.field_skipped("Type of Vehicle", reason="Missing from Excel")
             else:
                 log(f"   ⚠️ Type Of Vehicle missing from Excel.")
     except Exception as e:
@@ -458,10 +459,10 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
                 except Exception:
                     sel_to_use = _fuel_sel
 
-            await select_dropdown_with_delay(page, sel_to_use, val, "Type of Fuel", log, field_delay_ms)
+            await select_dropdown_with_delay(page, sel_to_use, val, "Type of Fuel", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("Type of Fuel missing from source data.")
+                log.field_skipped("Type of Fuel", reason="Missing from Excel")
             else:
                 log(f"   ⚠️ Type Of Fuel missing from Excel.")
     except Exception as e:

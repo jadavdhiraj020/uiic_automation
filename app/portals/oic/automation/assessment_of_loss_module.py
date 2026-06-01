@@ -119,6 +119,7 @@ async def fill_assessment_of_loss(
 
 
 async def _fill_invoice_section(page: Page, claim, defaults, log: AutomationLogger, delay: int):
+    log._section = "Invoice Details"
     log.info("▸ Filling Invoice Section")
     
     # 1. Invoice Number (Optional)
@@ -338,6 +339,7 @@ async def _type_in_inputnumber_field(
 
 
 async def _fill_invoice_items(page: Page, claim, defaults: dict, log: AutomationLogger, delay: int) -> None:
+    log._section = "Invoice Items"
     """Fill all invoice items from the OIC assessment Excel (Spare Parts + Labour Charges).
 
     Steps:
@@ -1220,6 +1222,7 @@ async def _ensure_compulsory_excess_and_fill(page: Page, amount_val: str, log: A
 
 
 async def _fill_excess_section(page: Page, claim, defaults, log: AutomationLogger, delay: int):
+    log._section = "Excess Details"
     log.info("▸ Filling Excess Section")
 
     try:
@@ -1284,6 +1287,7 @@ async def _add_and_fill_excess(page: Page, excess_type: str, amount_val: str, lo
 
 
 async def _fill_salvage_section(page: Page, claim, defaults, log: AutomationLogger, delay: int):
+    log._section = "Salvage Details"
     log.info("▸ Filling Salvage Charges Section")
     salvage_amt = getattr(claim, "salvage_amount", "0")
     if (not salvage_amt or salvage_amt == "0") and getattr(claim, "salvage_value", "0") != "0":
@@ -1293,6 +1297,7 @@ async def _fill_salvage_section(page: Page, claim, defaults, log: AutomationLogg
 
 
 async def _fill_survey_charges(page: Page, claim, defaults, log: AutomationLogger, delay: int) -> bool:
+    log._section = "Survey Charges"
     log.info("▸ Filling Survey Charges Section")
 
     # 1. Is Survey GST Applicable (always choose NO)
@@ -1429,6 +1434,7 @@ async def _fill_recommendation_declaration(
     delay: int,
     expenses_filled: bool,
 ):
+    log._section = "Recommendation & Declaration"
     log.info("▸ Filling Final Recommendation & Declaration")
 
     # 1. Final Recommendation (text, default agree)

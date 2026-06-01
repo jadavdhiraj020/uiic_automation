@@ -110,6 +110,7 @@ async def fill_interim_report(
 
 
 async def _fill_survey_details(page, claim, defaults, log, delay):
+    log._section = "Survey Details"
     """Fill the Survey Details subsection.
 
     Fields:
@@ -174,6 +175,7 @@ async def _fill_survey_details(page, claim, defaults, log, delay):
 
 
 async def _fill_documentation_verification(page, claim, defaults, log, delay):
+    log._section = "Documentation Verification"
     """Fill the Documentation Verification subsection.
 
     Fields:
@@ -227,6 +229,7 @@ async def _fill_documentation_verification(page, claim, defaults, log, delay):
 
 
 async def _fill_claim_assessment_contact(page, claim, defaults, log, delay):
+    log._section = "Claim Assessment & Contact"
     """Fill the Claim Assessment and Contact Information subsection.
 
     Fields:

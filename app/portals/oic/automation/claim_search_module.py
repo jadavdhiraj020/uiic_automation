@@ -74,6 +74,7 @@ async def fill_claim_search(
 
     msg = f"Initializing Generate Assessment search for claim {claim.claim_no}..."
     if isinstance(log, AutomationLogger):
+        log._section = "Claim Search"
         log.info(msg)
         log.indent()
     else:

@@ -343,6 +343,7 @@ async def fill_document_upload_section(
     if stop_cb(): return False
 
     if isinstance(log, AutomationLogger):
+        log._section = "Document Upload"
         log.info("Starting Document Upload Section phase...")
         log.indent()
     else:
@@ -401,9 +402,11 @@ async def fill_document_upload_section(
         file_path = data.upload_doc_files.get(doc_key, "")
         if file_path and os.path.isfile(file_path):
             active_docs.append((doc_key, dropdown_text, label, file_path))
+            if isinstance(log, AutomationLogger):
+                log.document_mapped(label, os.path.basename(file_path), "Matched Successfully")
         else:
             if isinstance(log, AutomationLogger):
-                log.info(f"Skipping '{label}' (File not found).")
+                log.field_skipped(label, reason="File not found in folder scan")
             else:
                 log(f"[{_ts()}]   ℹ️ No '{label}' file found in folder. Skipping.")
 
@@ -442,7 +445,7 @@ async def fill_document_upload_section(
         try:
             await select_dropdown_with_delay(
                 page, dropdown_sel, dropdown_text,
-                f"Row {current_row} Type", log, field_delay_ms
+                label, log, field_delay_ms, source="Calculated"
             )
             await asyncio.sleep(0.5)
         except Exception as e:
@@ -459,11 +462,14 @@ async def fill_document_upload_section(
         # 1.5 MB (compression happens at scan time in folder_scanner.py)
         file_input_sel = f'input#mandatoryFiles{current_row}'
         try:
+            if isinstance(log, AutomationLogger):
+                log.upload_start(label, os.path.basename(file_path))
+            
             success = await upload_file_via_input(
                 page,
                 file_input_selector=file_input_sel,
                 file_path=file_path,
-                label=f"Row {current_row} File",
+                label=label,
                 log=log,
             )
             if success:
@@ -552,6 +558,10 @@ async def fill_document_upload_section(
                 timestamp = time.strftime("%Y%m%d_%H%M%S")
                 output_path = os.path.join(folder_path, f"claim_others_documents_{timestamp}.pdf")
                 precomputed_pdf = PdfMergeService.merge(remaining, output_path, config, log=log)
+                if precomputed_pdf and os.path.isfile(precomputed_pdf):
+                    mb = os.path.getsize(precomputed_pdf) / (1024 * 1024)
+                    if isinstance(log, AutomationLogger):
+                        log.document_mapped("Claim Related Documents", Path(precomputed_pdf).name, f"Matched Successfully (Runtime merged fallback, {len(remaining)} files, {mb:.1f}MB)")
 
     if precomputed_pdf and os.path.isfile(precomputed_pdf):
         merged_path = precomputed_pdf
@@ -559,16 +569,14 @@ async def fill_document_upload_section(
         n = len(precomputed) if precomputed else "?"
         mb = os.path.getsize(merged_path) / (1024 * 1024)
         if isinstance(log, AutomationLogger):
+            log.document_mapped("Claim Related Documents", Path(merged_path).name, f"Matched Successfully (Pre-merged, {n} files, {mb:.1f}MB)")
             log.success(f"Using pre-merged PDF: {Path(merged_path).name} ({n} source file(s), {mb:.1f}MB)")
         else:
             log(f"[{_ts()}]     ✅ Using pre-merged: {Path(merged_path).name} ({n} source file(s), {mb:.1f}MB)")
     else:
         merged_path = None
         if isinstance(log, AutomationLogger):
-            log.warning(
-                "No pre-merged PDF available. Claim Related Documents will not be uploaded. "
-                "Ensure folder scan completes before automation starts."
-            )
+            log.field_skipped("Claim Related Documents", reason="No merged PDF available")
         else:
             log(f"[{_ts()}]     ⚠️ No pre-merged PDF available. Skipping Claim Related Documents.")
 
@@ -596,7 +604,7 @@ async def fill_document_upload_section(
         try:
             await select_dropdown_with_delay(
                 page, dropdown_sel, "Claim Related Documents",
-                f"Row {current_row} Type", log, field_delay_ms
+                "Claim Related Documents", log, field_delay_ms, source="Calculated"
             )
             await asyncio.sleep(0.5)
         except Exception as e:
@@ -608,11 +616,14 @@ async def fill_document_upload_section(
         # Attach merged PDF
         file_input_sel = f'input#mandatoryFiles{current_row}'
         try:
+            if isinstance(log, AutomationLogger):
+                log.upload_start("Claim Related Documents", os.path.basename(merged_path))
+            
             success = await upload_file_via_input(
                 page,
                 file_input_selector=file_input_sel,
                 file_path=merged_path,
-                label=f"Row {current_row} Merged File",
+                label="Claim Related Documents",
                 log=log,
             )
             if success:

@@ -165,6 +165,7 @@ async def fill_basic_details(
 
 async def _fill_vehicle_details(page: Page, claim, log, delay: int):
     """Fill Vehicle Details subsection fields — all 24 fields."""
+    log._section = "Vehicle Details"
 
     # Row 1 ─────────────────────────────────────────────────────────────────
 
@@ -368,6 +369,7 @@ async def _fill_vehicle_details(page: Page, claim, log, delay: int):
 
 async def _fill_loss_details(page: Page, claim, log, delay: int):
     """Fill Loss Details subsection: 3 radios + optional text."""
+    log._section = "Loss Details"
 
     # 1. Close Proximity (Accident date vs Allotment date > 10 days → YES)
     proximity = _resolve_loss_proximity(claim.date_of_accident, claim.date_of_allotment)
@@ -410,6 +412,7 @@ async def _fill_loss_details(page: Page, claim, log, delay: int):
 
 async def _fill_surveyor_details(page: Page, claim, log, delay: int):
     """Fill Surveyor Details subsection if fields are editable."""
+    log._section = "Surveyor Details"
     
     # 1. Surveyor Name
     if claim.surveyor_name:
@@ -486,6 +489,7 @@ async def _is_field_editable(page: Page, selector: str) -> bool:
 
 async def _fill_driver_details(page: Page, claim, log, delay: int, automation_defaults: dict | None = None):
     """Fill Driver Details subsection — all 19 fields."""
+    log._section = "Driver Details"
 
     # Row 1 ─────────────────────────────────────────────────────────────────
 
@@ -687,6 +691,7 @@ async def _fill_driver_details(page: Page, claim, log, delay: int, automation_de
 
 async def _fill_workshop_details(page: Page, claim, log, delay: int):
     """Fill Workshop Details subsection."""
+    log._section = "Workshop Details"
 
     # 1. Workshop Name
     if claim.workshop_name:

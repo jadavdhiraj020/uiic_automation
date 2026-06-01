@@ -4,7 +4,6 @@ import time
 import os
 import threading
 from contextlib import suppress
-from datetime import datetime
 from typing import Callable, List, Optional
 
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
@@ -13,9 +12,8 @@ from app.automation.automation_logger import AutomationLogger
 from app.automation.claim_assessment import fill_claim_assessment
 from app.automation.claim_documents import fill_claim_documents
 from app.automation.interim_report import fill_interim_report
-from app.automation.selectors import TABS, TAB_SEL
+from app.automation.navigation_module import WORKLIST_URL
 from app.data.data_model import ClaimData
-from app.portals.registry import get_portal
 
 
 logger = logging.getLogger(__name__)
@@ -23,7 +21,9 @@ logger = logging.getLogger(__name__)
 DEFERRED_OCR_TIMEOUT_SECONDS = 180.0
 
 
-def _setting_int(settings: dict, primary_key: str, legacy_key: str, default: int) -> int:
+def _setting_int(
+    settings: dict, primary_key: str, legacy_key: str, default: int
+) -> int:
     value = settings.get(primary_key)
     if value in (None, ""):
         value = settings.get(legacy_key, default)
@@ -99,11 +99,11 @@ async def _page_has_login_form(page: Page, portal_id: str = "uiic") -> bool:
 
 async def _get_active_page(
     context: BrowserContext,
-    log = None,
+    log=None,
     captured_pages: List[Page] = None,
     stop_cb: Callable[[], bool] = lambda: False,
     portal_id: str = "uiic",
-    log_cb = None,   # backwards-compat alias for log
+    log_cb=None,  # backwards-compat alias for log
 ) -> Optional[Page]:
     """
     Establish which page to work on after login.
@@ -123,16 +123,17 @@ async def _get_active_page(
 
     # UIIC specific logic: wait for the Surveyor tab
     start_t = time.time()
-    
+
     if isinstance(log, AutomationLogger):
         log.wait("Locating dashboard/worklist page...")
         log.indent()
     else:
         log("Locating dashboard/worklist page...")
-        
+
     while time.time() - start_t < 25:
         if stop_cb():
-            if isinstance(log, AutomationLogger): log.outdent()
+            if isinstance(log, AutomationLogger):
+                log.outdent()
             return None
 
         pages = context.pages
@@ -154,7 +155,8 @@ async def _get_active_page(
         # Short-circuit: if all open pages are on the login URL, skip the 15s wait
         all_on_login_url = bool(pages) and all(
             "home.jsp" in p.url.lower() or p.url in ("about:blank", "")
-            for p in pages if not p.is_closed()
+            for p in pages
+            if not p.is_closed()
         )
 
         if elapsed > 10 and int(elapsed) % 5 == 0 and not all_on_login_url:
@@ -165,13 +167,16 @@ async def _get_active_page(
 
         # Attempt direct navigation if tab doesn't open OR all pages still on login
         if elapsed > 15 or all_on_login_url:
-            if isinstance(log, AutomationLogger): log.outdent()
+            if isinstance(log, AutomationLogger):
+                log.outdent()
             for attempt in range(1, 4):
                 try:
                     if isinstance(log, AutomationLogger):
                         log.wait(f"Direct navigation attempt {attempt}/3...")
                     else:
-                        log(f"Opening authenticated Worklist page (attempt {attempt}/3)...")
+                        log(
+                            f"Opening authenticated Worklist page (attempt {attempt}/3)..."
+                        )
                     new_page = await context.new_page()
                     await new_page.goto(WORKLIST_URL, timeout=20000)
                     await asyncio.sleep(0.5)
@@ -183,7 +188,9 @@ async def _get_active_page(
                         if isinstance(log, AutomationLogger):
                             log.warning("Session not settled; retrying...")
                         else:
-                            log("Login form is still visible after direct navigation; waiting for session to settle.")
+                            log(
+                                "Login form is still visible after direct navigation; waiting for session to settle."
+                            )
                         await asyncio.sleep(2)
                         continue
 
@@ -206,7 +213,8 @@ async def _get_active_page(
     pages = context.pages
     if pages:
         page = _pick_best_page(pages, log)
-        if isinstance(log, AutomationLogger): log.outdent()
+        if isinstance(log, AutomationLogger):
+            log.outdent()
         return page
 
     if isinstance(log, AutomationLogger):
@@ -227,16 +235,29 @@ class AutomationEngine:
         self.portal_id = portal_id
         self.log_cb = log_cb
         self.step_cb = step_cb
-        self._stop_requested = False
+        self._stop_event = threading.Event()
         self.log = AutomationLogger("ENGINE", self.log_cb, portal_id=self.portal_id)
+
+    @property
+    def _stop_requested(self) -> bool:
+        """Thread-safe backward compatible getter for stop signal state."""
+        return self._stop_event.is_set()
+
+    @_stop_requested.setter
+    def _stop_requested(self, value: bool):
+        """Thread-safe backward compatible setter for stop signal state."""
+        if value:
+            self._stop_event.set()
+        else:
+            self._stop_event.clear()
 
     def request_stop(self):
         """Set a flag to stop automation at the next check point."""
-        self._stop_requested = True
+        self._stop_event.set()
 
     def _check_stop(self) -> bool:
         """Internal callback passed to modules."""
-        if self._stop_requested:
+        if self._stop_event.is_set():
             self.log_cb("⛔ Stop requested. Closing automation safely...")
             return True
         return False
@@ -258,7 +279,9 @@ class AutomationEngine:
                 if hasattr(claim, "_excel_coords"):
                     claim._excel_coords[field] = source
                 if hasattr(claim, "_excel_logs"):
-                    claim._excel_logs.append(f"  📊 {field}: '{value}' (Source: {source})")
+                    claim._excel_logs.append(
+                        f"  📊 {field}: '{value}' (Source: {source})"
+                    )
 
         def _set_claim_field(field: str, value: str, source: str) -> None:
             if not value:
@@ -289,15 +312,22 @@ class AutomationEngine:
             setattr(claim, f"_deferred_{kind}_ocr_thread", thread)
             thread.start()
 
-        if getattr(claim, "_pending_invoice_ocr", False) and getattr(claim, "_pending_invoice_pdf_path", None):
+        if getattr(claim, "_pending_invoice_ocr", False) and getattr(
+            claim, "_pending_invoice_pdf_path", None
+        ):
+
             def _invoice_job() -> None:
                 self.log.info("Deferred Workshop Invoice OCR started in background.")
                 try:
                     from app.ui.services.claim_folder_service import ClaimFolderService
                     from app.utils import resource_path
 
-                    config_dir = resource_path("app", "portals", self.portal_id, "config")
-                    service = ClaimFolderService(config_dir=config_dir, portal_id=self.portal_id)
+                    config_dir = resource_path(
+                        "app", "portals", self.portal_id, "config"
+                    )
+                    service = ClaimFolderService(
+                        config_dir=config_dir, portal_id=self.portal_id
+                    )
 
                     class MockScanResult:
                         def __init__(self, invoice_path: str):
@@ -306,12 +336,17 @@ class AutomationEngine:
                     ocr_logs: List[str] = []
                     mock_scan = MockScanResult(claim._pending_invoice_pdf_path)
                     from copy import copy
+
                     with claim_lock:
                         ocr_claim = copy(claim)
-                        ocr_claim._excel_coords = dict(getattr(claim, "_excel_coords", {}) or {})
+                        ocr_claim._excel_coords = dict(
+                            getattr(claim, "_excel_coords", {}) or {}
+                        )
                         ocr_claim._excel_logs = []
 
-                    service._extract_pdf_invoice_data(mock_scan, ocr_claim, ocr_logs, stop_cb=self._check_stop)
+                    service._extract_pdf_invoice_data(
+                        mock_scan, ocr_claim, ocr_logs, stop_cb=self._check_stop
+                    )
 
                     with claim_lock:
                         for attr in (
@@ -324,15 +359,20 @@ class AutomationEngine:
                             if value:
                                 setattr(claim, attr, value)
                         if hasattr(claim, "_excel_coords"):
-                            claim._excel_coords.update(getattr(ocr_claim, "_excel_coords", {}) or {})
+                            claim._excel_coords.update(
+                                getattr(ocr_claim, "_excel_coords", {}) or {}
+                            )
                         if hasattr(claim, "_excel_logs"):
-                            claim._excel_logs.extend(getattr(ocr_claim, "_excel_logs", []) or [])
+                            claim._excel_logs.extend(
+                                getattr(ocr_claim, "_excel_logs", []) or []
+                            )
 
                     for line in ocr_logs:
                         self.log_cb(f"[Background OCR] {line.strip()}")
 
                     missing = [
-                        label for label, attr in (
+                        label
+                        for label, attr in (
                             ("invoice number", "vendor_invoice_number"),
                             ("invoice date", "vendor_invoice_date"),
                         )
@@ -353,11 +393,16 @@ class AutomationEngine:
 
             _start_job("invoice", _invoice_job)
 
-        if getattr(claim, "_pending_cheque_ocr", False) and getattr(claim, "_pending_cheque_path", None):
+        if getattr(claim, "_pending_cheque_ocr", False) and getattr(
+            claim, "_pending_cheque_path", None
+        ):
+
             def _cheque_job() -> None:
                 self.log.info("Deferred Cheque OCR started in background.")
                 try:
-                    from app.portals.newindia.automation.ocr_helper import ChequeExtractor
+                    from app.portals.newindia.automation.ocr_helper import (
+                        ChequeExtractor,
+                    )
 
                     extractor = ChequeExtractor(claim._pending_cheque_path)
                     ocr_logs: List[str] = []
@@ -375,27 +420,44 @@ class AutomationEngine:
                     )
 
                     if cheque_details.get("ifsc"):
-                        _set_claim_field("ifsc_code", cheque_details["ifsc"], "Cheque OCR")
-                        self.log_cb(f"  ✅ [Background OCR] IFSC Code: {cheque_details['ifsc']}")
+                        _set_claim_field(
+                            "ifsc_code", cheque_details["ifsc"], "Cheque OCR"
+                        )
+                        self.log_cb(
+                            f"  ✅ [Background OCR] IFSC Code: {cheque_details['ifsc']}"
+                        )
                     if cheque_details.get("account_number"):
-                        _set_claim_field("account_number", cheque_details["account_number"], "Cheque OCR")
-                        self.log_cb(f"  ✅ [Background OCR] Account Number: {cheque_details['account_number']}")
+                        _set_claim_field(
+                            "account_number",
+                            cheque_details["account_number"],
+                            "Cheque OCR",
+                        )
+                        self.log_cb(
+                            f"  ✅ [Background OCR] Account Number: {cheque_details['account_number']}"
+                        )
                     if cheque_details.get("account_type"):
-                        _set_claim_field("account_type", cheque_details["account_type"], "Cheque OCR")
-                        self.log_cb(f"  ✅ [Background OCR] Account Type: {cheque_details['account_type']}")
+                        _set_claim_field(
+                            "account_type", cheque_details["account_type"], "Cheque OCR"
+                        )
+                        self.log_cb(
+                            f"  ✅ [Background OCR] Account Type: {cheque_details['account_type']}"
+                        )
 
                     for line in ocr_logs:
                         self.log_cb(f"[Background OCR] {line}")
 
                     missing = [
-                        label for label, attr in (
+                        label
+                        for label, attr in (
                             ("IFSC code", "ifsc_code"),
                             ("account number", "account_number"),
                         )
                         if not str(getattr(claim, attr, "") or "").strip()
                     ]
                     if missing:
-                        message = f"Cheque OCR finished but missing: {', '.join(missing)}"
+                        message = (
+                            f"Cheque OCR finished but missing: {', '.join(missing)}"
+                        )
                         _set_claim_status("_deferred_cheque_ocr_error", message)
                         self.log.warning(message)
                     else:
@@ -433,19 +495,27 @@ class AutomationEngine:
                     return False
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    self.log.error(f"Deferred {label} OCR timed out after {int(timeout_s)} seconds.")
+                    self.log.error(
+                        f"Deferred {label} OCR timed out after {int(timeout_s)} seconds."
+                    )
                     return False
                 if time.monotonic() >= next_progress_log:
-                    self.log.info(f"Still waiting for deferred {label} OCR ({int(remaining)}s left).")
+                    self.log.info(
+                        f"Still waiting for deferred {label} OCR ({int(remaining)}s left)."
+                    )
                     next_progress_log = time.monotonic() + 30.0
                 await asyncio.sleep(0.5)
 
         missing = [
-            label_name for label_name, attr in required_fields
+            label_name
+            for label_name, attr in required_fields
             if not str(getattr(claim, attr, "") or "").strip()
         ]
         if missing:
-            detail = getattr(claim, f"_deferred_{kind}_ocr_error", "") or "OCR produced no usable value."
+            detail = (
+                getattr(claim, f"_deferred_{kind}_ocr_error", "")
+                or "OCR produced no usable value."
+            )
             self.log.warning(
                 f"Deferred {label} OCR did not resolve: {', '.join(missing)}. "
                 f"{detail} Continuing with Excel/manual-entry fallback."
@@ -478,28 +548,53 @@ class AutomationEngine:
                 break
             await asyncio.sleep(1)
 
-    async def run_automation(self, claim: ClaimData, settings: Optional[dict] = None) -> AutomationRunResult:
+    async def run_automation(
+        self, claim: ClaimData, settings: Optional[dict] = None
+    ) -> AutomationRunResult:
         """Main entry point for claim automation."""
         if settings is None:
             settings = {}
         self._stop_requested = False
-        
+
         # Determine steps based on portal
         if self.portal_id == "newindia":
             steps = [
-                "Login", "Navigate", "Quick Update", "Photo Graph", "RC Details",
-                "Driver Details", "FIR Details", "NEFT Details", "Work Approval",
-                "Claim Assessment", "Document Upload", "Survey Fee Bill"
+                "Login",
+                "Navigate",
+                "Quick Update",
+                "Photo Graph",
+                "RC Details",
+                "Driver Details",
+                "FIR Details",
+                "NEFT Details",
+                "Work Approval",
+                "Claim Assessment",
+                "Document Upload",
+                "Survey Fee Bill",
             ]
         elif self.portal_id == "oic":
-            steps = ["Login", "Navigate", "Claim Search", "Basic Details", "Interim Report", "Assessment of Loss", "Document Upload"]
+            steps = [
+                "Login",
+                "Navigate",
+                "Claim Search",
+                "Basic Details",
+                "Interim Report",
+                "Assessment of Loss",
+                "Document Upload",
+            ]
         else:
-            steps = ["Login", "Navigate", "Interim Report", "Claim Documents", "Claim Assessment"]
+            steps = [
+                "Login",
+                "Navigate",
+                "Interim Report",
+                "Claim Documents",
+                "Claim Assessment",
+            ]
 
         # No pre-run validation hard abort for OIC. Errors will be shown in the UI but the engine will proceed and launch the browser.
 
         field_delay = _setting_int(settings, "field_wait_ms", "field_delay_ms", 400)
-        
+
         async with async_playwright() as p:
             # 1. Launch Browser
             browser_type = p.chromium
@@ -510,7 +605,7 @@ class AutomationEngine:
             browser = await browser_type.launch(
                 headless=_setting_bool(settings, "browser_headless", False),
                 args=launch_args,
-                slow_mo=_setting_int(settings, "browser_slow_mo_ms", "slow_mo_ms", 0)
+                slow_mo=_setting_int(settings, "browser_slow_mo_ms", "slow_mo_ms", 0),
             )
 
             # Create context without viewport to allow --start-maximized to work
@@ -520,7 +615,7 @@ class AutomationEngine:
             # --- CIRCUIT BREAKER MONITOR ---
             health_state = {
                 "empty_pages_since": None,
-                "authenticated_page_ready": False
+                "authenticated_page_ready": False,
             }
 
             async def _monitor_health():
@@ -545,18 +640,26 @@ class AutomationEngine:
                             # login→Surveyor.html tab transition doesn't
                             # trigger a false abort on slow machines.
                             # Pre-auth grace stays at 10 s.
-                            grace_seconds = 8.0 if health_state["authenticated_page_ready"] else 10.0
+                            grace_seconds = (
+                                8.0
+                                if health_state["authenticated_page_ready"]
+                                else 10.0
+                            )
                             if now - health_state["empty_pages_since"] >= grace_seconds:
-                                self.log.error("CIRCUIT BREAKER: All pages were closed. Aborting run.")
+                                self.log.error(
+                                    "CIRCUIT BREAKER: All pages were closed. Aborting run."
+                                )
                                 self.request_stop()
                                 break
                             await asyncio.sleep(0.5)
                             continue
                         health_state["empty_pages_since"] = None
-                            
+
                         active = alive[-1]
                         if active.url.startswith("chrome-error://"):
-                            self.log.error("CIRCUIT BREAKER: Network disconnected or 502/504 error. Aborting run.")
+                            self.log.error(
+                                "CIRCUIT BREAKER: Network disconnected or 502/504 error. Aborting run."
+                            )
                             self.request_stop()
                             break
                     except Exception:
@@ -566,14 +669,119 @@ class AutomationEngine:
             health_task = asyncio.create_task(_monitor_health())
 
             try:
-                t_start = time.time()
+                # Dynamically set the claim context on the logger for structured JSON logs
+                log_path = getattr(claim, "_scan_log_file", None)
+                self.log.set_claim_context(
+                    claim.claim_no, self.portal_id, log_file_path=log_path
+                )
+                if hasattr(claim, "correlation_id") and claim.correlation_id:
+                    self.log.correlation_id = claim.correlation_id
+                if hasattr(claim, "_scan_logs") and claim._scan_logs:
+                    self.log.write_historical_logs(claim._scan_logs)
+
+                # Path resolution and settings loading logs for UIIC/NIA/OIC
+                from app.utils import (
+                    is_frozen,
+                    get_base_dir,
+                    get_exe_dir,
+                    settings_paths,
+                    field_mapping_paths,
+                    doc_mapping_paths,
+                    automation_defaults_paths,
+                )
+
+                self.log.raw(
+                    f"[{self.log._portal_tag}][Runtime]\nLoading Portal Config"
+                )
+                self.log.raw(
+                    f"[{self.log._portal_tag}][Runtime]\nPackaged Runtime: {'Frozen (EXE)' if is_frozen() else 'Source (Python)'}"
+                )
+                self.log.raw(
+                    f"[{self.log._portal_tag}][Runtime]\nBase Directory: {get_base_dir()}"
+                )
+                self.log.raw(
+                    f"[{self.log._portal_tag}][Runtime]\nExe Directory: {get_exe_dir()}"
+                )
+
+                # Settings
+                s_paths = settings_paths(self.portal_id)
+                self.log.raw(
+                    f"[{self.log._portal_tag}][Runtime]\nSettings Config Discovery:\n  • Bundled (Read-Only): {s_paths['default']}\n  • User (Writable):     {s_paths['user']}"
+                )
+                if os.path.exists(s_paths["user"]):
+                    self.log.raw(
+                        f"[{self.log._portal_tag}][Configuration]\nSettings Loaded (User Override Active)"
+                    )
+                else:
+                    self.log.raw(
+                        f"[{self.log._portal_tag}][Configuration]\nSettings Loaded (Using Bundled Defaults)"
+                    )
+
+                # Field mapping
+                fm_paths = field_mapping_paths(self.portal_id)
+                self.log.raw(
+                    f"[{self.log._portal_tag}][Runtime]\nField Mapping Discovery:\n  • Bundled (Read-Only): {fm_paths['default']}\n  • User (Writable):     {fm_paths['user']}"
+                )
+                if os.path.exists(fm_paths["user"]):
+                    self.log.raw(
+                        f"[{self.log._portal_tag}][Configuration]\nField Mapping Loaded (User Override Active)"
+                    )
+                else:
+                    self.log.raw(
+                        f"[{self.log._portal_tag}][Configuration]\nField Mapping Loaded (Using Bundled Defaults)"
+                    )
+
+                # Document mapping
+                dm_paths = doc_mapping_paths(self.portal_id)
+                self.log.raw(
+                    f"[{self.log._portal_tag}][Runtime]\nDocument Mapping Discovery:\n  • Bundled (Read-Only): {dm_paths['default']}\n  • User (Writable):     {dm_paths['user']}"
+                )
+                if os.path.exists(dm_paths["user"]):
+                    self.log.raw(
+                        f"[{self.log._portal_tag}][Configuration]\nDocument Mapping Loaded (User Override Active)"
+                    )
+                else:
+                    self.log.raw(
+                        f"[{self.log._portal_tag}][Configuration]\nDocument Mapping Loaded (Using Bundled Defaults)"
+                    )
+
+                # Automation defaults mapping
+                ad_paths = automation_defaults_paths(self.portal_id)
+                self.log.raw(
+                    f"[{self.log._portal_tag}][Runtime]\nAutomation Defaults Discovery:\n  • Bundled (Read-Only): {ad_paths['default']}\n  • User (Writable):     {ad_paths['user']}"
+                )
+                if os.path.exists(ad_paths["user"]):
+                    self.log.raw(
+                        f"[{self.log._portal_tag}][Configuration]\nAutomation Defaults Loaded (User Override Active)"
+                    )
+                else:
+                    self.log.raw(
+                        f"[{self.log._portal_tag}][Configuration]\nAutomation Defaults Loaded (Using Bundled Defaults)"
+                    )
+
+                # Portal config path
+                from app.portals.registry import get_portal
+
+                portal_info = get_portal(self.portal_id)
+                if portal_info:
+                    self.log.raw(
+                        f"[{self.log._portal_tag}][Runtime]\nPortal Config Found:\n{portal_info.bundled_config_dir()}"
+                    )
+                    self.log.raw(
+                        f"[{self.log._portal_tag}][Configuration]\nUsing Portal-Specific Config"
+                    )
+                else:
+                    self.log.raw(
+                        f"[{self.log._portal_tag}][Configuration]\nUsing Fallback Configuration"
+                    )
+
                 claim_type = settings.get("claim_type", "Non Maruti")
 
                 self.log.startup_banner(
                     claim_no=claim.claim_no,
                     claim_type=claim_type,
                     survey_date=claim.date_of_survey or "—",
-                    loss_amount=claim.initial_loss_amount or "—"
+                    loss_amount=claim.initial_loss_amount or "—",
                 )
 
                 total_steps = len(steps)
@@ -595,14 +803,24 @@ class AutomationEngine:
                     stop_cb=self._check_stop,
                 )
                 if not success:
-                    message = "Automation stopped by user." if self._check_stop() else "Login failed."
+                    message = (
+                        "Automation stopped by user."
+                        if self._check_stop()
+                        else "Login failed."
+                    )
                     return AutomationRunResult(False, message)
                 if self._check_stop():
                     return AutomationRunResult(False, "Automation stopped by user.")
 
-                page = await _get_active_page(context, self.log, [], self._check_stop, portal_id=self.portal_id)
+                page = await _get_active_page(
+                    context, self.log, [], self._check_stop, portal_id=self.portal_id
+                )
                 if page is None:
-                    message = "Automation stopped by user." if self._check_stop() else "Could not find an authenticated Worklist page."
+                    message = (
+                        "Automation stopped by user."
+                        if self._check_stop()
+                        else "Could not find an authenticated Worklist page."
+                    )
                     return AutomationRunResult(False, message)
                 health_state["authenticated_page_ready"] = True
 
@@ -616,21 +834,47 @@ class AutomationEngine:
                     return AutomationRunResult(False, "Automation stopped by user.")
 
                 self.step_cb(1, steps[1])
-                self.log.phase_banner(2, total_steps, f"Navigate to Claim ({claim.claim_no})")
+                self.log.phase_banner(
+                    2, total_steps, f"Navigate to Claim ({claim.claim_no})"
+                )
 
                 if self.portal_id == "newindia":
-                    from app.portals.newindia.automation.navigation_module import navigate_to_claim
-                    claim_page = await navigate_to_claim(page, claim.claim_no, settings=settings, log=self.log, stop_cb=self._check_stop)
+                    from app.portals.newindia.automation.navigation_module import (
+                        navigate_to_claim,
+                    )
+
+                    claim_page = await navigate_to_claim(
+                        page,
+                        claim.claim_no,
+                        settings=settings,
+                        log=self.log,
+                        stop_cb=self._check_stop,
+                    )
                 elif self.portal_id == "oic":
-                    from app.portals.oic.automation.navigation_module import navigate_to_claim
-                    claim_page = await navigate_to_claim(page, claim.claim_no, settings=settings, log=self.log, stop_cb=self._check_stop)
+                    from app.portals.oic.automation.navigation_module import (
+                        navigate_to_claim,
+                    )
+
+                    claim_page = await navigate_to_claim(
+                        page,
+                        claim.claim_no,
+                        settings=settings,
+                        log=self.log,
+                        stop_cb=self._check_stop,
+                    )
                 else:
                     from app.automation.navigation_module import navigate_to_claim
-                    claim_page = await navigate_to_claim(page, claim.claim_no, settings=settings, log=self.log)
+
+                    claim_page = await navigate_to_claim(
+                        page, claim.claim_no, settings=settings, log=self.log
+                    )
 
                 if claim_page is None:
-                    return AutomationRunResult(False, f"Claim '{claim.claim_no}' was not found in Worklist or navigation failed.")
-                
+                    return AutomationRunResult(
+                        False,
+                        f"Claim '{claim.claim_no}' was not found in Worklist or navigation failed.",
+                    )
+
                 page = claim_page
                 self.log.info(f"Working on page: {page.url}")
                 if self._check_stop():
@@ -645,46 +889,94 @@ class AutomationEngine:
                     # (Quick Update, Vehicle Photo, RC, Driver, FIR, NEFT, Work Approval, Assessment, Upload)
                     # I'll omit the full NIA block for brevity as I'm focused on UIIC refactor,
                     # but I'll ensure the existing NIA logic remains compatible with 'log=self.log'
-                    
-                    from app.portals.newindia.automation.quick_update_module import fill_quick_update_details
-                    from app.portals.newindia.automation.vehicle_photo_module import fill_vehicle_photo_graph
-                    from app.portals.newindia.automation.registration_cert_module import fill_registration_cert_details
-                    from app.portals.newindia.automation.driver_details_module import fill_driver_details
-                    from app.portals.newindia.automation.fir_details_module import fill_fir_details
-                    from app.portals.newindia.automation.neft_module import fill_neft_details
-                    from app.portals.newindia.automation.work_approval_module import fill_work_approval_details
-                    from app.portals.newindia.automation.claim_assessment_module import fill_claim_assessment_details
-                    from app.portals.newindia.automation.survey_fee_bill_module import fill_survey_fee_bill
-                    from app.portals.newindia.automation.document_upload_module import fill_document_upload_section
+
+                    from app.portals.newindia.automation.quick_update_module import (
+                        fill_quick_update_details,
+                    )
+                    from app.portals.newindia.automation.vehicle_photo_module import (
+                        fill_vehicle_photo_graph,
+                    )
+                    from app.portals.newindia.automation.registration_cert_module import (
+                        fill_registration_cert_details,
+                    )
+                    from app.portals.newindia.automation.driver_details_module import (
+                        fill_driver_details,
+                    )
+                    from app.portals.newindia.automation.fir_details_module import (
+                        fill_fir_details,
+                    )
+                    from app.portals.newindia.automation.neft_module import (
+                        fill_neft_details,
+                    )
+                    from app.portals.newindia.automation.work_approval_module import (
+                        fill_work_approval_details,
+                    )
+                    from app.portals.newindia.automation.claim_assessment_module import (
+                        fill_claim_assessment_details,
+                    )
+                    from app.portals.newindia.automation.survey_fee_bill_module import (
+                        fill_survey_fee_bill,
+                    )
+                    from app.portals.newindia.automation.document_upload_module import (
+                        fill_document_upload_section,
+                    )
 
                     # Phase 3: Quick Update
                     self.step_cb(2, steps[2])
                     self.log.phase_banner(3, total_steps, "Fill Quick Update Details")
-                    if not await fill_quick_update_details(page, claim, log=self.log, stop_cb=self._check_stop):
+                    if not await fill_quick_update_details(
+                        page, claim, log=self.log, stop_cb=self._check_stop
+                    ):
                         return AutomationRunResult(False, "Phase 3 failed.")
 
                     # Phase 4: Vehicle Photo
                     self.step_cb(3, steps[3])
                     self.log.phase_banner(4, total_steps, "Vehicle Photo Graph")
-                    if not await fill_vehicle_photo_graph(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
+                    if not await fill_vehicle_photo_graph(
+                        page,
+                        claim,
+                        log=self.log,
+                        stop_cb=self._check_stop,
+                        field_delay_ms=field_delay,
+                    ):
                         return AutomationRunResult(False, "Phase 4 failed.")
 
                     # Phase 5: RC Details
                     self.step_cb(4, steps[4])
-                    self.log.phase_banner(5, total_steps, "Registration Certificate Details")
-                    if not await fill_registration_cert_details(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
+                    self.log.phase_banner(
+                        5, total_steps, "Registration Certificate Details"
+                    )
+                    if not await fill_registration_cert_details(
+                        page,
+                        claim,
+                        log=self.log,
+                        stop_cb=self._check_stop,
+                        field_delay_ms=field_delay,
+                    ):
                         return AutomationRunResult(False, "Phase 5 failed.")
 
                     # Phase 6: Driver Details
                     self.step_cb(5, steps[5])
                     self.log.phase_banner(6, total_steps, "Driver Details")
-                    if not await fill_driver_details(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
+                    if not await fill_driver_details(
+                        page,
+                        claim,
+                        log=self.log,
+                        stop_cb=self._check_stop,
+                        field_delay_ms=field_delay,
+                    ):
                         return AutomationRunResult(False, "Phase 6 failed.")
 
                     # Phase 7: FIR Details
                     self.step_cb(6, steps[6])
                     self.log.phase_banner(7, total_steps, "FIR Details")
-                    if not await fill_fir_details(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
+                    if not await fill_fir_details(
+                        page,
+                        claim,
+                        log=self.log,
+                        stop_cb=self._check_stop,
+                        field_delay_ms=field_delay,
+                    ):
                         return AutomationRunResult(False, "Phase 7 failed.")
 
                     # Phase 8: NEFT Details
@@ -699,14 +991,28 @@ class AutomationEngine:
                             ("Account Number", "account_number"),
                         ),
                     ):
-                        return AutomationRunResult(False, "Phase 8 failed: cheque OCR data not ready.")
-                    if not await fill_neft_details(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
+                        return AutomationRunResult(
+                            False, "Phase 8 failed: cheque OCR data not ready."
+                        )
+                    if not await fill_neft_details(
+                        page,
+                        claim,
+                        log=self.log,
+                        stop_cb=self._check_stop,
+                        field_delay_ms=field_delay,
+                    ):
                         return AutomationRunResult(False, "Phase 8 failed.")
 
                     # Phase 9: Work Approval
                     self.step_cb(8, steps[8])
                     self.log.phase_banner(9, total_steps, "Work Approval")
-                    if not await fill_work_approval_details(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
+                    if not await fill_work_approval_details(
+                        page,
+                        claim,
+                        log=self.log,
+                        stop_cb=self._check_stop,
+                        field_delay_ms=field_delay,
+                    ):
                         return AutomationRunResult(False, "Phase 9 failed.")
 
                     # Phase 10: Claim Assessment
@@ -721,8 +1027,16 @@ class AutomationEngine:
                             ("Vendor Invoice Number", "vendor_invoice_number"),
                         ),
                     ):
-                        return AutomationRunResult(False, "Phase 10 failed: invoice OCR data not ready.")
-                    if not await fill_claim_assessment_details(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
+                        return AutomationRunResult(
+                            False, "Phase 10 failed: invoice OCR data not ready."
+                        )
+                    if not await fill_claim_assessment_details(
+                        page,
+                        claim,
+                        log=self.log,
+                        stop_cb=self._check_stop,
+                        field_delay_ms=field_delay,
+                    ):
                         return AutomationRunResult(False, "Phase 10 failed.")
 
                     # Phase 11: Document Upload
@@ -730,43 +1044,87 @@ class AutomationEngine:
                     #  top-to-bottom accordion order on the Document Upload tab)
                     self.step_cb(10, steps[10])
                     self.log.phase_banner(11, total_steps, "Document Upload")
-                    if not await fill_document_upload_section(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
+                    if not await fill_document_upload_section(
+                        page,
+                        claim,
+                        log=self.log,
+                        stop_cb=self._check_stop,
+                        field_delay_ms=field_delay,
+                    ):
                         return AutomationRunResult(False, "Phase 11 failed.")
 
                     # Phase 12: Survey Fee Bill
                     self.step_cb(11, steps[11])
                     self.log.phase_banner(12, total_steps, "Survey Fee Bill")
-                    if not await fill_survey_fee_bill(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
+                    if not await fill_survey_fee_bill(
+                        page,
+                        claim,
+                        log=self.log,
+                        stop_cb=self._check_stop,
+                        field_delay_ms=field_delay,
+                    ):
                         return AutomationRunResult(False, "Phase 12 failed.")
 
-                    t_total = time.time() - t_start
-                    self.log.section_done("Total New India Workflow", show_duration=True)
+                    self.log.section_done(
+                        "Total New India Workflow", show_duration=True
+                    )
                     await self._wait_for_manual_review(browser)
                     return AutomationRunResult(True, "New India phases complete.")
 
                 # --- OIC PORTAL PHASES ---
                 if self.portal_id == "oic":
-                    from app.portals.oic.automation.claim_search_module import fill_claim_search
-                    from app.portals.oic.automation.basic_details_module import fill_basic_details
+                    from app.portals.oic.automation.claim_search_module import (
+                        fill_claim_search,
+                    )
+                    from app.portals.oic.automation.basic_details_module import (
+                        fill_basic_details,
+                    )
 
                     # Phase 3: Claim Search (Generate Assessment form)
                     self.step_cb(2, steps[2])
                     self.log.phase_banner(3, total_steps, "Claim Search")
-                    if not await fill_claim_search(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
-                        return AutomationRunResult(False, "Phase 3 (Claim Search) failed.")
+                    if not await fill_claim_search(
+                        page,
+                        claim,
+                        log=self.log,
+                        stop_cb=self._check_stop,
+                        field_delay_ms=field_delay,
+                    ):
+                        return AutomationRunResult(
+                            False, "Phase 3 (Claim Search) failed."
+                        )
 
                     # Phase 4: Basic Details
                     self.step_cb(3, steps[3])
                     self.log.phase_banner(4, total_steps, "Basic Details")
-                    if not await fill_basic_details(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
-                        return AutomationRunResult(False, "Phase 4 (Basic Details) failed.")
+                    if not await fill_basic_details(
+                        page,
+                        claim,
+                        log=self.log,
+                        stop_cb=self._check_stop,
+                        field_delay_ms=field_delay,
+                    ):
+                        return AutomationRunResult(
+                            False, "Phase 4 (Basic Details) failed."
+                        )
 
                     # Phase 5: Interim Report
                     self.step_cb(4, steps[4])
                     self.log.phase_banner(5, total_steps, "Interim Report")
-                    from app.portals.oic.automation.interim_report_module import fill_interim_report as oic_fill_interim_report
-                    if not await oic_fill_interim_report(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
-                        return AutomationRunResult(False, "Phase 5 (Interim Report) failed.")
+                    from app.portals.oic.automation.interim_report_module import (
+                        fill_interim_report as oic_fill_interim_report,
+                    )
+
+                    if not await oic_fill_interim_report(
+                        page,
+                        claim,
+                        log=self.log,
+                        stop_cb=self._check_stop,
+                        field_delay_ms=field_delay,
+                    ):
+                        return AutomationRunResult(
+                            False, "Phase 5 (Interim Report) failed."
+                        )
 
                     # Phase 6: Assessment of Loss
                     self.step_cb(5, steps[5])
@@ -780,29 +1138,58 @@ class AutomationEngine:
                             ("Workshop Invoice Date", "workshop_invoice_date"),
                         ),
                     ):
-                        return AutomationRunResult(False, "Phase 6 failed: invoice OCR timed out or stopped.")
-                    from app.portals.oic.automation.assessment_of_loss_module import fill_assessment_of_loss
-                    if not await fill_assessment_of_loss(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
-                        return AutomationRunResult(False, "Phase 6 (Assessment of Loss) failed.")
+                        return AutomationRunResult(
+                            False, "Phase 6 failed: invoice OCR timed out or stopped."
+                        )
+                    from app.portals.oic.automation.assessment_of_loss_module import (
+                        fill_assessment_of_loss,
+                    )
+
+                    if not await fill_assessment_of_loss(
+                        page,
+                        claim,
+                        log=self.log,
+                        stop_cb=self._check_stop,
+                        field_delay_ms=field_delay,
+                    ):
+                        return AutomationRunResult(
+                            False, "Phase 6 (Assessment of Loss) failed."
+                        )
 
                     # Phase 7: Document Upload
                     self.step_cb(6, steps[6])
                     self.log.phase_banner(7, total_steps, "Document Upload")
-                    from app.portals.oic.automation.document_upload_module import fill_document_upload_section
-                    if not await fill_document_upload_section(page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay):
-                        return AutomationRunResult(False, "Phase 7 (Document Upload) failed.")
+                    from app.portals.oic.automation.document_upload_module import (
+                        fill_document_upload_section,
+                    )
 
-                    t_total = time.time() - t_start
-                    self.log.section_done("Total Oriental Insurance Workflow", show_duration=True)
+                    if not await fill_document_upload_section(
+                        page,
+                        claim,
+                        log=self.log,
+                        stop_cb=self._check_stop,
+                        field_delay_ms=field_delay,
+                    ):
+                        return AutomationRunResult(
+                            False, "Phase 7 (Document Upload) failed."
+                        )
+
+                    self.log.section_done(
+                        "Total Oriental Insurance Workflow", show_duration=True
+                    )
                     await self._wait_for_manual_review(browser)
-                    return AutomationRunResult(True, "Oriental Insurance phases complete.")
+                    return AutomationRunResult(
+                        True, "Oriental Insurance phases complete."
+                    )
 
                 # --- UIIC PORTAL PHASES ---
                 self.step_cb(2, steps[2])
                 self.log.phase_banner(3, total_steps, "Fill Interim Report")
                 await page.bring_to_front()
                 await page.evaluate("window.scrollTo(0, 0)")
-                await fill_interim_report(page, claim, log_cb=self.log, settings=settings)
+                await fill_interim_report(
+                    page, claim, log_cb=self.log, settings=settings
+                )
                 if self._check_stop():
                     return AutomationRunResult(False, "Automation stopped by user.")
 
@@ -812,7 +1199,9 @@ class AutomationEngine:
                 self.step_cb(3, steps[3])
                 self.log.phase_banner(4, total_steps, "Upload Claim Documents")
                 await page.evaluate("window.scrollTo(0, 0)")
-                await fill_claim_documents(page, claim, log_cb=self.log, settings=settings)
+                await fill_claim_documents(
+                    page, claim, log_cb=self.log, settings=settings
+                )
                 if self._check_stop():
                     return AutomationRunResult(False, "Automation stopped by user.")
 
@@ -830,13 +1219,16 @@ class AutomationEngine:
                         ("Workshop Invoice Date", "workshop_invoice_date"),
                     ),
                 ):
-                    return AutomationRunResult(False, "Phase 5 failed: invoice OCR timed out or stopped.")
+                    return AutomationRunResult(
+                        False, "Phase 5 failed: invoice OCR timed out or stopped."
+                    )
                 await page.evaluate("window.scrollTo(0, 0)")
-                await fill_claim_assessment(page, claim, log_cb=self.log, settings=settings)
+                await fill_claim_assessment(
+                    page, claim, log_cb=self.log, settings=settings
+                )
                 if self._check_stop():
                     return AutomationRunResult(False, "Automation stopped by user.")
 
-                t_total = time.time() - t_start
                 self.step_cb(5, "Complete")
                 self.log.section_done("Total UIIC Workflow", show_duration=True)
 
@@ -847,8 +1239,7 @@ class AutomationEngine:
                 self.log.error("Automation cancelled.")
                 return AutomationRunResult(False, "Automation cancelled.")
             except Exception as exc:
-                self.log.error(f"Automation failed: {exc}")
-                logger.exception("Automation error")
+                self.log.exception("Automation failed", exc)
                 return AutomationRunResult(False, f"Automation failed: {exc}")
             finally:
                 if health_task and not health_task.done():
@@ -864,3 +1255,21 @@ class AutomationEngine:
                 # conflicts with the circuit-breaker monitor task and causes
                 # RuntimeWarnings on graceful stop paths.
                 await browser.close()
+
+                # Clean up temporary pre-compressed files registered during scanning
+                temp_files = getattr(claim, "_temporary_files", [])
+                if temp_files:
+                    try:
+                        self.log.info(
+                            f"Pristine Cleanup: unlinking {len(temp_files)} temporary pre-compressed files..."
+                        )
+                        for temp_path in temp_files:
+                            if temp_path and os.path.isfile(temp_path):
+                                try:
+                                    os.remove(temp_path)
+                                except Exception as rm_exc:
+                                    self.log.warning(
+                                        f"Could not remove temporary file {os.path.basename(temp_path)}: {rm_exc}"
+                                    )
+                    except Exception as clean_exc:
+                        self.log.warning(f"Pristine Cleanup failed: {clean_exc}")

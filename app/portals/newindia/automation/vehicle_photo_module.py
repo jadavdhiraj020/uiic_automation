@@ -36,10 +36,14 @@ async def _attach_file(page: Page, idx: int, file_path: str, log) -> bool:
     name = f"mandatoryFiles{idx}"
     fname = os.path.basename(file_path)
     abs_path = os.path.abspath(file_path)
+    doc_type = "Chassis Number Photograph" if idx == 0 else "Odometer Reading Photograph"
+
+    if isinstance(log, AutomationLogger):
+        log.upload_start(doc_type, fname, os.path.getsize(abs_path) if os.path.exists(abs_path) else 0)
 
     if not os.path.isfile(abs_path):
         if isinstance(log, AutomationLogger):
-            log.upload_failed(f"Row {idx} Photo", f"File not found: {fname}")
+            log.upload_failed(doc_type, f"File not found: {fname}")
         else:
             log(f"  ❌ [Row {idx}] File not found: {fname}")
         return False
@@ -50,13 +54,13 @@ async def _attach_file(page: Page, idx: int, file_path: str, log) -> bool:
         await file_input.set_input_files(abs_path)
         await asyncio.sleep(0.8)
         if isinstance(log, AutomationLogger):
-            log.upload_attached(f"Row {idx} Photo", fname)
+            log.upload_attached(doc_type, fname)
         else:
             log(f"  ✅ [Row {idx}] File attached → '{fname}'")
         return True
     except Exception as e:
         if isinstance(log, AutomationLogger):
-            log.upload_failed(f"Row {idx} Photo", str(e))
+            log.upload_failed(doc_type, str(e))
         else:
             log(f"  ⚠️  [Row {idx}] File attach failed: {e}")
         return False
@@ -122,6 +126,7 @@ async def fill_vehicle_photo_graph(
     field_delay_ms: int = 600
 ) -> bool:
     if isinstance(log, AutomationLogger):
+        log._section = "Vehicle Photo Graph"
         log.info("Starting Vehicle Photo Graph phase...")
         log.indent()
     elif log:
@@ -149,6 +154,12 @@ async def fill_vehicle_photo_graph(
     chassis_file  = _find_file(claim_data, "Chassis Number Photograph",  ["chassis"])
     odometer_file = _find_file(claim_data, "Odometer Reading Photograph", ["odometer", "odo"])
 
+    if isinstance(log, AutomationLogger):
+        if chassis_file:
+            log.document_mapped("Chassis Number Photograph", os.path.basename(chassis_file), "Matched Successfully")
+        if odometer_file:
+            log.document_mapped("Odometer Reading Photograph", os.path.basename(odometer_file), "Matched Successfully")
+
     # ── ROW 0 — Chassis ──────────────────────────────────────────────────────
     # Attach chassis file first, then odometer. Upload is clicked ONCE after
     # both are attached. Each attachment is followed by an immediate popup check
@@ -162,7 +173,7 @@ async def fill_vehicle_photo_graph(
 
     await select_dropdown_with_delay(
         page, 'select[name="docType0"]', _DOCTYPE_CHASSIS,
-        "Row 0 Type", log, field_delay_ms
+        "Row 0 Type", log, field_delay_ms, source="Default"
     )
 
     chassis_attached = False
@@ -172,7 +183,7 @@ async def fill_vehicle_photo_graph(
         await quick_check_and_dismiss(page, log, context="Chassis attach")
     else:
         if isinstance(log, AutomationLogger):
-            log.warning("No Chassis photo found in source data.")
+            log.field_skipped("Chassis Number Photograph", reason="No file found in source data")
         else:
             log("  ⚠️ No Chassis file — row 0 will have empty file input.")
 
@@ -194,7 +205,7 @@ async def fill_vehicle_photo_graph(
         if await _click_plus_and_wait(page, log, before_count):
             await select_dropdown_with_delay(
                 page, 'select[name="docType1"]', _DOCTYPE_ODOMETER,
-                "Row 1 Type", log, field_delay_ms
+                "Row 1 Type", log, field_delay_ms, source="Default"
             )
             odometer_attached = await _attach_file(page, 1, odometer_file, log)
             # Dismiss any immediate portal alert after odometer attachment
@@ -204,7 +215,7 @@ async def fill_vehicle_photo_graph(
             log.outdent()
     else:
         if isinstance(log, AutomationLogger):
-            log.info("No Odometer photo found; skipping Row 1.")
+            log.field_skipped("Odometer Reading Photograph", reason="No file found in source data")
         else:
             log("  ℹ️ No Odometer file found — skipping Row 1.")
 

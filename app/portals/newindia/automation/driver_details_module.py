@@ -12,6 +12,7 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
     defaults = load_automation_defaults(portal_id=getattr(data, "portal_id", "newindia"))
 
     if isinstance(log, AutomationLogger):
+        log._section = "Driver Details"
         log.info("Opening Driver Details section...")
         log.indent()
     else:
@@ -54,7 +55,7 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
             
         await select_dropdown_with_delay(
             page, 'select[name="Was the vehicle parked during accident ?"]',
-            "No", "Vehicle Parked", log, field_delay_ms
+            "No", "Vehicle Parked", log, field_delay_ms, source="Calculated"
         )
 
         # Wait for the Relationship dropdown to become VISIBLE
@@ -90,7 +91,7 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
             await select_dropdown_with_delay(
                 page,
                 'select[name="Relationship of the driver with the Insured"]',
-                val, "Relationship", log, field_delay_ms
+                val, "Relationship", log, field_delay_ms, source="Excel"
             )
         else:
             relationship_default = str(defaults.get("relationship_with_insured", "Self") or "Self")
@@ -101,7 +102,7 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
             await select_dropdown_with_delay(
                 page,
                 'select[name="Relationship of the driver with the Insured"]',
-                relationship_default, "Relationship", log, field_delay_ms
+                relationship_default, "Relationship", log, field_delay_ms, source="Default"
             )
     except Exception as e:
         if isinstance(log, AutomationLogger):
@@ -115,10 +116,10 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
     try:
         val = data.license_type_of_driver
         if val:
-            await select_dropdown_with_delay(page, 'select[name="License Type of Driver"]', val, "License Type", log, field_delay_ms)
+            await select_dropdown_with_delay(page, 'select[name="License Type of Driver"]', val, "License Type", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("License Type missing from source data.")
+                log.field_skipped("License Type", reason="Missing from Excel")
             else:
                 log("   ⚠️ License Type of Driver missing from Excel.")
     except Exception as e:
@@ -134,10 +135,10 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
         val = data.dob_of_driver
         if val:
             formatted_date = format_date_ddmmyyyy(val)
-            await fill_input_with_delay(page, 'input[name="DOB of Driver"]', formatted_date, "Driver DOB", log, field_delay_ms)
+            await fill_input_with_delay(page, 'input[name="DOB of Driver"]', formatted_date, "Driver DOB", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("Driver DOB missing from source data.")
+                log.field_skipped("Driver DOB", reason="Missing from Excel")
             else:
                 log("   ⚠️ DOB of Driver missing from Excel.")
     except Exception as e:
@@ -152,10 +153,10 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
     try:
         val = data.driver_name
         if val:
-            await fill_input_with_delay(page, 'input[name="Driver Name"]', val, "Driver Name", log, field_delay_ms)
+            await fill_input_with_delay(page, 'input[name="Driver Name"]', val, "Driver Name", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("Driver Name missing from source data.")
+                log.field_skipped("Driver Name", reason="Missing from Excel")
             else:
                 log("   ⚠️ Driver Name missing from Excel.")
     except Exception as e:
@@ -170,10 +171,10 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
     try:
         val = data.age_of_driver
         if val:
-            await fill_input_with_delay(page, 'input[name="Age of Driver"]', val, "Driver Age", log, field_delay_ms)
+            await fill_input_with_delay(page, 'input[name="Age of Driver"]', val, "Driver Age", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("Driver Age missing from source data.")
+                log.field_skipped("Driver Age", reason="Missing from Excel")
             else:
                 log("   ⚠️ Age of Driver missing from Excel.")
     except Exception as e:
@@ -200,7 +201,7 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
                 """)
                 await asyncio.sleep(field_delay_ms / 1000.0)
                 if isinstance(log, AutomationLogger):
-                    log.success("License Validation set to YES")
+                    log.field_filled("License Validation", "Y", source="Calculated")
                 else:
                     log(f"   ✅ License Valid set to YES")
     except Exception as e:
@@ -215,10 +216,10 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
     try:
         val = data.license_issuing_authority
         if val:
-            await fill_input_with_delay(page, 'input[name="License Issuing Authority"]', val, "Issuing Authority", log, field_delay_ms)
+            await fill_input_with_delay(page, 'input[name="License Issuing Authority"]', val, "Issuing Authority", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("Issuing Authority missing from source data.")
+                log.field_skipped("Issuing Authority", reason="Missing from Excel")
             else:
                 log("   ⚠️ License Issuing Authority missing from Excel.")
     except Exception as e:
@@ -233,10 +234,10 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
     try:
         val = data.driver_license_number
         if val:
-            await fill_input_with_delay(page, 'input[name="Driver driving License Number"]', val, "License No", log, field_delay_ms)
+            await fill_input_with_delay(page, 'input[name="Driver driving License Number"]', val, "License No", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("License Number missing from source data.")
+                log.field_skipped("License No", reason="Missing from Excel")
             else:
                 log("   ⚠️ License Number missing from Excel.")
     except Exception as e:
@@ -252,10 +253,10 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
         val = data.driver_license_issue_date
         if val:
             formatted_date = format_date_ddmmyyyy(val)
-            await fill_input_with_delay(page, 'input[name="Driver driving License Issue Date"]', formatted_date, "Issue Date", log, field_delay_ms)
+            await fill_input_with_delay(page, 'input[name="Driver driving License Issue Date"]', formatted_date, "Issue Date", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("License Issue Date missing from source data.")
+                log.field_skipped("Issue Date", reason="Missing from Excel")
             else:
                 log("   ⚠️ License Issue Date missing from Excel.")
     except Exception as e:
@@ -271,10 +272,10 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
         val = data.driver_license_expiry_date
         if val:
             formatted_date = format_date_ddmmyyyy(val)
-            await fill_input_with_delay(page, 'input[name="Driver driving License Expiry Date"]', formatted_date, "Expiry Date", log, field_delay_ms)
+            await fill_input_with_delay(page, 'input[name="Driver driving License Expiry Date"]', formatted_date, "Expiry Date", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("License Expiry Date missing from source data.")
+                log.field_skipped("Expiry Date", reason="Missing from Excel")
             else:
                 log("   ⚠️ License Expiry Date missing from Excel.")
     except Exception as e:
@@ -289,10 +290,10 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
     try:
         val = data.badge_number
         if val:
-            await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.badgeNo"]', val, "Badge No", log, field_delay_ms)
+            await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.badgeNo"]', val, "Badge No", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.info("Badge Number missing; skipping (Optional).")
+                log.field_skipped("Badge No", reason="Missing from Excel")
             else:
                 log("   ⏭️ [Badge Number] — Optional, not in Excel. Skipping.")
     except Exception as e:

@@ -222,6 +222,16 @@ class ChequeExtractor:
             else:
                 self._log(log, "warning", f"{fld} NOT found in cheque — Excel fallback will apply.")
 
+        if isinstance(log, AutomationLogger) and log._portal_id == "newindia":
+            ocr_fields = {}
+            if result.get("ifsc"):
+                ocr_fields["IFSC"] = result["ifsc"]
+            if result.get("account_number"):
+                ocr_fields["Account Number"] = result["account_number"]
+            if result.get("account_type"):
+                ocr_fields["Account Type"] = result["account_type"]
+            log.ocr_processed(fname, ocr_fields)
+
         return result
 
     # ══════════════════════════════════════════════════════════════════════════

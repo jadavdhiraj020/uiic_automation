@@ -13,6 +13,7 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
     missing_text_default = str(defaults.get("missing_text_default", "NA") or "NA")
 
     if isinstance(log, AutomationLogger):
+        log._section = "FIR Details"
         log.info("Opening FIR Details section...")
         log.indent()
     else:
@@ -49,7 +50,8 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
     # 1. FIR Number
     try:
         val = data.fir_number or missing_text_default
-        await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.firNo"]', val, "FIR Number", log, field_delay_ms)
+        src = "Excel" if data.fir_number else "Default"
+        await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.firNo"]', val, "FIR Number", log, field_delay_ms, source=src)
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"FIR Number field error: {str(e)[:100]}")
@@ -62,10 +64,10 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
     try:
         val = data.fir_date
         if val:
-            await fill_input_with_delay(page, 'input[name="firDate"]', val, "FIR Date", log, field_delay_ms)
+            await fill_input_with_delay(page, 'input[name="firDate"]', val, "FIR Date", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.info("FIR Date missing; skipping (Optional).")
+                log.field_skipped("FIR Date", reason="Missing from Excel")
             else:
                 log(f"   ⏭️ [FIR Date] — Optional, not in Excel. Skipping.")
     except Exception as e:
@@ -79,7 +81,8 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
     # 3. Police Station Name
     try:
         val = data.police_station_name or missing_text_default
-        await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.policeStation"]', val, "Station Name", log, field_delay_ms)
+        src = "Excel" if data.police_station_name else "Default"
+        await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.policeStation"]', val, "Station Name", log, field_delay_ms, source=src)
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Police Station field error: {str(e)[:100]}")
@@ -91,7 +94,8 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
     # 4. Charged U/S Motor Vehicle act
     try:
         val = data.charged_us_motor_vehicle_act or missing_text_default
-        await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.chargedUSMotorVehAct"]', val, "Charged U/S MV Act", log, field_delay_ms)
+        src = "Excel" if data.charged_us_motor_vehicle_act else "Default"
+        await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.chargedUSMotorVehAct"]', val, "Charged U/S MV Act", log, field_delay_ms, source=src)
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"MV Act field error: {str(e)[:100]}")
@@ -103,7 +107,8 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
     # 5. Charged U/S IPC
     try:
         val = data.charged_us_ipc or missing_text_default
-        await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.chargedUSIPC"]', val, "Charged U/S IPC", log, field_delay_ms)
+        src = "Excel" if data.charged_us_ipc else "Default"
+        await fill_input_with_delay(page, 'input[data-ng-model="surveyorData.worklist.additionalDetails.chargedUSIPC"]', val, "Charged U/S IPC", log, field_delay_ms, source=src)
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"IPC field error: {str(e)[:100]}")
@@ -117,10 +122,10 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
         val = data.whether_driver_without_license
         if val:
             normalized = "Yes" if str(val).strip().lower() == "yes" else "No"
-            await select_dropdown_with_delay(page, 'select[name="Whether driver without license ?"]', normalized, "Driver w/o License", log, field_delay_ms)
+            await select_dropdown_with_delay(page, 'select[name="Whether driver without license ?"]', normalized, "Driver w/o License", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("Driver Without License status missing from source data.")
+                log.field_skipped("Driver w/o License", reason="Missing from Excel")
             else:
                 log("   ⚠️ Whether driver without license missing from Excel.")
     except Exception as e:
@@ -136,10 +141,10 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
         val = data.any_previous_police_records
         if val:
             normalized = "Yes" if str(val).strip().lower() == "yes" else "No"
-            await select_dropdown_with_delay(page, 'select[data-ng-model="surveyorData.worklist.additionalDetails.prevPoliceRecords"]', normalized, "Police Records", log, field_delay_ms)
+            await select_dropdown_with_delay(page, 'select[data-ng-model="surveyorData.worklist.additionalDetails.prevPoliceRecords"]', normalized, "Police Records", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.info("Police Records missing; skipping (Optional).")
+                log.field_skipped("Police Records", reason="Missing from Excel")
             else:
                 log(f"   ⏭️ [Previous Police Records] — Optional, not in Excel. Skipping.")
     except Exception as e:
@@ -155,10 +160,10 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
         val = data.is_there_any_tp_claim
         if val:
             normalized = "Yes" if str(val).strip().lower() == "yes" else "No"
-            await select_dropdown_with_delay(page, 'select[name="Is there any TP claim?"]', normalized, "TP Claim", log, field_delay_ms)
+            await select_dropdown_with_delay(page, 'select[name="Is there any TP claim?"]', normalized, "TP Claim", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning("TP Claim status missing from source data.")
+                log.field_skipped("TP Claim", reason="Missing from Excel")
             else:
                 log("   ⚠️ Is there any TP claim missing from Excel.")
     except Exception as e:

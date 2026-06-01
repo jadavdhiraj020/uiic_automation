@@ -301,6 +301,7 @@ async def do_login(
     max_retries = settings.get("captcha_max_retries", 5)
 
     if isinstance(log, AutomationLogger):
+        log._section = "Login"
         log.info("Navigating to OIC Portal...")
         log.indent()
     else:

@@ -3,54 +3,35 @@ main_window.py  — Premium Dark Dashboard UI for UIIC Automation.
 Modularized version delegating to component classes.
 """
 
-import json
 import os
-import asyncio
 from datetime import datetime
-from pathlib import Path
 
 from PyQt6.QtCore import (
     Qt,
     QThread,
-    pyqtSignal,
-    QObject,
-    QSize,
     QPropertyAnimation,
     QEasingCurve,
     QPointF,
 )
 from PyQt6.QtGui import (
-    QFont,
     QColor,
-    QTextCursor,
     QIcon,
     QPainter,
     QPen,
     QPixmap,
-    QPainterPath,
 )
 from PyQt6.QtWidgets import (
     QMainWindow,
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
-    QGridLayout,
     QLabel,
     QLineEdit,
     QPushButton,
-    QProgressBar,
-    QTextEdit,
     QFileDialog,
     QFrame,
-    QSizePolicy,
-    QScrollArea,
     QComboBox,
-    QTableWidget,
-    QTableWidgetItem,
-    QHeaderView,
     QMessageBox,
-    QSpacerItem,
-    QApplication,
     QStackedWidget,
     QGraphicsOpacityEffect,
 )
@@ -58,7 +39,6 @@ from PyQt6.QtWidgets import (
 from app.utils import (
     resource_path,
     load_settings,
-    settings_paths,
     doc_mapping_paths,
     user_data_dir,
     ensure_dir,
@@ -335,24 +315,41 @@ class MainWindow(QMainWindow):
     def _open_log_file(self):
         try:
             log_dir = ensure_dir(user_data_dir("logs"))
-            
+
             # 1. Create a unique timestamped log.
             import glob
+
             ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             base_log = os.path.join(log_dir, f"automation_{ts}_{os.getpid()}.log")
             self._log_file = open(base_log, "x", encoding="utf-8")
 
-            # 2. Cleanup old logs after creating this one (keep last 10 total).
+            # 2. Cleanup old plain-text log files (keep last 20 plain text logs).
             existing_logs = sorted(
                 glob.glob(os.path.join(log_dir, "automation_*.log")),
                 key=lambda path: (os.path.getmtime(path), path),
             )
-            for old_log in existing_logs[:-10]:
+            for old_log in existing_logs[:-20]:
                 try:
                     if os.path.abspath(old_log) != os.path.abspath(base_log):
                         os.remove(old_log)
                 except Exception:
                     pass
+
+            # 3. Cleanup old structured JSON log files per portal (keep last 20 JSON logs per portal).
+            from app.portals.registry import list_portals
+
+            for portal in list_portals():
+                portal_log_dir = os.path.join(log_dir, portal.portal_id)
+                if os.path.exists(portal_log_dir):
+                    existing_jsons = sorted(
+                        glob.glob(os.path.join(portal_log_dir, "*.json")),
+                        key=lambda path: (os.path.getmtime(path), path),
+                    )
+                    for old_json in existing_jsons[:-20]:
+                        try:
+                            os.remove(old_json)
+                        except Exception:
+                            pass
         except Exception:
             pass
 
@@ -374,7 +371,9 @@ class MainWindow(QMainWindow):
 
         # Update status to running scan
         self._set_status("running", "Scanning...")
-        self.workspace_page.doc_status_label.setText("📁 Indexing and extracting documents via OCR... Please wait.")
+        self.workspace_page.doc_status_label.setText(
+            "📁 Indexing and extracting documents via OCR... Please wait."
+        )
         self._append_log(f"📁 Starting background scan for: {folder}")
 
         # Disable buttons to prevent concurrent triggers
@@ -428,7 +427,6 @@ class MainWindow(QMainWindow):
         self._scan_worker = None
         self._scan_thread = None
 
-
     def _start_automation(self):
         if not self._claim:
             QMessageBox.warning(
@@ -447,14 +445,16 @@ class MainWindow(QMainWindow):
         settings = load_settings(portal_id=portal_id)
 
         self._thread = QThread()
-        self._worker = AutomationWorker(self._claim, settings_override=settings, portal_id=portal_id)
+        self._worker = AutomationWorker(
+            self._claim, settings_override=settings, portal_id=portal_id
+        )
         self._worker.moveToThread(self._thread)
 
         self._thread.started.connect(self._worker.run)
-        self._worker.done_signal.connect(self._thread.quit)        # stop event loop
+        self._worker.done_signal.connect(self._thread.quit)  # stop event loop
         self._worker.done_signal.connect(self._on_automation_ui_reset)  # update UI
-        self._thread.finished.connect(self._on_thread_fully_stopped)    # clear refs
-        
+        self._thread.finished.connect(self._on_thread_fully_stopped)  # clear refs
+
         self._worker.log_signal.connect(self._append_log)
         self._worker.step_signal.connect(self.workspace_page.set_step)
 
@@ -486,8 +486,8 @@ class MainWindow(QMainWindow):
         """Called by thread.finished — thread OS object has fully stopped. Safe to clear."""
         self._worker = None
         self._thread = None
-        success = getattr(self, '_last_success', False)
-        message = getattr(self, '_last_message', 'Automation finished.')
+        success = getattr(self, "_last_success", False)
+        message = getattr(self, "_last_message", "Automation finished.")
         if success:
             self.log(f"SUCCESS: {message}")
         else:
@@ -497,6 +497,7 @@ class MainWindow(QMainWindow):
         self.workspace_page.append_log(text)
         if self._log_file and not self._log_file.closed:
             import re
+
             match = re.match(r"^\[(\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\] (.*)$", text)
             if match:
                 today = datetime.now().strftime("%Y-%m-%d")
@@ -538,14 +539,18 @@ class MainWindow(QMainWindow):
         # ── Gracefully stop automation thread before closing ────────────────────
         if self._thread and self._thread.isRunning():
             if self._worker:
-                self._worker.stop()          # signal engine to stop
-            self._thread.quit()              # ask event loop to exit
+                self._worker.stop()  # signal engine to stop
+            self._thread.quit()  # ask event loop to exit
             if not self._thread.wait(5000):  # up to 5s graceful wait
-                self._thread.terminate()     # force-kill if still running
+                self._thread.terminate()  # force-kill if still running
                 self._thread.wait(2000)
 
         # ── Gracefully stop folder scanning thread before closing ───────────────
-        if hasattr(self, "_scan_thread") and self._scan_thread and self._scan_thread.isRunning():
+        if (
+            hasattr(self, "_scan_thread")
+            and self._scan_thread
+            and self._scan_thread.isRunning()
+        ):
             if hasattr(self, "_scan_worker") and self._scan_worker:
                 try:
                     self._scan_worker.request_stop()
@@ -553,6 +558,17 @@ class MainWindow(QMainWindow):
                     pass
             self._scan_thread.quit()
             self._scan_thread.wait(2000)
+
+        # Clean up temporary pre-compressed files registered during scanning
+        if hasattr(self, "_claim") and self._claim:
+            temp_files = getattr(self._claim, "_temporary_files", [])
+            if temp_files:
+                for temp_path in temp_files:
+                    if temp_path and os.path.isfile(temp_path):
+                        try:
+                            os.remove(temp_path)
+                        except Exception:
+                            pass
 
         if self._log_file:
             try:

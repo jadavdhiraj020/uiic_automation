@@ -27,6 +27,22 @@ ASSESSMENT_UPLOAD_LABELS = {
 }
 
 
+def _log_extraction(claim, log, field: str, value: str, key: str):
+    if not isinstance(log, AutomationLogger):
+        return
+    coord = claim._excel_coords.get(key, "")
+    sheet = "Summary"
+    cell = coord
+    if "|" in coord:
+        parts = coord.split("|")
+        sheet = parts[0].strip()
+        cell = parts[1].strip()
+    elif not coord:
+        sheet = "N/A"
+        cell = "N/A"
+    log.excel_extracted(field, str(value), cell, sheet=sheet)
+
+
 def _settings_int(settings, key: str, default: int) -> int:
     """Read integer settings safely when UI persistence stores values as strings."""
     value = (settings or {}).get(key, default)
@@ -119,6 +135,7 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
     fname = os.path.basename(file_path)
     if not os.path.isfile(file_path):
         if isinstance(log, AutomationLogger):
+            log.upload_failed(upload_label, "File not found")
             log.warning(f"File not found: {fname}")
         else:
             log(f"  ⚠️  Not found: {fname}")
@@ -129,7 +146,7 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
         logger.info("Large assessment file (%.1fMB): %s — portal alert will be auto-accepted", mb, fname)
 
     if isinstance(log, AutomationLogger):
-        log.info(f"[{upload_label}] ← {fname}")
+        log.upload_start(upload_label, fname)
     else:
         log(f"  ▶ [{upload_label}] ← {fname}")
         
@@ -157,7 +174,7 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
                     pass
                 await asyncio.sleep(upload_wait_s)
                 if isinstance(log, AutomationLogger):
-                    log.success(f"Uploaded: {fname}")
+                    log.upload_attached(upload_label, fname)
                 else:
                     log(f"  ✅ Uploaded: {fname} (li.clearfix relative selector)")
                 return True
@@ -213,7 +230,7 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
                     pass
                 await asyncio.sleep(upload_wait_s)
                 if isinstance(log, AutomationLogger):
-                    log.success(f"Uploaded: {fname}")
+                    log.upload_attached(upload_label, fname)
                 else:
                     log(f"  ✅ Uploaded: {fname} (JS DOM scan)")
                 return True
@@ -239,7 +256,7 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
                 except Exception:
                     await asyncio.sleep(upload_wait_s / 2.0)
                 if isinstance(log, AutomationLogger):
-                    log.success(f"Uploaded: {fname}")
+                    log.upload_attached(upload_label, fname)
                 else:
                     log(f"  ✅ Uploaded: {fname} (XPath following)")
                 return True
@@ -247,7 +264,7 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
             continue
 
     if isinstance(log, AutomationLogger):
-        log.error(f"Upload input not found for: {upload_label}")
+        log.upload_failed(upload_label, "Upload input not found on page")
     else:
         log(f"  ❌ Upload input not found for: {upload_label}")
     return False
@@ -265,6 +282,7 @@ async def _fill_parts(page, claim: ClaimData, log, _src) -> None:
         should_check = nil_dep_raw == "yes"
 
         if nil_dep_raw in {"yes", "no"}:
+            _log_extraction(claim, log, "Nil Depreciation", claim.nil_depreciation, "nil_depreciation")
             toggle_result = await page.evaluate(
                 """
                 ({ shouldCheck }) => {
@@ -319,7 +337,7 @@ async def _fill_parts(page, claim: ClaimData, log, _src) -> None:
                     log(f"  ⚠️  Nil Depreciation checkbox: {reason}")
         else:
             if isinstance(log, AutomationLogger):
-                log.info("Nil Depreciation checkbox skipped (no data)")
+                log.field_skipped("Nil Depreciation", "Excel value missing or not Yes/No")
             else:
                 log("  ⏭️  Nil Depreciation checkbox: skipped (Excel value missing or not Yes/No)")
 
@@ -358,15 +376,22 @@ async def _fill_parts(page, claim: ClaimData, log, _src) -> None:
             else:
                 log("  📊 Nil OFF/Blank: Using all Excel values as-is without modification")
 
+        _log_extraction(claim, log, "Age Dep (Metal)", val_age, "parts_age_dep_excl_gst")
         await safe_fill_amount(page, ASSESSMENT["age_dep"],
                                val_age, "Age Dep (Metal)", log,
                                source=_src("parts_age_dep_excl_gst"))
+        
+        _log_extraction(claim, log, "50% Dep (Plastic)", val_50, "parts_50_dep_excl_gst")
         await safe_fill_amount(page, ASSESSMENT["dep_50"],
                                val_50, "50% Dep (Plastic)", log,
                                source=_src("parts_50_dep_excl_gst"))
+        
+        _log_extraction(claim, log, "Nil Dep", val_nil, "parts_nil_dep_excl_gst")
         await safe_fill_amount(page, ASSESSMENT["nil_dep"],
                                val_nil, "Nil Dep", log,
                                source=_src("parts_nil_dep_excl_gst"))
+        
+        _log_extraction(claim, log, "Parts GST 18%", val_target, "parts_gst18_amount")
         await safe_fill_amount(page, ASSESSMENT["gst_18_parts"],
                                val_target, "Parts GST 18%", log,
                                source=_src("parts_gst18_amount") if not should_check else "Calculated")
@@ -387,9 +412,12 @@ async def _fill_labour(page, claim: ClaimData, log, _src) -> None:
         log("\n👷 Labour:")
         
     try:
+        _log_extraction(claim, log, "Labour (Excl GST)", claim.labour_excl_gst, "labour_excl_gst")
         await safe_fill_amount(page, ASSESSMENT["labour"],
                                claim.labour_excl_gst, "Labour (Excl GST)", log,
                                source=_src("labour_excl_gst"))
+        
+        _log_extraction(claim, log, "Labour GST 18%", claim.labour_excl_gst, "labour_excl_gst")
         await safe_fill_amount(page, ASSESSMENT["gst_18_labour"],
                                claim.labour_excl_gst, "Labour GST 18%", log,
                                source=_src("labour_excl_gst"))
@@ -411,9 +439,12 @@ async def _fill_workshop_invoice(page, claim: ClaimData, log, _src) -> None:
         
     try:
         ws_no = str(claim.workshop_invoice_no).split(" ")[0].split("(")[0][:20]
+        _log_extraction(claim, log, "WS Invoice No", ws_no, "workshop_invoice_no")
         await safe_fill(page, ASSESSMENT["ws_invoice_no"],
                         ws_no, "WS Invoice No", log,
                         source=_src("workshop_invoice_no"))
+        
+        _log_extraction(claim, log, "WS Invoice Date", claim.workshop_invoice_date, "workshop_invoice_date")
         await safe_fill_date(page, ASSESSMENT["ws_invoice_date"],
                              claim.workshop_invoice_date, "WS Invoice Date", log,
                              source=_src("workshop_invoice_date"))
@@ -434,21 +465,32 @@ async def _fill_other_charges(page, claim: ClaimData, log, _src) -> None:
         log("\n💰 Other Charges:")
         
     try:
+        _log_extraction(claim, log, "Towing Charges", claim.towing_charges, "towing_charges")
         await safe_fill_amount(page, ASSESSMENT["towing"],
                                claim.towing_charges, "Towing Charges", log,
                                source=_src("towing_charges"))
+        
+        _log_extraction(claim, log, "Spot Repairs", claim.spot_repairs, "spot_repairs")
         await safe_fill_amount(page, ASSESSMENT["spot_repairs"],
                                claim.spot_repairs, "Spot Repairs", log,
                                source=_src("spot_repairs"))
+        
+        _log_extraction(claim, log, "Voluntary Excess", claim.voluntary_excess, "voluntary_excess")
         await safe_fill_amount(page, ASSESSMENT["vol_excess"],
                                claim.voluntary_excess, "Voluntary Excess", log,
                                source=_src("voluntary_excess"))
+        
+        _log_extraction(claim, log, "Compulsory Excess", claim.compulsory_excess, "compulsory_excess")
         await safe_fill_amount(page, ASSESSMENT["comp_excess"],
                                claim.compulsory_excess, "Compulsory Excess", log,
                                source=_src("compulsory_excess"))
+        
+        _log_extraction(claim, log, "Imposed Excess", claim.imposed_excess, "imposed_excess")
         await safe_fill_amount(page, ASSESSMENT["imp_excess"],
                                claim.imposed_excess, "Imposed Excess", log,
                                source=_src("imposed_excess"))
+        
+        _log_extraction(claim, log, "Salvage Value", claim.salvage_value, "salvage_value")
         await safe_fill_amount(page, ASSESSMENT["salvage"],
                                claim.salvage_value, "Salvage Value", log,
                                source=_src("salvage_value"))
@@ -473,9 +515,12 @@ async def _fill_invoice_details(page, claim: ClaimData, log, _src) -> None:
         inv_date = claim.invoice_date if claim.invoice_date.strip() else claim.workshop_invoice_date
         inv_no_clean = str(inv_no).split(" ")[0].split("(")[0][:20]
         
+        _log_extraction(claim, log, "Invoice No", inv_no_clean, "invoice_no")
         await safe_fill(page, ASSESSMENT["invoice_no"],
                         inv_no_clean, "Invoice No", log,
                         source=_src("invoice_no") or _src("workshop_invoice_no"))
+        
+        _log_extraction(claim, log, "Invoice Date", inv_date, "invoice_date")
         await safe_fill_date(page, ASSESSMENT["invoice_date"],
                              inv_date, "Invoice Date", log,
                              source=_src("invoice_date") or _src("workshop_invoice_date"))
@@ -502,16 +547,19 @@ async def _fill_report_details(page, claim: ClaimData, log, _src) -> None:
             raw_ref = claim.invoice_no or ""
         clean_report_no = re.split(r'[/\\-]', raw_ref)[-1].strip() if raw_ref else ""
         
+        _log_extraction(claim, log, "Report No", clean_report_no, "final_report_no")
         await safe_fill(page, ASSESSMENT["report_no"],
                         clean_report_no, "Report No", log,
                         source=_src("final_report_no"))
+        
         if claim.final_report_date and claim.final_report_date.strip():
+            _log_extraction(claim, log, "Report Date", claim.final_report_date, "final_report_date")
             await safe_fill_date(page, ASSESSMENT["report_date"],
                                  claim.final_report_date, "Report Date", log,
                                  source=_src("final_report_date"))
         else:
             if isinstance(log, AutomationLogger):
-                log.info("Report Date skipped (using portal default)")
+                log.field_skipped("Report Date", "Report Date is missing in Excel (portal auto-fills today's date)")
             else:
                 log("  ⏭️  Report Date: skipped (portal auto-fills today's date)")
     except Exception as e:
@@ -531,18 +579,27 @@ async def _fill_surveyor_charges(page, claim: ClaimData, log, _src) -> None:
         log("\n💼 Surveyor Charges:")
         
     try:
+        _log_extraction(claim, log, "Travel Expenses", claim.traveling_expenses, "traveling_expenses")
         await safe_fill_amount(page, ASSESSMENT["travel"],
                                claim.traveling_expenses, "Travel Expenses", log,
                                source=_src("traveling_expenses"))
+        
+        _log_extraction(claim, log, "Professional Fee", claim.professional_fee, "professional_fee")
         await safe_fill_amount(page, ASSESSMENT["prof_fee"],
                                claim.professional_fee, "Professional Fee", log,
                                source=_src("professional_fee"))
+        
+        _log_extraction(claim, log, "Daily Allowance", claim.daily_allowance, "daily_allowance")
         await safe_fill_amount(page, ASSESSMENT["daily_allowance"],
                                claim.daily_allowance, "Daily Allowance", log,
                                source=_src("daily_allowance"))
+        
+        _log_extraction(claim, log, "Photo Charges", claim.photo_charges, "photo_charges")
         await safe_fill_amount(page, ASSESSMENT["photo"],
                                claim.photo_charges, "Photo Charges", log,
                                source=_src("photo_charges"))
+        
+        _log_extraction(claim, log, "Total Claimed Amount", str(claim.total_claimed_amount or 0), "total_claimed_amount")
         await safe_fill_amount(page, ASSESSMENT["total"],
                                str(claim.total_claimed_amount or 0), "Total Claimed Amount", log,
                                source="Calculated")
@@ -574,7 +631,7 @@ async def _upload_all(page, claim: ClaimData, log, settings: dict) -> None:
                 count += 1
         except Exception as e:
             if isinstance(log, AutomationLogger):
-                log.error(f"[{slot_key}] upload error: {e}")
+                log.upload_failed(upload_label, f"Upload error: {e}")
             else:
                 log(f"  ❌ [{slot_key}] upload error: {e}")
                 
@@ -594,6 +651,7 @@ async def fill_claim_assessment(page, claim: ClaimData,
     log = log_cb
     defaults = load_automation_defaults(portal_id=getattr(claim, "portal_id", "uiic"))
     if isinstance(log, AutomationLogger):
+        log.section = "Claim Assessment"
         log.section_start("PHASE 5: CLAIM ASSESSMENT")
     
     await click_tab(page, "assessment", log)
@@ -633,6 +691,7 @@ async def fill_claim_assessment(page, claim: ClaimData,
     # Remarks
     try:
         remarks_default = str(defaults.get("remarks_default", "Done") or "Done")
+        _log_extraction(claim, log, "Remarks", remarks_default, "")
         await safe_fill_portal_text(page, ASSESSMENT["remarks"],
                              remarks_default, "Remarks", log,
                              source="Automation Defaults")
