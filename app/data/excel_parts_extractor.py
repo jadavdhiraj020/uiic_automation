@@ -112,6 +112,38 @@ def coerce_hsn_code(value, fallback: str):
     return int(raw) if raw.isdigit() else raw
 
 
+# The set of values that are clearly boolean/disabled config mistakes.
+# When the user accidentally sets the boundary keyword to one of these,
+# we substitute robust keyword defaults instead of scanning to sheet end.
+_INVALID_BOUNDARY_VALUES = frozenset({"no", "none", "false", "true", "yes", "0", ""})
+_DEFAULT_BOUNDARY_KEYWORD = "sub total|total|grand total"
+
+
+def _normalize_boundary_keyword(keyword: str) -> str:
+    """Guard against misconfigured table_boundary_keyword values.
+
+    If the value is empty, a boolean-like word, or any other clearly invalid
+    keyword (e.g. the user typed 'No' thinking it would disable the feature),
+    fall back to a robust multi-keyword default so the scanner stops at the
+    correct table boundary.
+
+    Args:
+        keyword: Raw value from ``defaults["table_boundary_keyword"]``.
+
+    Returns:
+        A clean, valid keyword string safe to pass to the extractor.
+    """
+    cleaned = str(keyword or "").strip()
+    if cleaned.lower() in _INVALID_BOUNDARY_VALUES:
+        logger.warning(
+            "table_boundary_keyword '%s' looks like a boolean/disabled value "
+            "— substituting default '%s' to prevent full-sheet scanning.",
+            cleaned, _DEFAULT_BOUNDARY_KEYWORD,
+        )
+        return _DEFAULT_BOUNDARY_KEYWORD
+    return cleaned
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # DYNAMIC HEADER DETECTION
 # ══════════════════════════════════════════════════════════════════════════════
@@ -246,6 +278,7 @@ def _extract_parts_rows(
     hsn_code=8512,
     audit_lines: Optional[List[str]] = None,
     boundary_keyword: str = "sub total",
+    stop_row: Optional[int] = None,
 ) -> List[dict]:
     """Extract spare part rows from the sheet using the detected header and column map."""
     rows = []
@@ -266,7 +299,19 @@ def _extract_parts_rows(
             _boundary_variants.add(_t)
             _boundary_variants.add(_t.replace(" ", ""))
 
-    for r in range(header_row + 1, sheet.max_row + 1):
+    # Determine the last row to scan. If the caller provides a stop_row (e.g.
+    # the first row of the Labour header), we stop before it so spare parts
+    # can never bleed into the labour section regardless of boundary keywords.
+    scan_end = sheet.max_row
+    if stop_row is not None and stop_row > header_row:
+        scan_end = stop_row - 1
+        if audit_lines is not None:
+            audit_lines.append(
+                f"Parts extraction: bounded by stop_row={stop_row} "
+                f"(Labour header) — scanning rows {header_row + 1}..{scan_end}"
+            )
+
+    for r in range(header_row + 1, scan_end + 1):
         # Check for subtotal boundary — exact cell text match only
         row_texts = [
             str(sheet.cell(row=r, column=c).value).strip().lower()
@@ -507,6 +552,9 @@ def extract_parts_and_labour(
                           For every token, the literal form and the collapsed
                           form (spaces removed) are both matched, so
                           ``"sub total"`` also matches ``"subtotal"``.
+                          Values like ``"No"``, ``"None"``, ``"False"``, or
+                          blank are treated as misconfiguration and replaced
+                          with a robust default automatically.
                           Default: ``"sub total"``.
 
     Returns:
@@ -521,9 +569,14 @@ def extract_parts_and_labour(
     if not os.path.exists(excel_path):
         raise FileNotFoundError(f"Source Excel not found: {excel_path}")
 
+    # Normalize the boundary keyword — guard against misconfigured values like
+    # 'No', 'None', 'False', or blank that would cause a full-sheet scan.
+    boundary_keyword = _normalize_boundary_keyword(boundary_keyword)
+
     audit_lines: List[str] = [
         "Parts & Labour Extraction Audit",
         f"Source Excel: {excel_path}",
+        f"Boundary keyword: {boundary_keyword}",
     ]
 
     logger.info("Parts extractor: loading source Excel %s", excel_path)
@@ -561,9 +614,16 @@ def extract_parts_and_labour(
             logger.warning("Parts extractor: %s", warning)
             audit_lines.append(f"WARNING: {warning}")
         else:
+            # Detect labour header first so we can pass its row as a stop_row
+            # boundary. This guarantees spare parts never bleed into the labour
+            # section even when keyword matching fails.
+            _labour_detection_for_stop = _detect_labour_header(src_ws)
+            _stop_row = _labour_detection_for_stop.row  # None if not found
+
             parts_rows = _extract_parts_rows(
                 src_ws, parts_header, parts_col_map, hsn_code=parts_hsn,
                 audit_lines=audit_lines, boundary_keyword=boundary_keyword,
+                stop_row=_stop_row,
             )
             logger.info("Parts extractor: extracted %d spare part rows", len(parts_rows))
     else:

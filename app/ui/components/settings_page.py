@@ -199,8 +199,11 @@ class SettingsPage(QWidget):
         self.defaults_table.verticalHeader().setDefaultSectionSize(48)
         self.defaults_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.defaults_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
-        self.defaults_table.setColumnWidth(1, 220)
+        self.defaults_table.setColumnWidth(1, 280)
         self.defaults_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        # TagDelegate: renders any '|'-separated VALUE cells as square chip boxes
+        # (same look as the Field Mapping tab's search label chips)
+        self.defaults_table.setItemDelegateForColumn(1, TagDelegate(self.defaults_table))
         l.addWidget(self.defaults_table)
         s.setWidget(w); return s
 
@@ -329,8 +332,21 @@ class SettingsPage(QWidget):
                     spin.setValue(25)  # safe fallback default
                 self.defaults_table.setCellWidget(i, 1, spin)
             else:
-                value_item = QTableWidgetItem(raw_value)
-                self.defaults_table.setItem(i, 1, value_item)
+                # ChipLineEdit: shows pipe-separated tokens as square chip boxes
+                # when unfocused (read mode), and switches to normal text input
+                # when the user clicks to edit.  Same behaviour as the
+                # 'Main Excel Keywords' field in the Doc Mapping tab.
+                inp = ChipLineEdit()
+                inp.setObjectName("settingsInput")
+                inp.setText(raw_value)
+                # Context-specific placeholder guides the user.
+                if key == "table_boundary_keyword":
+                    inp.setPlaceholderText("e.g. sub total|total|grand total")
+                elif key == "upload_remarks":
+                    inp.setPlaceholderText("Min 10 chars — text filled on Document Upload step")
+                else:
+                    inp.setPlaceholderText("Enter value...")
+                self.defaults_table.setCellWidget(i, 1, inp)
 
             used_item = QTableWidgetItem(used_in)
             used_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
@@ -477,7 +493,48 @@ class SettingsPage(QWidget):
                     continue
                 if isinstance(widget, QComboBox):
                     defaults[key] = widget.currentText().strip()
+                elif isinstance(widget, QLineEdit):
+                    raw = widget.text().strip()
+
+                    def _scroll_to_error(w=widget):
+                        idx = self.defaults_table.indexAt(w.pos())
+                        if idx.isValid():
+                            self.defaults_table.scrollTo(idx)
+                        w.setFocus()
+                        w.selectAll()
+
+                    # ── Validate: Upload Remarks minimum length ───────────────
+                    if key == "upload_remarks" and len(raw) < _remarks_min_len:
+                        _scroll_to_error()
+                        raise ValueError(
+                            f"Upload Remarks must be at least {_remarks_min_len} characters "
+                            f"(currently {len(raw)}). Please enter a longer remark."
+                        )
+
+                    # ── Validate: Table Boundary Keyword ─────────────────────
+                    # Must be a non-blank text keyword (e.g. "sub total").
+                    # Typing "Yes" or "No" here is a common mistake — the field
+                    # looks like a boolean in the table but it is a text keyword.
+                    if key == "table_boundary_keyword":
+                        if not raw:
+                            _scroll_to_error()
+                            raise ValueError(
+                                "Table Boundary Keyword cannot be empty.\n"
+                                "Enter the text that marks the end of the parts/labour table "
+                                "in your Excel (e.g. 'sub total')."
+                            )
+                        if raw.lower() in {"yes", "no", "true", "false"}:
+                            _scroll_to_error()
+                            raise ValueError(
+                                f"Table Boundary Keyword is set to '{raw}' which looks like a "
+                                "Yes/No answer — but this field expects a text keyword from "
+                                "your Excel (e.g. 'sub total' or 'grand total').\n"
+                                "Please correct the value before saving."
+                            )
+
+                    defaults[key] = raw
                 else:
+                    # Fallback: plain QTableWidgetItem (older rows or custom fields)
                     value_item = self.defaults_table.item(r, 1)
                     raw = value_item.text().strip() if value_item else ""
 
@@ -495,9 +552,6 @@ class SettingsPage(QWidget):
                         )
 
                     # ── Validate: Table Boundary Keyword ─────────────────────
-                    # Must be a non-blank text keyword (e.g. "sub total").
-                    # Typing "Yes" or "No" here is a common mistake — the field
-                    # looks like a boolean in the table but it is a text keyword.
                     if key == "table_boundary_keyword":
                         if not raw:
                             _scroll_to_error()

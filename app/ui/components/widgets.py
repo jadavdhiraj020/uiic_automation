@@ -329,11 +329,17 @@ class TagDelegate(QStyledItemDelegate):
 
 
 class ChipLineEdit(QLineEdit):
-    """A QLineEdit that renders pipe-separated text as tags when not focused."""
+    """A QLineEdit that renders pipe-separated text as tag chips when not focused.
+
+    When the user clicks the field it becomes a normal plain-text QLineEdit so
+    they can type freely using ``|`` as a separator.  Once focus is lost and the
+    text contains ``|`` characters the chips are re-rendered automatically.
+    """
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumHeight(44)
-    
+
     def paintEvent(self, event):
         # Only show chips when NOT focused and has content with pipes
         if self.hasFocus() or not self.text() or "|" not in self.text():
@@ -342,12 +348,12 @@ class ChipLineEdit(QLineEdit):
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
-        # Draw frame (matching brutalist lineEdit style)
+
+        # ── Outer frame — match the app's standard input border ────────────
         painter.setBrush(QColor("#FFFFFF"))
-        painter.setPen(QPen(QColor("#0F172A"), 2))
-        painter.drawRect(self.rect().adjusted(1, 1, -1, -1))
-        
+        painter.setPen(QPen(QColor("#CBD5E1"), 1))
+        painter.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), 6, 6)
+
         tags = [t.strip() for t in self.text().split("|") if t.strip()]
         if not tags:
             painter.end()
@@ -358,30 +364,47 @@ class ChipLineEdit(QLineEdit):
         x = margin
         tag_h = 26
         y = (self.height() - tag_h) // 2
-        
+
         font = self.font()
         font.setPointSize(9)
-        font.setWeight(800)
+        font.setWeight(700)
         painter.setFont(font)
         metrics = QFontMetrics(font)
-        
+
+        # Chip colours — indigo-50 fill, indigo-700 border/text (matches the
+        # app's primary design accent used on tabs, active states, etc.)
+        chip_bg     = QColor("#EEF2FF")   # indigo-50
+        chip_border = QColor("#6366F1")   # indigo-500
+        chip_text   = QColor("#4338CA")   # indigo-700
+
         for tag in tags:
-            tw = metrics.horizontalAdvance(tag) + 16
+            tw = metrics.horizontalAdvance(tag) + 20   # inner horizontal padding
             tag_rect = QRect(x, y, tw, tag_h)
-            
-            # Clip if too long
+
+            # Clip — stop drawing if we'd overflow the widget
             if x + tw > self.width() - margin:
+                # Show a "+N more" overflow indicator
+                remaining = len(tags) - tags.index(tag)
+                if remaining > 0:
+                    more_text = f"+{remaining}"
+                    more_tw = metrics.horizontalAdvance(more_text) + 14
+                    more_rect = QRect(x, y, more_tw, tag_h)
+                    painter.setBrush(QColor("#F1F5F9"))
+                    painter.setPen(QPen(QColor("#94A3B8"), 1))
+                    painter.drawRoundedRect(more_rect, 4, 4)
+                    painter.setPen(QColor("#64748B"))
+                    painter.drawText(more_rect, Qt.AlignmentFlag.AlignCenter, more_text)
                 break
 
-            # Tag box
-            painter.setBrush(QColor("#FFFFFF"))
-            painter.setPen(QPen(QColor("#0F172A"), 1.5))
-            painter.drawRect(tag_rect)
-            
-            # Text
-            painter.setPen(QColor("#0F172A"))
+            # Chip box with rounded corners
+            painter.setBrush(chip_bg)
+            painter.setPen(QPen(chip_border, 1))
+            painter.drawRoundedRect(tag_rect, 4, 4)
+
+            # Chip text
+            painter.setPen(chip_text)
             painter.drawText(tag_rect, Qt.AlignmentFlag.AlignCenter, tag)
-            
-            x += tw + 8
-        
+
+            x += tw + 6   # gap between chips
+
         painter.end()

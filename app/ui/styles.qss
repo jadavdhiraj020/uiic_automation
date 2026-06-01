@@ -917,3 +917,26 @@ QComboBox#embeddedCombo, QSpinBox#embeddedSpin {
 QComboBox#embeddedCombo:focus, QSpinBox#embeddedSpin:focus {
     border-color: #6366F1;
 }
+
+/* Embedded text input in settings table — same visual rhythm as combo/spin */
+QLineEdit#settingsInput {
+    background-color: #FFFFFF;
+    border: 1px solid #CBD5E1;
+    border-radius: 6px;
+    padding: 5px 10px;
+    color: #0F172A;
+    font-size: 10pt;
+    font-weight: 600;
+    min-height: 32px;
+}
+
+QLineEdit#settingsInput:focus {
+    border-color: #6366F1;
+    background-color: #FAFAFA;
+}
+
+QLineEdit#settingsInput::placeholder {
+    color: #94A3B8;
+    font-weight: 400;
+    font-style: italic;
+}

@@ -30,7 +30,7 @@
   "item_hsn_code": "8512",
   "labour_hsn_code": "8729",
   "labour_estimated_amount": "100000",
-  "table_boundary_keyword": "sub total",
+  "table_boundary_keyword": "sub total|total|grand total",
 
   "_comment_upload": "Hardcoded defaults for Document Upload (Step 5).",
   "upload_remarks": "Documents verified and uploaded.",
