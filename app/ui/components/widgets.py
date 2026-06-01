@@ -74,15 +74,12 @@ def search_row(placeholder: str, on_change):
     inp.setObjectName("settingsInput")
     inp.textChanged.connect(on_change)
 
-    btn_clear = QPushButton("X")
+    btn_clear = QPushButton("×")
+    btn_clear.setObjectName("searchClearBtn")
     btn_clear.setFixedWidth(36)
+    btn_clear.setToolTip("Clear search")
     btn_clear.setCursor(Qt.CursorShape.PointingHandCursor)
     btn_clear.clicked.connect(inp.clear)
-    btn_clear.setStyleSheet(
-        "QPushButton { border-radius: 8px; padding: 0; background: #F1F5F9; "
-        "color: #64748B; font-size: 10pt; font-weight: 800; } "
-        "QPushButton:hover { background: #E2E8F0; color: #0F172A; }"
-    )
 
     lay.addWidget(inp)
     lay.addWidget(btn_clear)
@@ -130,9 +127,9 @@ def stat_card(value_text, label_text, accent_color):
     outer.setStyleSheet(
         "QFrame#statCard {"
         "  background-color:#FFFFFF;"
-        "  border:2px solid #0F172A;"
+        "  border:1px solid #DDE4EE;"
         f" border-left:6px solid {accent_color};"
-        "  border-radius:0px;"
+        "  border-radius:6px;"
         "}"
     )
     outer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -143,17 +140,21 @@ def stat_card(value_text, label_text, accent_color):
     lay.setSpacing(14)
 
     icon_map = {
-        "Fields Extracted": "📄",
-        "Documents Found": "✅",
-        "Missing Critical": "⚠",
-        "Status": "⏱",
+        "Fields Extracted": "FLD",
+        "Documents Found": "DOC",
+        "Missing Critical": "!",
+        "Status": "OK",
+        "Matched": "OK",
+        "Missing": "!",
+        "Unknown": "?",
+        "Skipped": "SK",
     }
     icon_tile = QLabel(icon_map.get(label_text, ""))
     icon_tile.setObjectName("statIconTile")
     icon_tile.setFixedSize(44, 44)
     # Soft tint for the icon tile like Tailwind `*-100`
     icon_tile.setStyleSheet(
-        f"background-color: {_hex_to_rgba(accent_color, 0.12)}; border:2px solid {accent_color}; border-radius:0px;"
+        f"background-color: {_hex_to_rgba(accent_color, 0.12)}; border:1px solid {accent_color}; border-radius:6px;"
     )
     icon_tile.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -183,15 +184,29 @@ def stat_card(value_text, label_text, accent_color):
 
 # ── Horizontal Step Pipeline (replaces sidebar) ──────────────────────
 class StepPipeline(QWidget):
-    """Horizontal step indicators for the Progress page."""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(14)
-        self._items: list[tuple[QFrame, QLabel, QLabel]] = []
+    """Horizontal step indicators for portal-aware automation phases."""
 
-        for i, (name, number) in enumerate(STEPS):
+    def __init__(self, phases=None, parent=None):
+        super().__init__(parent)
+        self._lay = QHBoxLayout(self)
+        self._lay.setContentsMargins(0, 0, 0, 0)
+        self._lay.setSpacing(10)
+        self._items: list[tuple[QFrame, QLabel, QLabel]] = []
+        self.set_phases(phases or [name for name, _ in STEPS])
+
+    def set_phases(self, phases):
+        while self._lay.count():
+            item = self._lay.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+        self._items.clear()
+
+        phase_labels = [getattr(p, "label", str(p)) for p in phases]
+        if not phase_labels:
+            phase_labels = [name for name, _ in STEPS]
+
+        for i, name in enumerate(phase_labels):
             card = QFrame()
             card.setObjectName("stepCard")
             card.setProperty("state", "pending")
@@ -201,7 +216,7 @@ class StepPipeline(QWidget):
             v.setSpacing(10)
             v.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-            badge = QLabel(number)
+            badge = QLabel(str(i + 1))
             badge.setObjectName("stepBadge")
             badge.setFixedSize(36, 36)
             badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -217,22 +232,24 @@ class StepPipeline(QWidget):
             v.addWidget(lbl, 0, Qt.AlignmentFlag.AlignCenter)
 
             self._items.append((card, badge, lbl))
-            lay.addWidget(card, 1)
+            self._lay.addWidget(card, 1)
+
+        self.set_step(-1)
 
     def set_step(self, active_idx: int):
         for i, (card, badge, lbl) in enumerate(self._items):
             if i < active_idx:
                 state = "done"
                 badge.setText("✓")
-                badge.setStyleSheet("background-color: #10B981; color: white; border: 2px solid #065F46; border-radius: 0px;")
+                badge.setStyleSheet("background-color: #10B981; color: white; border: 1px solid #065F46; border-radius: 6px;")
             elif i == active_idx:
                 state = "active"
                 badge.setText(str(i + 1))
-                badge.setStyleSheet("background-color: #4F46E5; color: white; border: 3px solid #312E81; border-radius: 0px;")
+                badge.setStyleSheet("background-color: #4F46E5; color: white; border: 1px solid #312E81; border-radius: 6px;")
             else:
                 state = "pending"
                 badge.setText(str(i + 1))
-                badge.setStyleSheet("background-color: #FFFFFF; color: #94A3B8; border: 2px solid #E2E8F0; border-radius: 0px;")
+                badge.setStyleSheet("background-color: #FFFFFF; color: #94A3B8; border: 1px solid #E2E8F0; border-radius: 6px;")
 
             for w in (card, badge, lbl):
                 w.setProperty("state", state)

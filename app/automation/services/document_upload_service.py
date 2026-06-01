@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 from typing import Callable, List, Optional, Tuple
+from app.automation.automation_logger import AutomationLogger
 
 MAX_FILE_MB = 2.0
 
@@ -11,9 +12,9 @@ logger = logging.getLogger(__name__)
 class DocumentUploadService:
     """Encapsulates upload panel interaction and row/file lifecycle."""
 
-    def __init__(self, page, log_cb: Callable[[str], None]):
+    def __init__(self, page, log_cb = print):
         self.page = page
-        self.log_cb = log_cb
+        self.log = log_cb
 
     async def get_upload_panel(self):
         panel = self.page.locator(".panel.panel-yellow").filter(
@@ -90,7 +91,10 @@ class DocumentUploadService:
                     if await btn.is_visible(timeout=250):
                         label = (await btn.inner_text(timeout=250)).strip() or "button"
                         await btn.click(force=True, timeout=1000)
-                        self.log_cb(f"    ℹ️  Closed upload popup via '{label[:40]}'")
+                        if isinstance(self.log, AutomationLogger):
+                            self.log.info(f"Closed upload popup via '{label[:40]}'")
+                        else:
+                            self.log(f"    ℹ️  Closed upload popup via '{label[:40]}'")
                         dismissed = True
                         await asyncio.sleep(0.6)
                         break
@@ -129,7 +133,10 @@ class DocumentUploadService:
                         """
                     )
                     if clicked:
-                        self.log_cb(f"    ℹ️  Closed upload popup via DOM '{clicked[:40]}'")
+                        if isinstance(self.log, AutomationLogger):
+                            self.log.info(f"Closed upload popup via DOM '{clicked[:40]}'")
+                        else:
+                            self.log(f"    ℹ️  Closed upload popup via DOM '{clicked[:40]}'")
                         dismissed = True
                         await asyncio.sleep(0.6)
                         continue
@@ -174,13 +181,19 @@ class DocumentUploadService:
         dropdown_set = False
         try:
             await row_select.select_option(label=doc_label, timeout=5000)
-            self.log_cb(f"      ✅ Doc type (label): {doc_label}")
+            if isinstance(self.log, AutomationLogger):
+                self.log.success(f"Doc type (label): {doc_label}")
+            else:
+                self.log(f"      ✅ Doc type (label): {doc_label}")
             dropdown_set = True
         except Exception as e1:
             logger.debug("Label select failed for '%s': %s", doc_label, str(e1)[:60])
             try:
                 await row_select.select_option(value=f"string:{doc_label}", timeout=5000)
-                self.log_cb(f"      ✅ Doc type (value): {doc_label}")
+                if isinstance(self.log, AutomationLogger):
+                    self.log.success(f"Doc type (value): {doc_label}")
+                else:
+                    self.log(f"      ✅ Doc type (value): {doc_label}")
                 dropdown_set = True
             except Exception as e2:
                 logger.debug("Value select failed for '%s': %s", doc_label, str(e2)[:60])
@@ -212,10 +225,16 @@ class DocumentUploadService:
                     """
                 )
                 if not js_ok:
-                    self.log_cb(f"      ❌ Doc type FAILED for '{doc_label}' — not found in portal dropdown")
+                    if isinstance(self.log, AutomationLogger):
+                        self.log.error(f"Doc type FAILED for '{doc_label}' — not found in portal dropdown")
+                    else:
+                        self.log(f"      ❌ Doc type FAILED for '{doc_label}' — not found in portal dropdown")
                     logger.error("Dropdown set failed: '%s' not found in portal options", doc_label)
                     return False
-                self.log_cb(f"      ✅ Doc type (JS fallback): '{js_ok}'")
+                if isinstance(self.log, AutomationLogger):
+                    self.log.success(f"Doc type (JS fallback): '{js_ok}'")
+                else:
+                    self.log(f"      ✅ Doc type (JS fallback): '{js_ok}'")
                 dropdown_set = True
 
         if not dropdown_set:
@@ -246,19 +265,31 @@ class DocumentUploadService:
                     expected_name.lower() in row_text and "no file chosen" not in row_text
                 ) or (selected_name and selected_name.lower() == expected_name.lower()):
                     if attempt > 1:
-                        self.log_cb(f"      ℹ️  File attach succeeded on retry {attempt}")
+                        if isinstance(self.log, AutomationLogger):
+                            self.log.info(f"File attach succeeded on retry {attempt}")
+                        else:
+                            self.log(f"      ℹ️  File attach succeeded on retry {attempt}")
                     return True
 
-                self.log_cb(
-                    f"      ⚠️  File attach did not stick for '{doc_label}' "
-                    f"(attempt {attempt}/{max_attempts}, got '{selected_name or 'empty'}')"
-                )
+                if isinstance(self.log, AutomationLogger):
+                    self.log.warning(f"File attach did not stick for '{doc_label}' (attempt {attempt}/{max_attempts})")
+                else:
+                    self.log(
+                        f"      ⚠️  File attach did not stick for '{doc_label}' "
+                        f"(attempt {attempt}/{max_attempts}, got '{selected_name or 'empty'}')"
+                    )
             except Exception as exc:
-                self.log_cb(f"      ⚠️  File attach retry {attempt}/{max_attempts} failed: {str(exc)[:70]}")
+                if isinstance(self.log, AutomationLogger):
+                    self.log.warning(f"File attach retry {attempt}/{max_attempts} failed: {str(exc)[:70]}")
+                else:
+                    self.log(f"      ⚠️  File attach retry {attempt}/{max_attempts} failed: {str(exc)[:70]}")
 
             await asyncio.sleep(0.8)
 
-        self.log_cb(f"      ❌ File input did not retain '{expected_name}'")
+        if isinstance(self.log, AutomationLogger):
+            self.log.error(f"File input did not retain '{expected_name}'")
+        else:
+            self.log(f"      ❌ File input did not retain '{expected_name}'")
         logger.error("File input did not retain file for row %d (%s)", row_index, doc_label)
         return False
 
@@ -275,10 +306,10 @@ class DocumentUploadService:
             pass
 
         try:
-            await self.page.evaluate(
+            await panel.evaluate(
                 """
-                (function() {
-                    var all = document.querySelectorAll('[ng-click],[data-ng-click]');
+                (panelEl) => {
+                    var all = panelEl.querySelectorAll('[ng-click],[data-ng-click]');
                     for (var el of all) {
                         var nc = (el.getAttribute('ng-click') || el.getAttribute('data-ng-click') || '').toLowerCase();
                         if (nc.includes('add') && (nc.includes('row') || nc.includes('document'))) {
@@ -287,7 +318,7 @@ class DocumentUploadService:
                         }
                     }
                     return null;
-                })();
+                }
                 """
             )
             await asyncio.sleep(0.8)
@@ -305,7 +336,7 @@ class DocumentUploadService:
         ]
         for sel in css_selectors:
             try:
-                btn = self.page.locator(sel).last
+                btn = panel.locator(sel).last
                 if await btn.is_visible(timeout=1000):
                     await btn.click(timeout=3000)
                     await asyncio.sleep(0.8)
@@ -314,10 +345,10 @@ class DocumentUploadService:
                 continue
 
         try:
-            await self.page.evaluate(
+            await panel.evaluate(
                 """
-                (function() {
-                    var imgs = document.querySelectorAll('img[src*="plus"]');
+                (panelEl) => {
+                    var imgs = panelEl.querySelectorAll('img[src*="plus"]');
                     for (var img of imgs) {
                         var p = img.parentElement;
                         if (p && (p.tagName === 'A' || p.tagName === 'BUTTON')) {
@@ -326,7 +357,7 @@ class DocumentUploadService:
                         }
                     }
                     return false;
-                })();
+                }
                 """
             )
         except Exception:
@@ -335,10 +366,16 @@ class DocumentUploadService:
         await asyncio.sleep(1.0)
         after_count = await panel.locator('select[name^="docType"]').count()
         if after_count > before_count:
-            self.log_cb("    ➕ New row added to DOM successfully")
+            if isinstance(self.log, AutomationLogger):
+                self.log.success("New row added to DOM successfully")
+            else:
+                self.log("    ➕ New row added to DOM successfully")
             return True
 
-        self.log_cb("    ⚠️  PLUS button click failed to add new row")
+        if isinstance(self.log, AutomationLogger):
+            self.log.warning("PLUS button click failed to add new row")
+        else:
+            self.log("    ⚠️  PLUS button click failed to add new row")
         return False
 
     async def set_doc_type_by_index(self, row_idx: int, option_index: int) -> None:
@@ -355,9 +392,15 @@ class DocumentUploadService:
             """
         )
         if result:
-            self.log_cb(f"      ℹ️  No file — set dropdown to option {option_index}: '{result}'")
+            if isinstance(self.log, AutomationLogger):
+                self.log.info(f"No file — set dropdown to option {option_index}: '{result}'")
+            else:
+                self.log(f"      ℹ️  No file — set dropdown to option {option_index}: '{result}'")
         else:
-            self.log_cb(f"      ⚠️  Could not set fallback dropdown option {option_index}")
+            if isinstance(self.log, AutomationLogger):
+                self.log.warning(f"Could not set fallback dropdown option {option_index}")
+            else:
+                self.log(f"      ⚠️  Could not set fallback dropdown option {option_index}")
 
     async def upload_queue(
         self,
@@ -370,26 +413,54 @@ class DocumentUploadService:
 
         for idx, (doc_type, file_path) in enumerate(queue):
             fname = os.path.basename(file_path) if file_path else "[no file]"
-            self.log_cb(f"\n  [{idx+1}/{len(queue)}] '{doc_type}' → {fname}")
+            if isinstance(self.log, AutomationLogger):
+                self.log.upload_start(doc_type, fname)
+            else:
+                self.log(f"\n  [{idx+1}/{len(queue)}] '{doc_type}' → {fname}")
+            panel = await self.get_upload_panel()
+            before_count = await panel.locator('select[name^="docType"]').count()
 
             if idx == 0:
-                panel = await self.get_upload_panel()
-                existing = await panel.locator('select[name^="docType"]').count()
-                if existing == 0:
-                    self.log_cb("    ⚠️  No pre-existing row found — adding first row")
-                    await self.click_plus(timeout_ms=wait_timeout_ms)
+                if before_count == 0:
+                    if isinstance(self.log, AutomationLogger):
+                        self.log.warning("No pre-existing row found — adding first row")
+                    else:
+                        self.log("    ⚠️  No pre-existing row found — adding first row")
+                    added = await self.click_plus(timeout_ms=wait_timeout_ms)
+                    panel = await self.get_upload_panel()
+                    after_count = await panel.locator('select[name^="docType"]').count()
+                    if not added and after_count == 0:
+                        if isinstance(self.log, AutomationLogger):
+                            self.log.upload_failed(doc_type, "Could not add first row")
+                        else:
+                            self.log(f"    ❌ Could not add first row — skipping '{doc_type}'")
+                        logger.error("PLUS button failed for first upload row (doc: %s)", doc_type)
+                        upload_results.append((doc_type, fname, "FAILED", "Could not add upload row"))
+                        continue
+                    row_idx = 0
                 else:
-                    self.log_cb(f"    ℹ️  Using pre-existing row (row count: {existing})")
+                    if isinstance(self.log, AutomationLogger):
+                        self.log.info(f"Using pre-existing row (row count: {before_count})")
+                    else:
+                        self.log(f"    ℹ️  Using pre-existing row (row count: {before_count})")
+                    row_idx = 0
             else:
-                self.log_cb("    ➕ Clicking PLUS for new row...")
+                if isinstance(self.log, AutomationLogger):
+                    self.log.info("Clicking PLUS for new row...")
+                else:
+                    self.log("    ➕ Clicking PLUS for new row...")
                 added = await self.click_plus(timeout_ms=wait_timeout_ms)
-                if not added:
-                    self.log_cb(f"    ❌ Could not add row — skipping '{doc_type}'")
+                panel = await self.get_upload_panel()
+                after_count = await panel.locator('select[name^="docType"]').count()
+                if not added or after_count <= before_count:
+                    if isinstance(self.log, AutomationLogger):
+                        self.log.upload_failed(doc_type, "Could not add row via PLUS click")
+                    else:
+                        self.log(f"    ❌ Could not add row — skipping '{doc_type}'")
                     logger.error("PLUS button failed for row %d (doc: %s)", idx, doc_type)
                     upload_results.append((doc_type, fname, "FAILED", "Could not add upload row"))
                     continue
-
-            row_idx = idx
+                row_idx = after_count - 1
 
             if file_path:
                 try:
@@ -398,16 +469,25 @@ class DocumentUploadService:
                     )
                     if ok:
                         await self.wait_after_upload(row_idx, wait_timeout_ms)
-                        self.log_cb(f"    ✅ Uploaded: {fname}")
+                        if isinstance(self.log, AutomationLogger):
+                            self.log.upload_attached(doc_type, fname)
+                        else:
+                            self.log(f"    ✅ Uploaded: {fname}")
                         logger.info("Upload OK: [%s] → %s", doc_type, fname)
                         upload_results.append((doc_type, fname, "OK", "Uploaded successfully"))
                         uploaded_rows.append((row_idx, doc_type, file_path))
                     else:
-                        self.log_cb(f"    ❌ Upload FAILED for: {fname}")
+                        if isinstance(self.log, AutomationLogger):
+                            self.log.upload_failed(doc_type, "Dropdown selection or file upload failed")
+                        else:
+                            self.log(f"    ❌ Upload FAILED for: {fname}")
                         logger.error("Upload FAILED: [%s] → %s — dropdown or file set failed", doc_type, fname)
                         upload_results.append((doc_type, fname, "FAILED", "Dropdown selection or file upload failed"))
                 except Exception as e:
-                    self.log_cb(f"    ❌ Upload error: {str(e)[:80]}")
+                    if isinstance(self.log, AutomationLogger):
+                        self.log.upload_failed(doc_type, f"Exception: {str(e)[:80]}")
+                    else:
+                        self.log(f"    ❌ Upload error: {str(e)[:80]}")
                     logger.error("Upload exception: [%s] → %s — %s", doc_type, fname, str(e)[:120])
                     upload_results.append((doc_type, fname, "FAILED", f"Exception: {str(e)[:80]}"))
             else:

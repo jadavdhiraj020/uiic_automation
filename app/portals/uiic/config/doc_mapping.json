@@ -1,0 +1,132 @@
+{
+  "_comment": "Maps lowercase filename keywords to Document Type dropdown values on the UIIC portal. filename is matched using 'in' operator (substring match). Keys sorted longest-first for priority matching.",
+  "claim_documents_tab": {
+    "Driving License": [
+      "driving_license",
+      "driving",
+      "dl"
+    ],
+    "RC Book": [
+      "rc_book",
+      "rc book",
+      "rcbook",
+      "registration_certificate",
+      "registration"
+    ],
+    "Vehicle Photograph (Front)": [
+      "vehicle_photo_1",
+      "veh_front",
+      "photo_front"
+    ],
+    "Vehicle Photograph(Rear)": [
+      "vehicle_photo_2",
+      "veh_rear",
+      "photo_rear"
+    ],
+    "Vehicle Photograph (Left)": [
+      "vehicle_photo_3",
+      "veh_left",
+      "photo_left"
+    ],
+    "Vehicle Photograph (Right)": [
+      "vehicle_photo_4",
+      "veh_right",
+      "photo_right"
+    ],
+    "Road Permit for Commercial Vehicle": [
+      "road_permit",
+      "route_permit",
+      "permit"
+    ],
+    "Vehicle Fitness Certificate": [
+      "fitness_certificate",
+      "fitness"
+    ],
+    "FIR": [
+      "fir",
+      "police_report"
+    ],
+    "CSR and Certificate": [
+      "csr"
+    ],
+    "PAN Card": [
+      "pan_card",
+      "pan"
+    ],
+    "Aadhaar Card": [
+      "aadhaar",
+      "aadhar",
+      "uid"
+    ],
+    "Cancelled Cheque Or Bank Details": [
+      "cancel_check",
+      "cancel_cheque",
+      "cancelled_cheque",
+      "cancelled",
+      "cheque",
+      "bank_detail",
+      "bank"
+    ],
+    "Claim Form": [
+      "claim_form",
+      "claimform"
+    ],
+    "Discharge or Satisfaction Voucher": [
+      "discharge_voucher",
+      "discharge",
+      "satisfaction_voucher",
+      "voucher"
+    ],
+    "CKYC Form": [
+      "ckyc",
+      "kyc_form",
+      "kyc"
+    ],
+    "Investigation Report 1": [
+      "investigation",
+      "inv_report"
+    ]
+  },
+  "expected_claim_docs": [
+    "PAN Card",
+    "Aadhaar Card",
+    "Cancelled Cheque Or Bank Details",
+    "Driving License",
+    "RC Book",
+    "Vehicle Photograph (Front)",
+    "Vehicle Photograph(Rear)",
+    "Vehicle Photograph (Left)",
+    "Vehicle Photograph (Right)",
+    "Claim Form",
+    "CKYC Form",
+    "CSR and Certificate",
+    "Discharge or Satisfaction Voucher"
+  ],
+  "other_slots": [
+    "Other 1",
+    "Other 2",
+    "Other 3"
+  ],
+  "claim_assessment_tab": {
+    "assessment_report": [
+      "assessment_report",
+      "assessment"
+    ],
+    "survey_report": [
+      "survey_report",
+      "survey"
+    ],
+    "estimate": [
+      "repair_estimate",
+      "estimate"
+    ],
+    "invoice": [
+      "final_invoice",
+      "invoice"
+    ],
+    "reinspection_report": [
+      "re_inspection",
+      "reinspection"
+    ]
+  }
+}

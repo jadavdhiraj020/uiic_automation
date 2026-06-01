@@ -150,6 +150,13 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
         for c_idx, cell in enumerate(row):
             cell_str = " ".join(str(cell).strip().lower().split())  # collapse \n, \t, multi-space
             if cell_str and label_lower in cell_str:
+                # Prevent matching "time of survey" on a combined date cell like "Date and Time of Survey"
+                if "date" in cell_str and "date" not in label_lower:
+                    continue
+                # Prevent matching "time of survey" on a combined person cell like "Person Present at the Time of Survey"
+                if "person" in cell_str and "person" not in label_lower:
+                    continue
+
                 # Word-boundary check: prevent "TOTAL" matching "SUBTOTAL"
                 idx = cell_str.find(label_lower)
                 before_ok = (idx == 0) or not cell_str[idx - 1].isalnum()
@@ -307,21 +314,80 @@ def _format_date(raw: str) -> str:
     """Normalise any date string to DD/MM/YYYY for the portal."""
     if not raw:
         return ""
-    if re.match(r"\d{2}/\d{2}/\d{4}", raw):
-        return raw
-    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%m/%d/%Y", "%d.%m.%Y",
-                "%Y/%m/%d", "%B %d, %Y"):
+    val = str(raw).strip()
+    
+    # Try parsing common formats, particularly timestamps from Excel
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d-%m-%Y %H:%M:%S", "%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y", "%d.%m.%Y", "%Y/%m/%d", "%B %d, %Y"):
         try:
-            dt = datetime.strptime(raw.strip(), fmt)
+            dt = datetime.strptime(val, fmt)
             return dt.strftime("%d/%m/%Y")
         except ValueError:
-            continue
-    return raw
+            pass
+            
+    # Regex fallback if formats above fail
+    m = re.search(r'(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})', val)
+    if m:
+        d, mon, y = m.groups()
+        return f"{int(d):02d}/{int(mon):02d}/{y}"
+        
+    m2 = re.search(r'(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})', val)
+    if m2:
+        y, mon, d = m2.groups()
+        return f"{int(d):02d}/{int(mon):02d}/{y}"
+        
+    # Final fallback: if it looks like a timestamp (date + space + time), return just the date.
+    # Otherwise return the string as-is to preserve alphabetic dates that didn't match formats.
+    if " " in val and ":" in val:
+        return val.split(" ")[0]
+    return val
 
+
+def _extract_time_from_adjacent_cells(wb, sheet_name, found_label, cfg, claim) -> bool:
+    """Helper to scan adjacent cells for survey time if missing from main cell."""
+    time_found = False
+    try:
+        all_sheets = wb.all_sheets() if sheet_name == "ALL" else [wb.get_sheet(sheet_name)]
+        for sh in all_sheets:
+            if sh is None:
+                continue
+            for r_idx, row in enumerate(sh.rows()):
+                for c_idx, cell in enumerate(row):
+                    cell_lower = str(cell).strip().lower()
+                    if found_label.lower() in cell_lower and cell_lower:
+                        target_r = r_idx + cfg.get("row_offset", 0)
+                        all_row_data = list(sh.rows())
+                        if 0 <= target_r < len(all_row_data):
+                            target_row = all_row_data[target_r]
+                            for tc in range(c_idx + 1, len(target_row)):
+                                tc_str = str(target_row[tc]).strip()
+                                tm = re.search(r"(\d{1,2})[.:]?(\d{2})?\s*([aA]\.?[mM]\.?|[pP]\.?[mM]\.?)", tc_str)
+                                if tm:
+                                    h = int(tm.group(1))
+                                    m = tm.group(2) or "00"
+                                    ampm = tm.group(3).replace(".", "").lower()
+                                    if ampm == "pm" and h < 12:
+                                        h += 12
+                                    elif ampm == "am" and h == 12:
+                                        h = 0
+                                    claim.time_hh = f"{h:02d}"
+                                    claim.time_mm = f"{int(m):02d}"
+                                    time_found = True
+                                    logger.info(f"  [TIME] Extracted from adjacent cell R{target_r+1}C{tc+1}: {claim.time_hh}:{claim.time_mm}")
+                                    return True
+                                tm24 = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", tc_str)
+                                if tm24:
+                                    claim.time_hh = f"{int(tm24.group(1)):02d}"
+                                    claim.time_mm = f"{int(tm24.group(2)):02d}"
+                                    time_found = True
+                                    logger.info(f"  [TIME] Extracted 24h from adjacent cell R{target_r+1}C{tc+1}: {claim.time_hh}:{claim.time_mm}")
+                                    return True
+    except Exception as e:
+        logger.warning(f"  [TIME] Adjacent cell scan failed: {e}")
+    return False
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def read_excel(excel_path: str, config_dir: str):
+def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
     """
     Read Excel file and return a fully populated ClaimData instance.
 
@@ -332,14 +398,15 @@ def read_excel(excel_path: str, config_dir: str):
       - Logs exactly which cell was read for each field
     """
     from app.data.data_model import ClaimData
-    from app.utils import load_field_mapping
+    from app.utils import load_automation_defaults, load_field_mapping
 
     # Use the user's custom field mapping from AppData if it exists,
     # otherwise fall back to the bundled default.
-    mapping = load_field_mapping()
+    mapping = load_field_mapping(portal_id=portal_id)
+    automation_defaults = load_automation_defaults(portal_id=portal_id)
 
     wb = _open_workbook(excel_path)
-    claim = ClaimData()
+    claim = ClaimData(portal_id=portal_id or "uiic")
 
     found_count = 0
     missing_fields = []
@@ -349,10 +416,13 @@ def read_excel(excel_path: str, config_dir: str):
             continue
 
         if field_name == "surveyor_observation":
-            claim.surveyor_observation = "ok"
-            claim._excel_coords["surveyor_observation"] = "Fixed Value"
-            claim._excel_logs.append("  📊 surveyor_observation: 'ok' (Source: Fixed Value)")
-            logger.info("  [FIXED] surveyor_observation = ok")
+            observation_default = str(automation_defaults.get("observation_default", "Ok") or "Ok")
+            claim.surveyor_observation = observation_default
+            claim._excel_coords["surveyor_observation"] = "Automation Defaults"
+            claim._excel_logs.append(
+                f"  [DEFAULT] surveyor_observation: '{observation_default}' (Source: Automation Defaults)"
+            )
+            logger.info("  [DEFAULT] surveyor_observation = %s", observation_default)
             found_count += 1
             continue
 
@@ -368,7 +438,7 @@ def read_excel(excel_path: str, config_dir: str):
 
         row_off    = cfg.get("row_offset", 0)
         col_off    = cfg.get("col_offset", 1)
-        is_date    = "date" in field_name
+        is_date    = "date" in field_name or "dob" in field_name
         allow_literal_values = bool(cfg.get("allow_literal_values"))
         allow_text_values    = bool(cfg.get("allow_text_values"))
 
@@ -432,48 +502,7 @@ def read_excel(excel_path: str, config_dir: str):
 
                 # Second: if no time in value, scan adjacent cells in the row
                 if not time_found:
-                    try:
-                        all_sheets = wb.all_sheets() if sheet_name == "ALL" else [wb.get_sheet(sheet_name)]
-                        for sh in all_sheets:
-                            if sh is None:
-                                continue
-                            for r_idx, row in enumerate(sh.rows()):
-                                for c_idx, cell in enumerate(row):
-                                    cell_lower = str(cell).strip().lower()
-                                    if found_label.lower() in cell_lower and cell_lower:
-                                        target_r = r_idx + cfg.get("row_offset", 0)
-                                        all_row_data = list(sh.rows())
-                                        if 0 <= target_r < len(all_row_data):
-                                            target_row = all_row_data[target_r]
-                                            for tc in range(c_idx + 1, len(target_row)):
-                                                tc_str = str(target_row[tc]).strip()
-                                                tm = re.search(r"(\d{1,2})[.:]?(\d{2})?\s*([aA]\.?[mM]\.?|[pP]\.?[mM]\.?)", tc_str)
-                                                if tm:
-                                                    h = int(tm.group(1))
-                                                    m = tm.group(2) or "00"
-                                                    ampm = tm.group(3).replace(".", "").lower()
-                                                    if ampm == "pm" and h < 12:
-                                                        h += 12
-                                                    elif ampm == "am" and h == 12:
-                                                        h = 0
-                                                    claim.time_hh = f"{h:02d}"
-                                                    claim.time_mm = f"{int(m):02d}"
-                                                    time_found = True
-                                                    logger.info(f"  [TIME] Extracted from adjacent cell R{target_r+1}C{tc+1}: {claim.time_hh}:{claim.time_mm}")
-                                                    break
-                                                tm24 = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", tc_str)
-                                                if tm24:
-                                                    claim.time_hh = f"{int(tm24.group(1)):02d}"
-                                                    claim.time_mm = f"{int(tm24.group(2)):02d}"
-                                                    time_found = True
-                                                    logger.info(f"  [TIME] Extracted 24h from adjacent cell R{target_r+1}C{tc+1}: {claim.time_hh}:{claim.time_mm}")
-                                                    break
-                                            if time_found: break
-                                    if time_found: break
-                                if time_found: break
-                            if time_found: break
-                    except Exception as e:
-                        logger.warning(f"  [TIME] Adjacent cell scan failed: {e}")
+                    time_found = _extract_time_from_adjacent_cells(wb, sheet_name, found_label, cfg, claim)
 
                 if time_found:
                     logger.info(f"  [TIME] Survey time set: HH={claim.time_hh} MM={claim.time_mm}")
@@ -500,6 +529,22 @@ def read_excel(excel_path: str, config_dir: str):
             logger.info(f"  [FOUND] {field_name} = {value}")
         else:
             fallback = cfg.get("fallback_value")
+            default_key_by_field = {
+                "remarks": "remarks_default",
+                "fir_number": "missing_text_default",
+                "police_station_name": "missing_text_default",
+                "charged_us_motor_vehicle_act": "missing_text_default",
+                "charged_us_ipc": "missing_text_default",
+                "account_type": "account_type",
+                "party_payment_method": "payment_method",
+                "driver_relationship_with_insured": "relationship_with_insured",
+                "re_inspection_required": "reinspection_required",
+                "is_gst_applicable": "gst_applicable",
+                "payment_invoice_in_name_of_nia": "invoice_in_company_name",
+            }
+            default_key = default_key_by_field.get(field_name)
+            if default_key and automation_defaults.get(default_key) not in (None, ""):
+                fallback = automation_defaults.get(default_key)
             if fallback is not None:
                 setattr(claim, field_name, fallback)
                 logger.info(f"  [FALLBACK] {field_name} = {fallback}")
@@ -509,86 +554,87 @@ def read_excel(excel_path: str, config_dir: str):
                 missing_fields.append(f"{field_name} (labels: '{labels_str}')")
                 logger.warning(f"  [MISSING] {field_name}: labels '{labels_str}' not found or value empty")
 
-    # Expected completion date no longer needs separate Excel extraction or +10 day calculation.
-    # Keep it aligned with Date of Survey so every downstream consumer sees the same value.
-    if claim.date_of_survey:
-        claim.expected_completion_date = claim.date_of_survey
-        if "expected_completion_date" not in claim._excel_coords:
-            claim._excel_coords["expected_completion_date"] = claim._excel_coords.get("date_of_survey", "")
-        logger.info(
-            "  [SYNC] expected_completion_date = %s (same as date_of_survey)",
-            claim.expected_completion_date,
+    # ── Calculate Derived Business Logic ──────────────────────────────────────
+    if portal_id == "newindia" and claim._excel_coords.get("photo_charges") != "Hardcoded":
+        photo_charges_default = str(automation_defaults.get("photo_charges_default", "200") or "200")
+        claim.photo_charges = photo_charges_default
+        claim._excel_coords["photo_charges"] = "Hardcoded"
+        claim._excel_logs.append(
+            f"  [HARDCODED] photo_charges: '{photo_charges_default}' (Source: Automation Defaults)"
         )
+        logger.info("  [HARDCODED] photo_charges = %s", photo_charges_default)
 
-    # ── Calculate Total Claimed Amount ──────────────────────────────────────
-    # To ensure UI preview and Backend automation are synchronized (Point 6),
-    # we dynamically calculate the sum of surveyor charges here instead of
-    # relying on the explicitly extracted field.
-    try:
-        calculated_total = sum(
-            int(float(getattr(claim, k) or 0))
-            for k in ["traveling_expenses", "professional_fee", "daily_allowance", "photo_charges"]
-        )
-        claim.total_claimed_amount = str(calculated_total)
-        claim._excel_coords["total_claimed_amount"] = "Calculated"
-        claim._excel_logs.append(f"  📊 total_claimed_amount: '{claim.total_claimed_amount}' (Source: Calculated)")
-        logger.info(f"  [MATH] Calculated total_claimed_amount = {claim.total_claimed_amount}")
-    except Exception as e:
-        logger.warning(f"  [MATH] Failed to calculate total claimed amount: {e}")
+    claim.calculate_derived_fields()
 
     logger.info(f"Excel read complete: {found_count} fields found, "
                 f"{len(missing_fields)} missing: {missing_fields}")
 
     # ── Payment Type Detection (keyword scan) ────────────────────────────────
-    if not claim.payment_to:
+    if not claim.payment_to or not claim.bank_payment_to:
         for sh in wb.all_sheets():
             sh_name = sh.name if hasattr(sh, 'name') else 'Sheet'
             for r_idx, row in enumerate(sh.rows()):
                 for c_idx, cell in enumerate(row):
                     cell_text = " ".join(str(cell).strip().lower().split())
                     
-                    if "payment to insured" in cell_text:
+                    if "payment to insured" in cell_text or "payment to reimbursement" in cell_text:
                         claim.payment_to = "INSURED"
+                        claim.bank_payment_to = "Insured"
                         src = f"R{r_idx+1}C{c_idx+1} ({sh_name})"
                         claim._excel_coords["payment_to"] = src
-                        claim._excel_logs.append(f"  📊 payment_to: '{claim.payment_to}' (Source: {src})")
-                        logger.info(f"  [FOUND] payment_to = {claim.payment_to} (keyword scan - payment to insured)")
+                        claim._excel_coords["bank_payment_to"] = src
+                        claim._excel_logs.append(f"  📊 payment_to / bank_payment_to: '{claim.payment_to}' / '{claim.bank_payment_to}' (Source: {src})")
+                        logger.info(f"  [FOUND] payment_to = {claim.payment_to}, bank_payment_to = {claim.bank_payment_to} (keyword scan - payment to insured)")
                         break
-                    elif "payment to repairer" in cell_text:
+                    elif "payment to repairer" in cell_text or "payment to dealer" in cell_text:
                         claim.payment_to = "REPAIRER"
+                        claim.bank_payment_to = "Dealer"
                         src = f"R{r_idx+1}C{c_idx+1} ({sh_name})"
                         claim._excel_coords["payment_to"] = src
-                        claim._excel_logs.append(f"  📊 payment_to: '{claim.payment_to}' (Source: {src})")
-                        logger.info(f"  [FOUND] payment_to = {claim.payment_to} (keyword scan - payment to repairer)")
+                        claim._excel_coords["bank_payment_to"] = src
+                        claim._excel_logs.append(f"  📊 payment_to / bank_payment_to: '{claim.payment_to}' / '{claim.bank_payment_to}' (Source: {src})")
+                        logger.info(f"  [FOUND] payment_to = {claim.payment_to}, bank_payment_to = {claim.bank_payment_to} (keyword scan - payment to repairer/dealer)")
                         break
 
-                    if "favour" in cell_text and ("repairer" in cell_text or "insured" in cell_text):
+                    if "favour" in cell_text and ("repairer" in cell_text or "insured" in cell_text or "dealer" in cell_text):
                         if "insured" in cell_text:
                             claim.payment_to = "INSURED"
+                            claim.bank_payment_to = "Insured"
                         else:
                             claim.payment_to = "REPAIRER"
+                            claim.bank_payment_to = "Dealer"
                         src = f"R{r_idx+1}C{c_idx+1} ({sh_name})"
                         claim._excel_coords["payment_to"] = src
-                        claim._excel_logs.append(f"  📊 payment_to: '{claim.payment_to}' (Source: {src})")
-                        logger.info(f"  [FOUND] payment_to = {claim.payment_to} (keyword scan)")
+                        claim._excel_coords["bank_payment_to"] = src
+                        claim._excel_logs.append(f"  📊 payment_to / bank_payment_to: '{claim.payment_to}' / '{claim.bank_payment_to}' (Source: {src})")
+                        logger.info(f"  [FOUND] payment_to = {claim.payment_to}, bank_payment_to = {claim.bank_payment_to} (keyword scan)")
                         break
                     if "favour" in cell_text:
                         for nc in range(c_idx + 1, min(c_idx + 5, len(row))):
                             next_text = " ".join(str(row[nc]).strip().lower().split())
-                            if "repairer" in next_text:
+                            if "repairer" in next_text or "dealer" in next_text:
                                 claim.payment_to = "REPAIRER"
+                                claim.bank_payment_to = "Dealer"
                                 src = f"R{r_idx+1}C{nc+1} ({sh_name})"
                                 claim._excel_coords["payment_to"] = src
-                                claim._excel_logs.append(f"  📊 payment_to: '{claim.payment_to}' (Source: {src})")
+                                claim._excel_coords["bank_payment_to"] = src
+                                claim._excel_logs.append(f"  📊 payment_to / bank_payment_to: '{claim.payment_to}' / '{claim.bank_payment_to}' (Source: {src})")
                                 break
                             elif "insured" in next_text:
                                 claim.payment_to = "INSURED"
+                                claim.bank_payment_to = "Insured"
                                 src = f"R{r_idx+1}C{nc+1} ({sh_name})"
                                 claim._excel_coords["payment_to"] = src
-                                claim._excel_logs.append(f"  📊 payment_to: '{claim.payment_to}' (Source: {src})")
+                                claim._excel_coords["bank_payment_to"] = src
+                                claim._excel_logs.append(f"  📊 payment_to / bank_payment_to: '{claim.payment_to}' / '{claim.bank_payment_to}' (Source: {src})")
                                 break
-                        if claim.payment_to: break
-                if claim.payment_to: break
-            if claim.payment_to: break
+                        if claim.payment_to and claim.bank_payment_to: break
+                if claim.payment_to and claim.bank_payment_to: break
+            if claim.payment_to and claim.bank_payment_to: break
+
+    # Fallback Defaults
+    if not claim.bank_payment_to:
+        claim.bank_payment_to = "Insured"
+        claim._excel_logs.append(f"  📊 bank_payment_to: '{claim.bank_payment_to}' (Source: Default Fallback)")
 
     return claim

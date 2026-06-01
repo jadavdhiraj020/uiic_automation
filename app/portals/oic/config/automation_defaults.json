@@ -1,0 +1,39 @@
+{
+  "_comment": "Basic user-facing automation defaults for OIC. These are business values, not selectors, waits, retries, or upload internals.",
+  "unknown_claim_type_default": "CASHLESS",
+  "eager_folder_ocr": false,
+  "instant_fill": "Yes",
+  "typing_delay_ms": "25",
+
+  "_comment_basic": "Hardcoded defaults for Basic Details (Step 2). Surveyors can change these via Settings UI.",
+  "driver_relation_default": "Self",
+
+  "_comment_interim": "Hardcoded defaults for Interim Report (Step 3). Surveyors can change these via Settings UI.",
+  "whether_vehicle_inspected": "YES",
+  "is_survey_completed": "YES",
+  "is_driving_license_applicable": "YES",
+  "documents_verified": "YES",
+  "spot_survey_done": "YES",
+  "docs_verified_remarks": "okay",
+  "spot_survey_remarks": "okay",
+  "surveyor_observation_default": "okay",
+  "particulars_of_loss_damage": "As per estimate",
+
+  "_comment_loss": "Hardcoded defaults for Assessment of Loss (Step 4).",
+  "gst_type": "IGST",
+  "survey_gst_applicable": "No",
+  "expense_description": "conveyance",
+  "final_recommendation": "agree",
+  "declaration_checked": "Yes",
+  "item_side_description": "FRONT",
+  "item_igst_rate": "18%",
+  "item_hsn_code": "8512",
+  "labour_hsn_code": "8729",
+  "labour_estimated_amount": "100000",
+  "table_boundary_keyword": "sub total",
+
+  "_comment_upload": "Hardcoded defaults for Document Upload (Step 5).",
+  "upload_remarks": "Documents verified and uploaded.",
+  "auto_submit_documents": false,
+  "upload_max_file_bytes": 5242880
+}

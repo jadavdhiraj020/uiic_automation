@@ -1,10 +1,3 @@
-"""
-claim_documents.py — Orchestrates the "Claim Documents" tab workflow.
-
-Heavy DOM upload mechanics were extracted to DocumentUploadService to keep this
-module focused on business flow, queue construction, and summary reporting.
-"""
-
 import logging
 import os
 from typing import Callable, List, Optional, Tuple
@@ -15,7 +8,7 @@ from app.automation.services.document_upload_service import (
 )
 from app.automation.tab_utils import click_tab
 from app.data.data_model import ClaimData
-from app.utils import load_settings
+from app.automation.automation_logger import AutomationLogger
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +16,13 @@ logger = logging.getLogger(__name__)
 FALLBACK_OPTION_INDEX = 3
 
 
-async def _click_doc_radios(page, log_cb: Callable) -> None:
+async def _click_doc_radios(page, log) -> None:
     """Set Claim Documents verification radios to Yes using Angular-friendly events."""
+    if isinstance(log, AutomationLogger):
+        log.info("Setting 'Yes' radios for verification...")
+    else:
+        log("  🔘 Setting verification radios to Yes...")
+        
     radio_names = [
         "ynRCBookVerified",
         "ynRelevantDamage",
@@ -94,14 +92,17 @@ async def _click_doc_radios(page, log_cb: Callable) -> None:
     result = js_result or {}
     clicked = result.get("clicked", []) if isinstance(result, dict) else (result or [])
     extra = result.get("extra", 0) if isinstance(result, dict) else 0
-    log_cb(f"  🔘 Doc radios: {len(clicked)}/{len(radio_names)} named + {extra} auto-YES")
+    
+    if isinstance(log, AutomationLogger):
+        log.success(f"Radios set: {len(clicked)} named + {extra} extra")
+    else:
+        log(f"  🔘 Doc radios: {len(clicked)}/{len(radio_names)} named + {extra} auto-YES")
 
 
-async def _click_payment_option(page, claim: ClaimData, log_cb: Callable) -> None:
+async def _click_payment_option(page, claim: ClaimData, log) -> None:
     """Set payment option based on payment_to: insured -> reimbursement else cashless."""
     payment_raw = str(claim.payment_to).strip().lower()
     source = claim._excel_coords.get("payment_to", "")
-    src_tag = f" (Source: {source})" if source else ""
     target = "reimbursement" if "insured" in payment_raw else "cashless"
 
     result = await page.evaluate(
@@ -149,25 +150,41 @@ async def _click_payment_option(page, claim: ClaimData, log_cb: Callable) -> Non
 
     display = target.capitalize()
     if result:
-        log_cb(f"  ✅ Payment: {display}{src_tag}")
+        if isinstance(log, AutomationLogger):
+            log.success(f"Payment Option: {display}")
+        else:
+            log(f"  ✅ Payment: {display}")
     else:
-        log_cb(f"  ⚠️  Payment: {display} not found on page")
+        if isinstance(log, AutomationLogger):
+            log.warning(f"Payment Option: {display} not found on page")
+        else:
+            log(f"  ⚠️  Payment: {display} not found on page")
 
 
-def _build_queue(claim: ClaimData, log_cb: Callable) -> List[Tuple[str, Optional[str]]]:
+def _build_queue(claim: ClaimData, log) -> List[Tuple[str, Optional[str]]]:
     """Build upload queue preserving all mapped doc types, including missing-file placeholders."""
     queue = []
     for doc_type, file_path in claim.claim_doc_files.items():
         fname = os.path.basename(file_path) if file_path else "?"
         if not file_path or not os.path.isfile(file_path):
-            log_cb(f"  ⚠️  Not found: {fname} → type '{doc_type}' will be skipped")
+            if isinstance(log, AutomationLogger):
+                log.document_mapped(doc_type, fname, status="File Not Found", source="Folder Scan")
+                log.warning(f"File not found: {fname} (type '{doc_type}')")
+            else:
+                log(f"  ⚠️  Not found: {fname} → type '{doc_type}' will be skipped")
             logger.warning("Document file not found: %s (type: %s)", fname, doc_type)
             queue.append((doc_type, None))
             continue
 
         mb = os.path.getsize(file_path) / (1024 * 1024)
-        size_warn = " ⚠️ LARGE" if mb > MAX_FILE_MB else ""
-        log_cb(f"  📎 [{doc_type}]: {fname} ({mb:.1f}MB){size_warn}")
+        if isinstance(log, AutomationLogger):
+            log.document_mapped(doc_type, fname, status="Matched Successfully", source="Folder Scan")
+            size_tag = " [LARGE]" if mb > MAX_FILE_MB else ""
+            log.info(f"Queueing: [{doc_type}] → {fname} ({mb:.1f}MB){size_tag}")
+        else:
+            size_warn = " ⚠️ LARGE" if mb > MAX_FILE_MB else ""
+            log(f"  📎 [{doc_type}]: {fname} ({mb:.1f}MB){size_warn}")
+            
         if mb > MAX_FILE_MB:
             logger.info("Large file (%.1fMB): %s — portal alert will be auto-accepted", mb, fname)
         queue.append((doc_type, file_path))
@@ -175,26 +192,62 @@ def _build_queue(claim: ClaimData, log_cb: Callable) -> List[Tuple[str, Optional
     return queue
 
 
-async def fill_claim_documents(page, claim: ClaimData, log_cb: Callable[[str], None] = print) -> None:
-    """Fill Claim Documents tab with radios, payment option, and upload queue."""
-    await click_tab(page, "documents", log_cb)
+async def fill_claim_documents(page, claim: ClaimData, log_cb, settings: dict = None) -> bool:
+    """Main orchestrator for the Claim Documents tab."""
+    log = log_cb
+    if isinstance(log, AutomationLogger):
+        log.section = "Claim Documents"
+        log.section_start("PHASE 4: CLAIM DOCUMENTS")
+    else:
+        log("\n" + "="*60 + "\nPHASE 4: CLAIM DOCUMENTS\n" + "="*60)
 
-    log_cb("🔘 Setting verification radios...")
-    await _click_doc_radios(page, log_cb)
-    await _click_payment_option(page, claim, log_cb)
+    # 1. Click Tab
+    from app.automation.selectors import TABS
+    if await click_tab(page, "documents", log=log) is False:
+        return False
 
-    log_cb("\n📎 Building upload queue...")
-    queue = _build_queue(claim, log_cb)
+    if isinstance(log, AutomationLogger):
+        log.info("Filling Claim Documents section...")
+        log.indent()
+        log.step(1, 3, "Verification & Payment")
+    else:
+        log("🔘 Setting verification radios...")
+        
+    await _click_doc_radios(page, log)
+    await _click_payment_option(page, claim, log)
+
+    if isinstance(log, AutomationLogger):
+        log.step(2, 3, "Building Queue")
+        log.info("Building upload queue...")
+        log.indent()
+    else:
+        log("\n📎 Building upload queue...")
+        
+    queue = _build_queue(claim, log)
+    if isinstance(log, AutomationLogger): log.outdent()
+    
     if not queue:
-        log_cb("  ℹ️  No documents to process.")
+        if isinstance(log, AutomationLogger):
+            log.warning("No documents to process.")
+            log.outdent()
+        else:
+            log("  ℹ️  No documents to process.")
         logger.warning("No documents in upload queue — claim_doc_files was empty")
-        return
+        return True
 
-    log_cb(f"\n📤 Processing {len(queue)} document rows...")
+    if isinstance(log, AutomationLogger):
+        log.step(3, 3, "Uploading Documents")
+        log.info(f"Processing {len(queue)} document rows...")
+        log.indent()
+    else:
+        log(f"\n📤 Processing {len(queue)} document rows...")
 
     async def _handle_dialog(dialog):
-        dialog_msg = dialog.message[:80] if dialog.message else "(empty)"
-        log_cb(f"    ℹ️  Portal alert: '{dialog_msg}' → auto-accepted")
+        dialog_msg = (dialog.message[:80] + "...") if dialog.message and len(dialog.message) > 80 else (dialog.message or "(empty)")
+        if isinstance(log, AutomationLogger):
+            log.info(f"Portal alert: '{dialog_msg}' auto-accepted")
+        else:
+            log(f"    ℹ️  Portal alert: '{dialog_msg}' → auto-accepted")
         logger.info("Auto-accepted dialog: %s", dialog_msg)
         try:
             await dialog.accept()
@@ -203,19 +256,29 @@ async def fill_claim_documents(page, claim: ClaimData, log_cb: Callable[[str], N
 
     page.on("dialog", _handle_dialog)
 
-    settings = load_settings()
-    wait_timeout_ms = int(settings.get("upload_timeout_ms", settings.get("upload_wait_ms", 10000)))
+    # Use explicitly passed settings or empty dict
+    cfg = settings or {}
+    wait_timeout_ms = int(cfg.get("upload_timeout_ms", cfg.get("upload_wait_ms", 10000)))
     panel_ready_timeout = max(15000, wait_timeout_ms)
 
-    service = DocumentUploadService(page=page, log_cb=log_cb)
+    service = DocumentUploadService(page=page, log_cb=log)
 
     try:
         await service.wait_for_upload_section(panel_ready_timeout)
-        log_cb("  ✅ Upload panel ready")
+        if isinstance(log, AutomationLogger):
+            log.success("Upload panel ready")
+        else:
+            log("  ✅ Upload panel ready")
     except Exception as e:
-        log_cb(f"  ⚠️  Upload panel wait failed: {str(e)[:80]}")
+        if isinstance(log, AutomationLogger):
+            log.warning(f"Upload panel wait failed: {str(e)[:80]}")
+        else:
+            log(f"  ⚠️  Upload panel wait failed: {str(e)[:80]}")
         logger.error("Upload panel not visible: %s", str(e)[:120])
-        log_cb("  ℹ️  Proceeding anyway...")
+        if isinstance(log, AutomationLogger):
+            log.info("Proceeding anyway...")
+        else:
+            log("  ℹ️  Proceeding anyway...")
 
     upload_results, uploaded_rows = await service.upload_queue(
         queue=queue,
@@ -224,14 +287,21 @@ async def fill_claim_documents(page, claim: ClaimData, log_cb: Callable[[str], N
     )
 
     if uploaded_rows:
-        log_cb("\n🔎 Verifying visible upload rows...")
+        if isinstance(log, AutomationLogger):
+            log.info("Verifying visible upload rows...")
+        else:
+            log("\n🔎 Verifying visible upload rows...")
 
     for row_idx, doc_type, file_path in uploaded_rows:
         expected_name = os.path.basename(file_path)
         if await service.row_shows_expected_file(row_idx, expected_name, timeout_ms=2000):
             continue
 
-        log_cb(f"  ⚠️  Row lost file after upload: [{doc_type}] → retrying visible row")
+        if isinstance(log, AutomationLogger):
+            log.warning(f"Row lost file after upload: [{doc_type}] → retrying")
+        else:
+            log(f"  ⚠️  Row lost file after upload: [{doc_type}] → retrying visible row")
+            
         retry_ok = await service.select_doc_and_set_file(
             row_index=row_idx,
             doc_label=doc_type,
@@ -241,7 +311,10 @@ async def fill_claim_documents(page, claim: ClaimData, log_cb: Callable[[str], N
         if retry_ok:
             await service.wait_after_upload(row_index=row_idx, wait_ms=wait_timeout_ms)
             if await service.row_shows_expected_file(row_idx, expected_name, timeout_ms=2000):
-                log_cb(f"  ✅ Row restored: [{doc_type}] → {expected_name}")
+                if isinstance(log, AutomationLogger):
+                    log.success(f"Row restored: [{doc_type}] → {expected_name}")
+                else:
+                    log(f"  ✅ Row restored: [{doc_type}] → {expected_name}")
                 continue
 
         for idx_result, (r_doc_type, r_fname, r_status, _) in enumerate(upload_results):
@@ -256,18 +329,35 @@ async def fill_claim_documents(page, claim: ClaimData, log_cb: Callable[[str], N
     fail_count = sum(1 for _, _, s, _ in upload_results if s == "FAILED")
     skip_count = sum(1 for _, _, s, _ in upload_results if s == "SKIPPED")
 
-    log_cb(f"\n{'═' * 50}")
-    log_cb(f"📊 UPLOAD SUMMARY: {ok_count} uploaded, {fail_count} failed, {skip_count} skipped")
-    log_cb(f"{'═' * 50}")
-    for doc_type, fname, status, detail in upload_results:
-        icon = "✅" if status == "OK" else "❌" if status == "FAILED" else "⏭️"
-        log_cb(f"  {icon} [{doc_type}] → {fname} — {detail}")
+    if isinstance(log, AutomationLogger):
+        log.outdent()
+        log.info(f"Upload Summary: {ok_count} OK, {fail_count} Failed, {skip_count} Skipped")
+        log.indent()
+        for doc_type, fname, status, detail in upload_results:
+            msg = f"[{doc_type}] → {fname}: {detail}"
+            if status == "OK": log.success(msg)
+            elif status == "FAILED": log.error(msg)
+            else: log.info(f"(Skipped) {msg}")
+        log.outdent()
+    else:
+        log(f"\n{'═' * 50}")
+        log(f"📊 UPLOAD SUMMARY: {ok_count} uploaded, {fail_count} failed, {skip_count} skipped")
+        log(f"{'═' * 50}")
+        for doc_type, fname, status, detail in upload_results:
+            icon = "✅" if status == "OK" else "❌" if status == "FAILED" else "⏭️"
+            log(f"  {icon} [{doc_type}] → {fname} — {detail}")
 
     if fail_count > 0:
-        log_cb(f"\n  ⚠️  {fail_count} document(s) failed to upload — check file names and portal dropdown values")
+        if isinstance(log, AutomationLogger):
+            log.error(f"{fail_count} document(s) failed to upload")
+        else:
+            log(f"\n  ⚠️  {fail_count} document(s) failed to upload — check file names and portal dropdown values")
         logger.error("%d document(s) failed to upload", fail_count)
-    if skip_count > 0:
-        log_cb(f"  ℹ️  {skip_count} document(s) skipped (file not found or too large)")
 
-    log_cb(f"{'═' * 50}")
-    log_cb(f"\n✅ Claim Documents complete — {len(queue)} rows processed.")
+    if isinstance(log, AutomationLogger):
+        log.success("Claim Documents section complete.")
+        log.outdent()
+    else:
+        log(f"\n✅ Claim Documents complete — {len(queue)} rows processed.")
+    
+    return fail_count == 0

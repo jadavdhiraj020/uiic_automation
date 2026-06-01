@@ -1,0 +1,6 @@
+{
+  "_comment": "Basic user-facing automation defaults for UIIC. These are business values, not selectors, waits, retries, or upload internals.",
+  "remarks_default": "Done",
+  "observation_default": "Ok",
+  "eager_folder_ocr": false
+}

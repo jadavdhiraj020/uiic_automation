@@ -40,7 +40,7 @@ warnings.filterwarnings(
 
 def first_existing(*paths: Path) -> Path | None:
     for path in paths:
-        if path and path.exists():
+        if path and path.exists() and (not path.is_dir() or any(path.iterdir())):
             return path
     return None
 
@@ -126,8 +126,17 @@ hiddenimports: list[str] = []
 
 # Application resources.
 add_directory(datas, PROJECT_ROOT / "app" / "config", "app/config")
+for portal_config in sorted((PROJECT_ROOT / "app" / "portals").glob("*/config")):
+    portal_id = portal_config.parent.name
+    add_directory(datas, portal_config, f"app/portals/{portal_id}/config")
+for required_portal in ("uiic", "newindia", "oic"):
+    required_config = PROJECT_ROOT / "app" / "portals" / required_portal / "config"
+    if not required_config.is_dir():
+        raise FileNotFoundError(f"Required portal config directory missing: {required_config}")
 if (PROJECT_ROOT / "app" / "ui" / "styles.qss").exists():
     datas.append((str(PROJECT_ROOT / "app" / "ui" / "styles.qss"), "app/ui"))
+else:
+    raise FileNotFoundError(PROJECT_ROOT / "app" / "ui" / "styles.qss")
 if (PROJECT_ROOT / "assets" / "icon.ico").exists():
     datas.append((str(PROJECT_ROOT / "assets" / "icon.ico"), "assets"))
 
@@ -176,6 +185,7 @@ for package_name in (
     "shapely",
     "playwright",
     "pdfplumber",
+    "pypdfium2",
     "pandas",
     "openpyxl",
     "docx",
@@ -199,6 +209,7 @@ hiddenimports.extend(
         "openpyxl",
         "xlrd",
         "pdfplumber",
+        "pypdfium2",
         "numpy",
         "PIL",
         "cv2",
@@ -233,6 +244,58 @@ hiddenimports.extend(
         "Cython",
         "setuptools",
         "docx",
+        # ── New India Assurance portal — automation package ─────────────────
+        # engine.py imports these lazily inside if-blocks; static analysis
+        # cannot find them. List explicitly so they are always compiled in.
+        "app.portals.newindia.automation",
+        "app.portals.newindia.automation.login_module",
+        "app.portals.newindia.automation.navigation_module",
+        "app.portals.newindia.automation.quick_update_module",
+        "app.portals.newindia.automation.vehicle_photo_module",
+        "app.portals.newindia.automation.registration_cert_module",
+        "app.portals.newindia.automation.driver_details_module",
+        "app.portals.newindia.automation.fir_details_module",
+        "app.portals.newindia.automation.neft_module",
+        "app.portals.newindia.automation.work_approval_module",
+        "app.portals.newindia.automation.claim_assessment_module",
+        "app.portals.newindia.automation.document_upload_module",
+        "app.portals.newindia.automation.popup_service",
+        "app.portals.newindia.automation.ui_utils",
+        "app.portals.newindia.automation.ocr_helper",
+        "app.portals.newindia.automation.survey_fee_bill_module",
+        # ── Oriental Insurance Company portal — automation package ───────────
+        # engine.py imports these lazily inside if-blocks; static analysis
+        # cannot find them. List explicitly so they are always compiled in.
+        "app.portals.oic.automation",
+        "app.portals.oic.automation.login_module",
+        "app.portals.oic.automation.navigation_module",
+        # NOTE: 'claim_assessment_module' kept for back-compat but the real
+        # assessment module is 'assessment_of_loss_module' — both listed.
+        "app.portals.oic.automation.claim_assessment_module",
+        "app.portals.oic.automation.assessment_of_loss_module",
+        "app.portals.oic.automation.interim_report_module",
+        "app.portals.oic.automation.date_formatter",
+        "app.portals.oic.automation.document_upload_module",
+        "app.portals.oic.automation.popup_service",
+        "app.portals.oic.automation.ui_utils",
+        "app.portals.oic.automation.workflow_module",
+        "app.portals.oic.automation.basic_details_module",
+        "app.portals.oic.automation.claim_search_module",
+        "app.portals.oic.automation.selectors",
+        # ── app.data — Excel extraction and OIC assessment generation ─────────
+        # These are imported at runtime by the OIC portal engine but PyInstaller
+        # cannot detect them through dynamic import chains.
+        "app.data",
+        "app.data.oic_assessment_generator",
+        "app.data.excel_parts_extractor",
+        "app.data.excel_reader",
+        "app.data.assessment_generator",
+        "app.data.data_model",
+        "app.data.folder_scanner",
+        # ── UI service layer (lazy-imported inside main_window event handlers)
+        "app.ui.services",
+        # ── Automation service layer (if it contains dynamically loaded code)
+        "app.automation.services",
     ]
 )
 

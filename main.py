@@ -4,6 +4,7 @@ main.py - Application entry point.
 Works both from source and from the PyInstaller onedir bundle.
 """
 
+import hashlib
 import logging
 import os
 import sys
@@ -51,7 +52,17 @@ def main() -> None:
     qss_path = resource_path("app", "ui", "styles.qss")
     if os.path.exists(qss_path):
         with open(qss_path, "r", encoding="utf-8") as handle:
-            app.setStyleSheet(handle.read())
+            qss = handle.read()
+            app.setStyleSheet(qss)
+        qss_hash = hashlib.sha256(qss.encode("utf-8")).hexdigest()[:12]
+        logger.info(
+            "Loaded stylesheet: %s (%s bytes, sha256=%s)",
+            qss_path,
+            len(qss.encode("utf-8")),
+            qss_hash,
+        )
+    else:
+        logger.warning("Stylesheet not found: %s", qss_path)
 
     icon_path = resource_path("assets", "icon.ico")
     if os.path.exists(icon_path):
@@ -60,7 +71,17 @@ def main() -> None:
     from app.ui.main_window import MainWindow
 
     window = MainWindow()
-    window.show()
+
+    # Pre-warm PaddleOCR in background so it's fully loaded by the time OCR is needed
+    from app.automation.ocr_engine import warmup_ocr_background
+    warmup_ocr_background()
+    # NOTE: warmup_ocr_background() spawns a daemon thread. If PaddleOCR init
+    # fails, the error is logged at WARNING level in startup.log by
+    # ensure_ocr_ready() (see ocr_engine.py). The UI will surface the error
+    # message when OCR is first required (captcha, cheque, or invoice OCR).
+    # Check startup.log if captcha solving silently fails at runtime.
+
+    window.showMaximized()
     sys.exit(app.exec())
 
 

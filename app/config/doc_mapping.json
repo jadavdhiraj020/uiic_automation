@@ -1,5 +1,7 @@
 {
   "_comment": "Maps lowercase filename keywords to Document Type dropdown values on the UIIC portal. filename is matched using 'in' operator (substring match). Keys sorted longest-first for priority matching.",
+  "main_excel_keywords": [],
+  "_main_excel_keywords_comment": "Filename keywords to identify the main data Excel file. E.g. ['survey_data', 'claim'] — scanner picks the first matching .xls/.xlsx file. Leave empty to auto-pick the first Excel found.",
   "claim_documents_tab": {
     "Driving License": [
       "driving_license",
@@ -87,6 +89,21 @@
       "inv_report"
     ]
   },
+  "expected_claim_docs": [
+    "PAN Card",
+    "Aadhaar Card",
+    "Cancelled Cheque Or Bank Details",
+    "Driving License",
+    "RC Book",
+    "Vehicle Photograph (Front)",
+    "Vehicle Photograph(Rear)",
+    "Vehicle Photograph (Left)",
+    "Vehicle Photograph (Right)",
+    "Claim Form",
+    "CKYC Form",
+    "CSR and Certificate",
+    "Discharge or Satisfaction Voucher"
+  ],
   "other_slots": [
     "Other 1",
     "Other 2",
@@ -113,5 +130,10 @@
       "re_inspection",
       "reinspection"
     ]
+  },
+  "work_approval_keywords": {
+    "_comment": "Keywords used to find cashless/non-cashless approval documents by filename.",
+    "non_cashless": ["non_cashless", "non-cashless", "noncashless", "non cashless", "non_caseless", "non-caseless"],
+    "cashless": ["cashless", "caseless"]
   }
 }

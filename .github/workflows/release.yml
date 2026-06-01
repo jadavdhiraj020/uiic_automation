@@ -1,7 +1,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 #  UIIC Surveyor Automation — CI/CD Release Pipeline
 # ─────────────────────────────────────────────────────────────────────────────
-#  Triggers on every push to `main`.
+#  Triggers on every branch push and pull requests targeting main.
 #  Steps:
 #    1. Checkout code
 #    2. Set up Python 3.10 (pinned for PaddlePaddle 2.x Windows stability)
@@ -11,17 +11,20 @@
 #    6. Build the Windows EXE via PyInstaller (.spec file)
 #    7. Verify the EXE was produced
 #    8. Create a versioned ZIP of the dist folder
-#    9. Create a GitHub Release and upload the ZIP as an asset
+#    9. Upload ZIP as Build Artifact (available on all branches)
+#    10. Create a GitHub Release and upload ZIP (main push only)
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: Build & Release Windows EXE
 
 on:
   push:
-    branches: [main]
-
-  # Allow manual trigger from Actions tab
-  workflow_dispatch:
+    branches:
+      - '**'        # Run on every branch push
+  pull_request:
+    branches:
+      - main        # Run on PRs targeting main
+  workflow_dispatch:  # Allow manual trigger from Actions tab
 
 # Cancel superseded runs on the same branch
 concurrency:
@@ -70,19 +73,25 @@ jobs:
           python -m pip install --upgrade pip wheel
           python -m pip install -r requirements-build.txt
 
-      # ─── 4b. Create placeholder settings.json (gitignored) ───────────────
-      - name: Create CI settings.json
+      # ─── 4b. Create placeholder settings.json files (gitignored) ─────────
+      - name: Create CI settings.json files
         run: |
-          $settings = "app\config\settings.json"
-          $template = "app\config\settings.json.example"
-          if (-Not (Test-Path $settings)) {
-            if (Test-Path $template) {
-              Copy-Item $template $settings
-              Write-Host "Created $settings from template"
+          function Ensure-Settings($real, $example) {
+            if (-Not (Test-Path $real)) {
+              if (Test-Path $example) {
+                Copy-Item $example $real
+                Write-Host "Created $real from $example"
+              } else {
+                Write-Host "WARNING: No example found for $real — build may warn"
+              }
             } else {
-              Write-Host "WARNING: No settings template found — build may warn"
+              Write-Host "Found existing: $real"
             }
           }
+          Ensure-Settings "app\config\settings.json"                    "app\config\settings.json.example"
+          Ensure-Settings "app\portals\uiic\config\settings.json"       "app\portals\uiic\config\settings.json.example"
+          Ensure-Settings "app\portals\newindia\config\settings.json"   "app\portals\newindia\config\settings.json.example"
+          Ensure-Settings "app\portals\oic\config\settings.json"        "app\portals\oic\config\settings.json.example"
         shell: pwsh
 
       # ─── 5. Prepare Playwright Chromium ──────────────────────────────────
@@ -98,7 +107,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path "build_assets\paddleocr" | Out-Null
           $env:PADDLEOCR_HOME = "${{ github.workspace }}\build_assets\paddleocr"
-          python -c "from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=False, lang='en', show_log=False); print('PaddleOCR models ready.')"
+          python -c "from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=True, lang='en', show_log=False); print('PaddleOCR models ready.')"
         shell: pwsh
 
       # ─── 7. Extract version from pyproject.toml ─────────────────────────
@@ -123,13 +132,57 @@ jobs:
           Write-Host "ZIP:     $zip_name"
         shell: pwsh
 
-      # ─── 8. Build EXE with PyInstaller ──────────────────────────────────
+      # ─── 8. Verify OIC module imports (EXE vs local parity check) ───────
+      - name: Verify OIC module imports (pre-build parity check)
+        run: |
+          Write-Host "Checking all OIC automation + data modules are importable..."
+          $modules = @(
+            "app.portals.oic.automation",
+            "app.portals.oic.automation.login_module",
+            "app.portals.oic.automation.navigation_module",
+            "app.portals.oic.automation.assessment_of_loss_module",
+            "app.portals.oic.automation.interim_report_module",
+            "app.portals.oic.automation.date_formatter",
+            "app.portals.oic.automation.document_upload_module",
+            "app.portals.oic.automation.popup_service",
+            "app.portals.oic.automation.ui_utils",
+            "app.portals.oic.automation.workflow_module",
+            "app.portals.oic.automation.basic_details_module",
+            "app.portals.oic.automation.claim_search_module",
+            "app.portals.oic.automation.selectors",
+            "app.data",
+            "app.data.oic_assessment_generator",
+            "app.data.excel_parts_extractor",
+            "app.data.excel_reader",
+            "app.data.assessment_generator",
+            "app.data.data_model",
+            "app.data.folder_scanner"
+          )
+          $failed = @()
+          foreach ($mod in $modules) {
+            $result = python -c "import $mod; print('OK: $mod')" 2>&1
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "  FAIL: $mod -- $result" -ForegroundColor Red
+              $failed += $mod
+            } else {
+              Write-Host "  OK:   $mod"
+            }
+          }
+          if ($failed.Count -gt 0) {
+            Write-Error "OIC parity check FAILED — $($failed.Count) module(s) not importable:`n$($failed -join ', ')`nThese modules will cause ModuleNotFoundError in the EXE at runtime."
+            exit 1
+          }
+          Write-Host "OIC parity check PASSED — all $($modules.Count) modules importable." -ForegroundColor Green
+        shell: pwsh
+
+      # ─── 9. Build EXE with PyInstaller ──────────────────────────────────
       - name: Build Windows EXE
         run: |
           $env:PLAYWRIGHT_BROWSERS_PATH = "${{ github.workspace }}\build_assets\ms-playwright"
           $env:PADDLEOCR_HOME            = "${{ github.workspace }}\build_assets\paddleocr"
           $env:PYTHONWARNINGS             = "ignore:The numpy.array_api submodule is still experimental.:UserWarning,ignore:invalid escape sequence.*:SyntaxWarning"
 
+          Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
           python -m PyInstaller --noconfirm --clean uiic_automation.spec
         shell: pwsh
 
@@ -149,7 +202,13 @@ jobs:
           Get-ChildItem "dist\${{ env.APP_NAME }}" | Select-Object Name, Length | Format-Table -AutoSize
         shell: pwsh
 
-      # ─── 10. Smoke-test the EXE (headless) ──────────────────────────────
+      # ─── 10. Verify packaged runtime resources ──────────────────────────
+      - name: Verify packaged runtime resources
+        run: |
+          python scripts\verify_packaged_runtime.py "dist\${{ env.APP_NAME }}"
+        shell: pwsh
+
+      # ─── 11. Smoke-test the EXE (headless) ──────────────────────────────
       - name: Smoke-test EXE (launch + exit)
         run: |
           Write-Host "Attempting headless smoke-test of the EXE..."
@@ -174,7 +233,7 @@ jobs:
         shell: pwsh
         continue-on-error: true   # GUI may fail without a display; treated as non-fatal
 
-      # ─── 11. Create ZIP archive ─────────────────────────────────────────
+      # ─── 12. Create ZIP archive ─────────────────────────────────────────
       - name: Package release ZIP
         run: |
           $source  = "dist\${{ env.APP_NAME }}"
@@ -190,8 +249,17 @@ jobs:
         id: zip
         shell: pwsh
 
-      # ─── 12. Create GitHub Release ──────────────────────────────────────
+      # ─── 12.5. Upload Artifact (For All Branches) ───────────────────────
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.ZIP_NAME }}
+          path: ${{ steps.version.outputs.ZIP_NAME }}.zip
+          retention-days: 14
+
+      # ─── 13. Create GitHub Release (Only for Main Branch Push) ──────────
       - name: Create GitHub Release
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.TAG }}

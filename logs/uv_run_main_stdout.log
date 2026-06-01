@@ -1,0 +1,91 @@
+2026-05-30 19:19:13,504 [INFO] __main__: Starting UIIC Surveyor Automation
+2026-05-30 19:19:13,602 [INFO] __main__: Loaded stylesheet: C:\Users\Dev\Code\FastAPI\pc\uiic_automation\app\ui\styles.qss (20994 bytes, sha256=0142ffcfb6c8)
+2026-05-30 19:19:15,049 [INFO] app.automation.ocr_engine: [OCR] Starting background daemon thread to pre-load PaddleOCR models...
+2026-05-30 19:19:15,129 [INFO] app.automation.ocr_engine: [OCR] Initializing shared PaddleOCR singleton...
+2026-05-30 19:19:49,026 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): Accident Document.jpg
+2026-05-30 19:19:49,030 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): Bill_JDB_1336.pdf
+2026-05-30 19:19:49,031 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): Insurance Policy.pdf
+2026-05-30 19:19:49,031 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): Interim report full webpage img.png
+2026-05-30 19:19:49,032 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): Partnership Deed.pdf
+2026-05-30 19:19:49,033 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): Towing Bill.jpg
+2026-05-30 19:19:49,033 [WARNING] app.data.folder_scanner: Duplicate claim document mapping for [Cancelled Cheque Or Bank Details], keeping first file.
+2026-05-30 19:19:49,033 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): chassisno.jpeg
+2026-05-30 19:19:49,035 [WARNING] app.data.folder_scanner: Duplicate claim document mapping for [Discharge or Satisfaction Voucher], keeping first file.
+2026-05-30 19:19:49,035 [WARNING] app.data.folder_scanner: Duplicate claim document mapping for [Driving License], keeping first file.
+2026-05-30 19:19:49,038 [WARNING] app.data.folder_scanner: win32com not installed, skipping PDF export.
+2026-05-30 19:19:49,473 [WARNING] app.data.folder_scanner: Reinspection extraction failed. Attempt details: win32com/pythoncom not installed
+2026-05-30 19:19:49,476 [WARNING] app.data.folder_scanner: Could not resolve reinspection_report from user PDF, existing generated files, or Excel extraction.
+2026-05-30 19:19:49,477 [WARNING] app.data.folder_scanner: Duplicate assessment mapping for [estimate], keeping first file.
+2026-05-30 19:19:49,478 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): inspection.pdf
+2026-05-30 19:19:49,479 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): odometer_photo.jpeg
+2026-05-30 19:19:49,479 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): photo.pdf
+2026-05-30 19:19:49,480 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): work_approval_fallback.pdf
+2026-05-30 19:19:49,480 [WARNING] app.data.folder_scanner: Multiple Excel files found. Keeping first: C:/Users/Dev/Code/FastAPI/pc/uiic_automation/OIC DOCS\dummy.xlsx
+2026-05-30 19:19:49,816 [WARNING] app.data.excel_reader:   [MISSING] towing_charges: labels 'TOWING CHARGES' not found or value empty
+2026-05-30 19:19:49,841 [WARNING] app.data.excel_reader:   [MISSING] compulsory_excess: labels 'Less Compulsory Excess' not found or value empty
+2026-05-30 19:19:49,860 [WARNING] app.data.excel_reader:   [invoice_no] Sheet 'Sheet5' not found in workbook
+2026-05-30 19:19:49,861 [WARNING] app.data.excel_reader:   [MISSING] invoice_no: labels 'Ref:' not found or value empty
+2026-05-30 19:19:49,861 [WARNING] app.data.excel_reader:   [invoice_date] Sheet 'Sheet5' not found in workbook
+2026-05-30 19:19:49,861 [WARNING] app.data.excel_reader:   [MISSING] invoice_date: labels 'Date:' not found or value empty
+2026-05-30 19:19:49,886 [WARNING] app.data.excel_reader:   [MISSING] final_report_date: labels 'Date:' not found or value empty
+2026-05-30 19:19:49,886 [WARNING] app.data.excel_reader:   [traveling_expenses] Sheet 'Sheet5' not found in workbook
+2026-05-30 19:19:49,887 [WARNING] app.data.excel_reader:   [MISSING] traveling_expenses: labels 'CONVEYANCE CHARGES' not found or value empty
+2026-05-30 19:19:49,887 [WARNING] app.data.excel_reader:   [professional_fee] Sheet 'Sheet5' not found in workbook
+2026-05-30 19:19:49,887 [WARNING] app.data.excel_reader:   [MISSING] professional_fee: labels 'SURVEY FEE' not found or value empty
+2026-05-30 19:19:49,888 [WARNING] app.data.excel_reader:   [daily_allowance] Sheet 'Sheet5' not found in workbook
+2026-05-30 19:19:49,888 [WARNING] app.data.excel_reader:   [MISSING] daily_allowance: labels 'DAILY ALLOWANCE' not found or value empty
+2026-05-30 19:19:49,888 [WARNING] app.data.excel_reader:   [photo_charges] Sheet 'Sheet5' not found in workbook
+2026-05-30 19:19:49,888 [WARNING] app.data.excel_reader:   [MISSING] photo_charges: labels 'PHOTOGRAPHS' not found or value empty
+2026-05-30 19:19:49,889 [WARNING] app.data.excel_reader:   [vehicle_no] Sheet 'Sheet2' not found in workbook
+2026-05-30 19:19:49,889 [WARNING] app.data.excel_reader:   [MISSING] vehicle_no: labels 'VEHICLE REG. NO.' not found or value empty
+2026-05-30 19:19:49,922 [WARNING] app.data.excel_reader:   [MISSING] workshop_invoice_no: labels 'INVOICE NO PART' not found or value empty
+2026-05-30 19:19:49,942 [WARNING] app.data.excel_reader:   [MISSING] workshop_invoice_date: labels 'BILL GENERATION DATE' not found or value empty
+2026-05-30 19:20:40,096 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): Aadhar Card.pdf
+2026-05-30 19:20:40,101 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): Accident Document.jpg
+2026-05-30 19:20:40,101 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): Assessment_ReportNo_JDB_1336.pdf
+2026-05-30 19:20:40,102 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): Bill_JDB_1336.pdf
+2026-05-30 19:20:40,102 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): Discharge Voucher.pdf
+2026-05-30 19:20:40,103 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): Fitness Certificate.jpeg
+2026-05-30 19:20:40,103 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): Insurance Policy.pdf
+2026-05-30 19:20:40,104 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): Interim report full webpage img.png
+2026-05-30 19:20:40,104 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): Partnership Deed.pdf
+2026-05-30 19:20:40,105 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): Registration Certificate.pdf
+2026-05-30 19:20:40,105 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): Route Permit.pdf
+2026-05-30 19:20:40,106 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): Survey_ReportNo_JDB_1336_-_Copy.pdf
+2026-05-30 19:20:40,106 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): Towing Bill.jpg
+2026-05-30 19:20:40,107 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): cancel_check.jpeg
+2026-05-30 19:20:40,107 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): cancel_check_fallback.pdf
+2026-05-30 19:20:40,108 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): chassisno.jpeg
+2026-05-30 19:20:40,109 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): claim_form.jpg
+2026-05-30 19:20:40,110 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): discharge.pdf
+2026-05-30 19:20:40,110 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): dl.jpg
+2026-05-30 19:20:40,111 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): dl.pdf
+2026-05-30 19:20:40,114 [WARNING] app.data.folder_scanner: win32com not installed, skipping PDF export.
+2026-05-30 19:20:40,205 [WARNING] app.data.folder_scanner: Reinspection extraction failed. Attempt details: win32com/pythoncom not installed
+2026-05-30 19:20:40,210 [WARNING] app.data.folder_scanner: Could not resolve reinspection_report from user PDF, existing generated files, or Excel extraction.
+2026-05-30 19:20:40,211 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): estimate.pdf
+2026-05-30 19:20:40,212 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): estimate_bill.pdf
+2026-05-30 19:20:40,212 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): inspection.pdf
+2026-05-30 19:20:40,212 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): odometer_photo.jpeg
+2026-05-30 19:20:40,213 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): photo.pdf
+2026-05-30 19:20:40,214 [WARNING] app.data.folder_scanner: Unrecognised file (no mapping): work_approval_fallback.pdf
+2026-05-30 19:20:40,214 [WARNING] app.data.folder_scanner: Multiple Excel files found. Keeping first: C:/Users/Dev/Code/FastAPI/pc/uiic_automation/OIC DOCS\dummy.xlsx
+2026-05-30 19:20:40,214 [WARNING] app.data.folder_scanner: No Other slot left for: others 3 supp approval.pdf (only 0 slots)
+2026-05-30 19:20:41,119 [WARNING] app.data.excel_reader:   [MISSING] validity_of_authorization: labels 'Validity of Authorization | Auth Validity | Authorization Validity' not found or value empty
+2026-05-30 19:20:41,251 [WARNING] app.data.excel_reader:   [MISSING] badge_issue_date: labels 'Badge Issue Date | Badge Date | Date of Badge Issue' not found or value empty
+2026-05-30 19:20:41,397 [WARNING] app.data.excel_reader:   [MISSING] workshop_invoice_no: labels 'invoice_no | Invoice No | Tax Invoice No.' not found or value empty
+2026-05-30 19:20:41,429 [WARNING] app.data.excel_reader:   [MISSING] workshop_invoice_date: labels 'invoice_date | Invoice Date | Invoice Date and Time' not found or value empty
+2026-05-30 19:20:41,608 [WARNING] app.data.excel_reader:   [MISSING] expected_completion_date: labels 'Submission Date | Final Document Date | Expected Completion Date | Completion Date | Date of Final Submission' not found or value empty
+2026-05-30 19:20:41,741 [WARNING] app.data.excel_reader:   [MISSING] oicl_gst_number: labels 'oicl_gst_number | OICL GST Number | OICL GST No | GST No of OICL' not found or value empty
+2026-05-30 19:20:41,794 [WARNING] app.data.excel_reader:   [MISSING] traveling_expenses: labels 'traveling_expenses | conveyance | CONVEYANCE CHARGE | CONVEYANCE CHARGES | traveling expenses' not found or value empty
+2026-05-30 19:20:41,826 [WARNING] app.data.excel_reader:   [MISSING] professional_fee: labels 'professional_fee | professional fee | SURVEY FEE | SURVEY FEES' not found or value empty
+2026-05-30 19:20:41,850 [WARNING] app.data.excel_reader:   [MISSING] daily_allowance: labels 'DAILY_ALLOWANCE | daily allowance | DAILY allowances' not found or value empty
+2026-05-30 19:20:41,881 [WARNING] app.data.excel_reader:   [MISSING] photo_charges: labels 'photocharges | PHOTOGRAPHS | PHOTO charge | photo charges' not found or value empty
+2026-05-30 19:20:41,910 [WARNING] app.data.excel_reader:   [MISSING] surveyor_other_expenses: labels 'other_expenses | Other Expenses | other expenses | Others' not found or value empty
+2026-05-30 19:21:56,682 [WARNING] automation.engine: [OIC][ENGINE] [GST Number] failed: Page.wait_for_selector: Timeout 5000ms exceeded.
+Call log:
+  - waiting for locator("#gstNumber") to be visible
+
+2026-05-30 19:22:49,769 [WARNING] automation.engine: [OIC][ENGINE]    Compulsory Excess Amount: keyboard entry did not stick, applying native value setter
+2026-05-30 19:22:54,404 [WARNING] automation.engine: [OIC][ENGINE]    Imposed Excess Amount: keyboard entry did not stick, applying native value setter
+2026-05-30 19:22:59,010 [WARNING] automation.engine: [OIC][ENGINE]    Voluntary Excess Amount: keyboard entry did not stick, applying native value setter

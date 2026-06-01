@@ -1,0 +1,42 @@
+{
+  "_comment": "doc_mapping.json — Oriental Insurance Company portal. Contains strictly the required documents for OIC automation.",
+  "main_excel_keywords": [],
+  "_main_excel_keywords_comment": "Filename keywords to identify the main data Excel file. E.g. ['survey_data', 'claim'] — scanner picks the first matching .xls/.xlsx file. Leave empty to auto-pick the first Excel found.",
+  "claim_documents_tab": {},
+  "expected_claim_docs": [],
+  "other_slots": [],
+  "claim_assessment_tab": {
+    "invoice": [
+      "final_invoice",
+      "invoice"
+    ]
+  },
+  "document_upload_tab": {
+    "workshop_estimate": [
+      "estimate",
+      "workshop_estimate",
+      "repair_estimate",
+      "workshop_repair"
+    ],
+    "discharge_voucher": [
+      "discharge",
+      "voucher",
+      "satisfaction",
+      "discharge_voucher"
+    ],
+    "reinspection_report": [
+      "reinspection",
+      "re_inspection"
+    ],
+    "driving_license": [
+      "driving_license",
+      "driving license",
+      "dl"
+    ],
+    "photographs": [
+      "vehicle_photo",
+      "photograph",
+      "photo"
+    ]
+  }
+}

@@ -1,0 +1,562 @@
+{
+  "_comment": "field_mapping.json — Oriental Insurance Company portal. Maps ClaimData fields to Excel labels for OIC automation. search_labels lists fallback labels tried in order.",
+
+  "claim_no": {
+    "sheet": "ALL",
+    "search_labels": ["Claim no", "Claim Number", "claim_number", "claim_no", "Claim number"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+
+  "vehicle_registration_number": {
+    "sheet": "ALL",
+    "search_labels": ["Registration No.", "Registration No", "Vehicle Registration Number", "Regn No", "Vehicle No"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "date_of_registration": {
+    "sheet": "ALL",
+    "search_labels": ["Date of Registration", "Regn Date", "Registration Date"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": false
+  },
+  "vehicle_make": {
+    "sheet": "ALL",
+    "search_labels": ["Make & Year of Manufacturer", "Make of Vehicle", "Vehicle Make", "Make"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": true
+  },
+  "chassis_no": {
+    "sheet": "ALL",
+    "search_labels": ["Chassis No", "Chassis Number", "Ch No"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "engine_no": {
+    "sheet": "ALL",
+    "search_labels": ["Engine No", "Engine Number", "Eng No"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "cubic_capacity": {
+    "sheet": "ALL",
+    "search_labels": ["Cubic capacity", "Cubic Capacity", "CC"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "year_of_manufacture": {
+    "sheet": "ALL",
+    "search_labels": ["Year of Manufacture", "Mfg Year", "Year of Mfg", "Year", "year_of_manufacture"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": false
+  },
+  "type_of_body": {
+    "sheet": "ALL",
+    "search_labels": ["Type of Body", "Body Type"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "class_of_vehicle": {
+    "sheet": "ALL",
+    "search_labels": ["Class of Vehicle", "Vehicle Class"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "type_of_fuel": {
+    "sheet": "ALL",
+    "search_labels": ["Fuel used", "Type of Fuel", "Fuel Type", "Fuel"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "vehicle_color": {
+    "sheet": "ALL",
+    "search_labels": ["Color of Vehicle", "Color", "Colour", "vehicle_color"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "registered_owner_name": {
+    "sheet": "ALL",
+    "search_labels": ["Name of Regd. Owner", "Registered Owner Name", "Owner Name", "Name of Owner", "Insured Name"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "rto_name": {
+    "sheet": "ALL",
+    "search_labels": ["RTO Name", "RTO", "Registering Authority"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "registered_laden_weight": {
+    "sheet": "ALL",
+    "search_labels": ["Registered Laden Weight", "Laden Weight"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": false
+  },
+  "unladen_weight": {
+    "sheet": "ALL",
+    "search_labels": ["Unladen Weight", "ULW", "Unladen Wt"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": false
+  },
+  "road_tax_paid_upto": {
+    "sheet": "ALL",
+    "search_labels": ["Road Tax Paid Upto", "Road Tax", "Tax Valid Upto", "Road Tax Validity"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": false
+  },
+  "seating_capacity": {
+    "sheet": "ALL",
+    "search_labels": ["Seating Capacity", "Seating/Load Carrying Capacity", "Seats", "Seating"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": false
+  },
+  "fitness_valid_upto": {
+    "sheet": "ALL",
+    "search_labels": ["Fitness Valid Upto", "Fitness Upto", "Fitness Validity", "Fitness Certificate"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": false
+  },
+  "permit_number": {
+    "sheet": "ALL",
+    "search_labels": ["Permit Number", "Permit No", "Permit No."],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "type_of_permit": {
+    "sheet": "ALL",
+    "search_labels": ["Type of Permit", "Permit Type"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "permit_valid_upto": {
+    "sheet": "ALL",
+    "search_labels": ["Permit Valid Upto", "Permit Validity", "Permit Expiry"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": false
+  },
+  "authorization_number": {
+    "sheet": "ALL",
+    "search_labels": ["Authorization Number", "Auth Number", "Auth No", "Authorization No"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "validity_of_authorization": {
+    "sheet": "ALL",
+    "search_labels": ["Validity of Authorization", "Auth Validity", "Authorization Validity"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "road_area_of_operation": {
+    "sheet": "ALL",
+    "search_labels": ["Road/Area of Operation", "Area of Operation", "Route", "Road Area"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+
+  "date_of_accident": {
+    "sheet": "ALL",
+    "search_labels": ["Date of Accident", "Accident Date"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": false
+  },
+  "date_of_allotment": {
+    "sheet": "ALL",
+    "search_labels": ["Date of Allotment of Survey", "Date of Allotment", "Allotment Date"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": false
+  },
+  "age_of_vehicle": {
+    "sheet": "ALL",
+    "search_labels": ["LIFE OF VEHICLE", "Age of Vehicle", "Vehicle Age"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": false
+  },
+  "nil_depreciation": {
+    "sheet": "ALL",
+    "search_labels": ["Nil Depreciation", "Less Depreciation", "NIL DEP"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+
+  "driver_name": {
+    "sheet": "ALL",
+    "search_labels": ["Name of Driver", "Driver Name", "Name of the Driver"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": true
+  },
+  "dob_of_driver": {
+    "sheet": "ALL",
+    "search_labels": ["DOB:", "DOB of Driver", "Driver DOB", "Date of Birth of Driver"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "license_type_of_driver": {
+    "sheet": "ALL",
+    "search_labels": ["Type of Licence", "License Type of Driver", "License Type", "Type of License", "DL Type"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": true
+  },
+  "driver_license_number": {
+    "sheet": "ALL",
+    "search_labels": ["LICENCE NO.", "License No", "Driving License Number", "DL Number", "DL No"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "driver_license_issue_date": {
+    "sheet": "ALL",
+    "search_labels": ["Date of issue", "DL Issue Date", "License Issue Date"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "driver_license_expiry_date": {
+    "sheet": "ALL",
+    "search_labels": ["Valid Till", "DL Expiry Date", "License Expiry Date", "License Valid Till"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "badge_number": {
+    "sheet": "ALL",
+    "search_labels": ["Badge Number", "Badge No"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": false
+  },
+  "driver_address": {
+    "sheet": "ALL",
+    "search_labels": ["Address"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "driver_city_state": {
+    "sheet": "ALL",
+    "search_labels": ["City/State", "City / State"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "driver_pin_code": {
+    "sheet": "ALL",
+    "search_labels": ["Pin Code", "Pincode", "Pin", "Zip Code", "Zip"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "badge_issue_date": {
+    "sheet": "ALL",
+    "search_labels": ["Badge Issue Date", "Badge Date", "Date of Badge Issue"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": false
+  },
+  "driver_qualification": {
+    "sheet": "ALL",
+    "search_labels": ["Qualification", "Driver Qualification", "Educational Qualification"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "charges_filed": {
+    "sheet": "ALL",
+    "search_labels": ["Charges Filed", "Charges", "Criminal Charges", "Charges Filed Against Driver"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "license_issuing_authority": {
+    "sheet": "ALL",
+    "search_labels": ["Issuing Authority", "License Issuing Authority", "DL Issuing Authority"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+
+  "workshop_name": {
+    "sheet": "ALL",
+    "search_labels": ["Workshop", "Name of Workshop", "Workshop Name"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": true
+  },
+  "workshop_estimate_amount": {
+    "sheet": "ALL",
+    "search_labels": ["TOTAL NET FOR PARTS", "NET PAYABLE", "Total Net Parts"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "workshop_estimate_date": {
+    "sheet": "ALL",
+    "search_labels": [
+      "Estimate Date", "Workshop Estimate Date", "Date of Estimate",
+      "Estimation Date", "Workshop Date", "Estimate Dt"
+    ],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": false
+  },
+  "gst_number": {
+    "sheet": "ALL",
+    "search_labels": ["GST Number", "GST No.", "GSTIN", "GST", "gst_number"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+
+  "date_of_survey": {
+    "sheet": "ALL",
+    "search_labels": ["Date and Time of Survey", "date of survey", "Survey Date"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "place_of_survey": {
+    "sheet": "ALL",
+    "search_labels": ["Place of survey", "place of survey"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "mobile_no": {
+    "sheet": "ALL",
+    "search_labels": ["Mobile:", "mobile no", "mobile", "surveyor_mobile"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": false
+  },
+  "email_id": {
+    "sheet": "ALL",
+    "search_labels": ["e-mail:-", "email id", "email", "surveyor_email"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": false
+  },
+  "initial_loss_amount": {
+    "sheet": "ALL",
+    "search_labels": ["initial loss assessment", "intial losss", "intial loss"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": false
+  },
+  "cause_nature_of_accident": {
+    "sheet": "ALL",
+    "search_labels": ["CAUSE AND NATURE OF ACCIDENT", "Nature of Accident", "Cause of Accident"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "workshop_invoice_no": {
+    "sheet": "ALL",
+    "search_labels": ["invoice_no", "Invoice No", "Tax Invoice No."],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": false
+  },
+  "workshop_invoice_date": {
+    "sheet": "ALL",
+    "search_labels": ["invoice_date", "Invoice Date", "Invoice Date and Time"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": false
+  },
+  "surveyor_name": {
+    "sheet": "ALL",
+    "search_labels": ["Name of the Surveyor", "Surveyor Name", "Name of Surveyor", "Surveyor"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "surveyor_email": {
+    "sheet": "ALL",
+    "search_labels": ["Surveyor Email", "Email ID", "e-mail:-", "email id", "email", "surveyor_email"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "surveyor_mobile": {
+    "sheet": "ALL",
+    "search_labels": ["Surveyor Mobile Number", "Mobile Number", "mobile no", "mobile", "surveyor_mobile"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": false
+  },
+  "surveyor_address": {
+    "sheet": "ALL",
+    "search_labels": ["Surveyor Address", "Address", "surveyor_address"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "surveyor_pan": {
+    "sheet": "ALL",
+    "search_labels": ["PAN Number", "PAN No.", "PAN", "panNumber"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+
+  "expected_completion_date": {
+    "sheet": "ALL",
+    "search_labels": ["Submission Date", "Final Document Date", "Expected Completion Date", "Completion Date", "Date of Final Submission"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": false
+  },
+  "invoice_amount_without_gst": {
+    "sheet": "ALL",
+    "search_labels": ["invoice_amount_without_gst", "Invoice Amount Without GST", "Invoice Amount Excl GST", "net_payable_excluding_gst", "Net Invoice Amt"],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "invoice_gst_amount": {
+    "sheet": "ALL",
+    "search_labels": ["invoice_gst_amount", "Invoice GST Amount", "Invoice GST", "GST Amount"],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "voluntary_excess": {
+    "sheet": "ALL",
+    "search_labels": ["voluntary_excess", "Voluntary Excess", "voluntry excess"],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "imposed_excess": {
+    "sheet": "ALL",
+    "search_labels": ["imposed_excess", "Imposed Excess", "imposed excess"],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "compulsory_excess": {
+    "sheet": "ALL",
+    "search_labels": [
+      "compulsory_excess",
+      "Compulsory Excess",
+      "Less Compulsory Excess",
+      "Compulsory Excess Amount",
+      "compulsory excess",
+      "Comp Excess"
+    ],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "salvage_amount": {
+    "sheet": "ALL",
+    "search_labels": ["salvage_amount", "Salvage Amount", "salvage amount", "LESS SALVAGE VALUE", "Less Salvage Value"],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "surveyor_license_number": {
+    "sheet": "ALL",
+    "search_labels": ["license_number", "License Number", "Surveyor License Number", "Lic No", "License No"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true
+  },
+  "surveyor_license_expiry_date": {
+    "sheet": "ALL",
+    "search_labels": ["license_expiry_date", "License Expiry Date", "Expiry Date", "Lic Expiry Date"],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "oicl_gst_number": {
+    "sheet": "ALL",
+    "search_labels": ["oicl_gst_number", "OICL GST Number", "OICL GST No", "GST No of OICL"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true
+  },
+  "traveling_expenses": {
+    "sheet": "ALL",
+    "search_labels": ["traveling_expenses", "conveyance", "CONVEYANCE CHARGE", "CONVEYANCE CHARGES", "traveling expenses"],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "professional_fee": {
+    "sheet": "ALL",
+    "search_labels": ["professional_fee", "professional fee", "SURVEY FEE", "SURVEY FEES"],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "daily_allowance": {
+    "sheet": "ALL",
+    "search_labels": ["DAILY_ALLOWANCE", "daily allowance", "DAILY allowances"],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "photo_charges": {
+    "sheet": "ALL",
+    "search_labels": ["photocharges", "PHOTOGRAPHS", "PHOTO charge", "photo charges"],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "surveyor_other_expenses": {
+    "sheet": "ALL",
+    "search_labels": ["other_expenses", "Other Expenses", "other expenses", "Others"],
+    "row_offset": 0,
+    "col_offset": 1
+  }
+}
