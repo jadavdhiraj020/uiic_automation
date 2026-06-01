@@ -1,0 +1,3 @@
+E0000 00:00:1780148980.775233   15564 ctxmenu.cc:220] NOT_FOUND: Can't connect to socket at: \\.\Pipe\GoogleDriveFSPipe_Dev_shell [type.googleapis.com/drive.ds.Status='UNAVAILABLE_RESOURCE']
+=== Source Location Trace: === 
+apps/drive/fs/ipc/shell_ipc_client.cc:644

@@ -35,27 +35,27 @@ htmlcov/
 Thumbs.db
 
 # Microsoft Office lock files (auto-generated, never commit these)
-~$*.xlsx
-~$*.xls
-~$*.docx
-~$*.doc
-~$*.pptx
-~$*.ppt
+# ~$*.xlsx
+# ~$*.xls
+# ~$*.docx
+# ~$*.doc
+# ~$*.pptx
+# ~$*.ppt
 
 # Logs & Temporary Files
-logs/
-*.log
+# logs/
+# *.log
 tmp/
 temp/
-scratch/
+# scratch/
 
-# SECURITY: Never commit credentials or local overrides
-app/config/settings.json
-app/portals/uiic/config/settings.json
-app/portals/newindia/config/settings.json
-.env
+# # SECURITY: Never commit credentials or local overrides
+# app/config/settings.json
+# app/portals/uiic/config/settings.json
+# app/portals/newindia/config/settings.json
+# .env
 
-# User claim folders & uploaded documents
+# # User claim folders & uploaded documents
 # automationfolderuploading/
 # *.xlsx
 # *.xls
@@ -65,10 +65,10 @@ app/portals/newindia/config/settings.json
 # *.png
 # *.puc
 
-# CUSTOM SKILLS
-.agents/*
+# # CUSTOM SKILLS
+# .agents/*
 
-.scratch/*
+# .scratch/*
 
 
 
