@@ -23,6 +23,7 @@ import os
 import json  # noqa: F401 (mock target in unit tests)
 import re
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -148,6 +149,11 @@ class FolderScanResult:
             str, str
         ] = {}  # key → original path before compression (excluded from claim_related)
         self.temporary_files: List[str] = []
+        self.policy_warnings: List[str] = []
+        self.policy_events: List[dict] = []
+        self.generated_files: List[str] = []
+        self.cancelled: bool = False
+        self.cancellation_reason: str = ""
 
     def summary_lines(self) -> List[str]:
         lines = []
@@ -386,9 +392,75 @@ def _extract_sheet_for_reinspection(
     return None
 
 
-def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
+def scan_folder(
+    folder_path: str,
+    portal_id: str = "uiic",
+    stop_cb: Optional[callable] = None,
+) -> FolderScanResult:
     # 1. Load keywords from doc_mapping.json
     result = FolderScanResult()
+    _preexisting_paths: Set[str] = set()
+    if os.path.isdir(folder_path):
+        try:
+            _preexisting_paths = {
+                os.path.normcase(os.path.normpath(os.path.join(folder_path, fname)))
+                for fname in os.listdir(folder_path)
+            }
+        except Exception:
+            _preexisting_paths = set()
+
+    def _is_cancelled() -> bool:
+        try:
+            return bool(stop_cb and stop_cb())
+        except Exception:
+            return False
+
+    def _mark_generated(path: str) -> None:
+        if not path:
+            return
+        norm = os.path.normcase(os.path.normpath(path))
+        if norm not in _preexisting_paths and path not in result.generated_files:
+            result.generated_files.append(path)
+
+    def _cleanup_generated(reason: str) -> None:
+        result.cancelled = True
+        result.cancellation_reason = reason
+        removed = []
+        for path in reversed(result.generated_files):
+            norm = os.path.normcase(os.path.normpath(path))
+            if norm in _preexisting_paths:
+                continue
+            if os.path.isfile(path):
+                try:
+                    os.remove(path)
+                    removed.append(path)
+                except OSError as exc:
+                    logger.warning(
+                        "Cancellation cleanup failed for generated file %s: %s",
+                        path,
+                        exc,
+                    )
+        if removed:
+            result.policy_events.append(
+                {
+                    "timestamp": datetime.now().isoformat(),
+                    "event": "scan_generated_files_cleaned",
+                    "portal_id": portal_id,
+                    "folder_path": os.path.abspath(folder_path),
+                    "removed_files": removed,
+                    "reason": reason,
+                }
+            )
+
+    def _cancel_checkpoint(reason: str) -> bool:
+        if _is_cancelled():
+            _cleanup_generated(reason)
+            logger.info("Folder scan cancelled: %s", reason)
+            return True
+        return False
+
+    if _cancel_checkpoint("before_scan_start"):
+        return result
     (
         claim_map,
         assessment_map,
@@ -411,6 +483,8 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
     )  # Track original vehicle files to exclude from claim_related
     try:
         for fname in sorted(os.listdir(folder_path)):
+            if _cancel_checkpoint("before_vehicle_photo_duplication"):
+                return result
             if fname in _SKIP_FILES or os.path.isdir(os.path.join(folder_path, fname)):
                 continue
             fname_lower = fname.lower()
@@ -435,12 +509,15 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
 
                 # Create 4 copies (Front, Rear, Left, Right)
                 for copy_num in range(1, 5):
+                    if _cancel_checkpoint("before_vehicle_photo_copy"):
+                        return result
                     new_name = f"vehicle_photo_{copy_num}{ext}"
                     new_path = os.path.join(folder_path, new_name)
                     if os.path.exists(new_path):
                         continue  # Don't overwrite existing copies
                     try:
                         shutil.copy2(source_path, new_path)
+                        _mark_generated(new_path)
                         logger.info("Generated %s from %s", new_name, fname)
                     except Exception as e:
                         logger.error("Failed to copy %s to %s: %s", fname, new_name, e)
@@ -454,6 +531,8 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
         "reinspection_report", []
     ) or upload_map.get("reinspection_report", [])
     for fname in sorted(os.listdir(folder_path)):
+        if _cancel_checkpoint("before_reinspection_pdf_scan"):
+            return result
         full_path = os.path.join(folder_path, fname)
         if not os.path.isfile(full_path):
             continue
@@ -490,6 +569,8 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
     # ── Pre-scan for the main data Excel file ───────────────────────────────
     excel_candidates = []
     for fname in sorted(os.listdir(folder_path)):
+        if _cancel_checkpoint("before_main_excel_scan"):
+            return result
         full_path = os.path.join(folder_path, fname)
         if not os.path.isfile(full_path):
             continue
@@ -558,6 +639,8 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
     )
 
     for fname in sorted(os.listdir(folder_path)):
+        if _cancel_checkpoint("before_document_mapping"):
+            return result
         if fname in _SKIP_FILES:
             result.skipped_files.append(
                 (os.path.join(folder_path, fname), "Ignored system file")
@@ -655,10 +738,14 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
                     )
 
                     if not spot_path:
+                        if _cancel_checkpoint("before_reinspection_generation"):
+                            return result
                         # User confirmed Sheet 7 (index 6) is the correct target
                         spot_path = _extract_sheet_for_reinspection(
                             full_path, folder_path, sheet_index=6
                         )
+                        if spot_path:
+                            _mark_generated(spot_path)
 
                     # If we successfully created/found a report, assign it!
                     if spot_path and os.path.exists(spot_path):
@@ -791,7 +878,8 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
             )
             result.skipped_files.append((other_path, "No 'Other' slots left"))
 
-    # ── Fallback: Copy Invoice as Cancelled Cheque if missing ──────────────────
+    # Bank proof policy: missing cancelled-cheque/bank proof stays missing.
+    # Never substitute invoice or any unrelated document as bank proof.
     cancel_key = next(
         (
             k
@@ -801,28 +889,24 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
         ),
         None,
     )
-    if (
-        cancel_key
-        and cancel_key not in result.claim_doc_files
-        and "invoice" in result.assessment_files
-    ):
-        invoice_path = result.assessment_files["invoice"]
-        ext = Path(invoice_path).suffix
-        cancel_check_name = f"cancel_check_fallback{ext}"
-        cancel_check_path = os.path.join(folder_path, cancel_check_name)
-
-        try:
-            if not os.path.exists(cancel_check_path):
-                import shutil
-
-                shutil.copy2(invoice_path, cancel_check_path)
-            result.claim_doc_files[cancel_key] = cancel_check_path
-            logger.info(
-                "Generated %s from invoice because cancelled cheque was missing",
-                cancel_check_name,
-            )
-        except Exception as e:
-            logger.error("Failed to copy invoice to %s: %s", cancel_check_name, e)
+    if cancel_key and cancel_key not in result.claim_doc_files:
+        warning = (
+            f"{cancel_key} missing. Invoice fallback is disabled; no substitute "
+            "document was generated or mapped as bank proof."
+        )
+        result.policy_warnings.append(warning)
+        policy_event = {
+            "timestamp": datetime.now().isoformat(),
+            "event": "bank_proof_missing_no_fallback",
+            "portal_id": portal_id,
+            "folder_path": os.path.abspath(folder_path),
+            "missing_document": cancel_key,
+            "document_category": "bank_proof",
+            "policy_decision": "no_fallback_used",
+            "action": "mark_missing_only",
+        }
+        result.policy_events.append(policy_event)
+        logger.warning(warning, extra={"policy_event": policy_event})
 
     # ── Fallback: Copy Invoice as Work Approval Document if missing ────────────
     work_approval_key = next(
@@ -838,6 +922,8 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
         and work_approval_key not in result.claim_doc_files
         and "invoice" in result.assessment_files
     ):
+        if _cancel_checkpoint("before_work_approval_fallback"):
+            return result
         invoice_path = result.assessment_files["invoice"]
         ext = Path(invoice_path).suffix
         work_approval_name = f"work_approval_fallback{ext}"
@@ -848,6 +934,7 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
                 import shutil
 
                 shutil.copy2(invoice_path, work_approval_path)
+                _mark_generated(work_approval_path)
             result.claim_doc_files[work_approval_key] = work_approval_path
             logger.info(
                 "Generated %s from invoice because Work Approval Document was missing",
@@ -861,6 +948,8 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
     # and the automation directly attaches the ready-to-use compressed file.
     _MANDATORY_LIMIT_BYTES = 1536 * 1024  # 1.5 MB — NIA portal per-file limit
     for _ukey, _upath in list(result.upload_doc_files.items()):
+        if _cancel_checkpoint("before_upload_compression"):
+            return result
         if not _upath or not os.path.isfile(_upath):
             continue
         _usz = os.path.getsize(_upath)
@@ -884,6 +973,9 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
             )
             _tmp.close()
             _out_path = _tmp.name
+            _mark_generated(_out_path)
+            if _cancel_checkpoint("before_upload_compression_write"):
+                return result
             if _ext == ".pdf":
                 _ok = _compress_pdf_for_upload(_upath, _out_path)
             elif _ext in (".jpg", ".jpeg", ".png", ".gif", ".bmp"):
@@ -992,6 +1084,8 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
             import re as _re
 
             for _fname in sorted(os.listdir(folder_path)):
+                if _cancel_checkpoint("before_claim_related_discovery"):
+                    return result
                 _full = os.path.join(folder_path, _fname)
                 if not os.path.isfile(_full):
                     continue
@@ -1017,6 +1111,8 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
 
         # Pre-merge now so UI can show the real filename and size
         if result.claim_related_files and folder_path:
+            if _cancel_checkpoint("before_claim_related_premerge"):
+                return result
             import time
 
             timestamp = time.strftime("%Y%m%d_%H%M%S")
@@ -1034,8 +1130,11 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
                 [Path(f).name for f in _mergeable],
             )
             if _mergeable:
+                if _cancel_checkpoint("before_claim_related_merge_write"):
+                    return result
                 merged = _merge_claim_related_pdf(_mergeable, _out)
                 if merged:
+                    _mark_generated(merged)
                     result.claim_related_merged_pdf = merged
                     if os.path.isfile(merged):
                         logger.info(
@@ -1061,6 +1160,9 @@ def scan_folder(folder_path: str, portal_id: str = "uiic") -> FolderScanResult:
             )
 
     # ── Generate comprehensive scan summary log ──────────────────────────────
+    if _cancel_checkpoint("before_scan_summary"):
+        return result
+
     _log_scan_summary(result, claim_map)
 
     return result

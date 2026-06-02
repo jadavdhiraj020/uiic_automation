@@ -47,11 +47,18 @@ class AutomationWorker(QObject):
 class FolderScanWorker(QObject):
     done_signal = pyqtSignal(object)  # ClaimFolderProcessResult
 
-    def __init__(self, folder: str, config_dir: str, portal_id: str = "uiic"):
+    def __init__(
+        self,
+        folder: str,
+        config_dir: str,
+        portal_id: str = "uiic",
+        scan_token: int = 0,
+    ):
         super().__init__()
         self.folder = folder
         self.config_dir = config_dir
         self.portal_id = portal_id
+        self.scan_token = scan_token
         self._stop_requested = False
 
     def request_stop(self):
@@ -63,6 +70,9 @@ class FolderScanWorker(QObject):
         try:
             service = ClaimFolderService(config_dir=self.config_dir, portal_id=self.portal_id)
             result = service.process_folder(self.folder, stop_cb=lambda: self._stop_requested)
+            result.scan_token = self.scan_token
+            result.scan_portal_id = self.portal_id
+            result.scan_folder = self.folder
             self.done_signal.emit(result)
         except Exception as e:
             from app.ui.services.claim_folder_service import ClaimFolderProcessResult
@@ -74,5 +84,8 @@ class FolderScanWorker(QObject):
                 log_lines=[f"❌ Folder scanning crashed: {e}"],
                 error=str(e),
             )
+            result.scan_token = self.scan_token
+            result.scan_portal_id = self.portal_id
+            result.scan_folder = self.folder
             self.done_signal.emit(result)
 

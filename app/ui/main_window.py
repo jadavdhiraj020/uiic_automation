@@ -73,6 +73,11 @@ class MainWindow(QMainWindow):
         self._log_file = None
         self._scan_thread = None
         self._scan_worker = None
+        self._scan_context = None
+        self._scan_generation = 0
+        self._active_scan_token = None
+        self._active_scan_portal_id = None
+        self._active_scan_folder = ""
 
         self._open_log_file()
         self._create_icons()
@@ -276,18 +281,115 @@ class MainWindow(QMainWindow):
             w.style().unpolish(w)
             w.style().polish(w)
 
+    def _is_scan_running(self):
+        return bool(self._scan_thread and self._scan_thread.isRunning())
+
+    def _write_portal_audit_event(self, event: str, **extra):
+        payload = {
+            "timestamp": datetime.now().isoformat(),
+            "event": event,
+            "source": "main_window",
+            **extra,
+        }
+        try:
+            import json
+
+            audit_path = os.path.join(user_data_dir("logs"), "portal_audit.jsonl")
+            ensure_dir(os.path.dirname(audit_path))
+            with open(audit_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        except Exception as exc:
+            warning = (
+                "[Portal Isolation] Portal audit JSON write failed; continuing. "
+                f"Event={event}; Error={exc}; Details={payload}"
+            )
+            try:
+                self._append_log(warning)
+            except Exception:
+                pass
+
+    def _set_portal_selector_locked(self, locked: bool, reason: str = ""):
+        self.portal_combo.setEnabled(not locked)
+        self.portal_combo.setToolTip(reason if locked else "")
+
+    def _reset_portal_combo_to_active(self):
+        current_portal_id = get_active_portal_id() or "uiic"
+        idx = self.portal_combo.findData(current_portal_id)
+        if idx >= 0 and idx != self.portal_combo.currentIndex():
+            self.portal_combo.blockSignals(True)
+            try:
+                self.portal_combo.setCurrentIndex(idx)
+            finally:
+                self.portal_combo.blockSignals(False)
+
+    def _cancel_active_scan_for_portal_change(self, old_portal_id, new_portal_id):
+        if not self._is_scan_running():
+            return False
+        token = self._active_scan_token
+        folder = self._active_scan_folder
+        if self._scan_worker:
+            self._scan_worker.request_stop()
+        self._active_scan_token = None
+        self._set_status("running", "Cancelling Scan...")
+        self.workspace_page.doc_status_label.setText(
+            "Portal changed. Cancelling current scan; please rescan for the selected portal."
+        )
+        self._append_log(
+            "[Portal Isolation] Portal changed during scan. Current scan was "
+            "cancelled and its result will be ignored. Please rescan the folder."
+        )
+        QMessageBox.information(
+            self,
+            "Scan Cancelled",
+            "The current scan was cancelled because the portal changed. Please rescan the folder for the selected portal.",
+        )
+        self._write_portal_audit_event(
+            "scan_cancelled_due_to_portal_change",
+            old_portal_id=old_portal_id,
+            new_portal_id=new_portal_id,
+            folder_path=folder,
+            scan_token=token,
+            action="cancel_and_ignore_result",
+        )
+        return True
+
     def _on_portal_changed(self, index):
         """Handle portal dropdown change — switch all config resolution."""
+        if self._worker:
+            self._reset_portal_combo_to_active()
+            QMessageBox.information(
+                self,
+                "Automation Running",
+                "Automation is running. Please stop the current automation before switching portal.",
+            )
+            self._append_log(
+                "[Portal Isolation] Portal switch blocked because automation is running. "
+                "Stop the current automation before switching portal."
+            )
+            self._write_portal_audit_event(
+                "portal_switch_blocked_during_automation",
+                active_portal_id=get_active_portal_id() or "uiic",
+                action="blocked",
+            )
+            return
+
         portal_id = self.portal_combo.itemData(index)
         if portal_id is None:
             return
+        old_portal_id = get_active_portal_id() or "uiic"
+        old_portal = get_active_portal()
         try:
             set_active_portal(portal_id)
         except ValueError:
             return
 
+        old_context = self._scan_context
         portal = get_active_portal()
         self._append_log(f"🔄 Portal switched to: {portal.display_name}")
+
+        scan_cancelled = self._cancel_active_scan_for_portal_change(
+            old_portal_id, portal_id
+        )
 
         # Update window title to show active portal
         self.setWindowTitle(f"Surveyor Automation — {portal.display_name}")
@@ -296,10 +398,40 @@ class MainWindow(QMainWindow):
         # Reload settings page to show portal-specific settings
         self.settings_page.set_portal(portal_id)
 
-        # Clear any previously loaded claim data (it may not apply to the new portal)
+        claim_cleared = self._clear_loaded_claim_for_portal_change(old_context, portal)
+        self._write_portal_audit_event(
+            "portal_changed",
+            old_portal_id=old_portal_id,
+            old_portal_name=getattr(old_portal, "display_name", old_portal_id),
+            new_portal_id=portal_id,
+            new_portal_name=getattr(portal, "display_name", portal_id),
+            folder_path=self._active_scan_folder,
+            scan_cancelled=scan_cancelled,
+            claim_cleared=claim_cleared,
+            action="clear_claim_require_rescan",
+        )
+
+    def _clear_loaded_claim_for_portal_change(self, old_context, new_portal):
+        """Clear scanned data whenever the selected portal changes."""
+        had_claim = self._claim is not None or self._scan_result is not None
         self._claim = None
         self._scan_result = None
+        self._scan_context = None
         self.workspace_page.reset_state()
+        if had_claim:
+            old_name = getattr(old_context, "portal_display_name", "previous portal")
+            new_name = getattr(new_portal, "display_name", "selected portal")
+            self._set_status("ready", "Rescan Required")
+            self._append_log(
+                "[Portal Isolation] Cleared scanned claim data because portal "
+                f"changed from {old_name} to {new_name}. Please rescan the folder."
+            )
+            QMessageBox.information(
+                self,
+                "Rescan Required",
+                "Claim data was cleared because the portal changed. Please rescan the folder for the selected portal.",
+            )
+        return had_claim
 
     def _setup_animations(self):
         self._pulse_eff = QGraphicsOpacityEffect(self.status_dot)
@@ -362,7 +494,23 @@ class MainWindow(QMainWindow):
     def _scan_folder(self, folder):
         from app.ui.worker import FolderScanWorker
 
+        if self._is_scan_running():
+            QMessageBox.information(
+                self,
+                "Scan Running",
+                "A folder scan is still running. Please wait for it to stop before starting another scan.",
+            )
+            self._append_log(
+                "[Portal Isolation] New scan blocked because a previous scan is still running."
+            )
+            return
+
         portal_id = get_active_portal_id() or "uiic"
+        self._scan_generation += 1
+        scan_token = self._scan_generation
+        self._active_scan_token = scan_token
+        self._active_scan_portal_id = portal_id
+        self._active_scan_folder = folder
         # Always derive config_dir from portal_id so FolderScanWorker and
         # config_dir stay in sync. The old `CONFIG_DIR` fallback caused a
         # mismatch: portal_id="uiic" was passed but config_dir pointed to the
@@ -384,7 +532,9 @@ class MainWindow(QMainWindow):
 
         # Initialize thread and worker
         self._scan_thread = QThread()
-        self._scan_worker = FolderScanWorker(folder, config_dir, portal_id)
+        self._scan_worker = FolderScanWorker(
+            folder, config_dir, portal_id, scan_token=scan_token
+        )
         self._scan_worker.moveToThread(self._scan_thread)
 
         # Connect signals
@@ -397,6 +547,39 @@ class MainWindow(QMainWindow):
         self._scan_thread.start()
 
     def _on_scan_completed(self, result):
+        result_token = getattr(result, "scan_token", None)
+        result_portal_id = getattr(result, "scan_portal_id", None)
+        current_portal_id = get_active_portal_id() or "uiic"
+        if (
+            result_token != self._active_scan_token
+            or result_portal_id != current_portal_id
+        ):
+            self._append_log(
+                "[Portal Isolation] Ignored stale scan result because the portal "
+                "or scan session changed. Please rescan for the selected portal."
+            )
+            self._write_portal_audit_event(
+                "stale_scan_result_ignored",
+                result_portal_id=result_portal_id,
+                current_portal_id=current_portal_id,
+                result_scan_token=result_token,
+                active_scan_token=self._active_scan_token,
+                folder_path=getattr(result, "scan_folder", ""),
+                action="ignored",
+            )
+            self._active_scan_portal_id = None
+            self._active_scan_folder = ""
+            self._set_status("ready", "Rescan Required")
+            self.workspace_page.btn_start.setEnabled(False)
+            btn_browse = self.workspace_page.findChild(QPushButton, "btnBrowse")
+            if btn_browse:
+                btn_browse.setEnabled(True)
+            return
+
+        self._active_scan_token = None
+        self._active_scan_portal_id = None
+        self._active_scan_folder = ""
+
         # Log all lines produced by the scanner service
         for line in result.log_lines:
             self._append_log(line)
@@ -405,11 +588,19 @@ class MainWindow(QMainWindow):
         if result.success:
             self._claim = result.claim
             self._scan_result = result.scan_result
+            self._scan_context = getattr(result.claim, "_scan_context", None)
+            if self._scan_context:
+                self._append_log(
+                    "[Portal Isolation] Scan locked to "
+                    f"{self._scan_context.portal_display_name} "
+                    f"({self._scan_context.portal_id})."
+                )
             self.workspace_page.update_data(self._claim, self._scan_result)
             self._set_status("ready", "Ready")
         else:
             self._scan_result = result.scan_result
             self._claim = None
+            self._scan_context = None
             self.workspace_page.doc_status_label.setText(
                 "❌ No valid Excel data source found."
             )
@@ -441,7 +632,34 @@ class MainWindow(QMainWindow):
         self.workspace_page.clear_logs()
         self.log("Starting automation thread...")
 
-        portal_id = get_active_portal_id()
+        scan_context = getattr(self._claim, "_scan_context", None)
+        if scan_context is None:
+            QMessageBox.critical(
+                self,
+                "Rescan Required",
+                "This claim does not have a scan portal context. Please rescan the folder before starting automation.",
+            )
+            self.log(
+                "[Portal Isolation] Start blocked: scanned claim has no portal context."
+            )
+            return
+
+        current_portal_id = get_active_portal_id()
+        if current_portal_id != scan_context.portal_id:
+            QMessageBox.critical(
+                self,
+                "Portal Mismatch",
+                "This claim was scanned for "
+                f"{scan_context.portal_display_name}. Please rescan after changing portals.",
+            )
+            self.log(
+                "[Portal Isolation] Start blocked: current portal "
+                f"'{current_portal_id}' differs from scanned portal "
+                f"'{scan_context.portal_id}'."
+            )
+            return
+
+        portal_id = scan_context.portal_id
         settings = load_settings(portal_id=portal_id)
 
         self._thread = QThread()
@@ -459,6 +677,19 @@ class MainWindow(QMainWindow):
         self._worker.step_signal.connect(self.workspace_page.set_step)
 
         self.workspace_page.set_automation_running(True)
+        self._set_portal_selector_locked(
+            True,
+            "Automation is running. Please stop the current automation before switching portal.",
+        )
+        self._append_log(
+            "[Portal Isolation] Portal switching is disabled while automation is running. "
+            "Stop the current automation before switching portal."
+        )
+        self._write_portal_audit_event(
+            "portal_switch_locked_for_automation",
+            portal_id=portal_id,
+            action="locked",
+        )
         self.status_pill.setProperty("status", "running")
         self.status_text.setText("Running")
         self.status_pill.style().unpolish(self.status_pill)
@@ -486,6 +717,12 @@ class MainWindow(QMainWindow):
         """Called by thread.finished — thread OS object has fully stopped. Safe to clear."""
         self._worker = None
         self._thread = None
+        self._set_portal_selector_locked(False)
+        self._write_portal_audit_event(
+            "portal_switch_unlocked_after_automation",
+            portal_id=get_active_portal_id() or "uiic",
+            action="unlocked",
+        )
         success = getattr(self, "_last_success", False)
         message = getattr(self, "_last_message", "Automation finished.")
         if success:

@@ -813,6 +813,39 @@ class AutomationLogger:
                 indent=indent,
             )
 
+    def ocr_incomplete(
+        self,
+        doc_name: str,
+        missing_fields: list[str],
+        source_file: str = "",
+        dependent_step: str = "",
+        policy: str = "warn_only_continue",
+        indent: Optional[int] = None,
+    ):
+        """Log OCR completion where required fields remain missing."""
+        missing = ", ".join(missing_fields)
+        msg = (
+            f"OCR incomplete for {doc_name}. Missing: {missing}. "
+            f"Source: {source_file or 'unknown'}. "
+            f"Dependent step: {dependent_step or 'unknown'}. "
+            f"Policy: {policy}."
+        )
+        extra = {
+            "ocr_status": "failed_or_incomplete",
+            "document": doc_name,
+            "missing_fields": missing_fields,
+            "source_file": source_file,
+            "dependent_step": dependent_step,
+            "policy": policy,
+        }
+        self._emit(
+            LogLevel.WARNING,
+            msg,
+            indent=indent,
+            py_level=logging.WARNING,
+            extra=extra,
+        )
+
     def document_mapped(
         self,
         doc_type: str,

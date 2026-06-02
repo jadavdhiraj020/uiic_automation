@@ -23,6 +23,7 @@ Column layout (mirrors what gets typed into the OIC portal):
 
 import logging
 import os
+from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 import openpyxl
@@ -36,6 +37,14 @@ from app.data.excel_parts_extractor import (
 logger = logging.getLogger(__name__)
 
 _OUTPUT_FILENAME = "auto_oic_assessment.xlsx"
+
+
+@dataclass
+class OicAssessmentGenerationResult:
+    output_path: Optional[str]
+    status: str
+    generated_files: List[str]
+    message: str = ""
 
 # ── Material → OIC Portal "Item Type" text ────────────────────────────────────
 _MATERIAL_TO_ITEM_TYPE: Dict[str, str] = {
@@ -328,6 +337,30 @@ def generate_oic_assessment(
         len(oic_rows), parts_count, labour_count, output_path,
     )
     return output_path
+
+
+def generate_oic_assessment_result(
+    source_excel_path: str,
+    output_folder: str,
+    defaults: dict,
+) -> OicAssessmentGenerationResult:
+    output_path = generate_oic_assessment(source_excel_path, output_folder, defaults)
+    if output_path:
+        return OicAssessmentGenerationResult(
+            output_path=output_path,
+            status="generated",
+            generated_files=[output_path, _audit_path_for(output_path)],
+            message="OIC assessment generated.",
+        )
+
+    skipped_audit = os.path.join(output_folder, "oic_assessment_skipped_audit.txt")
+    generated_files = [skipped_audit] if os.path.exists(skipped_audit) else []
+    return OicAssessmentGenerationResult(
+        output_path=None,
+        status="skipped_no_data",
+        generated_files=generated_files,
+        message="Assessment generation skipped: no parts/labour data found.",
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
