@@ -445,45 +445,55 @@ class MainWindow(QMainWindow):
         self.pulse_anim.start()
 
     def _open_log_file(self):
+        success = False
         try:
             log_dir = ensure_dir(user_data_dir("logs"))
-
-            # 1. Create a unique timestamped log.
-            import glob
-
             ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             base_log = os.path.join(log_dir, f"automation_{ts}_{os.getpid()}.log")
             self._log_file = open(base_log, "x", encoding="utf-8")
-
-            # 2. Cleanup old plain-text log files (keep last 20 plain text logs).
-            existing_logs = sorted(
-                glob.glob(os.path.join(log_dir, "automation_*.log")),
-                key=lambda path: (os.path.getmtime(path), path),
-            )
-            for old_log in existing_logs[:-20]:
-                try:
-                    if os.path.abspath(old_log) != os.path.abspath(base_log):
-                        os.remove(old_log)
-                except Exception:
-                    pass
-
-            # 3. Cleanup old structured JSON log files per portal (keep last 20 JSON logs per portal).
-            from app.portals.registry import list_portals
-
-            for portal in list_portals():
-                portal_log_dir = os.path.join(log_dir, portal.portal_id)
-                if os.path.exists(portal_log_dir):
-                    existing_jsons = sorted(
-                        glob.glob(os.path.join(portal_log_dir, "*.json")),
-                        key=lambda path: (os.path.getmtime(path), path),
-                    )
-                    for old_json in existing_jsons[:-20]:
-                        try:
-                            os.remove(old_json)
-                        except Exception:
-                            pass
+            success = True
         except Exception:
-            pass
+            try:
+                import tempfile
+                log_dir = tempfile.gettempdir()
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                base_log = os.path.join(log_dir, f"automation_{ts}_{os.getpid()}_fallback.log")
+                self._log_file = open(base_log, "x", encoding="utf-8")
+                success = True
+            except Exception:
+                pass
+
+        if success:
+            try:
+                import glob
+                # Cleanup old plain-text log files (keep last 20 plain text logs).
+                existing_logs = sorted(
+                    glob.glob(os.path.join(log_dir, "automation_*.log")),
+                    key=lambda path: (os.path.getmtime(path), path),
+                )
+                for old_log in existing_logs[:-20]:
+                    try:
+                        if os.path.abspath(old_log) != os.path.abspath(base_log):
+                            os.remove(old_log)
+                    except Exception:
+                        pass
+
+                # Cleanup old structured JSON log files per portal
+                from app.portals.registry import list_portals
+                for portal in list_portals():
+                    portal_log_dir = os.path.join(log_dir, portal.portal_id)
+                    if os.path.exists(portal_log_dir):
+                        existing_jsons = sorted(
+                            glob.glob(os.path.join(portal_log_dir, "*.json")),
+                            key=lambda path: (os.path.getmtime(path), path),
+                        )
+                        for old_json in existing_jsons[:-20]:
+                            try:
+                                os.remove(old_json)
+                            except Exception:
+                                pass
+            except Exception:
+                pass
 
     def _browse_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Claim Folder")
@@ -794,7 +804,9 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
             self._scan_thread.quit()
-            self._scan_thread.wait(2000)
+            if not self._scan_thread.wait(2000):  # up to 2s graceful wait
+                self._scan_thread.terminate()  # force-kill if still running
+                self._scan_thread.wait(1000)
 
         # Clean up temporary pre-compressed files registered during scanning
         if hasattr(self, "_claim") and self._claim:

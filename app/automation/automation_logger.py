@@ -140,11 +140,21 @@ class AutomationLogger:
                 # Resolve target path: logs/<portal_id>/<claim_no>_run_<timestamp>.json
                 from app.utils import user_data_dir, ensure_dir
 
-                log_dir = ensure_dir(user_data_dir("logs", portal_id.lower()))
-                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                # PID is appended to make it unique per process execution
-                filename = f"{claim_no}_run_{ts}_{os.getpid()}.json"
-                self._json_log_file = os.path.join(log_dir, filename)
+                try:
+                    log_dir = ensure_dir(user_data_dir("logs", portal_id.lower()))
+                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    # PID is appended to make it unique per process execution
+                    filename = f"{claim_no}_run_{ts}_{os.getpid()}.json"
+                    self._json_log_file = os.path.join(log_dir, filename)
+                except Exception as e:
+                    import tempfile
+                    log_dir = tempfile.gettempdir()
+                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    filename = f"{claim_no}_run_{ts}_{os.getpid()}_fallback.json"
+                    self._json_log_file = os.path.join(log_dir, filename)
+                    self._py_logger.warning(
+                        f"Failed to create primary log dir, fell back to system temp path: {e}"
+                    )
 
     def write_historical_logs(self, logs: list[str]):
         """Write pre-existing plain text logs (like scanner logs) to the JSON file retrospectively."""
