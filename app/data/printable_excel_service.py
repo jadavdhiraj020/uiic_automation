@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -346,9 +347,9 @@ def _generate_pdf_excel_com(
     try:
         import win32com.client
         import pythoncom
-    except ImportError:
+    except ImportError as exc:
         logs.append(
-            "  ℹ️  Excel COM: win32com not available — trying fallback."
+            f"  ℹ️  Excel COM: win32com not available ({exc}) — trying fallback."
         )
         return False
 
@@ -356,6 +357,20 @@ def _generate_pdf_excel_com(
     wb = None
     com_initialized = False  # Issue 2: track init state to guard CoUninitialize
     try:
+        if getattr(sys, "frozen", False):
+            try:
+                import win32com.client.gencache as gencache
+                gencache.is_readonly = False
+            except Exception as cache_exc:
+                # Surface as WARNING (not debug) — if gencache is read-only in the
+                # frozen EXE, COM dispatch will still work but may generate spurious
+                # TypeErrors for complex COM objects. Visible in production logs.
+                logger.warning(
+                    "win32com gencache setup failed in frozen EXE (non-fatal): %s. "
+                    "COM dispatch will proceed without gen-cache optimisation.",
+                    cache_exc,
+                )
+
         pythoncom.CoInitialize()
         com_initialized = True
         excel = win32com.client.DispatchEx("Excel.Application")
@@ -437,23 +452,41 @@ def _find_libreoffice() -> Optional[str]:
     """
     Auto-detect LibreOffice ``soffice`` executable on Windows.
 
-    Search order:
-      1. System PATH (via shutil.which)
-      2. Common Windows install directories
+    Search order (first match wins):
+      1. ``UIIC_BUNDLED_SOFFICE`` env var — set by the PyInstaller runtime hook
+         when a bundled LibreOffice is found under ``_MEIPASS``. Checked first
+         because it is the most specific and avoids redundant ``_MEIPASS`` scan.
+      2. ``sys._MEIPASS`` scan — fallback for frozen EXE when the env var was
+         not set by the runtime hook (e.g. older hook versions).
+      3. System PATH via ``shutil.which``.
+      4. Common Windows install directories.
 
     Returns the absolute path to soffice.exe, or None if not found.
     """
+    bundled_env = os.environ.get("UIIC_BUNDLED_SOFFICE", "")
+    if bundled_env and os.path.isfile(bundled_env):
+        return bundled_env
+
+    if getattr(sys, "frozen", False):
+        base = getattr(sys, "_MEIPASS", "")
+        if base:
+            for bundled_path in (
+                os.path.join(base, "LibreOffice", "program", "soffice.exe"),
+                os.path.join(base, "libreoffice", "program", "soffice.exe"),
+            ):
+                if os.path.isfile(bundled_path):
+                    return bundled_path
+
     # Try PATH first
     found = shutil.which("soffice")
     if found:
         return found
 
     # Common Windows install locations
-    common_paths = [
+    for p in [
         r"C:\Program Files\LibreOffice\program\soffice.exe",
         r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
-    ]
-    for p in common_paths:
+    ]:
         if os.path.isfile(p):
             return p
 
@@ -478,6 +511,8 @@ def _generate_pdf_libreoffice(
             "  ℹ️  LibreOffice: not found on this machine — cannot use fallback."
         )
         return False
+    if getattr(sys, "frozen", False) and os.environ.get("UIIC_BUNDLED_SOFFICE") == soffice:
+        logs.append("  ℹ️  LibreOffice: using bundled runtime.")
 
     output_dir = os.path.dirname(abs_pdf)
 
@@ -582,4 +617,3 @@ def _generate_pdf_libreoffice(
         logs.append(f"  ⚠️  LibreOffice error: {str(exc)[:200]}")
         logger.warning("LibreOffice PDF error: %s", exc)
         return False
-

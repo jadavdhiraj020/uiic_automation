@@ -152,20 +152,45 @@ def test_create_printable_excel_overwrite_locked():
 # ── _find_libreoffice ────────────────────────────────────────────────────────
 
 def test_find_libreoffice_on_path():
-    with patch("shutil.which", return_value=r"C:\tools\soffice.exe"):
+    with patch("app.data.printable_excel_service.shutil.which",
+               return_value=r"C:\tools\soffice.exe"):
         assert _find_libreoffice() == r"C:\tools\soffice.exe"
+
+
+def test_find_libreoffice_bundled_env_first():
+    expected = r"C:\app\_internal\LibreOffice\program\soffice.exe"
+    with patch.dict(os.environ, {"UIIC_BUNDLED_SOFFICE": expected}):
+        with patch("app.data.printable_excel_service.os.path.isfile",
+                   side_effect=lambda p: p == expected):
+            with patch("app.data.printable_excel_service.shutil.which") as mock_which:
+                assert _find_libreoffice() == expected
+    mock_which.assert_not_called()
+
+
+def test_find_libreoffice_frozen_meipass():
+    base = r"C:\app\_internal"
+    expected = os.path.join(base, "LibreOffice", "program", "soffice.exe")
+    with patch.dict(os.environ, {"UIIC_BUNDLED_SOFFICE": ""}):
+        with patch("sys.frozen", True, create=True):
+            with patch("sys._MEIPASS", base, create=True):
+                with patch("app.data.printable_excel_service.os.path.isfile",
+                           side_effect=lambda p: p == expected):
+                    with patch("app.data.printable_excel_service.shutil.which") as mock_which:
+                        assert _find_libreoffice() == expected
+    mock_which.assert_not_called()
 
 
 def test_find_libreoffice_common_path():
     expected = r"C:\Program Files\LibreOffice\program\soffice.exe"
-    with patch("shutil.which", return_value=None):
-        with patch("os.path.isfile", side_effect=lambda p: p == expected):
+    with patch("app.data.printable_excel_service.shutil.which", return_value=None):
+        with patch("app.data.printable_excel_service.os.path.isfile",
+                   side_effect=lambda p: p == expected):
             assert _find_libreoffice() == expected
 
 
 def test_find_libreoffice_not_found():
-    with patch("shutil.which", return_value=None):
-        with patch("os.path.isfile", return_value=False):
+    with patch("app.data.printable_excel_service.shutil.which", return_value=None):
+        with patch("app.data.printable_excel_service.os.path.isfile", return_value=False):
             assert _find_libreoffice() is None
 
 

@@ -17,6 +17,7 @@ pdfplumber==0.11.9
 pdfminer.six==20251230
 pypdfium2==5.7.1
 pandas==2.3.3
+pywin32==306 ; sys_platform == "win32"
 
 # OCR engine
 paddlepaddle==2.6.2

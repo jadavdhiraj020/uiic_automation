@@ -31,6 +31,8 @@ _PADDLEOCR_REQUIRED_SUBDIRS = (
     "whl/cls",
 )
 
+_PYWIN32_DLL_PATTERNS = ("pythoncom*.dll", "pywintypes*.dll")
+
 
 def _resource_root(dist_dir: Path) -> Path:
     internal = dist_dir / "_internal"
@@ -134,6 +136,22 @@ def verify(dist_dir: Path) -> list[str]:
                     f"  (CAPTCHA OCR will fail at runtime without this)"
                 )
 
+    # ── LibreOffice — bundled PDF fallback ───────────────────────────────────
+    soffice = root / "LibreOffice" / "program" / "soffice.exe"
+    ok = _require_nonempty_file(soffice, errors)
+    checks.append(("LibreOffice: bundled soffice.exe", ok))
+
+    # ── pywin32 — Excel COM support ──────────────────────────────────────────
+    for pattern in _PYWIN32_DLL_PATTERNS:
+        matches = list(root.rglob(pattern))
+        ok = bool(matches)
+        checks.append((f"pywin32: bundled {pattern}", ok))
+        if not ok:
+            errors.append(
+                f"missing pywin32 runtime DLL matching {pattern} under: {root}\n"
+                "  (Excel COM PDF export will be unavailable in the EXE)"
+            )
+
     # ── Python package structure — catches missing __init__.py bugs ───────────
     # In PyInstaller onedir mode, pure-Python packages from the app source are
     # compiled into the PYZ archive (not as visible directories). However, when
@@ -164,6 +182,8 @@ def verify(dist_dir: Path) -> list[str]:
         # ── app.data — Excel extraction and OIC assessment generation ────────
         ("app/data/__init__.py",
          "app.data package marker (OIC Excel extractor + assessment generator)"),
+        ("app/automation/services/__init__.py",
+         "app.automation.services package marker"),
     ]
     # The source tree is the CWD when this script runs in CI (repo root).
     import pathlib as _pathlib
@@ -218,4 +238,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
