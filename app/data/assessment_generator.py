@@ -16,6 +16,7 @@ header detection and row extraction.
 
 import logging
 import os
+from dataclasses import dataclass
 from typing import List, Optional
 
 import openpyxl
@@ -45,6 +46,14 @@ _MIN_HEADER_CONFIDENCE = 80
 # Keys added by the shared extractor that are OIC-specific and must be stripped
 # before the NIA template writer processes the row dicts.
 _OIC_ONLY_KEYS: frozenset = frozenset({"material_type", "labour_column"})
+
+
+@dataclass
+class AssessmentGenerationResult:
+    output_path: Optional[str]
+    status: str
+    generated_files: List[str]
+    message: str = ""
 
 
 def _next_available_path(output_folder: str, filename: str = _OUTPUT_FILENAME) -> str:
@@ -334,3 +343,25 @@ def generate_primary_assessment(source_excel_path: str, output_folder: str) -> O
         output_path,
     )
     return output_path
+
+
+def generate_primary_assessment_result(
+    source_excel_path: str, output_folder: str
+) -> AssessmentGenerationResult:
+    output_path = generate_primary_assessment(source_excel_path, output_folder)
+    if output_path:
+        return AssessmentGenerationResult(
+            output_path=output_path,
+            status="generated",
+            generated_files=[output_path, _audit_path_for(output_path)],
+            message="Primary assessment generated.",
+        )
+
+    skipped_audit = os.path.join(output_folder, "primary_assessment_skipped_audit.txt")
+    generated_files = [skipped_audit] if os.path.exists(skipped_audit) else []
+    return AssessmentGenerationResult(
+        output_path=None,
+        status="skipped_no_data",
+        generated_files=generated_files,
+        message="Assessment generation skipped: no parts/labour data found.",
+    )

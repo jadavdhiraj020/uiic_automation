@@ -400,11 +400,11 @@ class AutomationEngine:
             def _cheque_job() -> None:
                 self.log.info("Deferred Cheque OCR started in background.")
                 try:
-                    from app.portals.newindia.automation.ocr_helper import (
-                        ChequeExtractor,
+                    from app.automation.services.cheque_ocr_adapter import (
+                        get_cheque_ocr_adapter,
                     )
 
-                    extractor = ChequeExtractor(claim._pending_cheque_path)
+                    adapter = get_cheque_ocr_adapter(self.portal_id)
                     ocr_logs: List[str] = []
 
                     def ocr_log_fn(msg: str) -> None:
@@ -412,12 +412,16 @@ class AutomationEngine:
                         if clean_msg.strip():
                             ocr_logs.append(f"  • {clean_msg.strip()}")
 
-                    cheque_details = extractor.extract_details(
+                    ocr_result = adapter.extract_details(
+                        claim._pending_cheque_path,
                         log=ocr_log_fn,
                         excel_ifsc=getattr(claim, "ifsc_code", None) or "",
                         excel_account=getattr(claim, "account_number", None) or "",
                         stop_cb=self._check_stop,
                     )
+                    cheque_details = ocr_result.details
+                    if ocr_result.status == "unsupported":
+                        self.log.warning(ocr_result.message)
 
                     if cheque_details.get("ifsc"):
                         _set_claim_field(
@@ -479,6 +483,7 @@ class AutomationEngine:
         label: str,
         required_fields: tuple[tuple[str, str], ...],
         timeout_s: float = DEFERRED_OCR_TIMEOUT_SECONDS,
+        dependent_step: str = "",
     ) -> bool:
         """Wait until a deferred OCR job finishes before dependent form fill."""
         event = getattr(claim, f"_deferred_{kind}_ocr_event", None)
@@ -516,10 +521,19 @@ class AutomationEngine:
                 getattr(claim, f"_deferred_{kind}_ocr_error", "")
                 or "OCR produced no usable value."
             )
-            self.log.warning(
-                f"Deferred {label} OCR did not resolve: {', '.join(missing)}. "
-                f"{detail} Continuing with Excel/manual-entry fallback."
+            source_file = getattr(
+                claim,
+                f"_pending_{kind}_pdf_path",
+                getattr(claim, f"_pending_{kind}_path", ""),
             )
+            self.log.ocr_incomplete(
+                label,
+                missing,
+                source_file=source_file,
+                dependent_step=dependent_step,
+                policy="warn_only_continue",
+            )
+            self.log.warning(f"{detail} Continuing because OCR policy is warn-only.")
             return True
 
         self.log.success(f"Deferred {label} OCR data is ready.")
@@ -990,6 +1004,7 @@ class AutomationEngine:
                             ("IFSC Code", "ifsc_code"),
                             ("Account Number", "account_number"),
                         ),
+                        dependent_step="New India NEFT Details",
                     ):
                         return AutomationRunResult(
                             False, "Phase 8 failed: cheque OCR data not ready."
@@ -1026,6 +1041,7 @@ class AutomationEngine:
                             ("Vendor Invoice Date", "vendor_invoice_date"),
                             ("Vendor Invoice Number", "vendor_invoice_number"),
                         ),
+                        dependent_step="New India Claim Assessment",
                     ):
                         return AutomationRunResult(
                             False, "Phase 10 failed: invoice OCR data not ready."
@@ -1137,6 +1153,7 @@ class AutomationEngine:
                             ("Workshop Invoice No", "workshop_invoice_no"),
                             ("Workshop Invoice Date", "workshop_invoice_date"),
                         ),
+                        dependent_step="OIC Assessment of Loss",
                     ):
                         return AutomationRunResult(
                             False, "Phase 6 failed: invoice OCR timed out or stopped."
@@ -1218,6 +1235,7 @@ class AutomationEngine:
                         ("Workshop Invoice No", "workshop_invoice_no"),
                         ("Workshop Invoice Date", "workshop_invoice_date"),
                     ),
+                    dependent_step="UIIC Claim Assessment",
                 ):
                     return AutomationRunResult(
                         False, "Phase 5 failed: invoice OCR timed out or stopped."

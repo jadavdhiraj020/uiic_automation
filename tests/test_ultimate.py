@@ -4146,7 +4146,7 @@ def test_process_folder_success_with_excel(monkeypatch, tmp_path):
 
     monkeypatch.setattr(
         "app.data.folder_scanner.scan_folder",
-        lambda _folder, portal_id="uiic": fake_scan,
+        lambda _folder, portal_id="uiic", stop_cb=None: fake_scan,
     )
     monkeypatch.setattr(
         "app.data.excel_reader.extract_claim_data",
@@ -4175,7 +4175,7 @@ def test_process_folder_without_excel(monkeypatch, tmp_path):
 
     monkeypatch.setattr(
         "app.data.folder_scanner.scan_folder",
-        lambda _folder, portal_id="uiic": fake_scan,
+        lambda _folder, portal_id="uiic", stop_cb=None: fake_scan,
     )
 
     service = ClaimFolderService(config_dir="app/config")

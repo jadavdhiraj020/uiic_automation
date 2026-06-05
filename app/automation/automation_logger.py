@@ -140,11 +140,21 @@ class AutomationLogger:
                 # Resolve target path: logs/<portal_id>/<claim_no>_run_<timestamp>.json
                 from app.utils import user_data_dir, ensure_dir
 
-                log_dir = ensure_dir(user_data_dir("logs", portal_id.lower()))
-                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                # PID is appended to make it unique per process execution
-                filename = f"{claim_no}_run_{ts}_{os.getpid()}.json"
-                self._json_log_file = os.path.join(log_dir, filename)
+                try:
+                    log_dir = ensure_dir(user_data_dir("logs", portal_id.lower()))
+                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    # PID is appended to make it unique per process execution
+                    filename = f"{claim_no}_run_{ts}_{os.getpid()}.json"
+                    self._json_log_file = os.path.join(log_dir, filename)
+                except Exception as e:
+                    import tempfile
+                    log_dir = tempfile.gettempdir()
+                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    filename = f"{claim_no}_run_{ts}_{os.getpid()}_fallback.json"
+                    self._json_log_file = os.path.join(log_dir, filename)
+                    self._py_logger.warning(
+                        f"Failed to create primary log dir, fell back to system temp path: {e}"
+                    )
 
     def write_historical_logs(self, logs: list[str]):
         """Write pre-existing plain text logs (like scanner logs) to the JSON file retrospectively."""
@@ -812,6 +822,39 @@ class AutomationLogger:
                 f"OCR complete for [{doc_name}]: {fields}",
                 indent=indent,
             )
+
+    def ocr_incomplete(
+        self,
+        doc_name: str,
+        missing_fields: list[str],
+        source_file: str = "",
+        dependent_step: str = "",
+        policy: str = "warn_only_continue",
+        indent: Optional[int] = None,
+    ):
+        """Log OCR completion where required fields remain missing."""
+        missing = ", ".join(missing_fields)
+        msg = (
+            f"OCR incomplete for {doc_name}. Missing: {missing}. "
+            f"Source: {source_file or 'unknown'}. "
+            f"Dependent step: {dependent_step or 'unknown'}. "
+            f"Policy: {policy}."
+        )
+        extra = {
+            "ocr_status": "failed_or_incomplete",
+            "document": doc_name,
+            "missing_fields": missing_fields,
+            "source_file": source_file,
+            "dependent_step": dependent_step,
+            "policy": policy,
+        }
+        self._emit(
+            LogLevel.WARNING,
+            msg,
+            indent=indent,
+            py_level=logging.WARNING,
+            extra=extra,
+        )
 
     def document_mapped(
         self,
