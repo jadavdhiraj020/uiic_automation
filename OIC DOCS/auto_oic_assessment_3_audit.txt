@@ -1,0 +1,85 @@
+OIC Assessment Generation Audit
+Source Excel: C:\Users\jadav\Coding\Automation\UIIC\uiic_automation\OIC DOCS\dummy.xlsx
+Parts HSN: 8512
+Labour HSN: 8729
+
+Parts & Labour Extraction Audit
+Source Excel: C:\Users\jadav\Coding\Automation\UIIC\uiic_automation\OIC DOCS\dummy.xlsx
+Boundary keyword: sub total | total | grand total
+Source Sheet: Sheet1
+
+── Spare Parts ──
+Header row: 100
+Confidence: 100%
+Matched: sn, part_desc, estimated, metal, plastic, glass
+Missing: -
+Parts extraction: bounded by stop_row=156 (Labour header) — scanning rows 101..155
+Parts row 101: added 'fut Bumper' material=metal billed=1210.93 assessed=1210.93 hsn=8512
+Parts row 102: added 'fender LH' material=metal billed=992.18 assessed=992.18 hsn=8512
+Parts row 103: added 'fut Door LH' material=plastic billed=500.0 assessed=500.0 hsn=8512
+Parts row 104: added 'Rear Door LH' material=glass billed=5.0 assessed=5.0 hsn=8512
+Parts row 105: skipped no metal/plastic/glass amount for 'Quter Panel LH'
+Parts row 106: skipped no metal/plastic/glass amount for 'Rear Bumper'
+Parts row 107: skipped no metal/plastic/glass amount for 'fender RH'
+Parts row 108: skipped no metal/plastic/glass amount for 'fut Door RH'
+Parts row 109: skipped no metal/plastic/glass amount for 'Rear Door RH'
+Parts row 110: skipped no metal/plastic/glass amount for 'Quter Panel RH'
+Parts row 111: skipped no metal/plastic/glass amount for 'Side minor RH'
+Parts row 112: skipped no metal/plastic/glass amount for 'Side mirror LH'
+Parts row 113: skipped no metal/plastic/glass amount for 'feet Bumper Bubt'
+Parts row 114: skipped no metal/plastic/glass amount for 'Flood'
+Parts row 115: skipped no metal/plastic/glass amount for 'Carbone Cheye Accedator'
+Parts row 116: skipped no metal/plastic/glass amount for 'UNIT HEAD LAMP LH'
+Parts row 117: skipped likely labour row 'LABOUR CHARGE ACCIDENTAL'
+Parts row 118: skipped no metal/plastic/glass amount for 'jumper'
+Parts row 119: skipped blank part name
+Parts row 120: skipped blank part name
+Parts row 121: skipped blank part name
+Parts row 122: skipped blank part name
+Parts row 123: skipped blank part name
+Parts row 124: skipped blank part name
+Parts row 125: skipped blank part name
+Parts row 126: skipped blank part name
+Parts row 127: skipped blank part name
+Parts row 128: skipped blank part name
+Parts row 129: skipped blank part name
+Parts row 130: skipped blank part name
+Parts row 131: skipped blank part name
+Parts row 132: skipped blank part name
+Parts row 133: skipped blank part name
+Parts row 134: skipped blank part name
+Parts row 135: skipped blank part name
+Parts row 136: stopped at boundary 'sub total | total | grand total'
+
+── Labour Charges ──
+Header row: 156
+Confidence: 90%
+Matched: sn, labour_desc, rr, denting, cw
+Missing: estimated
+Labour row 157: added 'aaa' column=rr billed=5.0 assessed=5.0 hsn=8729
+Labour row 158: added 'bbb' column=denting billed=5.0 assessed=5.0 hsn=8729
+Labour row 159: added 'ccc' column=cw billed=5.0 assessed=5.0 hsn=8729
+Labour row 160: skipped blank labour name
+Labour row 161: skipped blank labour name
+Labour row 162: stopped at boundary 'sub total | total | grand total'
+
+── Summary ──
+Parts rows: 4
+Labour rows: 3
+Total rows: 7
+
+── OIC Row Details ──
+  1. [Metallic Parts] fut Bumper | amt=1210.93 est=1560 hsn=8512
+  2. [Metallic Parts] fender LH | amt=992.18 est=1480 hsn=8512
+  3. [Plastic] fut Door LH | amt=500 est=8570 hsn=8512
+  4. [Glass] Rear Door LH | amt=5 est=8861 hsn=8512
+  5. [Labour Charge] aaa | amt=5 est=100000 hsn=8729
+  6. [Labour Charge] bbb | amt=5 est=100000 hsn=8729
+  7. [Labour Charge] ccc | amt=5 est=100000 hsn=8729
+
+── Summary ──
+Output Excel: C:\Users\jadav\Coding\Automation\UIIC\uiic_automation\OIC DOCS\auto_oic_assessment_3.xlsx
+Audit File: C:\Users\jadav\Coding\Automation\UIIC\uiic_automation\OIC DOCS\auto_oic_assessment_3_audit.txt
+Parts rows: 4
+Labour rows: 3
+Total rows: 7

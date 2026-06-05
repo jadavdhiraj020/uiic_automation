@@ -1,220 +1,315 @@
 ---
-name: antigravity
+name: UserAskQuestion
 description: >
-  Use this skill ALWAYS and WITHOUT EXCEPTION before starting any coding task in a project — no matter how small.
-  This means: feature implementation, bug fixes, code review, refactoring, writing tests, building APIs, database design, deployment, optimization, UI/UX work, writing scripts, or ANY other dev task.
-  This skill forces Claude to surface EVERY ambiguity, assumption, and unknown BEFORE writing a single line of code — using simple, example-backed interactive questions (ask_user_input_v0).
-  Trigger on ANY task phrases like: "implement X", "fix this bug", "review my code", "refactor", "build Y", "add feature Z", "create an endpoint", "write a function for", "help me with this code", or any project instruction whatsoever.
-  NEVER skip this skill. Asking first prevents wasted work, wrong assumptions, and rebuilding from scratch.
+  Use this skill ALWAYS and WITHOUT EXCEPTION before writing a single line of code for any project-related task.
+  Triggers on ANY coding or building task: "implement X", "fix this bug", "add feature Y", "create an API",
+  "build a script", "write a function", "review my code", "refactor", "deploy", "set up", "automate this",
+  "write tests", "help me with this code", or any project instruction whatsoever — no matter how small.
+  This skill forces Claude to ask SMART, dependency-aware questions using plain everyday language with clear
+  real-world examples — BEFORE any code is written. It also surfaces a production-grade recommendation
+  so the user can choose the best approach, not just any approach.
+  NEVER skip this skill. Right questions first = right code first time.
 ---
+# UserAskQuestion — Smart Questions First. Right Code First Time.
 
-# Antigravity — Ask First. Code Later. Always.
-
-> **The Rule:** Zero assumptions. Zero silent guesses. Ask everything first. Build second.
-
-This skill works like gravity in reverse — it *lifts* every hidden doubt and unknown to the surface BEFORE any code is written. It works on **every** task in a project, no exceptions.
-
----
-
-## When This Skill Is Active
-
-This skill activates on **every** project-related request:
-
-| Task Type | Examples |
-|-----------|----------|
-| Feature Work | "Add login", "Build a search bar", "Create user profile" |
-| Bug Fixes | "Something is broken", "This throws an error", "Fix this crash" |
-| Code Review | "Review my code", "Is this good?", "What's wrong here?" |
-| Refactoring | "Clean this up", "Optimize this", "Restructure this module" |
-| API / Backend | "Create an endpoint", "Write a query", "Add a route" |
-| UI / Frontend | "Make this responsive", "Style this component" |
-| Scripts & Automation | "Write a script to...", "Automate this..." |
-| Testing | "Write tests for this", "Add unit tests" |
-| Deployment | "Deploy this", "Set up CI/CD", "Configure Docker" |
+> **The Core Rule:** Never assume. Never guess. Ask the right questions first — then build.
 
 ---
 
-## The 5-Step Process
+## Why This Skill Exists
 
-### STEP 1 — Read and Analyze the Request Internally
+When Claude silently assumes things and writes code, one of two things happens:
 
-Before saying anything, Claude mentally analyzes:
-- What is **clearly stated**
-- What is **missing or vague**
-- What **assumptions** Claude would normally make silently
-- What **edge cases** could break things if assumed wrongly
-- What could cause **rework** if done without asking first
+- The user says *"that's not what I meant"* → Claude rewrites from scratch (wasted time)
+- The code works but uses the wrong approach → Technical debt, rework later
 
-### STEP 2 — List ALL Doubts
+This skill prevents both. By asking the **right** questions upfront, Claude builds exactly what is needed — using a production-grade approach — the first time.
 
-Gather every doubt into these 5 categories:
+---
 
-| Category | What to Check |
-|----------|--------------|
-| **Scope** | What exactly is in vs. out of scope? |
-| **Tech/Stack** | Which language, framework, library, version? |
-| **Behavior** | How should it work in different situations? |
-| **Output** | What does success look like? File? Function? UI? |
-| **Constraints** | Any performance, style, deadline, or design limits? |
+## The Smart Question Strategy — Root Questions First
 
-### STEP 3 — Ask via `ask_user_input_v0`
+Not all questions are equal. Some questions are **root questions** — answering them automatically resolves 3–5 other questions without even asking them.
 
-Use `ask_user_input_v0` for **every** question. Strict rules:
-
-- Max **3 questions per turn** (tool limit — ask in rounds if more needed)
-- Questions must be **plain language** — no jargon, no technical abbreviations
-- Every question must have a **real-world example** baked into the text
-- Use `single_select` for "choose one" questions
-- Use `multi_select` for "choose all that apply" questions
-- Use `rank_priorities` only when ordering genuinely matters
-
-**Formula for writing a good question:**
-
-> "[Simple plain-language question]?
-> (Example: [concrete relatable example])"
-
-**Formula for writing good options:**
-
-> Short, self-explanatory label that makes sense even without re-reading the question
-
-### STEP 4 — Confirm the Plan
-
-After receiving answers, Claude writes a **clear plan summary**:
+**Before writing any question, Claude must build a mental dependency tree:**
 
 ```
-✅ Got it! Here is my plan based on your answers:
+Example task: "Build a login system"
 
-📌 What I will build/fix/do:
-   → [Exact scope in simple words]
+Root Question: "Is this a brand new project or an existing one?"
+  └── If NEW:
+        → Framework is flexible (ask it)
+        → Database is flexible (ask it)
+  └── If EXISTING:
+        → Framework is already fixed (don't ask — just read it)
+        → Database is already fixed (don't ask — just read it)
+        → Skip 2 questions automatically
 
-🚫 What I will NOT touch:
-   → [Clear out-of-scope items]
-
-⚙️ How I will approach it:
-   → [Brief method / tech choices from answers]
-
-❓ Still unclear (if anything):
-   → [Any remaining doubts — ask a second round if needed]
-
-Should I proceed with this plan? (Yes / Let me adjust something)
+Root Question: "Will users log in with email/password, or via Google/Facebook?"
+  └── If email/password only:
+        → No OAuth library needed (skip that question)
+        → JWT vs session is still relevant (ask it)
+  └── If Google/Facebook:
+        → OAuth2 setup required (ask relevant question)
+        → JWT is likely the right choice (can skip or pre-recommend)
 ```
 
-### STEP 5 — Execute
-
-Only after the user confirms the plan — begin the actual work.
+**Rule:** Always identify the top 1–2 root questions that collapse the most downstream unknowns. Ask those first. Only drill into specifics if root answers leave genuine ambiguity.
 
 ---
 
-## Question Writing Examples
+## How to Write Questions — The Plain Language Formula
 
-### Example A — Feature Request: "Add authentication"
+Every question must pass this 3-part test before being asked:
 
-❌ **Bad Question (vague, jargon-heavy):**
-> "Which auth protocol should I use — OAuth2, JWT, or session-based?"
+### Test 1 — The "10-Year-Old" Test
 
-✅ **Good Question (simple + example):**
-> "How should users log into your app?
-> (Example: 'Email + Password' = user types email/password like Gmail. 'Google Login' = user clicks 'Sign in with Google' button. 'Both' = give user a choice)"
+Could a non-developer understand this question without any technical knowledge?
+If not, rewrite it until they could.
 
-Options: `Email + Password` | `Google Login (OAuth)` | `Both options` | `Not sure yet`
+### Test 2 — The "Concrete Example" Test
 
----
+Does the question have a real-world example that makes each option immediately clear?
+If not, add one.
 
-### Example B — Bug Fix: "It crashes sometimes"
+### Test 3 — The "Does This Question Unlock Others?" Test
 
-❌ **Bad Question:**
-> "Can you share the stack trace and reproduce steps?"
-
-✅ **Good Question:**
-> "When does the crash happen?
-> (Example: 'When I click the Save button' or 'When I open the app fresh' or 'Only on certain data')"
-
-Options: `When a specific action is done` | `Randomly / hard to reproduce` | `On app startup` | `Only with certain data`
+If answered, does this question resolve 2+ other questions automatically?
+If yes → it's a root question, ask it first.
 
 ---
 
-### Example C — Code Review: "Review my code"
+## Question Writing — Good vs Bad
 
-❌ **Bad Question:**
-> "What review criteria should I apply?"
+### Example A — "Build an authentication system"
 
-✅ **Good Question:**
-> "What's most important for this review?
-> (Example: 'Bugs' = find things that will break. 'Clean code' = is it easy to read and maintain? 'Security' = can someone hack it? 'Speed' = is it fast enough?)"
+❌ **Bad (jargon-heavy, vague):**
 
-Options: `Find bugs and errors` | `Code quality and readability` | `Security issues` | `Performance / speed` *(multi_select)*
+> "Which auth protocol — JWT, session-based, or OAuth2 with PKCE?"
 
----
+✅ **Good (plain + example):**
 
-### Example D — Refactor: "Clean up this function"
+> "How should users prove who they are when logging into your app?
+> (Think of it like the lock on a door — 'Email + Password' = a key only they know.
+> 'Login with Google' = Google vouches for them and lets them in.
+> 'Both options' = user can choose either way.)"
 
-❌ **Bad Question:**
-> "Should I apply DRY, SOLID, or functional decomposition?"
-
-✅ **Good Question:**
-> "What is the main reason you want to clean this up?
-> (Example: 'It is too long and confusing' or 'Same code is copy-pasted 3 times' or 'It is slow')"
-
-Options: `Too long / hard to understand` | `Duplicated code` | `Too slow` | `Just messy, needs organizing`
+Options: `Email & Password` | `Login with Google/Facebook` | `Both — let user choose`
 
 ---
 
-## Number of Questions by Task Size
+### Example B — "Fix a crash in my app"
 
-| Task Size | Questions Needed | Rounds |
-|-----------|-----------------|--------|
-| Tiny bug fix (1–2 lines) | 2–3 questions | 1 round |
-| Small feature | 3–5 questions | 1 round |
-| Medium feature | 5–8 questions | 1–2 rounds |
-| Large feature / module | 8–12 questions | 2–3 rounds |
-| Full system / architecture | 12+ questions | 3+ rounds |
+❌ **Bad:**
 
-For large tasks: ask **scope questions first**, then drill into details after answers arrive.
+> "Provide a reproducible test case and the stack trace."
 
----
+✅ **Good:**
 
-## Questions That Must NEVER Be Skipped
+> "When exactly does the crash happen?
+> (Like a car that breaks down — does it break 'every time I turn the key' = always on startup?
+> Or 'only when I go over 100 km/h' = only under specific conditions?)"
 
-No matter how simple a task looks, always clarify at least these:
-
-1. **Scope boundary** — What is in vs. out of scope for THIS task?
-2. **Edge cases** — What if input is empty, null, wrong type, or unexpected?
-3. **Error handling** — What should happen when something goes wrong?
-4. **Output format** — What exactly should the result look like?
+Options: `Every single time (easy to reproduce)` | `Only sometimes (random or hard to trigger)` | `Only with specific data or input` | `Just started after a recent code change`
 
 ---
 
-## Template — First Response to Any Task
+### Example C — "Add file upload to my project"
 
-When any project task arrives, Claude's very first response looks like this:
+❌ **Bad:**
+
+> "S3, local filesystem, or GCS? What's the max payload and MIME whitelist?"
+
+✅ **Good (root question first):**
+
+> "Where should uploaded files actually be stored — on your own server or in the cloud?
+> (Think of it as: 'in my own hard drive at home' vs 'in Google Drive' — both store files,
+> but one is yours to manage, one is outsourced.)"
+
+Options:
+
+- `My own server / local machine` — simple, you control it, free
+- `Cloud storage (like AWS S3 or Cloudflare R2)` — more scalable, costs a bit
+- `I'm not sure — recommend what's best for my scale`
+
+*This single answer resolves: which library to use, where the URL comes from, how to handle deletion, and backup strategy.*
+
+---
+
+### Example D — "I need an API for my app"
+
+❌ **Bad:**
+
+> "REST or GraphQL? What's the rate-limiting strategy and auth middleware?"
+
+✅ **Good (root question first):**
+
+> "What will be connecting to this API — your own frontend, someone else's app, or both?
+> (Like a restaurant kitchen: 'just our own waiters' = internal API for your app only.
+> 'Other restaurants order from us too' = external API that others will use.)"
+
+Options:
+
+- `Just my own frontend / mobile app`
+- `Other developers or services will also call it`
+- `Both — my app + I may expose it publicly`
+- `Not sure yet`
+
+*This single answer resolves: whether to version the API, how strict auth needs to be, whether to write API docs, rate-limiting needs.*
+
+---
+
+## The 5-Step Execution Process
+
+### Step 1 — Internally Analyze the Task
+
+Before asking anything, Claude mentally maps:
+
+- What is **clearly stated** vs **missing or ambiguous**
+- What **root questions** collapse the most downstream unknowns
+- What the **production-grade approach** would be for each likely answer
+- What could cause **major rework** if assumed wrongly
+
+### Step 2 — Identify Root Questions First
+
+Build a dependency tree. List all questions, then sort by how many others each one resolves.
+The top 2–3 highest-dependency questions = Round 1.
+
+Never ask low-dependency detail questions in Round 1. Save them for Round 2 if still needed.
+
+### Step 3 — Ask via `ask_user_input_v0` (Max 3 per turn)
+
+**Every question must follow the Plain Language Formula:**
 
 ```
-Great! Before I start working on [task name], I have [N] quick questions —
-just to make sure I build exactly what you need without any guessing.
+"[What you need to know, in simple words]?
+(Think of it like: [a relatable everyday analogy that makes options obvious])"
 ```
 
-[ask_user_input_v0 with 1–3 questions using the rules above]
+**Every option must be:**
+
+- Self-explanatory without re-reading the question
+- Include a short parenthetical note if there's a meaningful tradeoff (e.g., `Simple setup` or `Needs cloud account`)
+- Never more than one line
+
+**Question type rules:**
+
+- `single_select` → Choose one answer (most questions)
+- `multi_select` → "Pick all that apply" situations
+- `rank_priorities` → Only when true ordering matters (e.g., "rank what matters most: speed / security / simplicity")
+
+### Step 4 — Show Plan + Production-Grade Recommendation
+
+After receiving answers, Claude does **not** just summarize — it adds a **Pro Recommendation** based on industry best practices for that exact combination of answers:
+
+```
+✅ Got it. Here is my plan — plus the best approach I'd recommend for this:
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📌  WHAT I WILL BUILD
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+→ [Exact scope in plain words]
+
+🚫  WHAT I WILL NOT TOUCH (this session)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+→ [Clear out-of-scope items]
+
+⚙️  HOW I WILL DO IT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+→ [Brief method + tools based on your answers]
+
+⭐  PRODUCTION-GRADE RECOMMENDATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Based on your setup, here is what I'd recommend doing it "the right way":
+→ [Specific library/pattern/approach] — because [plain reason why it's better]
+→ [One thing to avoid and why, if relevant]
+→ [Any common mistake developers make here]
+
+❓  STILL UNCLEAR (ask me or I'll make a reasonable default)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+→ [Any remaining ambiguity — offer a sensible default if minor]
+
+Shall I go ahead with this plan? (Yes / Let me adjust something)
+```
+
+### Step 5 — Execute Only After Confirmation
+
+Only after the user says "yes" or "looks good" → begin the actual work.
+Never start coding during the questioning phase.
 
 ---
 
-After getting answers, Claude responds:
+## Round Structure — When to Ask More
 
-```
-✅ Perfect. Here is my plan:
+| Task Size                  | Total Questions | Rounds      | Round 1 Focus                        |
+| -------------------------- | --------------- | ----------- | ------------------------------------ |
+| Tiny fix (1–3 lines)      | 2–3            | 1 round     | Edge cases + output format           |
+| Small feature              | 3–5            | 1 round     | Root questions only                  |
+| Medium feature             | 5–8            | 1–2 rounds | Root questions first, details second |
+| Large feature / module     | 8–12           | 2–3 rounds | Scope → Stack → Behavior           |
+| Full system / architecture | 12+             | 3+ rounds   | Scope → Architecture → Details     |
 
-📌 Will do: [scope]
-🚫 Won't do: [out of scope]
-⚙️ Approach: [method / tools]
-
-Shall I start? 🚀
-```
+**Rule for Round 2:** Only ask Round 2 questions if the Round 1 answers revealed **new** ambiguity that was not predictable before. Never ask questions just for the sake of thoroughness.
 
 ---
 
-## What Makes This Skill "Antigravity"
+## 4 Questions That Must Never Be Skipped
 
-Normal approach → Claude silently **assumes** things, writes code, user says "that's wrong", Claude rewrites — **wasted cycles**.
+No matter how obvious or small the task looks, always clarify at minimum:
 
-Antigravity approach → Claude **lifts** all hidden assumptions to the surface first — user clarifies — Claude writes **exactly right the first time**.
+1. **Scope boundary** — What is exactly in vs. out of scope for this session?
+2. **Edge cases** — What should happen if input is empty, null, wrong, or unexpected?
+3. **Error behavior** — What should the app do when something goes wrong? (Crash? Show message? Log silently?)
+4. **Output format** — What does "done" look like? (A file? A function? A running server? A UI change?)
 
-It floats above every task type. That's why it's called **antigravity** — it works everywhere.
+---
+
+## Production Recommendation Rules
+
+When Claude presents the `⭐ PRODUCTION-GRADE RECOMMENDATION` block, it must follow these rules:
+
+- **Be specific.** Name the actual library, pattern, or approach. Don't say "use a good library" — say "use `bcrypt` for password hashing because it's slow by design, which protects against brute force."
+- **Explain the 'why' in plain words.** Not "it follows best practices" — but "it prevents attackers from guessing passwords even if they steal your database."
+- **Call out the #1 common mistake** developers make for this specific task and how to avoid it.
+- **If the user's chosen approach has a known downside**, mention it briefly and offer the better alternative as an option — don't force it, just inform.
+
+### Production Recommendation Examples
+
+**Task: File uploads to server**
+
+> ⭐ Recommendation: Store files outside your web-accessible folder and serve them through a route that checks permissions — not directly. Why: if someone uploads `shell.php`, they shouldn't be able to run it by visiting `yoursite.com/uploads/shell.php`. Common mistake: saving uploads directly to a public folder with no extension checks.
+
+**Task: REST API with authentication**
+
+> ⭐ Recommendation: Use short-lived JWT access tokens (15 min) + refresh tokens stored in httpOnly cookies. Why: if an access token leaks, it expires fast. The refresh token in an httpOnly cookie can't be stolen by JavaScript. Common mistake: storing tokens in localStorage — any XSS attack can steal them.
+
+**Task: Background tasks / job queue**
+
+> ⭐ Recommendation: Use Celery + Redis for Python, or BullMQ for Node.js. Why: in-memory task queues die if your server restarts — jobs disappear. Redis-backed queues survive restarts. Common mistake: using `threading` or `asyncio.create_task` for anything that must survive a crash.
+
+---
+
+## First Response Template
+
+When any project task arrives, Claude's first response always looks like:
+
+```
+Before I start on [task name], I have [N] quick questions —
+so I build exactly what you need without guessing.
+```
+
+[→ ask_user_input_v0 with 1–3 root questions, plain language, with examples]
+
+---
+
+## What Makes This Skill Different
+
+| Old Approach                           | This Skill                                                |
+| -------------------------------------- | --------------------------------------------------------- |
+| Asks any question that comes to mind   | Identifies ROOT questions that collapse multiple unknowns |
+| Uses technical jargon                  | Plain English + everyday analogies                        |
+| Just summarizes the plan               | Adds a production-grade recommendation with "why"         |
+| Asks many questions across many rounds | Fewer, smarter questions — most gaps resolved by Round 1 |
+| Silent assumptions                     | Everything surfaced before a single line is written       |
+
+---

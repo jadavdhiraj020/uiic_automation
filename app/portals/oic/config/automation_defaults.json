@@ -35,5 +35,12 @@
   "_comment_upload": "Hardcoded defaults for Document Upload (Step 5).",
   "upload_remarks": "Documents verified and uploaded.",
   "auto_submit_documents": false,
-  "upload_max_file_bytes": 5242880
+  "upload_max_file_bytes": 5242880,
+
+  "_comment_printable": "Printable Excel & PDF settings. Always enabled, no toggle.",
+  "printable_output_excel_name": "Printable_Assessment.xlsx",
+  "printable_output_pdf_name": "Printable_Assessment.pdf",
+  "printable_print_mode": "scale_percentage",
+  "printable_scale_percentage": 80,
+  "printable_column_range": "A:L"
 }

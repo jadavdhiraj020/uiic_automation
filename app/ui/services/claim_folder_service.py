@@ -107,6 +107,31 @@ class ClaimFolderService:
             claim._scan_result = scan_result
             claim.source_excel_path = scan_result.excel_path or ""
 
+            # F6 FIX: import once here, used by printable block, OIC block,
+            # and the eager_ocr check further below — no repeated inline imports.
+            from app.utils import load_automation_defaults
+
+            # Issue 4: Load once, reuse for printable block + eager_ocr check.
+            # OIC block uses its own load with portal_id="oic" (intentional —
+            # it always needs OIC defaults regardless of the active portal).
+            _portal_defaults = load_automation_defaults(portal_id=self.portal_id)
+
+            # ── Generate Printable Excel copy + PDF ───────────────────────
+            if scan_result.excel_path:
+                try:
+                    from app.data.printable_excel_service import process_printable_output
+
+                    _output_dir = os.path.dirname(os.path.abspath(scan_result.excel_path))
+                    process_printable_output(
+                        source_excel_path=scan_result.excel_path,
+                        output_folder=_output_dir,
+                        settings=_portal_defaults,
+                        logs=logs,
+                    )
+                except Exception as print_exc:
+                    logs.append(f"⚠️  Printable Excel/PDF generation failed: {print_exc}")
+                    logger.warning("Printable generation error: %s", print_exc)
+
             # SSOT is now fully isolated and calculated directly within excel_reader.py
 
             # ── Auto-generate primary assessment Excel if not provided by user, or update if it's our auto-generated file ──
@@ -185,9 +210,8 @@ class ClaimFolderService:
                     from app.data.oic_assessment_generator import (
                         generate_oic_assessment,
                     )
-                    from app.utils import load_automation_defaults as _load_defaults
-
-                    oic_defaults = _load_defaults(portal_id="oic")
+                    # load_automation_defaults already imported above (F6)
+                    oic_defaults = load_automation_defaults(portal_id="oic")
                     # Resolve to absolute path to prevent os.path.dirname returning ""
                     # if scan_result.excel_path has no directory component.
                     _abs_excel = os.path.abspath(scan_result.excel_path)
@@ -223,9 +247,8 @@ class ClaimFolderService:
                     False, scan_result, claim, ["⚠️ Scan cancelled."], "Cancelled"
                 )
 
-            from app.utils import load_automation_defaults
-
-            defaults = load_automation_defaults(portal_id=self.portal_id)
+            # Issue 4: Reuse _portal_defaults loaded above — no second disk read.
+            defaults = _portal_defaults
             eager_ocr = defaults.get("eager_folder_ocr", True)
 
             invoice_pdf = scan_result.assessment_files.get("invoice")

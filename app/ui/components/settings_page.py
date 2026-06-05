@@ -146,11 +146,20 @@ class SettingsPage(QWidget):
         self.btn_eye.setToolTip("Hide password" if ch else "Show password")
 
     def _automation_default_rows(self):
+        # ── Printable Excel & PDF settings — shared across all portals ─────
+        _printable_rows = [
+            ("printable_output_excel_name", "Output Excel Name",    "Printable Excel — output filename", "text"),
+            ("printable_output_pdf_name",   "Output PDF Name",      "Printable PDF — output filename",   "text"),
+            ("printable_print_mode",        "Print Mode",           "scale_percentage or column_range",  "printmode"),
+            ("printable_scale_percentage",  "Scale Percentage",     "25–300 % (used when Print Mode = Scale Percentage)", "printspin"),
+            ("printable_column_range",      "Column Range",         "e.g. A:L (used when Print Mode = Column Range)", "text"),
+        ]
+
         rows_by_portal = {
             "uiic": [
                 ("remarks_default", "Remarks Default", "Interim Report, Claim Assessment", "text"),
                 ("observation_default", "Observation Default", "Surveyor Observation fallback", "text"),
-            ],
+            ] + _printable_rows,
             "newindia": [
                 ("remarks_default", "Remarks Default", "Remarks fallback", "text"),
                 ("observation_default", "Observation Default", "Observation fallback", "text"),
@@ -166,7 +175,7 @@ class SettingsPage(QWidget):
                 ("relationship_with_insured", "Relationship With Insured", "Driver details fallback", "text"),
                 ("reinspection_required", "Reinspection Required", "Claim Assessment dropdown", "yesno"),
                 ("table_boundary_keyword", "Table Boundary Keyword", "End-of-table marker(s) in Excel. Separate multiple with | (e.g. 'sub total|grand total')", "text"),
-            ],
+            ] + _printable_rows,
             "oic": [
                 ("unknown_claim_type_default", "Unknown Payment Default", "Claim Search claim type fallback", "claimtype"),
                 ("driver_relation_default",    "Relation of Driver",      "Driver Details — filled when Is Owner Driver = NO", "text"),
@@ -184,7 +193,7 @@ class SettingsPage(QWidget):
                 ("upload_remarks",          "Upload Remarks",          "Remarks text filled on Document Upload step (min 10 chars)", "remarks"),
                 ("instant_fill",               "Instant Form Filling",    "Fill fields instantly (faster) or type slowly", "yesno"),
                 ("typing_delay_ms",            "Typing Delay (ms)",       "Delay per character when typing, 0–999 ms (used if not instant fill)", "spinbox"),
-            ],
+            ] + _printable_rows,
         }
         return rows_by_portal.get(self._portal_id, rows_by_portal["uiic"])
 
@@ -300,7 +309,29 @@ class SettingsPage(QWidget):
             self.defaults_table.setItem(i, 0, label_item)
 
             raw_value = str(defaults.get(key, ""))
-            if kind in {"yesno", "claimtype", "gsttype", "sidecode", "igstrate"}:
+            if kind == "printmode":
+                # Print Mode dropdown: shows friendly labels, stores internal keys
+                value_widget = SafeComboBox()
+                value_widget.setObjectName("embeddedCombo")
+                value_widget.addItem("Scale Percentage", "scale_percentage")
+                value_widget.addItem("Column Range", "column_range")
+                # Match stored value (internal key) to the combo data
+                matched = False
+                for ci in range(value_widget.count()):
+                    if value_widget.itemData(ci) == raw_value:
+                        value_widget.setCurrentIndex(ci)
+                        matched = True
+                        break
+                # F5 FIX: warn when stored value doesn't match any known key
+                # so the user knows their config was silently reset to default.
+                if not matched and raw_value:
+                    import logging as _logging
+                    _logging.getLogger(__name__).warning(
+                        "printable_print_mode: unknown stored value %r — "
+                        "defaulting to 'Scale Percentage'", raw_value
+                    )
+                self.defaults_table.setCellWidget(i, 1, value_widget)
+            elif kind in {"yesno", "claimtype", "gsttype", "sidecode", "igstrate"}:
                 value_widget = SafeComboBox()
                 value_widget.setObjectName("embeddedCombo")
                 if kind == "yesno":
@@ -331,6 +362,17 @@ class SettingsPage(QWidget):
                 except (ValueError, TypeError):
                     spin.setValue(25)  # safe fallback default
                 self.defaults_table.setCellWidget(i, 1, spin)
+            elif kind == "printspin":
+                spin = SafeSpinBox()
+                spin.setObjectName("embeddedSpin")
+                spin.setRange(25, 300)
+                spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+                spin.setSuffix(" %")
+                try:
+                    spin.setValue(int(str(raw_value).strip()))
+                except (ValueError, TypeError):
+                    spin.setValue(80)  # safe fallback default
+                self.defaults_table.setCellWidget(i, 1, spin)
             else:
                 # ChipLineEdit: shows pipe-separated tokens as square chip boxes
                 # when unfocused (read mode), and switches to normal text input
@@ -344,6 +386,12 @@ class SettingsPage(QWidget):
                     inp.setPlaceholderText("e.g. sub total|total|grand total")
                 elif key == "upload_remarks":
                     inp.setPlaceholderText("Min 10 chars — text filled on Document Upload step")
+                elif key == "printable_column_range":
+                    inp.setPlaceholderText("e.g. A:L or A:N")
+                elif key == "printable_output_excel_name":
+                    inp.setPlaceholderText("e.g. Printable_Assessment.xlsx")
+                elif key == "printable_output_pdf_name":
+                    inp.setPlaceholderText("e.g. Printable_Assessment.pdf")
                 else:
                     inp.setPlaceholderText("Enter value...")
                 self.defaults_table.setCellWidget(i, 1, inp)
@@ -487,12 +535,24 @@ class SettingsPage(QWidget):
                 if not key:
                     continue
                 widget = self.defaults_table.cellWidget(r, 1)
-                # SpinBox kind: read integer value directly, no text parsing needed
+                # F7 FIX: printspin saves as native int to keep JSON type
+                # consistent with the bundled defaults (which store 80, not "80").
+                # General spinbox (ms values) keep str for backward compat.
+                if isinstance(widget, QSpinBox) and key == "printable_scale_percentage":
+                    defaults[key] = widget.value()  # int, not str
+                    continue
+                # General SpinBox kind: read integer value as string
                 if isinstance(widget, QSpinBox):
                     defaults[key] = str(widget.value())
                     continue
                 if isinstance(widget, QComboBox):
-                    defaults[key] = widget.currentText().strip()
+                    # printmode combo stores internal key (e.g. 'scale_percentage') as itemData
+                    item_data = widget.currentData()
+                    if item_data is not None:
+                        defaults[key] = str(item_data)
+                    else:
+                        defaults[key] = widget.currentText().strip()
+                    continue  # Issue 5: explicit continue — consistent with QSpinBox branches
                 elif isinstance(widget, QLineEdit):
                     raw = widget.text().strip()
 
