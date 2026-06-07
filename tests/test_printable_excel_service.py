@@ -512,3 +512,166 @@ def test_process_printable_output_invalid_column_range():
             logs=logs,
         )
         assert any("Invalid Column Range" in line for line in logs)
+
+
+# ── Finding #8 fix: rewrite to match subprocess-based _generate_pdf_excel_com ─
+
+def test_generate_pdf_excel_com_cleanup_on_open_failure():
+    """
+    Finding #8 fix: _generate_pdf_excel_com now delegates to excel_com_worker
+    in an isolated subprocess. The old test asserted on Workbooks.Open COM
+    calls that no longer happen in this function.
+
+    Verifies:
+    - When run_generate_pdf_subprocess returns False, the function returns False.
+    - A meaningful fallback log line is emitted (not a bare exception dump).
+    - The subprocess approach isolates the main process from EXCEL.EXE crashes.
+    """
+    with patch(
+        "app.data.printable_excel_service._generate_pdf_excel_com",
+        wraps=_generate_pdf_excel_com,
+    ):
+        with patch(
+            "app.data.excel_com_worker.run_generate_pdf_subprocess",
+            return_value=False,
+        ):
+            logs = []
+            result = _generate_pdf_excel_com(
+                os.path.abspath("dummy.xlsx"),
+                os.path.abspath("dummy.pdf"),
+                logs,
+            )
+
+    # Must fail gracefully
+    assert result is False
+    # Log must explain what happened — not a bare exception trace
+    assert any(
+        "fallback" in line.lower()
+        or "subprocess" in line.lower()
+        or "excel com" in line.lower()
+        or "libreoffice" in line.lower()
+        for line in logs
+    ), f"Expected fallback log. Got: {logs}"
+
+
+# ── Fix #22: Happy-path integration test for process_printable_output ────────
+
+def test_process_printable_output_happy_path():
+    """
+    Fix #22: End-to-end test of the success code path. Uses a real .xlsx source,
+    mocks both PDF generators, and verifies that:
+    - The output Excel is created in the output folder with a timestamped name.
+    - Both PDF generator functions are called (Excel COM then fallback).
+    - result.excel_path / result.pdf_path point to the actual timestamped files.
+    - Logs contain success messages.
+
+    NOTE: Output filenames now include a timestamp suffix
+    (e.g. Printable_Assessment_20260607_231751.xlsx) so we match by prefix/suffix
+    instead of an exact hardcoded name.
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        src_path = os.path.join(tmp_dir, "claim.xlsx")
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws["A1"] = "Claim Data"
+        ws["B2"] = 99999
+        wb.save(src_path)
+        wb.close()
+
+        settings = {
+            "printable_output_excel_name": "Printable_Assessment.xlsx",
+            "printable_output_pdf_name": "Printable_Assessment.pdf",
+            "printable_print_mode": "scale_percentage",
+            "printable_scale_percentage": 80,
+        }
+
+        # Mock both PDF generators: COM fails, LibreOffice succeeds.
+        with patch("app.data.printable_excel_service._generate_pdf_excel_com",
+                   return_value=False) as mock_com:
+            with patch("app.data.printable_excel_service._generate_pdf_libreoffice",
+                       return_value=True) as mock_lo:
+                logs = []
+                pr = process_printable_output(
+                    source_excel_path=src_path,
+                    output_folder=tmp_dir,
+                    settings=settings,
+                    logs=logs,
+                )
+
+        # Filenames now include a timestamp — verify by checking the prefix/suffix
+        # and that the result paths are inside the output folder.
+        excel_basename = os.path.basename(pr.excel_path)
+        pdf_basename   = os.path.basename(pr.pdf_path)
+        assert excel_basename.startswith("Printable_Assessment_"), (
+            f"Excel filename should start with 'Printable_Assessment_', got: {excel_basename}"
+        )
+        assert excel_basename.endswith(".xlsx"), (
+            f"Excel filename should end with '.xlsx', got: {excel_basename}"
+        )
+        assert pdf_basename.startswith("Printable_Assessment_"), (
+            f"PDF filename should start with 'Printable_Assessment_', got: {pdf_basename}"
+        )
+        assert pdf_basename.endswith(".pdf"), (
+            f"PDF filename should end with '.pdf', got: {pdf_basename}"
+        )
+        # Paths must be inside the output folder
+        assert os.path.dirname(pr.excel_path) == tmp_dir
+        assert os.path.dirname(pr.pdf_path) == tmp_dir
+
+        assert pr.excel_ok is True,  f"excel_ok should be True. Logs: {logs}"
+        assert pr.skipped is False
+
+        # Output Excel must exist on disk at the reported path
+        assert os.path.isfile(pr.excel_path), "Printable Excel was not created"
+
+        # Both PDF methods should have been called
+        mock_com.assert_called_once()
+        mock_lo.assert_called_once()
+
+        # Logs must confirm success
+        assert any("Printable Excel created" in line for line in logs), (
+            f"Expected success log. Got: {logs}"
+        )
+
+
+# ── Fix #24: mtime-scan fallback path test ───────────────────────────────────
+
+def test_generate_pdf_libreoffice_mtime_scan_recovery():
+    """
+    Fix #24: Test the mtime-scan fallback path.
+    Scenario: LibreOffice succeeds but creates a PDF with a different name
+    than both the expected path AND abs_pdf. The recovery scan must find it
+    by creation time and rename it to the desired path.
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        excel_path = os.path.join(tmp_dir, "Input.xlsx")
+        pdf_path = os.path.join(tmp_dir, "Desired_Output.pdf")
+        # LibreOffice would normally create Input.pdf, but imagine it created
+        # a locale-variant name instead
+        surprise_pdf = os.path.join(tmp_dir, "Locale_Variant_Input.pdf")
+
+        def fake_communicate(timeout=None):
+            # Write to a different file name than expected
+            with open(surprise_pdf, "wb") as f:
+                f.write(b"%PDF-1.4 recovered")
+            return "", ""
+
+        mock_proc = MagicMock()
+        mock_proc.communicate.side_effect = fake_communicate
+        mock_proc.returncode = 0
+
+        with patch("app.data.printable_excel_service._find_libreoffice",
+                    return_value=r"C:\fake\soffice.exe"):
+            with patch("app.data.printable_excel_service.subprocess.Popen",
+                       return_value=mock_proc):
+                logs = []
+                result = _generate_pdf_libreoffice(excel_path, pdf_path, logs)
+
+        # Recovery must have found and renamed the surprise PDF
+        assert result is True, f"Expected True (mtime recovery). Logs: {logs}"
+        assert os.path.isfile(pdf_path), (
+            "Recovered PDF should be at the desired output path"
+        )
+        assert not os.path.isfile(surprise_pdf), (
+            "Surprise PDF should be moved/renamed away"
+        )

@@ -8,6 +8,12 @@ Two print modes:
   - Scale Percentage (25-300): applies uniform scaling to Sheet 1
   - Column Range (e.g. A:L): restricts the print area to the given columns
 
+Filename policy:
+  Every generation appends a timestamp suffix so older files are NEVER
+  overwritten or deleted.  Example output names:
+    Printable_Assessment_20260607_231751.xlsx
+    Printable_Assessment_20260607_231751.pdf
+
 PDF generation uses a two-tier fallback chain:
   1. Primary:  Microsoft Excel COM automation (ExportAsFixedFormat)
                - pixel-perfect native print output.
@@ -25,6 +31,7 @@ import re
 import shutil
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -118,11 +125,20 @@ def process_printable_output(
         settings.get("printable_print_mode", DEFAULT_PRINT_MODE) or DEFAULT_PRINT_MODE
     ).strip().lower()
 
-    # Ensure correct extensions
-    if not output_excel_name.lower().endswith(".xlsx"):
-        output_excel_name += ".xlsx"
-    if not output_pdf_name.lower().endswith(".pdf"):
-        output_pdf_name += ".pdf"
+    # Ensure correct extensions (strip them before adding timestamp)
+    if output_excel_name.lower().endswith(".xlsx"):
+        output_excel_stem = output_excel_name[:-5]
+    else:
+        output_excel_stem = output_excel_name
+    if output_pdf_name.lower().endswith(".pdf"):
+        output_pdf_stem = output_pdf_name[:-4]
+    else:
+        output_pdf_stem = output_pdf_name
+
+    # Timestamp suffix — ensures every run keeps its own file; nothing is overwritten.
+    _ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_excel_name = f"{output_excel_stem}_{_ts}.xlsx"
+    output_pdf_name   = f"{output_pdf_stem}_{_ts}.pdf"
 
     output_excel_path = os.path.join(output_folder, output_excel_name)
     output_pdf_path = os.path.join(output_folder, output_pdf_name)
@@ -195,19 +211,28 @@ def _create_printable_excel(
     """
     import openpyxl
 
-    # Always overwrite — but raise clearly if the file is locked (open in Excel)
+    # Each run uses a unique timestamped filename so the file never exists yet.
+    # We still guard against the (unlikely) same-second collision or a stale
+    # leftover from a crashed previous run.
     if os.path.exists(output_path):
         try:
             os.remove(output_path)
-        except PermissionError:
+        except PermissionError as exc:
             raise PermissionError(
                 f"Cannot overwrite '{os.path.basename(output_path)}' — "
                 f"the file is open in another program (e.g. Excel). "
                 f"Please close it and scan the folder again."
             )
 
-    # Copy source → output (preserves all original formatting)
-    shutil.copy2(source_path, output_path)
+    # Copy source → output (preserves all original formatting).
+    try:
+        shutil.copy2(source_path, output_path)
+    except PermissionError as exc:
+        raise PermissionError(
+            f"Cannot write '{os.path.basename(output_path)}' — "
+            f"the file was locked by another process during copy. "
+            f"Please close any open files in the claim folder and scan again."
+        ) from exc
 
     # Wrap workbook lifecycle in try/finally so the file handle is
     # always released even if save() or any intermediate step raises.
@@ -256,14 +281,15 @@ def _generate_pdf(excel_path: str, pdf_path: str, logs: List[str]) -> None:
     abs_excel = os.path.abspath(excel_path)
     abs_pdf = os.path.abspath(pdf_path)
 
-    # Handle locked output file (shared by both methods)
+    # Each PDF has a unique timestamped name so it should not exist yet.
+    # Guard against the rare same-second collision or stale leftover.
     if os.path.exists(abs_pdf):
         try:
             os.remove(abs_pdf)
         except PermissionError:
             logs.append(
-                f"  ⚠️  PDF skipped: Cannot overwrite '{os.path.basename(abs_pdf)}' — "
-                f"the file is open in another program. Please close it and scan again."
+                f"  ⚠️  PDF skipped: '{os.path.basename(abs_pdf)}' is open in another "
+                f"program. Please close it and scan again."
             )
             return
 

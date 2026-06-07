@@ -257,6 +257,8 @@ def _merge_doc_mapping(base: dict[str, Any], user: dict[str, Any]) -> dict[str, 
                     merged[key] = [v for v in value if v in base_value]
             else:
                 merged[key] = value
+        else:
+            merged[key] = value
     return merged
 
 
