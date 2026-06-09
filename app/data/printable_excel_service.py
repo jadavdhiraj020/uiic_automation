@@ -14,13 +14,10 @@ Filename policy:
     Printable_Assessment_20260607_231751.xlsx
     Printable_Assessment_20260607_231751.pdf
 
-PDF generation uses a two-tier fallback chain:
-  1. Primary:  Microsoft Excel COM automation (ExportAsFixedFormat)
-               - pixel-perfect native print output.
-  2. Fallback: LibreOffice Headless (soffice --headless --convert-to pdf)
-               - high-fidelity conversion, no GUI required.
-  If both methods are unavailable, the PDF step is skipped with a log message.
-  No cell-by-cell rendering (ReportLab, FPDF, HTML, canvas, etc.) is used.
+PDF generation uses Microsoft Excel COM automation (ExportAsFixedFormat)
+for pixel-perfect native print output.
+If this is unavailable, the PDF step is skipped with a log message.
+No cell-by-cell rendering (ReportLab, FPDF, HTML, canvas, etc.) is used.
 """
 
 from __future__ import annotations
@@ -29,7 +26,6 @@ import logging
 import os
 import re
 import shutil
-import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -99,8 +95,7 @@ def process_printable_output(
 
     Called from claim_folder_service.py right after folder scan succeeds.
     Reads print settings from automation_defaults, validates them,
-    creates the printable copy, and generates the PDF via a two-tier
-    fallback chain (Excel COM then LibreOffice Headless).
+    creates the printable copy, and generates the PDF via Excel COM.
 
     Args:
         source_excel_path: Absolute path to the original claim Excel.
@@ -181,7 +176,7 @@ def process_printable_output(
         logger.exception("Printable Excel creation error")
         return
 
-    # ── Step 2: Generate PDF (Excel COM → LibreOffice fallback) ─────────
+    # ── Step 2: Generate PDF (Excel COM) ────────────────────────────────
     try:
         _generate_pdf(output_excel_path, output_pdf_path, logs)
     except Exception as exc:
@@ -271,12 +266,9 @@ def _create_printable_excel(
 
 def _generate_pdf(excel_path: str, pdf_path: str, logs: List[str]) -> None:
     """
-    Generate PDF from the printable Excel using a two-tier fallback chain.
+    Generate PDF from the printable Excel using Microsoft Excel COM.
 
-    Tier 1 - Excel COM:  pixel-perfect native print output.
-    Tier 2 - LibreOffice: high-fidelity headless conversion.
-
-    If both fail, a diagnostic message is logged.
+    If generation fails, a diagnostic message is logged.
     """
     abs_excel = os.path.abspath(excel_path)
     abs_pdf = os.path.abspath(pdf_path)
@@ -293,18 +285,14 @@ def _generate_pdf(excel_path: str, pdf_path: str, logs: List[str]) -> None:
             )
             return
 
-    # ── Tier 1: Excel COM ─────────────────────────────────────────────────
+    # ── Excel COM ─────────────────────────────────────────────────
     if _generate_pdf_excel_com(abs_excel, abs_pdf, logs):
         return
 
-    # ── Tier 2: LibreOffice Headless ──────────────────────────────────────
-    if _generate_pdf_libreoffice(abs_excel, abs_pdf, logs):
-        return
-
-    # ── Both failed ───────────────────────────────────────────────────────
+    # ── Failed ───────────────────────────────────────────────────────
     logs.append(
-        "  ❌ PDF: All generation methods failed. "
-        "Install pywin32 + Microsoft Excel, or install LibreOffice."
+        "  ❌ PDF: Generation failed. "
+        "Ensure Microsoft Excel is installed and a PDF printer (like 'Microsoft Print to PDF') is available."
     )
 
 
@@ -367,15 +355,14 @@ def _generate_pdf_excel_com(
     """
     Generate PDF via Microsoft Excel COM automation (ExportAsFixedFormat).
 
-    Returns True on success, False on failure (so the caller can fall through
-    to the next method).
+    Returns True on success, False on failure.
     """
     try:
         import win32com.client
         import pythoncom
     except ImportError as exc:
         logs.append(
-            f"  ℹ️  Excel COM: win32com not available ({exc}) — trying fallback."
+            f"  ℹ️  Excel COM: win32com not available ({exc})."
         )
         return False
 
@@ -442,7 +429,7 @@ def _generate_pdf_excel_com(
             readable = str(exc_args[2][2])
         else:
             readable = str(exc)[:200]
-        logs.append(f"  ⚠️  Excel COM failed: {readable} — trying fallback.")
+        logs.append(f"  ⚠️  Excel COM failed: {readable}.")
         logger.warning("Excel COM PDF export failed: %s", exc)
         return False
 
@@ -472,174 +459,3 @@ def _generate_pdf_excel_com(
                 pythoncom.CoUninitialize()
             except Exception as uninit_exc:
                 logger.warning("CoUninitialize warning (non-fatal): %s", uninit_exc)
-
-
-def _find_libreoffice() -> Optional[str]:
-    """
-    Auto-detect LibreOffice ``soffice`` executable on Windows.
-
-    Search order (first match wins):
-      1. ``UIIC_BUNDLED_SOFFICE`` env var — set by the PyInstaller runtime hook
-         when a bundled LibreOffice is found under ``_MEIPASS``. Checked first
-         because it is the most specific and avoids redundant ``_MEIPASS`` scan.
-      2. ``sys._MEIPASS`` scan — fallback for frozen EXE when the env var was
-         not set by the runtime hook (e.g. older hook versions).
-      3. System PATH via ``shutil.which``.
-      4. Common Windows install directories.
-
-    Returns the absolute path to soffice.exe, or None if not found.
-    """
-    bundled_env = os.environ.get("UIIC_BUNDLED_SOFFICE", "")
-    if bundled_env and os.path.isfile(bundled_env):
-        return bundled_env
-
-    if getattr(sys, "frozen", False):
-        base = getattr(sys, "_MEIPASS", "")
-        if base:
-            for bundled_path in (
-                os.path.join(base, "LibreOffice", "program", "soffice.exe"),
-                os.path.join(base, "libreoffice", "program", "soffice.exe"),
-            ):
-                if os.path.isfile(bundled_path):
-                    return bundled_path
-
-    # Try PATH first
-    found = shutil.which("soffice")
-    if found:
-        return found
-
-    # Common Windows install locations
-    for p in [
-        r"C:\Program Files\LibreOffice\program\soffice.exe",
-        r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
-    ]:
-        if os.path.isfile(p):
-            return p
-
-    return None
-
-
-def _generate_pdf_libreoffice(
-    abs_excel: str, abs_pdf: str, logs: List[str]
-) -> bool:
-    """
-    Generate PDF via LibreOffice Headless (soffice --headless --convert-to pdf).
-
-    LibreOffice reads the xlsx page-setup properties (scale, print area,
-    fit-to-page) that were written by _create_printable_excel(), so the
-    resulting PDF closely matches the intended print layout.
-
-    Returns True on success, False on failure.
-    """
-    soffice = _find_libreoffice()
-    if not soffice:
-        logs.append(
-            "  ℹ️  LibreOffice: not found on this machine — cannot use fallback."
-        )
-        return False
-    if getattr(sys, "frozen", False) and os.environ.get("UIIC_BUNDLED_SOFFICE") == soffice:
-        logs.append("  ℹ️  LibreOffice: using bundled runtime.")
-
-    output_dir = os.path.dirname(abs_pdf)
-
-    # LibreOffice names the output after the input file basename.
-    # e.g.  input = Printable_Assessment.xlsx  ->  output = Printable_Assessment.pdf
-    # If the desired PDF name differs, we rename after conversion.
-    input_stem = Path(abs_excel).stem  # "Printable_Assessment"
-    expected_output = os.path.join(output_dir, f"{input_stem}.pdf")
-
-    cmd = [
-        soffice,
-        "--headless",
-        "--convert-to", "pdf",
-        "--outdir", output_dir,
-        abs_excel,
-    ]
-
-    try:
-        conversion_start = os.path.getmtime(output_dir) if os.path.isdir(output_dir) else None
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=60,  # prevent hangs
-        )
-
-        if result.returncode != 0:
-            stderr = (result.stderr or "").strip()[:200]
-            logs.append(
-                f"  ⚠️  LibreOffice conversion failed (exit {result.returncode}): {stderr}"
-            )
-            logger.warning(
-                "LibreOffice PDF failed (rc=%d): %s",
-                result.returncode, result.stderr,
-            )
-            return False
-
-        # ── Issue 3: Robust output location handling ──────────────────────
-        # 1. Try the expected path (LibreOffice names output after input stem).
-        # 2. If that doesn't exist, search the output folder for any .pdf
-        #    created/modified after the conversion started — handles case-
-        #    sensitivity differences, locale-specific output names, etc.
-        # 3. If still not found, log the folder contents to aid diagnosis.
-
-        if expected_output != abs_pdf and os.path.isfile(expected_output):
-            if os.path.exists(abs_pdf):
-                os.remove(abs_pdf)
-            os.rename(expected_output, abs_pdf)
-
-        if not os.path.isfile(abs_pdf):
-            # Search output_dir for any PDF created during this conversion
-            import time
-            cutoff = time.time() - 15  # files created in the last 15 seconds
-            candidates = [
-                os.path.join(output_dir, f)
-                for f in os.listdir(output_dir)
-                if f.lower().endswith(".pdf")
-                and os.path.getmtime(os.path.join(output_dir, f)) >= cutoff
-                and os.path.join(output_dir, f) != abs_pdf
-            ]
-            if candidates:
-                # Pick the newest candidate
-                found_pdf = max(candidates, key=os.path.getmtime)
-                try:
-                    if os.path.exists(abs_pdf):
-                        os.remove(abs_pdf)
-                    os.rename(found_pdf, abs_pdf)
-                    logger.debug(
-                        "LibreOffice output recovered from: %s -> %s",
-                        found_pdf, abs_pdf,
-                    )
-                except Exception as rename_exc:
-                    logger.warning("LibreOffice output rename failed: %s", rename_exc)
-
-        if os.path.isfile(abs_pdf):
-            logs.append(f"  ✅ PDF generated (LibreOffice): {Path(abs_pdf).name}")
-            logger.info("PDF generated via LibreOffice: %s", abs_pdf)
-            return True
-        else:
-            # Log folder contents to help the user diagnose where the PDF went
-            try:
-                dir_contents = ", ".join(
-                    sorted(os.listdir(output_dir))
-                ) or "(empty)"
-            except Exception:
-                dir_contents = "(unable to list)"
-            logs.append(
-                f"  ⚠️  LibreOffice ran but PDF not found at '{Path(abs_pdf).name}'. "
-                f"Output folder contains: {dir_contents}"
-            )
-            logger.warning(
-                "LibreOffice PDF not found. Expected: %s. Dir: %s",
-                abs_pdf, dir_contents,
-            )
-            return False
-
-    except subprocess.TimeoutExpired:
-        logs.append("  ⚠️  LibreOffice conversion timed out (60s limit).")
-        logger.warning("LibreOffice PDF timed out for: %s", abs_excel)
-        return False
-    except Exception as exc:
-        logs.append(f"  ⚠️  LibreOffice error: {str(exc)[:200]}")
-        logger.warning("LibreOffice PDF error: %s", exc)
-        return False

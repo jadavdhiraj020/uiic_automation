@@ -112,62 +112,6 @@ jobs:
           python -c "from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=True, lang='en', show_log=False); print('PaddleOCR models ready.')"
         shell: pwsh
 
-      # ─── 6b. Stage LibreOffice runtime ───────────────────────────────────
-      - name: Stage bundled LibreOffice runtime
-        run: |
-          $ErrorActionPreference = "Stop"
-          $PSNativeCommandUseErrorActionPreference = $false
-
-          choco install libreoffice-fresh -y --no-progress
-
-          $candidates = @(
-            "C:\Program Files\LibreOffice",
-            "C:\Program Files (x86)\LibreOffice"
-          )
-          $source = $candidates | Where-Object { Test-Path "$_\program\soffice.exe" } | Select-Object -First 1
-          if (-not $source) {
-            Write-Error "LibreOffice install was not found after Chocolatey install."
-            exit 1
-          }
-
-          $dest = "${{ github.workspace }}\build_assets\LibreOffice"
-
-          # Hard-fail on removal so a partial prior run cannot silently persist.
-          if (Test-Path $dest) {
-            try {
-              Remove-Item -Recurse -Force $dest -ErrorAction Stop
-            } catch {
-              Write-Error "Failed to remove prior LibreOffice staging at '$dest': $_"
-              exit 1
-            }
-          }
-
-          New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
-          & robocopy $source $dest /MIR /NFL /NDL /NJH /NJS /NP
-          $rc = $LASTEXITCODE
-          if ($rc -gt 7) {
-            Write-Error "robocopy failed while staging LibreOffice (exit $rc)."
-            exit $rc
-          }
-          $LASTEXITCODE = 0
-
-          if (-not (Test-Path "$dest\program\soffice.exe")) {
-            Write-Error "Bundled LibreOffice staging failed: soffice.exe missing."
-            exit 1
-          }
-
-          # Sanity guard: a valid LibreOffice install has hundreds of files.
-          # Catches a robocopy run that exited 0 but produced a near-empty tree.
-          $fileCount = (Get-ChildItem $dest -Recurse -File).Count
-          if ($fileCount -lt 200) {
-            Write-Error "Bundled LibreOffice appears incomplete: only $fileCount files staged (expected >= 200)."
-            exit 1
-          }
-
-          $sizeMB = [math]::Round(((Get-ChildItem $dest -Recurse -File | Measure-Object Length -Sum).Sum / 1MB), 1)
-          Write-Host "LibreOffice staged at $dest ($fileCount files, $sizeMB MB)"
-        shell: pwsh
-
       # ─── 7. Extract version from pyproject.toml ─────────────────────────
       - name: Extract version
         id: version
@@ -265,12 +209,6 @@ jobs:
           # List top-level dist contents for debugging
           Write-Host "`n=== dist/${{ env.APP_NAME }}/ contents ==="
           Get-ChildItem "dist\${{ env.APP_NAME }}" | Select-Object Name, Length | Format-Table -AutoSize
-          Write-Host "`n=== bundled LibreOffice check ==="
-          if (-Not (Test-Path "dist\${{ env.APP_NAME }}\_internal\LibreOffice\program\soffice.exe")) {
-            Write-Error "Bundled LibreOffice missing from dist."
-            exit 1
-          }
-          Write-Host "Bundled LibreOffice found."
         shell: pwsh
 
       # ─── 10. Verify packaged runtime resources ──────────────────────────

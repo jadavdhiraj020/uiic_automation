@@ -136,10 +136,7 @@ def verify(dist_dir: Path) -> list[str]:
                     f"  (CAPTCHA OCR will fail at runtime without this)"
                 )
 
-    # ── LibreOffice — bundled PDF fallback ───────────────────────────────────
-    soffice = root / "LibreOffice" / "program" / "soffice.exe"
-    ok = _require_nonempty_file(soffice, errors)
-    checks.append(("LibreOffice: bundled soffice.exe", ok))
+
 
     # ── pywin32 — Excel COM support ──────────────────────────────────────────
     for pattern in _PYWIN32_DLL_PATTERNS:

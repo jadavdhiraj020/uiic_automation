@@ -47,7 +47,7 @@ Thumbs.db
 # *.log
 tmp/
 temp/
-# scratch/
+scratch/
 
 # # SECURITY: Never commit credentials or local overrides
 # app/config/settings.json

@@ -4,7 +4,7 @@ PyInstaller spec for the UIIC Surveyor Automation Windows EXE.
 
 Key stability choices:
 - onedir build for fast startup and easier native dependency handling
-- repo-local bundled runtime dependencies for Playwright, PaddleOCR, and LibreOffice
+- repo-local bundled runtime dependencies for Playwright and PaddleOCR
 - explicit native DLL search paths via runtime hooks
 - broad runtime coverage for PaddleOCR and related native/scientific packages
 """
@@ -167,33 +167,7 @@ if paddleocr_cache:
 else:
     print("[spec] PaddleOCR model cache not found; the EXE will need first-run download.")
 
-libreoffice_bundle = first_existing(
-    BUILD_ASSETS / "LibreOffice",
-    BUILD_ASSETS / "libreoffice",
-    Path(os.environ.get("PROGRAMFILES", "")) / "LibreOffice",
-    Path(os.environ.get("PROGRAMFILES(X86)", "")) / "LibreOffice",
-)
-if libreoffice_bundle:
-    add_directory(datas, libreoffice_bundle, "LibreOffice")
-    print(f"[spec] LibreOffice bundled from: {libreoffice_bundle}")
-else:
-    # In CI the staging step guarantees LibreOffice is in build_assets/ before
-    # PyInstaller runs — if it's missing there, the build must fail hard.
-    # On local developer machines LibreOffice is optional: the EXE falls back
-    # gracefully to Excel COM, and devs can still iterate without it installed.
-    _in_ci = os.environ.get("CI", "").lower() in ("true", "1", "yes")
-    if _in_ci:
-        raise FileNotFoundError(
-            "LibreOffice runtime not found in CI. The 'Stage bundled LibreOffice "
-            "runtime' workflow step must run before PyInstaller. "
-            "Expected path: build_assets/LibreOffice/program/soffice.exe"
-        )
-    else:
-        print(
-            "[spec] WARNING: LibreOffice not found locally — bundling skipped. "
-            "PDF generation will fall back to Excel COM only in the local EXE. "
-            "Install LibreOffice or set build_assets/LibreOffice to bundle it."
-        )
+
 
 
 # Native paddle DLLs collected explicitly into paddle/libs.
