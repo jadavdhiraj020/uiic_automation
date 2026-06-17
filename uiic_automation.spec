@@ -60,8 +60,23 @@ def add_package(name: str, datas: list, binaries: list, hiddenimports: list) -> 
 
 
 def add_directory(datas: list, source: Path, destination: str) -> None:
+    """Bundle a directory, silently skipping __pycache__ sub-folders."""
     if source.exists():
-        datas.append((str(source), destination))
+        # Exclude any __pycache__ directories that may have accumulated
+        # inside data directories (e.g. oic/config/__pycache__). They waste
+        # bundle space and can confuse directory listings on client machines.
+        has_pycache = any(
+            p.name == "__pycache__" for p in source.iterdir() if p.is_dir()
+        ) if source.is_dir() else False
+        if has_pycache:
+            # Collect individual files only, skipping __pycache__
+            for item in source.iterdir():
+                if item.is_file():
+                    datas.append((str(item), destination))
+                elif item.is_dir() and item.name != "__pycache__":
+                    add_directory(datas, item, f"{destination}/{item.name}")
+        else:
+            datas.append((str(source), destination))
 
 
 def dedupe_pairs(items: list[tuple]) -> list[tuple]:
@@ -154,18 +169,58 @@ playwright_cache = first_existing(
     LOCALAPPDATA / "ms-playwright",
 )
 if playwright_cache:
+    # Fail-fast: verify at least one chromium-* payload directory is present.
+    # An empty ms-playwright folder (e.g. from a failed download) would produce
+    # an EXE that cannot launch any browser — catch it at build time.
+    _chromium_dirs = [p for p in playwright_cache.iterdir()
+                      if p.is_dir() and p.name.lower().startswith("chromium")]
+    if not _chromium_dirs:
+        raise FileNotFoundError(
+            f"[spec] Playwright cache found at {playwright_cache} but contains NO "
+            "chromium-* directories.\n"
+            "Run:  build.bat  (step 4 — Playwright download) to populate the cache,\n"
+            "then re-run build.bat to rebuild the EXE."
+        )
     add_directory(datas, playwright_cache, "playwright_browsers")
 else:
-    print("[spec] Playwright browser cache not found; the EXE will need first-run download.")
+    raise FileNotFoundError(
+        "[spec] Playwright browser cache not found.\n"
+        "Expected: build_assets\\ms-playwright\\  OR  %LOCALAPPDATA%\\ms-playwright\\\n"
+        "Run:  build.bat  to download Chromium before building the EXE."
+    )
 
 paddleocr_cache = first_existing(
     BUILD_ASSETS / "paddleocr",
     Path.home() / ".paddleocr",
 )
 if paddleocr_cache:
+    # Fail-fast: all three model trees must be present and non-empty.
+    # A partial bundle (e.g. only det downloaded) causes silent CAPTCHA failures
+    # on client machines. Catch it at build time so the developer sees it immediately.
+    _required_ocr_dirs = {
+        "whl/det": "Text detection model",
+        "whl/rec": "Text recognition model",
+        "whl/cls": "Text direction classifier",
+    }
+    _ocr_errors = []
+    for _subdir, _label in _required_ocr_dirs.items():
+        _p = paddleocr_cache / Path(_subdir.replace("/", os.sep))
+        if not _p.is_dir() or not any(_p.iterdir()):
+            _ocr_errors.append(f"  - {_label}: {_p}")
+    if _ocr_errors:
+        raise FileNotFoundError(
+            "[spec] PaddleOCR model bundle is incomplete — missing or empty:\n"
+            + "\n".join(_ocr_errors)
+            + "\nRun:  build.bat  (step 5 — PaddleOCR download) to populate models,\n"
+            "then re-run build.bat to rebuild the EXE."
+        )
     add_directory(datas, paddleocr_cache, ".paddleocr")
 else:
-    print("[spec] PaddleOCR model cache not found; the EXE will need first-run download.")
+    raise FileNotFoundError(
+        "[spec] PaddleOCR model cache not found.\n"
+        "Expected: build_assets\\paddleocr\\whl\\{det,rec,cls}\\  OR  ~/.paddleocr/\n"
+        "Run:  build.bat  to download PaddleOCR models before building the EXE."
+    )
 
 
 
@@ -204,8 +259,13 @@ for package_name in (
     "pypdfium2",
     "pandas",
     "openpyxl",
+    "xlrd",             # .xls file support — dynamic import not visible to static analysis
     "docx",
     "win32com",
+    "albumentations",   # PaddleOCR augmentation dependency — not pulled in transitively
+    "albucore",         # albumentations core — required by albumentations >=2.x
+    "rapidfuzz",        # string-matching used by PaddleOCR postprocessing
+    "fonttools",        # pdfminer font subsetting — needed for some PDF types
 ):
     add_package(package_name, datas, binaries, hiddenimports)
 
@@ -224,7 +284,18 @@ hiddenimports.extend(
         "pyee",
         "greenlet",
         "openpyxl",
+        # xlrd: .xls file support. Dynamic import inside _open_workbook() is not
+        # statically visible; collect_all above ensures the C extension is bundled
+        # but we list submodules explicitly as a belt-and-suspenders guarantee.
         "xlrd",
+        "xlrd.biffh",
+        "xlrd.book",
+        "xlrd.compdoc",
+        "xlrd.formatting",
+        "xlrd.formula",
+        "xlrd.sheet",
+        "xlrd.timemachine",
+        "xlrd.xldate",
         "pdfplumber",
         "pypdfium2",
         "numpy",
@@ -257,6 +328,23 @@ hiddenimports.extend(
         "shapely",
         "requests",
         "sniffio",
+        # ── pdfminer (pdfplumber dependency) — dynamic font-codec imports ─────
+        # pdfplumber pulls pdfminer in, but pdfminer has many lazy imports that
+        # PyInstaller misses. List all runtime-required submodules explicitly.
+        "pdfminer",
+        "pdfminer.high_level",
+        "pdfminer.layout",
+        "pdfminer.converter",
+        "pdfminer.pdfparser",
+        "pdfminer.pdfdocument",
+        "pdfminer.pdfpage",
+        "pdfminer.pdfinterp",
+        "pdfminer.pdfdevice",
+        "pdfminer.cmapdb",
+        "pdfminer.encodingdb",
+        "pdfminer.glyphlist",
+        "pdfminer.image",
+        "pdfminer.utils",
         "six",
         "Cython",
         "setuptools",

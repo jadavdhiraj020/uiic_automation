@@ -70,4 +70,11 @@ if _is_frozen():
 
     pywin32_gen = os.path.join(user_base, "cache", "win32com_gen_py")
     os.makedirs(pywin32_gen, exist_ok=True)
+    # GEN_PY_DIR is the env var that win32com.client.gencache reads to locate
+    # its writable generated-type cache directory.  Without this the cache
+    # defaults to a path inside _MEIPASS (read-only in a frozen EXE), which
+    # causes COM dispatch to fall back to slow late-binding and may raise
+    # PermissionError on some machines.
+    # PYWIN32_CACHE_DIR is kept for forward-compatibility with future pywin32 versions.
+    os.environ["GEN_PY_DIR"] = pywin32_gen
     os.environ.setdefault("PYWIN32_CACHE_DIR", pywin32_gen)

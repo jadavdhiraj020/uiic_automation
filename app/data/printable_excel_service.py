@@ -373,7 +373,36 @@ def _generate_pdf_excel_com(
         if getattr(sys, "frozen", False):
             try:
                 import win32com.client.gencache as gencache
+
+                # ── Compute the writable cache path ───────────────────────────────
+                # Priority: GEN_PY_DIR (set by runtime_hook.py) → PYWIN32_CACHE_DIR →
+                # fallback to a known-good AppData subdirectory.
+                # We create the directory eagerly so gencache never hits a missing-dir
+                # error on first access (which also manifests as a PermissionError).
+                _gen_dir = (
+                    os.environ.get("GEN_PY_DIR")
+                    or os.environ.get("PYWIN32_CACHE_DIR")
+                    or os.path.join(
+                        os.environ.get("LOCALAPPDATA", str(Path.home())),
+                        "UIIC_Surveyor_Automation",
+                        "cache",
+                        "win32com_gen_py",
+                    )
+                )
+                os.makedirs(_gen_dir, exist_ok=True)
+
+                # Mark writable first so internal guards don't reject our override.
                 gencache.is_readonly = False
+
+                # Override the path resolver so gencache always writes to _gen_dir
+                # regardless of where win32com.__file__ resolves to inside _MEIPASS.
+                # Capture _gen_dir in closure so it stays correct for the process lifetime.
+                _frozen_gen_dir = _gen_dir
+                gencache.GetGeneratePath = lambda: _frozen_gen_dir
+
+                logger.debug(
+                    "win32com gencache redirected to writable path: %s", _gen_dir
+                )
             except Exception as cache_exc:
                 # Surface as WARNING (not debug) — if gencache is read-only in the
                 # frozen EXE, COM dispatch will still work but may generate spurious
@@ -383,6 +412,7 @@ def _generate_pdf_excel_com(
                     "COM dispatch will proceed without gen-cache optimisation.",
                     cache_exc,
                 )
+
 
         pythoncom.CoInitialize()
         com_initialized = True

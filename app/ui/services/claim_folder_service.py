@@ -488,7 +488,23 @@ class ClaimFolderService:
 
             # Issue 4: Reuse _portal_defaults loaded above — no second disk read.
             defaults = _portal_defaults
-            eager_ocr = defaults.get("eager_folder_ocr", True)
+            # Default is False at call-site: automation_defaults.json already sets
+            # eager_folder_ocr=false for all portals, but we guard here too so that
+            # a missing/corrupt config file never causes a scan-hang in the EXE.
+            eager_ocr = defaults.get("eager_folder_ocr", False)
+
+            # ── EXE safety: If OCR singleton is not ready yet (background warmup
+            # still loading models), downgrade eager→deferred automatically.
+            # This prevents the scan worker from blocking on _ocr_lock while the
+            # warmup thread holds it, which caused multi-minute scan hangs in EXE.
+            if eager_ocr:
+                from app.automation.ocr_engine import is_ocr_ready
+                if not is_ocr_ready():
+                    eager_ocr = False
+                    logs.append(
+                        "Info: OCR models still initializing in background — "
+                        "invoice/cheque OCR deferred to automation phase."
+                    )
 
             invoice_pdf = scan_result.assessment_files.get("invoice")
             if eager_ocr:

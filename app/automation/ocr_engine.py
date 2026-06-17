@@ -59,13 +59,25 @@ def get_shared_ocr():
 
                 kwargs = dict(use_angle_cls=True, lang='en', show_log=False)
 
-                # Resolve model directories — prefer bundled (EXE), then local cache
+                # ── Resolve model directories ─────────────────────────────────────
+                # Authoritative source: PADDLEOCR_HOME env var set by runtime_hook.py.
+                # In the frozen EXE, runtime_hook.py sets it to _MEIPASS/.paddleocr.
+                # In source runs, fall back to ~/.paddleocr (standard PaddleOCR default).
+                # This single code path covers both environments without duplication
+                # and correctly handles the case where the user overrides PADDLEOCR_HOME.
                 if getattr(sys, "frozen", False):
-                    model_root = os.path.join(sys._MEIPASS, ".paddleocr", "whl")
+                    paddleocr_home = os.environ.get(
+                        "PADDLEOCR_HOME",
+                        os.path.join(sys._MEIPASS, ".paddleocr"),
+                    )
                 else:
-                    # Running from source: use models already cached in user home
                     from pathlib import Path
-                    model_root = str(Path.home() / ".paddleocr" / "whl")
+                    paddleocr_home = os.environ.get(
+                        "PADDLEOCR_HOME",
+                        str(Path.home() / ".paddleocr"),
+                    )
+                model_root = os.path.join(paddleocr_home, "whl")
+                logger.info("[OCR] model_root resolved to: %s", model_root)
 
                 det_dir = os.path.join(model_root, "det", "en", "en_PP-OCRv3_det_infer")
                 rec_dir = os.path.join(model_root, "rec", "en", "en_PP-OCRv4_rec_infer")
@@ -104,17 +116,54 @@ def get_shared_ocr():
     return _ocr
 
 
-def run_shared_ocr(image_path: str, *, cls: bool = False):
+def is_ocr_ready() -> bool:
+    """
+    Non-blocking check: returns True if the PaddleOCR singleton is already
+    initialized and ready to use.
+
+    Safe to call from any thread at any time — never acquires any lock.
+    Use this before eager OCR calls during folder scan so the scan worker
+    never blocks waiting for background warmup to complete.
+
+    Returns False if:
+      - Warmup thread is still running (models not loaded yet).
+      - Initialization previously failed (_init_error is set).
+      - OCR was never requested.
+    """
+    return _ocr is not None
+
+
+def run_shared_ocr(image_path: str, *, cls: bool = False, timeout: float = 180.0):
     """
     Run OCR through the shared PaddleOCR instance.
 
     PaddleOCR is not treated as re-entrant here: all CAPTCHA, cheque, and
     invoice OCR calls share one execution lock so local runs and frozen EXE
     runs behave consistently even when background OCR is active.
+
+    Args:
+        image_path: Absolute path to the image file.
+        cls:        Whether to run text direction classification.
+        timeout:    Maximum seconds to wait for the run lock before raising
+                    TimeoutError.  Prevents indefinite hangs when background
+                    warmup is still loading models (default: 180 s).
+
+    Raises:
+        TimeoutError: If the run lock cannot be acquired within ``timeout`` seconds.
+        RuntimeError: If OCR initialization previously failed.
     """
     ocr_engine = get_shared_ocr()
-    with _ocr_run_lock:
+    acquired = _ocr_run_lock.acquire(timeout=timeout)
+    if not acquired:
+        raise TimeoutError(
+            f"[OCR] run_shared_ocr: could not acquire execution lock within "
+            f"{timeout:.0f}s — another OCR call is still running. "
+            "This may indicate a hung warmup thread or a very large image."
+        )
+    try:
         return ocr_engine.ocr(image_path, cls=cls)
+    finally:
+        _ocr_run_lock.release()
 
 
 def get_ocr_init_error() -> str | None:

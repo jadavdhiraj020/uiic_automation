@@ -112,6 +112,52 @@ echo [6/7] Cleaning old build output...
 if exist "%PROJECT_ROOT%build" rmdir /s /q "%PROJECT_ROOT%build"
 if exist "%DIST_DIR%" rmdir /s /q "%DIST_DIR%"
 
+echo [Pre-build] Verifying critical build dependencies...
+
+:: xlrd must be present in the build Python to support .xls file parsing.
+:: collect_all("xlrd") in the spec silently skips it if not installed,
+:: producing an EXE that crashes at runtime when a .xls claim file is scanned.
+"%BUILD_PYTHON%" -c "import xlrd" >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] xlrd is not installed in the build Python.
+    echo         Run: "%BUILD_PYTHON%" -m pip install xlrd==2.0.2
+    echo         Then re-run build.bat
+    exit /b 1
+)
+echo         [OK] xlrd present in build Python.
+
+:: pdfplumber/pdfminer font parsing requires fonttools for some PDF types.
+:: Note: the Python module name is 'fontTools' (capital T), not 'fonttools'.
+"%BUILD_PYTHON%" -c "import fontTools" >nul 2>&1
+if errorlevel 1 (
+    echo [WARN] fonttools not installed. Some PDFs with embedded fonts may fail.
+    echo        Run: "%BUILD_PYTHON%" -m pip install fonttools
+) else (
+    echo         [OK] fonttools present in build Python.
+)
+
+:: paddleocr must be importable (verifies paddle C extensions compiled correctly).
+"%BUILD_PYTHON%" -c "import paddleocr" >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] paddleocr is not importable in the build Python.
+    echo         Run: "%BUILD_PYTHON%" -m pip install paddlepaddle paddleocr
+    echo         Then re-run build.bat
+    exit /b 1
+)
+echo         [OK] paddleocr importable.
+
+:: PyQt6 must be importable (required for the GUI).
+"%BUILD_PYTHON%" -c "import PyQt6" >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] PyQt6 is not importable in the build Python.
+    echo         Run: "%BUILD_PYTHON%" -m pip install PyQt6
+    echo         Then re-run build.bat
+    exit /b 1
+)
+echo         [OK] PyQt6 importable.
+
+echo [Pre-build] All dependency checks passed.
+
 echo [7/7] Running PyInstaller...
 set "PYTHONWARNINGS=ignore:The numpy.array_api submodule is still experimental.:UserWarning,ignore:invalid escape sequence.*:SyntaxWarning"
 "%BUILD_PYTHON%" -m PyInstaller --noconfirm --clean uiic_automation.spec
