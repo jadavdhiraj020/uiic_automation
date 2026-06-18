@@ -398,11 +398,15 @@ def test_cancelled_service_scan_cleans_skipped_assessment_audit(
 def test_unsupported_cheque_ocr_is_info_and_policy_audited(
     monkeypatch, tmp_path
 ):
+    import openpyxl
     from app.data.data_model import ClaimData
     from app.ui.services.claim_folder_service import ClaimFolderService
 
     excel_path = tmp_path / "claim.xlsx"
-    excel_path.write_text("placeholder", encoding="utf-8")
+    wb = openpyxl.Workbook()
+    wb.save(excel_path)
+    wb.close()
+
     cheque_path = tmp_path / "cancelled_cheque.pdf"
     cheque_path.write_bytes(b"%PDF-1.4\n")
 
@@ -437,6 +441,10 @@ def test_unsupported_cheque_ocr_is_info_and_policy_audited(
     monkeypatch.setattr(
         "app.utils.load_automation_defaults",
         lambda portal_id="uiic": {"eager_folder_ocr": True},
+    )
+    monkeypatch.setattr(
+        "app.automation.ocr_engine.is_ocr_ready",
+        lambda: True,
     )
 
     service = ClaimFolderService(config_dir="", portal_id="uiic")

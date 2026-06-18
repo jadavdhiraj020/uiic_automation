@@ -9,9 +9,6 @@ import logging
 import os
 import sys
 
-from PyQt6.QtGui import QIcon
-from PyQt6.QtWidgets import QApplication
-
 from app.utils import ensure_dir, resource_path, user_data_dir
 
 
@@ -120,13 +117,15 @@ def main() -> None:
     logger = logging.getLogger(__name__)
     logger.info("Starting UIIC Surveyor Automation")
 
+    # Import PyQt6 early inside the main try/except loop to catch startup errors.
+    from PyQt6.QtGui import QIcon
+    from PyQt6.QtWidgets import QApplication, QMessageBox
+
     # ── Pre-flight resource check (frozen EXE only) ─────────────────────────
     # Runs before QApplication so errors are visible even if Qt fails to load.
     # In non-frozen (source) runs this is a no-op.
     _pf_errors = _preflight_check()
     if _pf_errors:
-        # Qt might not be fully up yet — import here to avoid circular deps
-        from PyQt6.QtWidgets import QApplication, QMessageBox
         _pf_app = QApplication.instance() or QApplication(sys.argv)
         _msg = (
             "UIIC Surveyor Automation cannot start because critical bundled "

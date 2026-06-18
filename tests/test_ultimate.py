@@ -7278,6 +7278,7 @@ class TestOcrOfflineConfig:
         - When bundled models do not exist: PADDLEOCR_HOME should fall back to AppData.
         """
         import importlib.util
+        import shutil
         # Create mock environment folders
         bundled_dir = tmp_path / "meipass"
         bundled_models_dir = bundled_dir / ".paddleocr"
@@ -7285,6 +7286,8 @@ class TestOcrOfflineConfig:
         
         # Scenario A: Bundled models exist in _MEIPASS
         bundled_models_dir.mkdir(parents=True, exist_ok=True)
+        for t in ("whl/det", "whl/rec", "whl/cls"):
+            (bundled_models_dir / t).mkdir(parents=True, exist_ok=True)
         user_appdata_dir.mkdir(parents=True, exist_ok=True)
 
         monkeypatch.setattr(sys, "frozen", True, raising=False)
@@ -7311,7 +7314,7 @@ class TestOcrOfflineConfig:
 
         # Scenario B: Bundled models DO NOT exist in _MEIPASS (falls back to AppData)
         # Remove the bundled .paddleocr directory
-        os.rmdir(bundled_models_dir)
+        shutil.rmtree(bundled_models_dir)
         
         monkeypatch.delenv("PADDLEOCR_HOME", raising=False)
         spec = importlib.util.spec_from_file_location("runtime_hook_test_b", hook_path)

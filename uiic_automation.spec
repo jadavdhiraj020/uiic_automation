@@ -60,23 +60,22 @@ def add_package(name: str, datas: list, binaries: list, hiddenimports: list) -> 
 
 
 def add_directory(datas: list, source: Path, destination: str) -> None:
-    """Bundle a directory, silently skipping __pycache__ sub-folders."""
-    if source.exists():
-        # Exclude any __pycache__ directories that may have accumulated
-        # inside data directories (e.g. oic/config/__pycache__). They waste
-        # bundle space and can confuse directory listings on client machines.
-        has_pycache = any(
-            p.name == "__pycache__" for p in source.iterdir() if p.is_dir()
-        ) if source.is_dir() else False
-        if has_pycache:
-            # Collect individual files only, skipping __pycache__
-            for item in source.iterdir():
-                if item.is_file():
-                    datas.append((str(item), destination))
-                elif item.is_dir() and item.name != "__pycache__":
-                    add_directory(datas, item, f"{destination}/{item.name}")
+    """Bundle a directory recursively, silently skipping __pycache__ sub-folders."""
+    if not source.exists():
+        return
+    if source.is_file():
+        datas.append((str(source), destination))
+        return
+    for root, dirs, files in os.walk(source):
+        # Filter out __pycache__ directories in-place to prevent os.walk from entering them
+        dirs[:] = [d for d in dirs if d != "__pycache__"]
+        rel_path = os.path.relpath(root, source)
+        if rel_path == ".":
+            dest_dir = destination
         else:
-            datas.append((str(source), destination))
+            dest_dir = f"{destination}/{rel_path.replace(os.sep, '/')}"
+        for file in files:
+            datas.append((os.path.join(root, file), dest_dir))
 
 
 def dedupe_pairs(items: list[tuple]) -> list[tuple]:

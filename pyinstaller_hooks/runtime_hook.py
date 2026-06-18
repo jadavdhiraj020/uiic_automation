@@ -41,9 +41,10 @@ if _is_frozen():
     os.environ.setdefault("PADDLE_HOME", os.path.join(user_base, ".paddle"))
 
     # Prefer bundled models shipped in _internal/.paddleocr (offline-first).
-    # Only fall back to user's AppData if bundled models are absent.
+    # Only fall back to user's AppData if bundled models are absent or incomplete.
     bundled_paddleocr = os.path.join(base, ".paddleocr")
     _required_model_trees = ("whl/det", "whl/rec", "whl/cls")
+    has_valid_bundle = False
     if os.path.isdir(bundled_paddleocr):
         _missing = [t for t in _required_model_trees
                     if not os.path.isdir(os.path.join(bundled_paddleocr, t.replace("/", os.sep)))]
@@ -51,18 +52,24 @@ if _is_frozen():
             import sys as _sys
             print(
                 f"[runtime_hook] WARNING: Bundled .paddleocr is incomplete — "
-                f"missing: {', '.join(_missing)}. CAPTCHA OCR may fail.",
+                f"missing: {', '.join(_missing)}. CAPTCHA OCR may fail. "
+                "Falling back to user cache if available.",
                 file=_sys.stderr,
             )
+        else:
+            has_valid_bundle = True
+
+    if has_valid_bundle:
         os.environ["PADDLEOCR_HOME"] = bundled_paddleocr
     else:
-        import sys as _sys
-        print(
-            "[runtime_hook] WARNING: Bundled .paddleocr not found. "
-            "Falling back to user cache. CAPTCHA OCR will fail if models "
-            "are not pre-cached in AppData.",
-            file=_sys.stderr,
-        )
+        if not os.path.isdir(bundled_paddleocr):
+            import sys as _sys
+            print(
+                "[runtime_hook] WARNING: Bundled .paddleocr not found. "
+                "Falling back to user cache. CAPTCHA OCR will fail if models "
+                "are not pre-cached in AppData.",
+                file=_sys.stderr,
+            )
         os.environ.setdefault("PADDLEOCR_HOME", os.path.join(user_base, ".paddleocr"))
     os.environ.setdefault("XDG_CACHE_HOME", os.path.join(user_base, "cache"))
 

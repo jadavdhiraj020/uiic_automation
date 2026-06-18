@@ -171,6 +171,10 @@ def process_printable_output(
             source_excel_path, output_excel_path,
             print_mode, scale, col_range, logs,
         )
+    except ValueError as exc:
+        logs.append(f"  ❌ Printable Excel: {exc}")
+        logger.warning("Printable Excel creation skipped: %s", exc)
+        return
     except Exception as exc:
         logs.append(f"  ❌ Printable Excel creation failed: {exc}")
         logger.exception("Printable Excel creation error")
@@ -231,7 +235,14 @@ def _create_printable_excel(
 
     # Wrap workbook lifecycle in try/finally so the file handle is
     # always released even if save() or any intermediate step raises.
-    wb = openpyxl.load_workbook(output_path)
+    import zipfile
+    try:
+        wb = openpyxl.load_workbook(output_path)
+    except (zipfile.BadZipFile, KeyError, ValueError) as exc:
+        raise ValueError(
+            f"Source file '{os.path.basename(source_path)}' is not a valid Excel file or is corrupted."
+        ) from exc
+
     try:
         ws = wb.worksheets[0]  # Sheet 1 only
 
