@@ -111,6 +111,47 @@ def _preflight_check() -> list:
 
 
 def main() -> None:
+    # Check if we are running in headless helper mode for COM/PDF rendering to avoid loading the GUI
+    if len(sys.argv) > 1 and sys.argv[1] in ("--headless-pdf-render", "--headless-reinspection-render"):
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+        _configure_logging()
+        _configure_frozen_environment()
+        
+        cmd = sys.argv[1]
+        if cmd == "--headless-pdf-render":
+            if len(sys.argv) < 4:
+                print("ERROR: Missing arguments for PDF render", file=sys.stderr)
+                sys.exit(1)
+            excel_path = sys.argv[2]
+            pdf_path = sys.argv[3]
+            try:
+                from app.data.printable_excel_service import run_headless_pdf_render_com
+                success = run_headless_pdf_render_com(excel_path, pdf_path)
+                sys.exit(0 if success else 1)
+            except Exception as e:
+                print(f"ERROR: Headless PDF render failed: {e}", file=sys.stderr)
+                sys.exit(1)
+                
+        elif cmd == "--headless-reinspection-render":
+            if len(sys.argv) < 5:
+                print("ERROR: Missing arguments for reinspection render", file=sys.stderr)
+                sys.exit(1)
+            source_excel = sys.argv[2]
+            target_pdf = sys.argv[3]
+            try:
+                sheet_index = int(sys.argv[4])
+            except ValueError:
+                print(f"ERROR: Invalid sheet index {sys.argv[4]}", file=sys.stderr)
+                sys.exit(1)
+            try:
+                from app.data.folder_scanner import run_headless_reinspection_com
+                success = run_headless_reinspection_com(source_excel, target_pdf, sheet_index)
+                sys.exit(0 if success else 1)
+            except Exception as e:
+                print(f"ERROR: Headless reinspection render failed: {e}", file=sys.stderr)
+                sys.exit(1)
+
     _configure_logging()
     _configure_frozen_environment()
 

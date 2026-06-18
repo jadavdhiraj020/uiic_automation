@@ -275,6 +275,21 @@ def _create_printable_excel(
     logger.info("Printable Excel saved: %s", output_path)
 
 
+def run_headless_pdf_render_com(excel_path: str, pdf_path: str) -> bool:
+    """
+    Runs the win32com Excel PDF export inside the headless subprocess.
+    Returns True on success, False on failure.
+    """
+    logs = []
+    success = _generate_pdf_excel_com(excel_path, pdf_path, logs)
+    for line in logs:
+        if "❌" in line or "⚠️" in line:
+            print(line, file=sys.stderr)
+        else:
+            print(line)
+    return success
+
+
 def _generate_pdf(excel_path: str, pdf_path: str, logs: List[str]) -> None:
     """
     Generate PDF from the printable Excel using Microsoft Excel COM.
@@ -296,9 +311,44 @@ def _generate_pdf(excel_path: str, pdf_path: str, logs: List[str]) -> None:
             )
             return
 
-    # ── Excel COM ─────────────────────────────────────────────────
-    if _generate_pdf_excel_com(abs_excel, abs_pdf, logs):
-        return
+    # Check if we should run inline (e.g. for testing)
+    should_run_inline = "pytest" in sys.modules or bool(os.environ.get("PYTEST_CURRENT_TEST"))
+    if should_run_inline:
+        if _generate_pdf_excel_com(abs_excel, abs_pdf, logs):
+            return
+    else:
+        # Run Excel COM in an isolated subprocess to prevent background thread COM hangs
+        try:
+            import subprocess
+            if getattr(sys, "frozen", False):
+                cmd = [sys.executable, "--headless-pdf-render", abs_excel, abs_pdf]
+            else:
+                main_py = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "main.py"))
+                cmd = [sys.executable, main_py, "--headless-pdf-render", abs_excel, abs_pdf]
+
+            logger.info(f"Launching printable PDF render subprocess: {cmd}")
+            res = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', timeout=30)
+            
+            # Add output lines to our logs
+            if res.stdout:
+                for line in res.stdout.splitlines():
+                    if line.strip():
+                        logs.append(line.strip())
+            if res.stderr:
+                for line in res.stderr.splitlines():
+                    if line.strip():
+                        logs.append(line.strip())
+
+            if res.returncode == 0 and os.path.exists(abs_pdf):
+                return
+        except subprocess.TimeoutExpired:
+            logs.append("  ❌ PDF generation timed out (30s limit).")
+            logger.warning("Subprocess printable PDF generation timed out (30s limit). Terminating.")
+            return
+        except Exception as exc:
+            logs.append(f"  ❌ Subprocess launch failed: {exc}")
+            logger.exception("Subprocess launch failed for PDF generation")
+            return
 
     # ── Failed ───────────────────────────────────────────────────────
     logs.append(

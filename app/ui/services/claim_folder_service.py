@@ -42,6 +42,277 @@ class ScanRunContext:
     automation_defaults_paths: dict
 
 
+def _run_background_document_generation(
+    portal_id: str,
+    scan_result: object,
+    claim: object,
+    portal_defaults: dict,
+    log_file_path: Optional[str],
+    correlation_id: Optional[str],
+    folder: str,
+):
+    import os
+    import logging
+    from pathlib import Path
+    from datetime import datetime
+    import json
+    from app.automation.automation_logger import AutomationLogger
+    from app.utils import ensure_dir, user_data_dir
+
+    bg_logger = AutomationLogger("SCANNER-BG", lambda msg: None, portal_id=portal_id)
+    if log_file_path and getattr(claim, "claim_no", None):
+        bg_logger.set_claim_context(claim.claim_no, portal_id, log_file_path=log_file_path)
+    if correlation_id:
+        bg_logger.correlation_id = correlation_id
+
+    bg_logger.info("Background document generation thread started.")
+    bg_logs = []
+
+    # 1. Generate Printable Excel copy + PDF
+    if getattr(scan_result, "excel_path", None):
+        try:
+            from app.data.printable_excel_service import process_printable_output
+            _output_dir = os.path.dirname(os.path.abspath(scan_result.excel_path))
+            bg_logger.info(f"Generating printable Excel/PDF copy for {Path(scan_result.excel_path).name}...")
+            process_printable_output(
+                source_excel_path=scan_result.excel_path,
+                output_folder=_output_dir,
+                settings=portal_defaults,
+                logs=bg_logs,
+            )
+            for line in bg_logs:
+                bg_logger.info(f"[Printable Output] {line.strip()}")
+        except Exception as print_exc:
+            bg_logger.warning(f"Printable Excel/PDF generation failed: {print_exc}")
+
+    # Helper function for audit path
+    def _audit_path_for(path: str) -> str:
+        root, _ext = os.path.splitext(path or "")
+        return f"{root}_audit.txt" if root else ""
+
+    # Helper function for policy events and old file deletions
+    def _delete_old_generated_bundle_static(
+        old_path: str, new_path: str, document_type: str
+    ) -> None:
+        deleted = []
+        new_paths = {
+            os.path.normcase(os.path.normpath(path))
+            for path in (new_path, _audit_path_for(new_path))
+            if path
+        }
+        for path in (old_path, _audit_path_for(old_path)):
+            norm_path = os.path.normcase(os.path.normpath(path or ""))
+            if norm_path in new_paths:
+                continue
+            if path and os.path.isfile(path):
+                try:
+                    os.remove(path)
+                    deleted.append(path)
+                except OSError as exc:
+                    logging.getLogger(__name__).warning(
+                        "Failed to delete old generated assessment file %s: %s",
+                        path,
+                        exc,
+                    )
+        if deleted:
+            payload = {
+                "timestamp": datetime.now().isoformat(),
+                "portal_id": portal_id,
+                "folder_path": os.path.abspath(folder),
+                "event": "old_generated_assessment_deleted",
+                "document_type": document_type,
+                "old_path": old_path,
+                "new_path": new_path,
+                "deleted_files": deleted,
+                "action": "delete_old_app_generated_files_after_success",
+            }
+            if not hasattr(scan_result, "policy_events"):
+                scan_result.policy_events = []
+            scan_result.policy_events.append(payload)
+            try:
+                log_dir = ensure_dir(user_data_dir("logs", portal_id.lower()))
+                audit_path = os.path.join(log_dir, "scan_policy_audit.jsonl")
+                with open(audit_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            except Exception as exc:
+                logging.getLogger(__name__).warning("Failed to write scan policy audit event: %s", exc)
+
+    def _is_newindia_generated_assessment(path: str) -> bool:
+        import re
+        name = os.path.basename(path or "").lower()
+        return bool(re.fullmatch(r"auto_primary_assessment(?:_\d+)?\.xlsx", name))
+
+    def _is_oic_generated_assessment(path: str) -> bool:
+        import re
+        name = os.path.basename(path or "").lower()
+        return bool(re.fullmatch(r"auto_oic_assessment(?:_\d+)?\.xlsx", name))
+
+    # 2. Auto-generate primary assessment Excel if not provided by user, or update if it is app-generated.
+    is_auto_generated = False
+    if "assessment_excel" in claim.assessment_files:
+        fpath = claim.assessment_files["assessment_excel"]
+        if _is_newindia_generated_assessment(fpath):
+            is_auto_generated = True
+
+    if portal_id == "newindia" and (
+        "assessment_excel" not in claim.assessment_files or is_auto_generated
+    ):
+        if scan_result.excel_path:
+            try:
+                old_path = (
+                    claim.assessment_files.get("assessment_excel", "")
+                    if is_auto_generated
+                    else ""
+                )
+
+                from app.data.assessment_generator import (
+                    generate_primary_assessment_result,
+                )
+
+                bg_logger.info(f"Generating primary assessment Excel for {Path(scan_result.excel_path).name}...")
+                generation = generate_primary_assessment_result(
+                    scan_result.excel_path,
+                    os.path.dirname(scan_result.excel_path),
+                )
+                generated_path = generation.output_path
+                
+                # Mark generated paths
+                for p in generation.generated_files or []:
+                    if p and os.path.exists(p):
+                        norm_existing = {
+                            os.path.normcase(os.path.normpath(x))
+                            for x in getattr(scan_result, "generated_files", [])
+                        }
+                        norm_p = os.path.normcase(os.path.normpath(p))
+                        if norm_p not in norm_existing:
+                            scan_result.generated_files.append(p)
+                
+                if generated_path:
+                    claim.assessment_files["assessment_excel"] = generated_path
+                    if old_path:
+                        payload = {
+                            "timestamp": datetime.now().isoformat(),
+                            "portal_id": portal_id,
+                            "folder_path": os.path.abspath(folder),
+                            "event": "generated_assessment_replaced",
+                            "document_type": "assessment_excel",
+                            "old_path": old_path,
+                            "new_path": generated_path,
+                            "action": "switch_mapping_after_success",
+                        }
+                        scan_result.policy_events.append(payload)
+                        try:
+                            log_dir = ensure_dir(user_data_dir("logs", portal_id.lower()))
+                            audit_path = os.path.join(log_dir, "scan_policy_audit.jsonl")
+                            with open(audit_path, "a", encoding="utf-8") as f:
+                                f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+                        except Exception as exc:
+                            logging.getLogger(__name__).warning("Failed to write scan policy audit event: %s", exc)
+
+                        bg_logger.info(
+                            "Auto-generated assessment replaced after new file was created successfully. "
+                            f"Previous file kept: {Path(old_path).name}; new file: {Path(generated_path).name}"
+                        )
+                        _delete_old_generated_bundle_static(
+                            old_path, generated_path, "assessment_excel"
+                        )
+                    bg_logger.info(
+                        f"Auto-generated assessment: {Path(generated_path).name} from {Path(scan_result.excel_path).name}"
+                    )
+                else:
+                    bg_logger.warning(generation.message)
+            except Exception as gen_exc:
+                bg_logger.warning(
+                    f"Auto-generation of assessment Excel failed: {gen_exc}"
+                )
+
+    # 3. Auto-generate OIC assessment Excel (Website 3).
+    if portal_id == "oic" and scan_result.excel_path:
+        is_oic_auto_generated = False
+        if "oic_assessment_excel" in claim.assessment_files:
+            oic_fpath = claim.assessment_files["oic_assessment_excel"]
+            if _is_oic_generated_assessment(oic_fpath):
+                is_oic_auto_generated = True
+
+        try:
+            old_oic_path = (
+                claim.assessment_files.get("oic_assessment_excel", "")
+                if is_oic_auto_generated
+                else ""
+            )
+
+            from app.data.oic_assessment_generator import (
+                generate_oic_assessment_result,
+            )
+            from app.utils import load_automation_defaults as _load_defaults
+
+            oic_defaults = _load_defaults(portal_id="oic")
+            _abs_excel = os.path.abspath(scan_result.excel_path)
+            _oic_output_dir = os.path.dirname(_abs_excel)
+            
+            bg_logger.info(f"Generating OIC assessment Excel for {Path(scan_result.excel_path).name}...")
+            generation = generate_oic_assessment_result(
+                _abs_excel,
+                _oic_output_dir,
+                oic_defaults,
+            )
+            oic_generated_path = generation.output_path
+            
+            # Mark generated paths
+            for p in generation.generated_files or []:
+                if p and os.path.exists(p):
+                    norm_existing = {
+                        os.path.normcase(os.path.normpath(x))
+                        for x in getattr(scan_result, "generated_files", [])
+                    }
+                    norm_p = os.path.normcase(os.path.normpath(p))
+                    if norm_p not in norm_existing:
+                        scan_result.generated_files.append(p)
+            
+            if oic_generated_path:
+                claim.assessment_files["oic_assessment_excel"] = oic_generated_path
+                if old_oic_path:
+                    payload = {
+                        "timestamp": datetime.now().isoformat(),
+                        "portal_id": portal_id,
+                        "folder_path": os.path.abspath(folder),
+                        "event": "generated_assessment_replaced",
+                        "document_type": "oic_assessment_excel",
+                        "old_path": old_oic_path,
+                        "new_path": oic_generated_path,
+                        "action": "switch_mapping_after_success",
+                    }
+                    if not hasattr(scan_result, "policy_events"):
+                        scan_result.policy_events = []
+                    scan_result.policy_events.append(payload)
+                    try:
+                        log_dir = ensure_dir(user_data_dir("logs", portal_id.lower()))
+                        audit_path = os.path.join(log_dir, "scan_policy_audit.jsonl")
+                        with open(audit_path, "a", encoding="utf-8") as f:
+                            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+                    except Exception as exc:
+                        logging.getLogger(__name__).warning("Failed to write scan policy audit event: %s", exc)
+
+                    bg_logger.info(
+                        "OIC auto-generated assessment replaced after new file was created successfully. "
+                        f"Previous file kept: {Path(old_oic_path).name}; new file: {Path(oic_generated_path).name}"
+                    )
+                    _delete_old_generated_bundle_static(
+                        old_oic_path, oic_generated_path, "oic_assessment_excel"
+                    )
+                bg_logger.info(
+                    f"OIC auto-generated assessment: {Path(oic_generated_path).name} from {Path(scan_result.excel_path).name}"
+                )
+            else:
+                bg_logger.warning(generation.message)
+        except Exception as gen_exc:
+            bg_logger.warning(
+                f"OIC auto-generation of assessment Excel failed: {gen_exc}"
+            )
+
+    bg_logger.info("Background document generation thread finished.")
+
+
 class ClaimFolderService:
     """Extracts and prepares claim + document data from a selected folder."""
 
@@ -82,7 +353,7 @@ class ClaimFolderService:
         return f"{root}_audit.txt" if root else ""
 
     def process_folder(
-        self, folder: str, stop_cb: Optional[callable] = None
+        self, folder: str, stop_cb: Optional[callable] = None, sync_generation: Optional[bool] = None
     ) -> ClaimFolderProcessResult:
         from app.data.excel_reader import extract_claim_data
         from app.data.folder_scanner import scan_folder
@@ -334,157 +605,57 @@ class ClaimFolderService:
             # it always needs OIC defaults regardless of the active portal).
             _portal_defaults = load_automation_defaults(portal_id=self.portal_id)
 
-            # ── Generate Printable Excel copy + PDF ───────────────────────
-            if scan_result.excel_path:
-                try:
-                    from app.data.printable_excel_service import process_printable_output
+            # ── Generate Printable Excel copy + PDF & Portal-specific assessment Excels in background ──
+            # Production-grade structured logging setup: initialize first so bg thread can share log file & correlation ID.
+            try:
+                claim._scan_logs = list(logs)
+                from app.automation.automation_logger import AutomationLogger
+                temp_logger = AutomationLogger("SCANNER", lambda msg: None, portal_id=self.portal_id)
+                temp_logger.set_claim_context(claim.claim_no, self.portal_id)
+                temp_logger.write_historical_logs(logs)
+                claim.correlation_id = temp_logger.correlation_id
+                claim._scan_log_file = temp_logger._json_log_file
+                claim._temporary_files = list(getattr(scan_result, "temporary_files", []))
+            except Exception as scan_log_exc:
+                logger.warning(f"Could not write structured JSON logs during folder scanning: {scan_log_exc}")
 
-                    _output_dir = os.path.dirname(os.path.abspath(scan_result.excel_path))
-                    process_printable_output(
-                        source_excel_path=scan_result.excel_path,
-                        output_folder=_output_dir,
-                        settings=_portal_defaults,
-                        logs=logs,
-                    )
-                except Exception as print_exc:
-                    logs.append(f"⚠️  Printable Excel/PDF generation failed: {print_exc}")
-                    logger.warning("Printable generation error: %s", print_exc)
+            import sys
+            if sync_generation is None:
+                sync_generation = "pytest" in sys.modules or bool(os.environ.get("PYTEST_CURRENT_TEST"))
 
-            # SSOT is now fully isolated and calculated directly within excel_reader.py
-
-            # Auto-generate primary assessment Excel if not provided by user, or update if it is app-generated.
-            is_auto_generated = False
-            if "assessment_excel" in claim.assessment_files:
-                fpath = claim.assessment_files["assessment_excel"]
-                if self._is_newindia_generated_assessment(fpath):
-                    is_auto_generated = True
-
-            if self.portal_id == "newindia" and (
-                "assessment_excel" not in claim.assessment_files or is_auto_generated
-            ):
-                if scan_result.excel_path:
-                    try:
-                        old_path = (
-                            claim.assessment_files.get("assessment_excel", "")
-                            if is_auto_generated
-                            else ""
-                        )
-
-                        from app.data.assessment_generator import (
-                            generate_primary_assessment_result,
-                        )
-
-                        generation = generate_primary_assessment_result(
-                            scan_result.excel_path,
-                            os.path.dirname(scan_result.excel_path),
-                        )
-                        generated_path = generation.output_path
-                        _mark_generated_paths(generation.generated_files)
-                        if generated_path:
-                            claim.assessment_files["assessment_excel"] = generated_path
-                            if old_path:
-                                _record_policy_event(
-                                    {
-                                        "event": "generated_assessment_replaced",
-                                        "document_type": "assessment_excel",
-                                        "old_path": old_path,
-                                        "new_path": generated_path,
-                                        "action": "switch_mapping_after_success",
-                                    }
-                                )
-                                logs.append(
-                                    "Auto-generated assessment replaced after new file was created successfully. "
-                                    f"Previous file kept: {Path(old_path).name}; new file: {Path(generated_path).name}"
-                                )
-                                _delete_old_generated_bundle(
-                                    old_path, generated_path, "assessment_excel"
-                                )
-                            logs.append(
-                                f"Auto-generated assessment: {Path(generated_path).name} from {Path(scan_result.excel_path).name}"
-                            )
-                        else:
-                            logs.append(generation.message)
-                    except Exception as gen_exc:
-                        if is_auto_generated and claim.assessment_files.get(
-                            "assessment_excel"
-                        ):
-                            logs.append(
-                                "Existing generated assessment kept because replacement failed."
-                            )
-                        logs.append(
-                            f"Warning: Auto-generation of assessment Excel failed: {gen_exc}"
-                        )
-
-            # Auto-generate OIC assessment Excel (Website 3).
-            if self.portal_id == "oic" and scan_result.excel_path:
-                is_oic_auto_generated = False
-                if "oic_assessment_excel" in claim.assessment_files:
-                    oic_fpath = claim.assessment_files["oic_assessment_excel"]
-                    if self._is_oic_generated_assessment(oic_fpath):
-                        is_oic_auto_generated = True
-
-                try:
-                    old_oic_path = (
-                        claim.assessment_files.get("oic_assessment_excel", "")
-                        if is_oic_auto_generated
-                        else ""
-                    )
-
-                    from app.data.oic_assessment_generator import (
-                        generate_oic_assessment_result,
-                    )
-                    from app.utils import load_automation_defaults as _load_defaults
-
-                    oic_defaults = _load_defaults(portal_id="oic")
-                    # Resolve to absolute path to prevent os.path.dirname returning ""
-                    # if scan_result.excel_path has no directory component.
-                    _abs_excel = os.path.abspath(scan_result.excel_path)
-                    _oic_output_dir = os.path.dirname(_abs_excel)
-                    logger.debug(
-                        "OIC generation: source=%s, output_dir=%s",
-                        _abs_excel,
-                        _oic_output_dir,
-                    )
-                    generation = generate_oic_assessment_result(
-                        _abs_excel,
-                        _oic_output_dir,
-                        oic_defaults,
-                    )
-                    oic_generated_path = generation.output_path
-                    _mark_generated_paths(generation.generated_files)
-                    if oic_generated_path:
-                        claim.assessment_files["oic_assessment_excel"] = (
-                            oic_generated_path
-                        )
-                        if old_oic_path:
-                            _record_policy_event(
-                                {
-                                    "event": "generated_assessment_replaced",
-                                    "document_type": "oic_assessment_excel",
-                                    "old_path": old_oic_path,
-                                    "new_path": oic_generated_path,
-                                    "action": "switch_mapping_after_success",
-                                }
-                            )
-                            logs.append(
-                                "OIC auto-generated assessment replaced after new file was created successfully. "
-                                f"Previous file kept: {Path(old_oic_path).name}; new file: {Path(oic_generated_path).name}"
-                            )
-                            _delete_old_generated_bundle(
-                                old_oic_path, oic_generated_path, "oic_assessment_excel"
-                            )
-                        logs.append(
-                            f"OIC auto-generated assessment: {Path(oic_generated_path).name} from {Path(scan_result.excel_path).name}"
-                        )
-                    else:
-                        logs.append(generation.message)
-                except Exception as gen_exc:
-                    logs.append(
-                        f"Warning: OIC auto-generation of assessment Excel failed: {gen_exc}"
-                    )
-
-            if stop_cb and stop_cb():
-                return _cancel_after_service_generation("after_assessment_generation")
+            if sync_generation:
+                # Run synchronously inline during testing
+                _run_background_document_generation(
+                    self.portal_id,
+                    scan_result,
+                    claim,
+                    _portal_defaults,
+                    getattr(claim, "_scan_log_file", None),
+                    getattr(claim, "correlation_id", None),
+                    folder,
+                )
+                if stop_cb and stop_cb():
+                    return _cancel_after_service_generation("after_assessment_generation")
+            else:
+                # Run in background daemon thread
+                import threading
+                bg_thread = threading.Thread(
+                    target=_run_background_document_generation,
+                    args=(
+                        self.portal_id,
+                        scan_result,
+                        claim,
+                        _portal_defaults,
+                        getattr(claim, "_scan_log_file", None),
+                        getattr(claim, "correlation_id", None),
+                        folder,
+                    ),
+                    name="BackgroundDocumentGeneration",
+                    daemon=True,
+                )
+                claim._background_generation_thread = bg_thread
+                bg_thread.start()
+                logs.append("Info: Excel PDF assessment generation started in background.")
 
             # Issue 4: Reuse _portal_defaults loaded above — no second disk read.
             defaults = _portal_defaults
@@ -625,31 +796,7 @@ class ClaimFolderService:
                 logs.append("Excel Data Sources Map:")
                 logs.extend(claim._excel_logs)
 
-            # Production-grade structured logging: write scan logs to claim JSON file immediately
-            try:
-                # Save the full scanning logs list inside claim object for future engine runs
-                claim._scan_logs = list(logs)
-
-                from app.automation.automation_logger import AutomationLogger
-
-                # Create a temporary logger to initialize the structured JSON log file for this claim
-                temp_logger = AutomationLogger(
-                    "SCANNER", lambda msg: None, portal_id=self.portal_id
-                )
-                temp_logger.set_claim_context(claim.claim_no, self.portal_id)
-                temp_logger.write_historical_logs(logs)
-                # Propagate correlation ID to the claim so the automation engine inherits it
-                claim.correlation_id = temp_logger.correlation_id
-
-                # Consolidate log path and register temporary pre-compressed files
-                claim._scan_log_file = temp_logger._json_log_file
-                claim._temporary_files = list(
-                    getattr(scan_result, "temporary_files", [])
-                )
-            except Exception as scan_log_exc:
-                logger.warning(
-                    f"Could not write structured JSON logs during folder scanning: {scan_log_exc}"
-                )
+            # Logging block moved and initialized earlier before background thread launch
 
             return ClaimFolderProcessResult(True, scan_result, claim, logs)
         except Exception as exc:

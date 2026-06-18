@@ -693,6 +693,13 @@ class AutomationEngine:
                 if hasattr(claim, "_scan_logs") and claim._scan_logs:
                     self.log.write_historical_logs(claim._scan_logs)
 
+                # Wait for background document/assessment generation to finish
+                bg_thread = getattr(claim, "_background_generation_thread", None)
+                if bg_thread and bg_thread.is_alive():
+                    self.log.wait("background document generation", "finishing generation task")
+                    bg_thread.join()
+                    self.log.success("Background document generation complete.")
+
                 # Path resolution and settings loading logs for UIIC/NIA/OIC
                 from app.utils import (
                     is_frozen,

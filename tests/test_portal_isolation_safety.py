@@ -627,3 +627,70 @@ async def test_deferred_ocr_missing_fields_continues_with_warn_only_policy(tmp_p
         entry.get("extra", {}).get("ocr_status") == "failed_or_incomplete"
         for entry in entries
     )
+
+
+def test_claim_folder_service_respects_async_generation(monkeypatch, tmp_path):
+    from app.data.data_model import ClaimData
+    from app.ui.services.claim_folder_service import ClaimFolderService
+    import time
+
+    excel_path = tmp_path / "claim.xlsx"
+    excel_path.write_text("placeholder", encoding="utf-8")
+
+    fake_scan = SimpleNamespace(
+        claim_doc_files={},
+        assessment_files={},
+        upload_doc_files={},
+        expected_docs=[],
+        skipped_files=[],
+        unknown_files=[],
+        excel_path=str(excel_path),
+        policy_warnings=[],
+        temporary_files=[],
+        generated_files=[],
+    )
+
+    fake_claim = ClaimData(portal_id="newindia")
+    fake_claim.claim_no = "CLAIM-ASYNC"
+
+    calls = []
+    def fake_generate_primary_assessment_result(src, out):
+        calls.append("generate")
+        time.sleep(0.1)
+        dest = tmp_path / "auto_primary_assessment.xlsx"
+        dest.write_text("done", encoding="utf-8")
+        return SimpleNamespace(
+            output_path=str(dest),
+            status="generated",
+            generated_files=[str(dest)],
+            message="Primary assessment generated.",
+        )
+
+    monkeypatch.setattr(
+        "app.data.folder_scanner.scan_folder",
+        lambda _folder, portal_id="uiic", stop_cb=None: fake_scan,
+    )
+    monkeypatch.setattr(
+        "app.data.excel_reader.extract_claim_data",
+        lambda _path, portal_id="uiic": fake_claim,
+    )
+    monkeypatch.setattr(
+        "app.data.assessment_generator.generate_primary_assessment_result",
+        fake_generate_primary_assessment_result,
+    )
+    monkeypatch.setattr(
+        "app.ui.services.claim_folder_service.user_data_dir",
+        lambda *parts: str(tmp_path / "app_data" / "/".join(parts)),
+    )
+
+    service = ClaimFolderService(config_dir="", portal_id="newindia")
+    
+    # Run with sync_generation=False to force async execution in pytest env
+    result = service.process_folder(str(tmp_path), sync_generation=False)
+
+    assert result.success
+    bg_thread = getattr(result.claim, "_background_generation_thread", None)
+    assert bg_thread is not None
+    bg_thread.join()
+    assert "generate" in calls
+

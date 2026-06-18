@@ -39,20 +39,27 @@ def _open_workbook(path: str):
 class _XlrdWrapper:
     def __init__(self, wb):
         self._wb = wb
+        self._sheets = {}
 
     def sheet_names(self):
         return self._wb.sheet_names()
 
     def get_sheet(self, name):
-        try:
-            sh = self._wb.sheet_by_name(name)
-            return _XlrdSheetWrapper(sh)
-        except Exception:
-            return None
+        if name not in self._sheets:
+            try:
+                sh = self._wb.sheet_by_name(name)
+                self._sheets[name] = _XlrdSheetWrapper(sh)
+            except Exception:
+                return None
+        return self._sheets[name]
 
     def all_sheets(self):
-        return [_XlrdSheetWrapper(self._wb.sheet_by_index(i))
-                for i in range(self._wb.nsheets)]
+        for i in range(self._wb.nsheets):
+            sh = self._wb.sheet_by_index(i)
+            name = sh.name
+            if name not in self._sheets:
+                self._sheets[name] = _XlrdSheetWrapper(sh)
+        return list(self._sheets.values())
 
 
 class _XlrdSheetWrapper:
@@ -68,26 +75,56 @@ class _XlrdSheetWrapper:
 class _OpenpyxlWrapper:
     def __init__(self, wb):
         self._wb = wb
+        self._sheets = {}
 
     def sheet_names(self):
         return self._wb.sheetnames
 
     def get_sheet(self, name):
-        if name in self._wb:
-            return _OpenpyxlSheetWrapper(self._wb[name])
-        return None
+        if name not in self._sheets:
+            if name in self._wb:
+                self._sheets[name] = _OpenpyxlSheetWrapper(self._wb[name])
+            else:
+                return None
+        return self._sheets[name]
 
     def all_sheets(self):
-        return [_OpenpyxlSheetWrapper(self._wb[n]) for n in self._wb.sheetnames]
+        for n in self._wb.sheetnames:
+            if n not in self._sheets:
+                self._sheets[n] = _OpenpyxlSheetWrapper(self._wb[n])
+        return list(self._sheets.values())
 
 
 class _OpenpyxlSheetWrapper:
     def __init__(self, sh):
         self._sh = sh
         self.name = sh.title
+        
+        # Calculate actual non-empty boundaries to avoid scanning massive empty cells.
+        self._max_row = sh.max_row or 1
+        self._max_col = sh.max_column or 1
+        
+        # If the sheet is reported as excessively wide or tall, we scan it once
+        # to restrict max_row and max_col to the actual bounding box of data.
+        if self._max_col > 100 or self._max_row > 1000:
+            real_max_row = 1
+            real_max_col = 1
+            for r_idx, row in enumerate(sh.iter_rows(values_only=True)):
+                row_has_data = False
+                for c_idx, val in enumerate(row):
+                    if val not in (None, ""):
+                        row_has_data = True
+                        real_max_col = max(real_max_col, c_idx + 1)
+                if row_has_data:
+                    real_max_row = max(real_max_row, r_idx + 1)
+            self._max_row = real_max_row
+            self._max_col = real_max_col
+            logger.info(
+                f"Optimized sheet '{self.name}' boundaries: max_row={self._max_row}, max_col={self._max_col} (down from {sh.max_row}x{sh.max_column})"
+            )
 
     def rows(self):
-        for row in self._sh.iter_rows(values_only=True):
+        for row in self._sh.iter_rows(max_row=self._max_row, max_col=self._max_col, values_only=True):
             yield [v if v is not None else "" for v in row]
 
 
