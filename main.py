@@ -111,10 +111,20 @@ def _preflight_check() -> list:
 
 
 def main() -> None:
+    # Unconditionally reconfigure stdout and stderr to UTF-8 to prevent charmap encoding errors when logging emojis on Windows console
+    if sys.stdout is not None:
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+    if sys.stderr is not None:
+        try:
+            sys.stderr.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
     # Check if we are running in headless helper mode for COM/PDF rendering to avoid loading the GUI
     if len(sys.argv) > 1 and sys.argv[1] in ("--headless-pdf-render", "--headless-reinspection-render"):
-        sys.stdout.reconfigure(encoding='utf-8')
-        sys.stderr.reconfigure(encoding='utf-8')
         _configure_logging()
         _configure_frozen_environment()
         

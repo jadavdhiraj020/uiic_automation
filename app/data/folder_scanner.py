@@ -404,7 +404,7 @@ def _extract_sheet_for_reinspection(
                 cmd = [sys.executable, main_py, "--headless-reinspection-render", full_path, pdf_path, str(sheet_index)]
 
             logger.info(f"Launching reinspection PDF render subprocess: {cmd}")
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            res = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', timeout=30)
             if res.returncode == 0 and os.path.exists(pdf_path):
                 logger.info(f"✅ Generated {pdf_path} via reinspection subprocess")
                 return pdf_path

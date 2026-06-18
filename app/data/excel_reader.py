@@ -109,14 +109,23 @@ class _OpenpyxlSheetWrapper:
         if self._max_col > 100 or self._max_row > 1000:
             real_max_row = 1
             real_max_col = 1
-            for r_idx, row in enumerate(sh.iter_rows(values_only=True)):
-                row_has_data = False
-                for c_idx, val in enumerate(row):
-                    if val not in (None, ""):
-                        row_has_data = True
-                        real_max_col = max(real_max_col, c_idx + 1)
-                if row_has_data:
-                    real_max_row = max(real_max_row, r_idx + 1)
+            cells_dict = getattr(sh, "_cells", None)
+            if isinstance(cells_dict, dict):
+                for (r, c), cell in cells_dict.items():
+                    if cell.value not in (None, ""):
+                        if r > real_max_row:
+                            real_max_row = r
+                        if c > real_max_col:
+                            real_max_col = c
+            else:
+                for r_idx, row in enumerate(sh.iter_rows(values_only=True)):
+                    row_has_data = False
+                    for c_idx, val in enumerate(row):
+                        if val not in (None, ""):
+                            row_has_data = True
+                            real_max_col = max(real_max_col, c_idx + 1)
+                    if row_has_data:
+                        real_max_row = max(real_max_row, r_idx + 1)
             self._max_row = real_max_row
             self._max_col = real_max_col
             logger.info(
