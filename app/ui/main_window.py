@@ -413,6 +413,11 @@ class MainWindow(QMainWindow):
 
     def _clear_loaded_claim_for_portal_change(self, old_context, new_portal):
         """Clear scanned data whenever the selected portal changes."""
+        if self._claim and hasattr(self._claim, "_background_generation_stop_event"):
+            try:
+                self._claim._background_generation_stop_event.set()
+            except Exception:
+                pass
         had_claim = self._claim is not None or self._scan_result is not None
         self._claim = None
         self._scan_result = None
@@ -502,6 +507,11 @@ class MainWindow(QMainWindow):
             self._scan_folder(folder)
 
     def _scan_folder(self, folder):
+        if self._claim and hasattr(self._claim, "_background_generation_stop_event"):
+            try:
+                self._claim._background_generation_stop_event.set()
+            except Exception:
+                pass
         from app.ui.worker import FolderScanWorker
 
         if self._is_scan_running():
@@ -741,18 +751,32 @@ class MainWindow(QMainWindow):
             self.log(f"STOPPED: {message}")
 
     def _append_log(self, text):
-        self.workspace_page.append_log(text)
-        if self._log_file and not self._log_file.closed:
-            import re
+        clean_text = text
+        if "\u200b" in text:
+            clean_text = text.split("\u200b")[0].rstrip()
 
-            match = re.match(r"^\[(\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\] (.*)$", text)
-            if match:
-                today = datetime.now().strftime("%Y-%m-%d")
-                self._log_file.write(f"[{today} {match.group(1)}] {match.group(2)}\n")
-            else:
-                ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                self._log_file.write(f"[{ts}] {text}\n")
-            self._log_file.flush()
+        try:
+            self.workspace_page.append_log(text)
+        except RuntimeError:
+            pass
+        except Exception:
+            pass
+
+        if self._log_file and not self._log_file.closed:
+            try:
+                import re
+
+                match = re.match(r"^\[(\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\] (.*)$", clean_text)
+                if match:
+                    today = datetime.now().strftime("%Y-%m-%d")
+                    self._log_file.write(f"[{today} {match.group(1)}] {match.group(2)}\n")
+                else:
+                    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    self._log_file.write(f"[{ts}] {clean_text}\n")
+                self._log_file.flush()
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Failed to write to plain text log file: {e}")
 
     def log(self, text):
         self._append_log(text)
@@ -783,6 +807,12 @@ class MainWindow(QMainWindow):
         )
 
     def closeEvent(self, event):
+        # Cancel any active background document generation thread
+        if self._claim and hasattr(self._claim, "_background_generation_stop_event"):
+            try:
+                self._claim._background_generation_stop_event.set()
+            except Exception:
+                pass
         # ── Gracefully stop automation thread before closing ────────────────────
         if self._thread and self._thread.isRunning():
             if self._worker:

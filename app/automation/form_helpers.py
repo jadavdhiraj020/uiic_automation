@@ -208,39 +208,39 @@ async def safe_fill_date(page, sel: str, value, label: str,
         el = page.locator(sel).first
         await el.wait_for(state="visible", timeout=timeout_ms)
 
-        set_ok = await page.evaluate(f"""
-            (function() {{
-                var el = document.querySelector('{sel}');
+        set_ok = await page.evaluate("""
+            ([selector, dateVal]) => {
+                var el = document.querySelector(selector);
                 if (!el) return false;
 
                 // Close any open datepicker by pressing Escape first
-                el.dispatchEvent(new KeyboardEvent('keydown', {{
+                el.dispatchEvent(new KeyboardEvent('keydown', {
                     bubbles: true, cancelable: true, keyCode: 27, key: 'Escape'
-                }}));
+                }));
 
                 // Set the value
-                el.value = '{_js_escape(display)}';
+                el.value = dateVal;
 
                 // Fire events Angular needs to register the change
-                el.dispatchEvent(new Event('input',  {{bubbles: true}}));
-                el.dispatchEvent(new Event('change', {{bubbles: true}}));
-                el.dispatchEvent(new KeyboardEvent('keydown', {{
+                el.dispatchEvent(new Event('input',  {bubbles: true}));
+                el.dispatchEvent(new Event('change', {bubbles: true}));
+                el.dispatchEvent(new KeyboardEvent('keydown', {
                     bubbles: true, cancelable: true, keyCode: 9, key: 'Tab'
-                }}));
+                }));
                 el.blur();
                 return true;
-            }})();
-        """)
+            }
+        """, [sel, display])
 
         if set_ok:
             # Verify the value was actually set
             await asyncio.sleep(0.15)
-            actual = await page.evaluate(f"""
-                (function() {{
-                    var el = document.querySelector('{sel}');
+            actual = await page.evaluate("""
+                (selector) => {
+                    var el = document.querySelector(selector);
                     return el ? el.value : '';
-                }})();
-            """)
+                }
+            """, sel)
             if actual and actual.strip():
                 await page.keyboard.press("Escape")  # close any stray popup
                 await asyncio.sleep(0.1)
@@ -359,33 +359,32 @@ async def safe_select(page, sel: str, value: str, label: str,
                 return True
 
         # ── Strategy 4: JS fallback for AngularJS select ──────────────────────
-        set_ok = await page.evaluate(f"""
-            (function() {{
-                var el = document.querySelector('{sel}');
+        set_ok = await page.evaluate("""
+            ([selector, searchValue]) => {
+                var el = document.querySelector(selector);
                 if (!el) return false;
-                var search = '{_js_escape(value.strip().lower())}';
                 var opts = Array.from(el.options);
                 // Match by text
                 var match = opts.find(o =>
-                    o.text.trim().toLowerCase() === search ||
-                    o.text.trim().toLowerCase().includes(search) ||
-                    search.includes(o.text.trim().toLowerCase())
+                    o.text.trim().toLowerCase() === searchValue ||
+                    o.text.trim().toLowerCase().includes(searchValue) ||
+                    searchValue.includes(o.text.trim().toLowerCase())
                 );
                 // Match by value stripping Angular prefixes
-                if (!match) {{
-                    match = opts.find(o => {{
+                if (!match) {
+                    match = opts.find(o => {
                         var v = o.value.replace(/^(number|string):/, '').trim().toLowerCase();
-                        return v === search;
-                    }});
-                }}
-                if (match) {{
+                        return v === searchValue;
+                    });
+                }
+                if (match) {
                     el.value = match.value;
-                    el.dispatchEvent(new Event('change', {{bubbles: true}}));
+                    el.dispatchEvent(new Event('change', {bubbles: true}));
                     return match.text;
-                }}
+                }
                 return false;
-            }})();
-        """)
+            }
+        """, [sel, value.strip().lower()])
         if set_ok:
             await asyncio.sleep(0.1)
             if isinstance(log, AutomationLogger):
@@ -464,31 +463,29 @@ async def click_all_yes_radios(page, radio_names: list, log) -> int:
     JS-based click of all Yes (value='Y') radios by ng-model / name attribute.
     Returns count of successfully clicked radios.
     """
-    names_js = str(radio_names).replace("'", '"')
-    result = await page.evaluate(f"""
-        (function() {{
-            var names = {names_js};
+    result = await page.evaluate("""
+        (names) => {
             var clicked = [];
-            names.forEach(function(name) {{
+            names.forEach(function(name) {
                 var selectors = [
                     'input[name="' + name + '"][value="Y"]',
                     'input[ng-model*="' + name + '"][value="Y"]',
                     'input[data-ng-model*="' + name + '"][value="Y"]',
                 ];
-                for (var s of selectors) {{
+                for (var s of selectors) {
                     var r = document.querySelector(s);
-                    if (r) {{
+                    if (r) {
                         r.checked = true;
                         r.click();
-                        r.dispatchEvent(new Event('change', {{bubbles: true}}));
+                        r.dispatchEvent(new Event('change', {bubbles: true}));
                         clicked.push(name);
                         break;
-                    }}
-                }}
-            }});
+                    }
+                }
+            });
             return clicked;
-        }})();
-    """)
+        }
+    """, radio_names)
     clicked = result or []
     if isinstance(log, AutomationLogger):
         log.info(f"Radios: {len(clicked)}/{len(radio_names)} clicked")
@@ -500,31 +497,31 @@ async def click_all_yes_radios(page, radio_names: list, log) -> int:
 async def js_select_option(page, sel_index: int, doc_type: str,
                            ng_model: str, log) -> bool:
     """JS partial-text dropdown selection for AngularJS selects."""
-    result = await page.evaluate(f"""
-        (function() {{
-            var selects = document.querySelectorAll('select[ng-model="{ng_model}"]');
-            var target = selects[{sel_index}];
+    result = await page.evaluate("""
+        ([index, docType, modelName]) => {
+            var selects = document.querySelectorAll('select[ng-model="' + modelName + '"]');
+            var target = selects[index];
             if (!target) return null;
             var opts = Array.from(target.options);
-            var search = '{doc_type.lower()[:25]}';
+            var search = docType.toLowerCase().substring(0, 25);
             var match = opts.find(o => o.text.toLowerCase().includes(search));
-            if (!match) {{
+            if (!match) {
                 var words = search.split(' ');
-                for (var w of words) {{
-                    if (w.length > 3) {{
+                for (var w of words) {
+                    if (w.length > 3) {
                         match = opts.find(o => o.text.toLowerCase().includes(w));
                         if (match) break;
-                    }}
-                }}
-            }}
-            if (match) {{
+                    }
+                }
+            }
+            if (match) {
                 target.value = match.value;
-                target.dispatchEvent(new Event('change', {{bubbles: true}}));
+                target.dispatchEvent(new Event('change', {bubbles: true}));
                 return match.text;
-            }}
+            }
             return null;
-        }})();
-    """)
+        }
+    """, [sel_index, doc_type, ng_model])
     if result:
         if isinstance(log, AutomationLogger):
             log.field_selected(f"Dropdown[{sel_index}]", str(result))

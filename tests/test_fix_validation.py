@@ -1,5 +1,7 @@
 import os
 import glob
+import pytest
+import threading
 from unittest.mock import MagicMock, patch
 from app.automation.engine import AutomationEngine
 from app.automation.automation_logger import AutomationLogger
@@ -168,3 +170,99 @@ def test_temp_file_unlinking(tmp_path):
                 os.remove(temp_path)
             except Exception:
                 pass
+
+
+
+# 6. Test background thread cooperative cancellation via stop event
+def test_background_thread_cancellation():
+    from app.ui.services.claim_folder_service import _run_background_document_generation
+    
+    # Mock parameters
+    portal_id = "uiic"
+    scan_result = MagicMock()
+    scan_result.excel_path = "dummy_excel.xlsx"
+    scan_result.generated_files = []
+    
+    claim = MagicMock()
+    claim.claim_no = "12345"
+    claim.assessment_files = {}
+    
+    portal_defaults = {}
+    
+    # Create stop event and attach
+    stop_event = threading.Event()
+    claim._background_generation_stop_event = stop_event
+    
+    # Set the stop event to simulate cancellation before start
+    stop_event.set()
+    
+    # Run _run_background_document_generation
+    # It should exit immediately without trying to generate files
+    with patch("app.data.printable_excel_service.process_printable_output") as mock_printable:
+        _run_background_document_generation(
+            portal_id,
+            scan_result,
+            claim,
+            portal_defaults,
+            log_file_path=None,
+            correlation_id=None,
+            folder="dummy_folder"
+        )
+        # Should not have called process_printable_output
+        mock_printable.assert_not_called()
+
+# 7. Test dialog listener registration and cleanup
+@pytest.mark.asyncio
+async def test_dialog_listener_cleanup():
+    from app.automation.login_module import do_login
+    from app.automation.claim_documents import fill_claim_documents
+    from app.data.data_model import ClaimData
+
+    # Mock page and browser context
+    from unittest.mock import AsyncMock
+    mock_page = MagicMock()
+    mock_context = MagicMock()
+    mock_page.context = mock_context
+    mock_context.pages = [mock_page]
+
+    # Configure mock page behaviours
+    mock_page.url = "https://portal.uiic.in/surveyor/data/home.jsp"
+    mock_page.goto = AsyncMock()
+    mock_page.evaluate = AsyncMock(return_value={})
+    mock_page.locator = MagicMock()
+    
+    # We mock solve_captcha_from_bytes to raise an exception to exit do_login quickly
+    # but still execute the finally block.
+    with patch("app.automation.login_module._get_captcha_bytes", side_effect=Exception("Trigger fallback exit")):
+        settings = {
+            "portal_url": "https://portal.uiic.in/surveyor/data/home.jsp",
+            "username": "user",
+            "password": "pwd",
+            "captcha_max_retries": 1
+        }
+        await do_login(mock_page, settings, log=MagicMock())
+
+    # Verify remove_all_listeners was called on page object
+    mock_page.remove_all_listeners.assert_any_call("dialog")
+    from unittest.mock import ANY
+    mock_page.on.assert_any_call("dialog", ANY)
+
+    # Reset mock for documents test
+    mock_page.reset_mock()
+    claim = ClaimData()
+    claim.claim_no = "12345"
+    claim.claim_doc_files = {"driving_license": "dummy_file.pdf"}
+
+    with patch("app.automation.claim_documents.click_tab", return_value=True), \
+         patch("app.automation.claim_documents.DocumentUploadService") as mock_service_class:
+        mock_service_inst = MagicMock()
+        mock_service_inst.wait_for_upload_section = AsyncMock()
+        mock_service_inst.upload_queue = AsyncMock(side_effect=Exception("Force exit to finally"))
+        mock_service_class.return_value = mock_service_inst
+        
+        try:
+            await fill_claim_documents(mock_page, claim, log_cb=MagicMock())
+        except Exception:
+            pass
+
+    mock_page.remove_all_listeners.assert_any_call("dialog")

@@ -274,6 +274,15 @@ class StructuredLogsPanel(QWidget):
     def _parse_entry(self, text, portal_id, phase):
         raw = "" if text is None else str(text)
         plain = html.unescape(re.sub(r"<[^>]+>", " ", raw)).strip()
+
+        # Extract zero-width space section metadata first
+        inferred_phase = phase or "General"
+        if "\u200b" in plain:
+            parts = plain.split("\u200b")
+            plain = parts[0]
+            if len(parts) > 1 and parts[1].strip():
+                inferred_phase = parts[1].strip()
+
         ts_match = re.search(r"\[(\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\]", plain)
         timestamp = ts_match.group(1) if ts_match else datetime.now().strftime("%H:%M:%S.%f")[:-3]
         if ts_match:
@@ -295,8 +304,10 @@ class StructuredLogsPanel(QWidget):
         elif any(x in lower for x in ("wait", "waiting", "⏳")):
             level = "Wait"
 
-        phase_match = re.search(r"STEP\s+\d+/\d+\s+[—-]\s+(.+)", plain)
-        inferred_phase = phase_match.group(1).strip() if phase_match else (phase or "General")
+        if "\u200b" not in raw:
+            phase_match = re.search(r"STEP\s+\d+/\d+\s+[—-]\s+(.+)", plain)
+            if phase_match:
+                inferred_phase = phase_match.group(1).strip()
 
         return {
             "time": timestamp,
@@ -918,8 +929,22 @@ class WorkspacePage(QWidget):
         self.set_stage(3)
 
     def append_log(self, text):
-        self.logs_drawer.append_log(text)
-        self.logs_panel.append_log(text, portal_id=self._portal_id, phase=self._current_phase or "General")
+        clean_text = text
+        if "\u200b" in text:
+            clean_text = text.split("\u200b")[0].rstrip()
+        try:
+            self.logs_drawer.append_log(clean_text)
+        except RuntimeError:
+            pass
+        except Exception:
+            pass
+
+        try:
+            self.logs_panel.append_log(text, portal_id=self._portal_id, phase=self._current_phase or "General")
+        except RuntimeError:
+            pass
+        except Exception:
+            pass
 
     def clear_logs(self):
         self.logs_drawer.clear_logs()

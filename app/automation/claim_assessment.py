@@ -122,6 +122,85 @@ async def _click_declaration_radio(page, log) -> None:
             else:
                 log(f"  ⚠️  Declaration radio: {str(e)[:80]}")
 
+async def _dismiss_assessment_upload_popup(page, log, timeout_ms: int = 4000) -> bool:
+    dismiss_selectors = [
+        "div.modal.in button:has-text('OK')",
+        "div.modal.show button:has-text('OK')",
+        "div[role='dialog'] button:has-text('OK')",
+        ".modal-dialog button:has-text('OK')",
+        ".modal-footer .btn-primary",
+        ".modal-footer button",
+        ".bootbox button:has-text('OK')",
+        ".swal-button",
+        ".swal2-confirm",
+        "button:has-text('OK')",
+        "button:has-text('Yes')",
+        "button:has-text('Close')",
+    ]
+    combined_sel = ", ".join(dismiss_selectors)
+    try:
+        btn = page.locator(combined_sel).first
+        if await btn.is_visible():
+            label = (await btn.inner_text()).strip() or "button"
+            await btn.click(force=True, timeout=1000)
+            if isinstance(log, AutomationLogger):
+                log.info(f"Closed upload popup via '{label[:40]}'")
+            else:
+                log(f"    ℹ️  Closed upload popup via '{label[:40]}'")
+            await asyncio.sleep(0.6)
+            return True
+    except Exception:
+        pass
+
+    try:
+        clicked = await page.evaluate(
+            """
+            () => {
+                const isVisible = (el) => {
+                    if (!el) return false;
+                    const style = window.getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+                    return style.visibility !== 'hidden' &&
+                           style.display !== 'none' &&
+                           rect.width > 0 &&
+                           rect.height > 0;
+                };
+
+                const candidates = Array.from(document.querySelectorAll('button, a, span'))
+                    .filter(isVisible)
+                    .filter(el => /^(ok|yes|close)$/i.test((el.textContent || '').trim()));
+
+                candidates.sort((a, b) => {
+                    const az = Number(window.getComputedStyle(a).zIndex) || 0;
+                    const bz = Number(window.getComputedStyle(b).zIndex) || 0;
+                    return bz - az;
+                });
+
+                const target = candidates[0];
+                if (!target) return null;
+                target.click();
+                return (target.textContent || '').trim();
+            }
+            """
+        )
+        if clicked:
+            if isinstance(log, AutomationLogger):
+                log.info(f"Closed upload popup via DOM '{clicked[:40]}'")
+            else:
+                log(f"    ℹ️  Closed upload popup via DOM '{clicked[:40]}'")
+            await asyncio.sleep(0.6)
+            return True
+    except Exception:
+        pass
+
+    try:
+        await page.keyboard.press("Escape")
+        await asyncio.sleep(0.2)
+    except Exception:
+        pass
+
+    return False
+
 
 async def _upload_by_label(page, upload_label: str, file_path: str,
                             log, settings: dict, slot_key: str = "") -> bool:
@@ -172,7 +251,18 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
                     await inp.evaluate("el => el.dispatchEvent(new Event('change', { bubbles: true }))")
                 except Exception:
                     pass
-                await asyncio.sleep(upload_wait_s)
+                
+                # Wait loop with popup dismissal
+                deadline = asyncio.get_running_loop().time() + max(upload_wait_s, 2.0)
+                while asyncio.get_running_loop().time() < deadline:
+                    await _dismiss_assessment_upload_popup(page, log, timeout_ms=900)
+                    try:
+                        await page.wait_for_load_state("networkidle", timeout=1000)
+                    except Exception:
+                        pass
+                    await asyncio.sleep(0.4)
+                await _dismiss_assessment_upload_popup(page, log, timeout_ms=1200)
+
                 if isinstance(log, AutomationLogger):
                     log.upload_attached(upload_label, fname)
                 else:
@@ -228,7 +318,18 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
                     await page.evaluate("el => el.dispatchEvent(new Event('change', { bubbles: true }))", arg=element)
                 except Exception:
                     pass
-                await asyncio.sleep(upload_wait_s)
+                
+                # Wait loop with popup dismissal
+                deadline = asyncio.get_running_loop().time() + max(upload_wait_s, 2.0)
+                while asyncio.get_running_loop().time() < deadline:
+                    await _dismiss_assessment_upload_popup(page, log, timeout_ms=900)
+                    try:
+                        await page.wait_for_load_state("networkidle", timeout=1000)
+                    except Exception:
+                        pass
+                    await asyncio.sleep(0.4)
+                await _dismiss_assessment_upload_popup(page, log, timeout_ms=1200)
+
                 if isinstance(log, AutomationLogger):
                     log.upload_attached(upload_label, fname)
                 else:
@@ -252,9 +353,21 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
                 await fi.wait_for(state="attached", timeout=timeout_ms)
                 await fi.set_input_files(abs_path)
                 try:
-                    await page.wait_for_load_state("networkidle", timeout=timeout_ms)
+                    await fi.evaluate("el => el.dispatchEvent(new Event('change', { bubbles: true }))")
                 except Exception:
-                    await asyncio.sleep(upload_wait_s / 2.0)
+                    pass
+
+                # Wait loop with popup dismissal
+                deadline = asyncio.get_running_loop().time() + max(upload_wait_s, 2.0)
+                while asyncio.get_running_loop().time() < deadline:
+                    await _dismiss_assessment_upload_popup(page, log, timeout_ms=900)
+                    try:
+                        await page.wait_for_load_state("networkidle", timeout=1000)
+                    except Exception:
+                        pass
+                    await asyncio.sleep(0.4)
+                await _dismiss_assessment_upload_popup(page, log, timeout_ms=1200)
+
                 if isinstance(log, AutomationLogger):
                     log.upload_attached(upload_label, fname)
                 else:
@@ -599,10 +712,23 @@ async def _fill_surveyor_charges(page, claim: ClaimData, log, _src) -> None:
                                claim.photo_charges, "Photo Charges", log,
                                source=_src("photo_charges"))
         
-        _log_extraction(claim, log, "Total Claimed Amount", str(claim.total_claimed_amount or 0), "total_claimed_amount")
-        await safe_fill_amount(page, ASSESSMENT["total"],
-                               str(claim.total_claimed_amount or 0), "Total Claimed Amount", log,
-                               source="Calculated")
+        try:
+            total_el = page.locator(ASSESSMENT["total"]).first
+            if await total_el.is_visible(timeout=2000) and await total_el.is_editable():
+                _log_extraction(claim, log, "Total Claimed Amount", str(claim.total_claimed_amount or 0), "total_claimed_amount")
+                await safe_fill_amount(page, ASSESSMENT["total"],
+                                       str(claim.total_claimed_amount or 0), "Total Claimed Amount", log,
+                                       source="Calculated")
+            else:
+                if isinstance(log, AutomationLogger):
+                    log.info("Total Claimed Amount is read-only, disabled, or not visible on this page. Skipping.")
+                else:
+                    log("  ℹ️  Total Claimed Amount is read-only, disabled, or not visible. Skipping.")
+        except Exception as e:
+            if isinstance(log, AutomationLogger):
+                log.info(f"Skipping Total Claimed Amount: {e}")
+            else:
+                log(f"  ℹ️  Skipping Total Claimed Amount: {e}")
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Surveyor charges error: {e}")

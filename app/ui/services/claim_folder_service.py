@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+import threading
 from typing import List, Optional
 
 from app.portals.registry import get_portal
@@ -65,6 +66,14 @@ def _run_background_document_generation(
     if correlation_id:
         bg_logger.correlation_id = correlation_id
 
+    stop_event = getattr(claim, "_background_generation_stop_event", None)
+    def is_cancelled() -> bool:
+        return stop_event is not None and stop_event.is_set()
+
+    if is_cancelled():
+        bg_logger.info("Background document generation thread cancelled before start.")
+        return
+
     bg_logger.info("Background document generation thread started.")
     bg_logs = []
 
@@ -79,6 +88,7 @@ def _run_background_document_generation(
                 output_folder=_output_dir,
                 settings=portal_defaults,
                 logs=bg_logs,
+                stop_cb=is_cancelled,
             )
             for line in bg_logs:
                 bg_logger.info(f"[Printable Output] {line.strip()}")
@@ -154,6 +164,10 @@ def _run_background_document_generation(
         if _is_newindia_generated_assessment(fpath):
             is_auto_generated = True
 
+    if is_cancelled():
+        bg_logger.info("Background document generation thread cancelled before New India primary assessment generation.")
+        return
+
     if portal_id == "newindia" and (
         "assessment_excel" not in claim.assessment_files or is_auto_generated
     ):
@@ -225,6 +239,10 @@ def _run_background_document_generation(
                 bg_logger.warning(
                     f"Auto-generation of assessment Excel failed: {gen_exc}"
                 )
+
+    if is_cancelled():
+        bg_logger.info("Background document generation thread cancelled before OIC assessment generation.")
+        return
 
     # 3. Auto-generate OIC assessment Excel (Website 3).
     if portal_id == "oic" and scan_result.excel_path:
@@ -310,6 +328,9 @@ def _run_background_document_generation(
                 f"OIC auto-generation of assessment Excel failed: {gen_exc}"
             )
 
+    if is_cancelled():
+        bg_logger.info("Background document generation thread cancelled before completion.")
+        return
     bg_logger.info("Background document generation thread finished.")
 
 
@@ -595,6 +616,7 @@ class ClaimFolderService:
             claim.upload_doc_files = scan_result.upload_doc_files
             claim._scan_result = scan_result
             claim.source_excel_path = scan_result.excel_path or ""
+            claim._background_generation_stop_event = threading.Event()
 
             # F6 FIX: import once here, used by printable block, OIC block,
             # and the eager_ocr check further below — no repeated inline imports.
@@ -638,7 +660,6 @@ class ClaimFolderService:
                     return _cancel_after_service_generation("after_assessment_generation")
             else:
                 # Run in background daemon thread
-                import threading
                 bg_thread = threading.Thread(
                     target=_run_background_document_generation,
                     args=(

@@ -89,6 +89,7 @@ def process_printable_output(
     output_folder: str,
     settings: dict,
     logs: List[str],
+    stop_cb: Optional[callable] = None,
 ) -> None:
     """
     Orchestrates creation of printable Excel + PDF.
@@ -102,7 +103,12 @@ def process_printable_output(
         output_folder:     Folder where outputs are saved (same as claim folder).
         settings:          Automation defaults dict for the active portal.
         logs:              Mutable log list — appends status lines.
+        stop_cb:           Optional callback returning True if stop requested.
     """
+    if stop_cb and stop_cb():
+        logs.append("⚠️  Printable Excel: Generation cancelled before start.")
+        return
+
     if not source_excel_path or not os.path.isfile(source_excel_path):
         logs.append("⚠️  Printable Excel: Source Excel not found — skipping generation.")
         return
@@ -165,6 +171,10 @@ def process_printable_output(
             return
         logs.append(f"  📐 Print Mode: Scale Percentage → {scale}%")
 
+    if stop_cb and stop_cb():
+        logs.append("⚠️  Printable Excel: Generation cancelled.")
+        return
+
     # ── Step 1: Create printable Excel copy ───────────────────────────────
     try:
         _create_printable_excel(
@@ -178,6 +188,10 @@ def process_printable_output(
     except Exception as exc:
         logs.append(f"  ❌ Printable Excel creation failed: {exc}")
         logger.exception("Printable Excel creation error")
+        return
+
+    if stop_cb and stop_cb():
+        logs.append("⚠️  Printable PDF: Generation cancelled before PDF render.")
         return
 
     # ── Step 2: Generate PDF (Excel COM) ────────────────────────────────

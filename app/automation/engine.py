@@ -232,9 +232,25 @@ class AutomationEngine:
         log_cb: Callable[[str], None] = print,
         step_cb: Callable[[int, str], None] = lambda i, s: None,
     ):
+        def safe_log_cb(msg):
+            try:
+                log_cb(msg)
+            except RuntimeError:
+                pass
+            except Exception:
+                pass
+
+        def safe_step_cb(i, s):
+            try:
+                step_cb(i, s)
+            except RuntimeError:
+                pass
+            except Exception:
+                pass
+
         self.portal_id = portal_id
-        self.log_cb = log_cb
-        self.step_cb = step_cb
+        self.log_cb = safe_log_cb
+        self.step_cb = safe_step_cb
         self._stop_event = threading.Event()
         self.log = AutomationLogger("ENGINE", self.log_cb, portal_id=self.portal_id)
 

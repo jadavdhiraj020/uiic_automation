@@ -260,7 +260,12 @@ class AutomationLogger:
                 line = f"[{ts}] {pad}{icon} {message}"
 
             # Emit to standard visual UI callback (backward compatible plain text)
-            self._log_cb(line)
+            try:
+                self._log_cb(f"{line} \u200b{self.section}")
+            except RuntimeError:
+                pass
+            except Exception:
+                pass
 
             # Emit to standard Python logger
             py_message = message.replace("\n", " | ")
@@ -286,7 +291,12 @@ class AutomationLogger:
     def raw(self, text: str):
         """Emit raw unformatted text (for separators, blank lines, banners)."""
         with self._lock:
-            self._log_cb(text)
+            try:
+                self._log_cb(f"{text} \u200b{self.section}")
+            except RuntimeError:
+                pass
+            except Exception:
+                pass
 
             entry = {
                 "timestamp": datetime.now().isoformat(),

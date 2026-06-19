@@ -6,7 +6,7 @@ from app.automation.automation_logger import AutomationLogger
 
 logger = logging.getLogger(__name__)
 
-SEL_USERNAME = "#login-username"
+SEL_USERNAME = "#login-username, input[name='username']"
 SEL_PASSWORD = "#login-password"
 SEL_CAPTCHA_IN = "input[name='captchaInput']"
 SEL_CAPTCHA_CVS = "canvas#captcha, canvas"
@@ -242,165 +242,178 @@ async def do_login(
 
     from app.automation.captcha_solver import solve_captcha_from_bytes
 
-    page.on("dialog", lambda dialog: asyncio.create_task(_accept_dialog(dialog, log)))
-
-    if isinstance(log, AutomationLogger):
-        log.raw(f"[{log._portal_tag}][Login]\nLoading Login Page")
-        log.info("Navigating to portal...")
-        log.indent()
-    else:
-        log("  🌐 Navigating to portal...")
-        
-    await page.goto(portal_url, wait_until="domcontentloaded", timeout=30000)
-    await asyncio.sleep(2)
+    async def handle_login_dialog(dialog):
+        await _accept_dialog(dialog, log)
 
     try:
-        await page.locator(SEL_USERNAME).wait_for(state="visible", timeout=12000)
-        if isinstance(log, AutomationLogger):
-            log.raw(f"[{log._portal_tag}][Login]\nLogin Page Loaded")
-            log.success("Login page loaded successfully")
-        else:
-            log("  ✅ Login page loaded successfully")
-    except Exception as exc:
-        if isinstance(log, AutomationLogger):
-            log.raw(f"[{log._portal_tag}][Login]\nLogin Page Load Failed")
-            log.error(f"Login page did not load: {exc}")
-            log.outdent()
-        else:
-            log(f"  ❌ Login page did not load: {exc}")
-        return False
+        page.remove_all_listeners("dialog")
+    except Exception:
+        pass
+    page.on("dialog", handle_login_dialog)
 
-    for attempt in range(1, max_retries + 1):
-        if stop_cb():
-            if isinstance(log, AutomationLogger): log.outdent()
-            return False
-
+    try:
         if isinstance(log, AutomationLogger):
-            log.raw(f"[{log._portal_tag}][Login]\nAttempt {attempt}/{max_retries}")
-            log.info(f"Login Attempt {attempt}/{max_retries}")
+            log.raw(f"[{log._portal_tag}][Login]\nLoading Login Page")
+            log.info("Navigating to portal...")
             log.indent()
         else:
-            log(f"\n  🔄 Attempt {attempt}/{max_retries}")
+            log("  🌐 Navigating to portal...")
             
-        if isinstance(log, AutomationLogger):
-            log.raw(f"[{log._portal_tag}][Login]\nCaptcha OCR Started")
-            log.wait("Reading CAPTCHA from canvas")
-        else:
-            log("    📷 Reading CAPTCHA from canvas...")
+        await page.goto(portal_url, wait_until="domcontentloaded", timeout=30000)
+        await asyncio.sleep(2)
 
         try:
-            img_bytes = await _get_captcha_bytes(page)
-            captcha_text = solve_captcha_from_bytes(img_bytes)
+            await page.locator(SEL_USERNAME).wait_for(state="visible", timeout=12000)
+            if isinstance(log, AutomationLogger):
+                log.raw(f"[{log._portal_tag}][Login]\nLogin Page Loaded")
+                log.success("Login page loaded successfully")
+            else:
+                log("  ✅ Login page loaded successfully")
         except Exception as exc:
             if isinstance(log, AutomationLogger):
-                log.raw(f"[{log._portal_tag}][Login]\nCaptcha Capture Failed")
-                log.error(f"CAPTCHA screenshot error: {exc}")
-            else:
-                log(f"    ⚠️  CAPTCHA screenshot error: {exc}")
-            await _refresh_captcha(page)
-            if isinstance(log, AutomationLogger): log.outdent()
-            continue
-
-        if not captcha_text or len(captcha_text) < 3:
-            from app.automation.ocr_engine import get_ocr_init_error
-            init_error = get_ocr_init_error()
-            if init_error:
-                if isinstance(log, AutomationLogger):
-                    log.raw(f"[{log._portal_tag}][Login]\nOCR Engine Initialization Failed")
-                    log.error(f"OCR ENGINE FAILED: {init_error}")
-                else:
-                    log(f"⚠️ OCR ENGINE FAILED: {init_error}")
-            else:
-                if isinstance(log, AutomationLogger):
-                    log.raw(f"[{log._portal_tag}][Login]\nCaptcha Unreadable")
-                    log.warning("CAPTCHA unreadable. Refreshing...")
-                else:
-                    log(f"CAPTCHA unreadable (OCR returned empty/short text). Refreshing...")
-            await _refresh_captcha(page)
-            if isinstance(log, AutomationLogger): log.outdent()
-            continue
-
-        if isinstance(log, AutomationLogger):
-            log.raw(f"[{log._portal_tag}][Login]\nCaptcha Value Extracted: {captcha_text}")
-            log.info(f"CAPTCHA text: '{captcha_text}'")
-        else:
-            log(f"    🔑 CAPTCHA text: '{captcha_text}'")
-
-        if stop_cb():
-            if isinstance(log, AutomationLogger): 
+                log.raw(f"[{log._portal_tag}][Login]\nLogin Page Load Failed")
+                log.error(f"Login page did not load: {exc}")
                 log.outdent()
-                log.outdent()
+            else:
+                log(f"  ❌ Login page did not load: {exc}")
             return False
 
-        clicked = await _try_login_with_captcha(page, username, password, captcha_text, log)
-        if not clicked:
-            if isinstance(log, AutomationLogger):
-                log.raw(f"[{log._portal_tag}][Login]\nLogin Click Failed")
-                log.error(f"Could not click login button on attempt {attempt}")
-            else:
-                log(f"    ⚠️  Could not click login button on attempt {attempt}")
-            await _refresh_captcha(page)
-            if isinstance(log, AutomationLogger): log.outdent()
-            continue
-
-        await asyncio.sleep(2)
-        if stop_cb():
-            if isinstance(log, AutomationLogger):
-                log.outdent()
-                log.outdent()
-            return False
-
-        login_ok, outcome = await _wait_for_login_outcome(page, log)
-        if login_ok:
-            if isinstance(log, AutomationLogger):
-                log.raw(f"[{log._portal_tag}][Login]\nLogin Successful")
-                log.success("Login successful!")
-                log.info(f"Signal: {outcome}")
-            else:
-                log(f"    ✅ Login successful!")
-                log(f"    ℹ️  Signal: {outcome}")
-            await _dismiss_alert(page, log)
-            await asyncio.sleep(1.5)
-            if isinstance(log, AutomationLogger):
-                log.outdent()
-                log.outdent()
-            return True
-
-        err = outcome.strip()
-        if err:
-            if isinstance(log, AutomationLogger):
-                log.raw(f"[{log._portal_tag}][Login]\nLogin Failed\nReason: {err[:140]}")
-                log.error(f"Login failed: {err[:140]}")
-            else:
-                log(f"    ❌ Login failed: {err[:140]}")
-                
-            if "password" in err.lower() and "captcha" not in err.lower():
-                if isinstance(log, AutomationLogger):
-                    log.raw(f"[{log._portal_tag}][Login]\nWrong Password stopping retries")
-                    log.error("Wrong password detected — stopping retries")
-                else:
-                    log("    ❌ Wrong password detected — stopping retries")
+        for attempt in range(1, max_retries + 1):
+            if stop_cb():
                 if isinstance(log, AutomationLogger): log.outdent()
-                break
+                return False
 
-        if stop_cb():
             if isinstance(log, AutomationLogger):
-                log.outdent()
-                log.outdent()
-            return False
+                log.raw(f"[{log._portal_tag}][Login]\nAttempt {attempt}/{max_retries}")
+                log.info(f"Login Attempt {attempt}/{max_retries}")
+                log.indent()
+            else:
+                log(f"\n  🔄 Attempt {attempt}/{max_retries}")
+                
+            if isinstance(log, AutomationLogger):
+                log.raw(f"[{log._portal_tag}][Login]\nCaptcha OCR Started")
+                log.wait("Reading CAPTCHA from canvas")
+            else:
+                log("    📷 Reading CAPTCHA from canvas...")
+
+            try:
+                img_bytes = await _get_captcha_bytes(page)
+                captcha_text = solve_captcha_from_bytes(img_bytes)
+            except Exception as exc:
+                if isinstance(log, AutomationLogger):
+                    log.raw(f"[{log._portal_tag}][Login]\nCaptcha Capture Failed")
+                    log.error(f"CAPTCHA screenshot error: {exc}")
+                else:
+                    log(f"    ⚠️  CAPTCHA screenshot error: {exc}")
+                await _refresh_captcha(page)
+                if isinstance(log, AutomationLogger): log.outdent()
+                continue
+
+            if not captcha_text or len(captcha_text) < 3:
+                from app.automation.ocr_engine import get_ocr_init_error
+                init_error = get_ocr_init_error()
+                if init_error:
+                    if isinstance(log, AutomationLogger):
+                        log.raw(f"[{log._portal_tag}][Login]\nOCR Engine Initialization Failed")
+                        log.error(f"OCR ENGINE FAILED: {init_error}")
+                    else:
+                        log(f"⚠️ OCR ENGINE FAILED: {init_error}")
+                else:
+                    if isinstance(log, AutomationLogger):
+                        log.raw(f"[{log._portal_tag}][Login]\nCaptcha Unreadable")
+                        log.warning("CAPTCHA unreadable. Refreshing...")
+                    else:
+                        log(f"CAPTCHA unreadable (OCR returned empty/short text). Refreshing...")
+                await _refresh_captcha(page)
+                if isinstance(log, AutomationLogger): log.outdent()
+                continue
+
+            if isinstance(log, AutomationLogger):
+                log.raw(f"[{log._portal_tag}][Login]\nCaptcha Value Extracted: {captcha_text}")
+                log.info(f"CAPTCHA text: '{captcha_text}'")
+            else:
+                log(f"    🔑 CAPTCHA text: '{captcha_text}'")
+
+            if stop_cb():
+                if isinstance(log, AutomationLogger): 
+                    log.outdent()
+                    log.outdent()
+                return False
+
+            clicked = await _try_login_with_captcha(page, username, password, captcha_text, log)
+            if not clicked:
+                if isinstance(log, AutomationLogger):
+                    log.raw(f"[{log._portal_tag}][Login]\nLogin Click Failed")
+                    log.error(f"Could not click login button on attempt {attempt}")
+                else:
+                    log(f"    ⚠️  Could not click login button on attempt {attempt}")
+                await _refresh_captcha(page)
+                if isinstance(log, AutomationLogger): log.outdent()
+                continue
+
+            await asyncio.sleep(2)
+            if stop_cb():
+                if isinstance(log, AutomationLogger):
+                    log.outdent()
+                    log.outdent()
+                return False
+
+            login_ok, outcome = await _wait_for_login_outcome(page, log)
+            if login_ok:
+                if isinstance(log, AutomationLogger):
+                    log.raw(f"[{log._portal_tag}][Login]\nLogin Successful")
+                    log.success("Login successful!")
+                    log.info(f"Signal: {outcome}")
+                else:
+                    log(f"    ✅ Login successful!")
+                    log(f"    ℹ️  Signal: {outcome}")
+                await _dismiss_alert(page, log)
+                await asyncio.sleep(1.5)
+                if isinstance(log, AutomationLogger):
+                    log.outdent()
+                    log.outdent()
+                return True
+
+            err = outcome.strip()
+            if err:
+                if isinstance(log, AutomationLogger):
+                    log.raw(f"[{log._portal_tag}][Login]\nLogin Failed\nReason: {err[:140]}")
+                    log.error(f"Login failed: {err[:140]}")
+                else:
+                    log(f"    ❌ Login failed: {err[:140]}")
+                    
+                if "password" in err.lower() and "captcha" not in err.lower():
+                    if isinstance(log, AutomationLogger):
+                        log.raw(f"[{log._portal_tag}][Login]\nWrong Password stopping retries")
+                        log.error("Wrong password detected — stopping retries")
+                    else:
+                        log("    ❌ Wrong password detected — stopping retries")
+                    if isinstance(log, AutomationLogger): log.outdent()
+                    break
+
+            if stop_cb():
+                if isinstance(log, AutomationLogger):
+                    log.outdent()
+                    log.outdent()
+                return False
+
+            if isinstance(log, AutomationLogger):
+                log.info("Refreshing CAPTCHA for next attempt...")
+            else:
+                log(f"    🔄 Refreshing CAPTCHA for next attempt...")
+            await _refresh_captcha(page)
+            await asyncio.sleep(1)
+            if isinstance(log, AutomationLogger): log.outdent()
 
         if isinstance(log, AutomationLogger):
-            log.info("Refreshing CAPTCHA for next attempt...")
+            log.raw(f"[{log._portal_tag}][Login]\nLogin Failed (Attempts Exhausted)")
+            log.error(f"Login failed after {max_retries} attempts")
+            log.outdent()
         else:
-            log(f"    🔄 Refreshing CAPTCHA for next attempt...")
-        await _refresh_captcha(page)
-        await asyncio.sleep(1)
-        if isinstance(log, AutomationLogger): log.outdent()
-
-    if isinstance(log, AutomationLogger):
-        log.raw(f"[{log._portal_tag}][Login]\nLogin Failed (Attempts Exhausted)")
-        log.error(f"Login failed after {max_retries} attempts")
-        log.outdent()
-    else:
-        log(f"  ❌ Login failed after {max_retries} attempts")
-    return False
+            log(f"  ❌ Login failed after {max_retries} attempts")
+        return False
+    finally:
+        try:
+            page.remove_all_listeners("dialog")
+        except Exception:
+            pass

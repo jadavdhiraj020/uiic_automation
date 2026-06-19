@@ -81,68 +81,61 @@ class DocumentUploadService:
             "button:has-text('Yes')",
             "button:has-text('Close')",
         ]
+        combined_sel = ", ".join(dismiss_selectors)
+        try:
+            btn = self.page.locator(combined_sel).first
+            if await btn.is_visible():
+                label = (await btn.inner_text()).strip() or "button"
+                await btn.click(force=True, timeout=1000)
+                if isinstance(self.log, AutomationLogger):
+                    self.log.info(f"Closed upload popup via '{label[:40]}'")
+                else:
+                    self.log(f"    ℹ️  Closed upload popup via '{label[:40]}'")
+                await asyncio.sleep(0.6)
+                return True
+        except Exception:
+            pass
 
-        dismissed = False
-        end_time = asyncio.get_running_loop().time() + max(timeout_ms, 1000) / 1000.0
-        while asyncio.get_running_loop().time() < end_time:
-            for sel in dismiss_selectors:
-                try:
-                    btn = self.page.locator(sel).first
-                    if await btn.is_visible(timeout=250):
-                        label = (await btn.inner_text(timeout=250)).strip() or "button"
-                        await btn.click(force=True, timeout=1000)
-                        if isinstance(self.log, AutomationLogger):
-                            self.log.info(f"Closed upload popup via '{label[:40]}'")
-                        else:
-                            self.log(f"    ℹ️  Closed upload popup via '{label[:40]}'")
-                        dismissed = True
-                        await asyncio.sleep(0.6)
-                        break
-                except Exception:
-                    continue
-            else:
-                try:
-                    clicked = await self.page.evaluate(
-                        """
-                        () => {
-                            const isVisible = (el) => {
-                                if (!el) return false;
-                                const style = window.getComputedStyle(el);
-                                const rect = el.getBoundingClientRect();
-                                return style.visibility !== 'hidden' &&
-                                       style.display !== 'none' &&
-                                       rect.width > 0 &&
-                                       rect.height > 0;
-                            };
+        try:
+            clicked = await self.page.evaluate(
+                """
+                () => {
+                    const isVisible = (el) => {
+                        if (!el) return false;
+                        const style = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        return style.visibility !== 'hidden' &&
+                               style.display !== 'none' &&
+                               rect.width > 0 &&
+                               rect.height > 0;
+                    };
 
-                            const candidates = Array.from(document.querySelectorAll('button, a, span'))
-                                .filter(isVisible)
-                                .filter(el => /^(ok|yes|close)$/i.test((el.textContent || '').trim()));
+                    const candidates = Array.from(document.querySelectorAll('button, a, span'))
+                        .filter(isVisible)
+                        .filter(el => /^(ok|yes|close)$/i.test((el.textContent || '').trim()));
 
-                            candidates.sort((a, b) => {
-                                const az = Number(window.getComputedStyle(a).zIndex) || 0;
-                                const bz = Number(window.getComputedStyle(b).zIndex) || 0;
-                                return bz - az;
-                            });
+                    candidates.sort((a, b) => {
+                        const az = Number(window.getComputedStyle(a).zIndex) || 0;
+                        const bz = Number(window.getComputedStyle(b).zIndex) || 0;
+                        return bz - az;
+                    });
 
-                            const target = candidates[0];
-                            if (!target) return null;
-                            target.click();
-                            return (target.textContent || '').trim();
-                        }
-                        """
-                    )
-                    if clicked:
-                        if isinstance(self.log, AutomationLogger):
-                            self.log.info(f"Closed upload popup via DOM '{clicked[:40]}'")
-                        else:
-                            self.log(f"    ℹ️  Closed upload popup via DOM '{clicked[:40]}'")
-                        dismissed = True
-                        await asyncio.sleep(0.6)
-                        continue
-                except Exception:
-                    pass
-                break
+                    const target = candidates[0];
+                    if (!target) return null;
+                    target.click();
+                    return (target.textContent || '').trim();
+                }
+                """
+            )
+            if clicked:
+                if isinstance(self.log, AutomationLogger):
+                    self.log.info(f"Closed upload popup via DOM '{clicked[:40]}'")
+                else:
+                    self.log(f"    ℹ️  Closed upload popup via DOM '{clicked[:40]}'")
+                await asyncio.sleep(0.6)
+                return True
+        except Exception:
+            pass
 
         try:
             await self.page.keyboard.press("Escape")
@@ -150,7 +143,7 @@ class DocumentUploadService:
         except Exception:
             pass
 
-        return dismissed
+        return False
 
     async def wait_after_upload(self, row_index: int, wait_ms: int) -> None:
         deadline = asyncio.get_running_loop().time() + max(wait_ms, 2000) / 1000.0
@@ -297,14 +290,22 @@ class DocumentUploadService:
         panel = await self.get_upload_panel()
         before_count = await panel.locator('select[name^="docType"]').count()
 
+        async def _row_added() -> bool:
+            await asyncio.sleep(0.2)
+            count = await panel.locator('select[name^="docType"]').count()
+            return count > before_count
+
+        # Attempt 1: Specific image selector
         try:
             plus_img = panel.locator('img[src*="plus-4-xxl"]').first
             if await plus_img.count() > 0:
-                await plus_img.click(timeout=5000)
-                await asyncio.sleep(0.8)
+                await plus_img.click(timeout=2000)
+                if await _row_added():
+                    return True
         except Exception:
             pass
 
+        # Attempt 2: Angular click handler search
         try:
             await panel.evaluate(
                 """
@@ -321,10 +322,12 @@ class DocumentUploadService:
                 }
                 """
             )
-            await asyncio.sleep(0.8)
+            if await _row_added():
+                return True
         except Exception:
             pass
 
+        # Attempt 3: Iterating through CSS selectors
         css_selectors = [
             "a[ng-click*='addDocumentRow']",
             "a[ng-click*='addDocument']",
@@ -337,15 +340,16 @@ class DocumentUploadService:
         for sel in css_selectors:
             try:
                 btn = panel.locator(sel).last
-                if await btn.is_visible(timeout=1000):
-                    await btn.click(timeout=3000)
-                    await asyncio.sleep(0.8)
-                    break
+                if await btn.is_visible():
+                    await btn.click(timeout=2000)
+                    if await _row_added():
+                        return True
             except Exception:
                 continue
 
+        # Attempt 4: General plus image selector
         try:
-            await panel.evaluate(
+            clicked_js = await panel.evaluate(
                 """
                 (panelEl) => {
                     var imgs = panelEl.querySelectorAll('img[src*="plus"]');
@@ -360,10 +364,18 @@ class DocumentUploadService:
                 }
                 """
             )
+            if clicked_js and await _row_added():
+                return True
         except Exception:
             pass
 
-        await asyncio.sleep(1.0)
+        # Fallback wait in case of digest loop lag
+        for _ in range(6):
+            await asyncio.sleep(0.5)
+            count = await panel.locator('select[name^="docType"]').count()
+            if count > before_count:
+                break
+
         after_count = await panel.locator('select[name^="docType"]').count()
         if after_count > before_count:
             if isinstance(self.log, AutomationLogger):

@@ -254,110 +254,120 @@ async def fill_claim_documents(page, claim: ClaimData, log_cb, settings: dict = 
         except Exception:
             pass
 
+    try:
+        page.remove_all_listeners("dialog")
+    except Exception:
+        pass
     page.on("dialog", _handle_dialog)
 
-    # Use explicitly passed settings or empty dict
-    cfg = settings or {}
-    wait_timeout_ms = int(cfg.get("upload_timeout_ms", cfg.get("upload_wait_ms", 10000)))
-    panel_ready_timeout = max(15000, wait_timeout_ms)
-
-    service = DocumentUploadService(page=page, log_cb=log)
-
     try:
-        await service.wait_for_upload_section(panel_ready_timeout)
-        if isinstance(log, AutomationLogger):
-            log.success("Upload panel ready")
-        else:
-            log("  ✅ Upload panel ready")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.warning(f"Upload panel wait failed: {str(e)[:80]}")
-        else:
-            log(f"  ⚠️  Upload panel wait failed: {str(e)[:80]}")
-        logger.error("Upload panel not visible: %s", str(e)[:120])
-        if isinstance(log, AutomationLogger):
-            log.info("Proceeding anyway...")
-        else:
-            log("  ℹ️  Proceeding anyway...")
+        # Use explicitly passed settings or empty dict
+        cfg = settings or {}
+        wait_timeout_ms = int(cfg.get("upload_timeout_ms", cfg.get("upload_wait_ms", 10000)))
+        panel_ready_timeout = max(15000, wait_timeout_ms)
 
-    upload_results, uploaded_rows = await service.upload_queue(
-        queue=queue,
-        wait_timeout_ms=wait_timeout_ms,
-        fallback_option_index=FALLBACK_OPTION_INDEX,
-    )
+        service = DocumentUploadService(page=page, log_cb=log)
 
-    if uploaded_rows:
-        if isinstance(log, AutomationLogger):
-            log.info("Verifying visible upload rows...")
-        else:
-            log("\n🔎 Verifying visible upload rows...")
+        try:
+            await service.wait_for_upload_section(panel_ready_timeout)
+            if isinstance(log, AutomationLogger):
+                log.success("Upload panel ready")
+            else:
+                log("  ✅ Upload panel ready")
+        except Exception as e:
+            if isinstance(log, AutomationLogger):
+                log.warning(f"Upload panel wait failed: {str(e)[:80]}")
+            else:
+                log(f"  ⚠️  Upload panel wait failed: {str(e)[:80]}")
+            logger.error("Upload panel not visible: %s", str(e)[:120])
+            if isinstance(log, AutomationLogger):
+                log.info("Proceeding anyway...")
+            else:
+                log("  ℹ️  Proceeding anyway...")
 
-    for row_idx, doc_type, file_path in uploaded_rows:
-        expected_name = os.path.basename(file_path)
-        if await service.row_shows_expected_file(row_idx, expected_name, timeout_ms=2000):
-            continue
-
-        if isinstance(log, AutomationLogger):
-            log.warning(f"Row lost file after upload: [{doc_type}] → retrying")
-        else:
-            log(f"  ⚠️  Row lost file after upload: [{doc_type}] → retrying visible row")
-            
-        retry_ok = await service.select_doc_and_set_file(
-            row_index=row_idx,
-            doc_label=doc_type,
-            file_path=file_path,
-            timeout_ms=wait_timeout_ms,
+        upload_results, uploaded_rows = await service.upload_queue(
+            queue=queue,
+            wait_timeout_ms=wait_timeout_ms,
+            fallback_option_index=FALLBACK_OPTION_INDEX,
         )
-        if retry_ok:
-            await service.wait_after_upload(row_index=row_idx, wait_ms=wait_timeout_ms)
+
+        if uploaded_rows:
+            if isinstance(log, AutomationLogger):
+                log.info("Verifying visible upload rows...")
+            else:
+                log("\n🔎 Verifying visible upload rows...")
+
+        for row_idx, doc_type, file_path in uploaded_rows:
+            expected_name = os.path.basename(file_path)
             if await service.row_shows_expected_file(row_idx, expected_name, timeout_ms=2000):
-                if isinstance(log, AutomationLogger):
-                    log.success(f"Row restored: [{doc_type}] → {expected_name}")
-                else:
-                    log(f"  ✅ Row restored: [{doc_type}] → {expected_name}")
                 continue
 
-        for idx_result, (r_doc_type, r_fname, r_status, _) in enumerate(upload_results):
-            if r_doc_type == doc_type and r_fname == expected_name and r_status == "OK":
-                upload_results[idx_result] = (
-                    r_doc_type, r_fname, "FAILED", "Visible row still shows no file after retry"
-                )
-                break
-        logger.error("Visible row verification failed for [%s] → %s", doc_type, expected_name)
+            if isinstance(log, AutomationLogger):
+                log.warning(f"Row lost file after upload: [{doc_type}] → retrying")
+            else:
+                log(f"  ⚠️  Row lost file after upload: [{doc_type}] → retrying visible row")
+                
+            retry_ok = await service.select_doc_and_set_file(
+                row_index=row_idx,
+                doc_label=doc_type,
+                file_path=file_path,
+                timeout_ms=wait_timeout_ms,
+            )
+            if retry_ok:
+                await service.wait_after_upload(row_index=row_idx, wait_ms=wait_timeout_ms)
+                if await service.row_shows_expected_file(row_idx, expected_name, timeout_ms=2000):
+                    if isinstance(log, AutomationLogger):
+                        log.success(f"Row restored: [{doc_type}] → {expected_name}")
+                    else:
+                        log(f"  ✅ Row restored: [{doc_type}] → {expected_name}")
+                    continue
 
-    ok_count = sum(1 for _, _, s, _ in upload_results if s == "OK")
-    fail_count = sum(1 for _, _, s, _ in upload_results if s == "FAILED")
-    skip_count = sum(1 for _, _, s, _ in upload_results if s == "SKIPPED")
+            for idx_result, (r_doc_type, r_fname, r_status, _) in enumerate(upload_results):
+                if r_doc_type == doc_type and r_fname == expected_name and r_status == "OK":
+                    upload_results[idx_result] = (
+                        r_doc_type, r_fname, "FAILED", "Visible row still shows no file after retry"
+                    )
+                    break
+            logger.error("Visible row verification failed for [%s] → %s", doc_type, expected_name)
 
-    if isinstance(log, AutomationLogger):
-        log.outdent()
-        log.info(f"Upload Summary: {ok_count} OK, {fail_count} Failed, {skip_count} Skipped")
-        log.indent()
-        for doc_type, fname, status, detail in upload_results:
-            msg = f"[{doc_type}] → {fname}: {detail}"
-            if status == "OK": log.success(msg)
-            elif status == "FAILED": log.error(msg)
-            else: log.info(f"(Skipped) {msg}")
-        log.outdent()
-    else:
-        log(f"\n{'═' * 50}")
-        log(f"📊 UPLOAD SUMMARY: {ok_count} uploaded, {fail_count} failed, {skip_count} skipped")
-        log(f"{'═' * 50}")
-        for doc_type, fname, status, detail in upload_results:
-            icon = "✅" if status == "OK" else "❌" if status == "FAILED" else "⏭️"
-            log(f"  {icon} [{doc_type}] → {fname} — {detail}")
+        ok_count = sum(1 for _, _, s, _ in upload_results if s == "OK")
+        fail_count = sum(1 for _, _, s, _ in upload_results if s == "FAILED")
+        skip_count = sum(1 for _, _, s, _ in upload_results if s == "SKIPPED")
 
-    if fail_count > 0:
         if isinstance(log, AutomationLogger):
-            log.error(f"{fail_count} document(s) failed to upload")
+            log.outdent()
+            log.info(f"Upload Summary: {ok_count} OK, {fail_count} Failed, {skip_count} Skipped")
+            log.indent()
+            for doc_type, fname, status, detail in upload_results:
+                msg = f"[{doc_type}] → {fname}: {detail}"
+                if status == "OK": log.success(msg)
+                elif status == "FAILED": log.error(msg)
+                else: log.info(f"(Skipped) {msg}")
+            log.outdent()
         else:
-            log(f"\n  ⚠️  {fail_count} document(s) failed to upload — check file names and portal dropdown values")
-        logger.error("%d document(s) failed to upload", fail_count)
+            log(f"\n{'═' * 50}")
+            log(f"📊 UPLOAD SUMMARY: {ok_count} uploaded, {fail_count} failed, {skip_count} skipped")
+            log(f"{'═' * 50}")
+            for doc_type, fname, status, detail in upload_results:
+                icon = "✅" if status == "OK" else "❌" if status == "FAILED" else "⏭️"
+                log(f"  {icon} [{doc_type}] → {fname} — {detail}")
 
-    if isinstance(log, AutomationLogger):
-        log.success("Claim Documents section complete.")
-        log.outdent()
-    else:
-        log(f"\n✅ Claim Documents complete — {len(queue)} rows processed.")
-    
-    return fail_count == 0
+        if fail_count > 0:
+            if isinstance(log, AutomationLogger):
+                log.error(f"{fail_count} document(s) failed to upload")
+            else:
+                log(f"\n  ⚠️  {fail_count} document(s) failed to upload — check file names and portal dropdown values")
+            logger.error("%d document(s) failed to upload", fail_count)
+
+        if isinstance(log, AutomationLogger):
+            log.success("Claim Documents section complete.")
+            log.outdent()
+        else:
+            log(f"\n✅ Claim Documents complete — {len(queue)} rows processed.")
+        
+        return fail_count == 0
+    finally:
+        try:
+            page.remove_all_listeners("dialog")
+        except Exception:
+            pass

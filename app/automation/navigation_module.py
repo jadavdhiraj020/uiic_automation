@@ -376,6 +376,10 @@ async def _find_and_click_claim(page: Page, claim_no: str, log) -> Optional[Page
     Search current table page for claim_no; click its Action button.
     Returns the new page (if a new tab opened) or same page, or None if not found.
     """
+    clicked = False
+    context = page.context
+    pages_before = set(id(p) for p in context.pages)
+
     try:
         rows = page.locator(SEL_RESULT_TABLE)
         count = await rows.count()
@@ -393,6 +397,8 @@ async def _find_and_click_claim(page: Page, claim_no: str, log) -> Optional[Page
         else:
             log(f"  📊 Found {count} rows in table")
 
+        matched_index = -1
+        target_row = None
         for i in range(count):
             row = rows.nth(i)
             try:
@@ -407,108 +413,111 @@ async def _find_and_click_claim(page: Page, claim_no: str, log) -> Optional[Page
                         log.success(f"Claim found in row {i + 1}")
                     else:
                         log(f"  ✅ Claim found in row {i + 1}: {text[:80]}...")
-
-                    # The portal may open a NEW TAB — listen for it
-                    context = page.context
-                    pages_before = set(id(p) for p in context.pages)
-
-                    # Strategy 1: Playwright locator click (proven selectors)
-                    for btn_sel in SEL_ACTION_BTN:
-                        try:
-                            btn = row.locator(btn_sel.strip()).first
-                            try:
-                                await btn.wait_for(state="visible", timeout=3000)
-                            except Exception:
-                                continue
-                            await btn.click(timeout=5000)
-                            if isinstance(log, AutomationLogger):
-                                log.success(f"Clicked Action button for claim {claim_no}")
-                            else:
-                                log(f"  ✅ Clicked Action button for claim {claim_no}")
-                            return await _detect_new_page(page, context, pages_before, log)
-                        except Exception:
-                            continue
-
-                    # Strategy 2: Click any <a> or <button> in the last table cell
-                    if isinstance(log, AutomationLogger):
-                        log.warning("'Click Here' not found — trying last cell...")
-                    else:
-                        log("  ⚠️  'Click Here' not found — trying last cell...")
-                        
-                    try:
-                        context = page.context
-                        pages_before = set(id(p) for p in context.pages)
-                        last_td = row.locator("td").last
-                        clickable = last_td.locator("a, button, input[type='button'], span[ng-click], [ng-click]").first
-                        try:
-                            await clickable.wait_for(state="visible", timeout=3000)
-                        except Exception:
-                            pass
-                        if await clickable.count() > 0:
-                            await clickable.click(timeout=5000, force=True)
-                            if isinstance(log, AutomationLogger):
-                                log.success(f"Clicked last-cell element for claim {claim_no}")
-                            else:
-                                log(f"  ✅ Clicked last-cell element for claim {claim_no}")
-                            return await _detect_new_page(page, context, pages_before, log)
-                    except Exception:
-                        pass
-
-                    # Strategy 3: JS click on the row's Action column
-                    if isinstance(log, AutomationLogger):
-                        log.info("Trying JS click on action column...")
-                    else:
-                        log("  ⚠️  Trying JS click on action column...")
-                        
-                    try:
-                        context = page.context
-                        pages_before = set(id(p) for p in context.pages)
-                        js_clicked = await page.evaluate(f"""
-                            (function() {{
-                                var rows = document.querySelectorAll('table tbody tr');
-                                var row = rows[{i}];
-                                if (!row) return null;
-                                var tds = row.querySelectorAll('td');
-                                if (tds.length === 0) return null;
-                                var lastTd = tds[tds.length - 1];
-                                // Click any clickable element in the last cell
-                                var el = lastTd.querySelector('a, button, input, span, [ng-click]');
-                                if (el) {{
-                                    el.click();
-                                    return el.tagName + ':' + (el.textContent || '').trim().substring(0, 30);
-                                }}
-                                // Fallback: click the td itself
-                                lastTd.click();
-                                return 'TD:clicked';
-                            }})();
-                        """)
-                        if js_clicked:
-                            if isinstance(log, AutomationLogger):
-                                log.success(f"Clicked via JS: {js_clicked}")
-                            else:
-                                log(f"  ✅ Clicked via JS: {js_clicked}")
-                            await asyncio.sleep(2)
-                            return await _detect_new_page(page, context, pages_before, log)
-                    except Exception as js_err:
-                        if isinstance(log, AutomationLogger):
-                            log.error(f"JS click failed: {str(js_err)[:60]}")
-                        else:
-                            log(f"  ⚠️  JS click failed: {str(js_err)[:60]}")
-
-                    if isinstance(log, AutomationLogger):
-                        log.error(f"Found claim row but couldn't click Action button")
-                    else:
-                        log(f"  ⚠️  Found claim row but couldn't click Action button")
-                    return None
-
+                    matched_index = i
+                    target_row = row
+                    break
             except Exception:
                 continue
+
+        if target_row is not None:
+            # Strategy 1: Playwright locator click (proven selectors)
+            for btn_sel in SEL_ACTION_BTN:
+                try:
+                    btn = target_row.locator(btn_sel.strip()).first
+                    try:
+                        await btn.wait_for(state="visible", timeout=3000)
+                    except Exception:
+                        continue
+                    await btn.click(timeout=5000)
+                    if isinstance(log, AutomationLogger):
+                        log.success(f"Clicked Action button for claim {claim_no}")
+                    else:
+                        log(f"  ✅ Clicked Action button for claim {claim_no}")
+                    clicked = True
+                    break
+                except Exception:
+                    continue
+
+            # Strategy 2: Click any <a> or <button> in the last table cell
+            if not clicked:
+                if isinstance(log, AutomationLogger):
+                    log.warning("'Click Here' not found — trying last cell...")
+                else:
+                    log("  ⚠️  'Click Here' not found — trying last cell...")
+                    
+                try:
+                    last_td = target_row.locator("td").last
+                    clickable = last_td.locator("a, button, input[type='button'], span[ng-click], [ng-click]").first
+                    try:
+                        await clickable.wait_for(state="visible", timeout=3000)
+                    except Exception:
+                        pass
+                    if await clickable.count() > 0:
+                        await clickable.click(timeout=5000, force=True)
+                        if isinstance(log, AutomationLogger):
+                            log.success(f"Clicked last-cell element for claim {claim_no}")
+                        else:
+                            log(f"  ✅ Clicked last-cell element for claim {claim_no}")
+                        clicked = True
+                except Exception:
+                    pass
+
+            # Strategy 3: JS click on the row's Action column
+            if not clicked:
+                if isinstance(log, AutomationLogger):
+                    log.info("Trying JS click on action column...")
+                else:
+                    log("  ⚠️  Trying JS click on action column...")
+                    
+                try:
+                    js_clicked = await page.evaluate(f"""
+                        (function() {{
+                            var rows = document.querySelectorAll('table tbody tr');
+                            var row = rows[{matched_index}];
+                            if (!row) return null;
+                            var tds = row.querySelectorAll('td');
+                            if (tds.length === 0) return null;
+                            var lastTd = tds[tds.length - 1];
+                            // Click any clickable element in the last cell
+                            var el = lastTd.querySelector('a, button, input, span, [ng-click]');
+                            if (el) {{
+                                el.click();
+                                return el.tagName + ':' + (el.textContent || '').trim().substring(0, 30);
+                            }}
+                            // Fallback: click the td itself
+                            lastTd.click();
+                            return 'TD:clicked';
+                        }})();
+                    """)
+                    if js_clicked:
+                        if isinstance(log, AutomationLogger):
+                            log.success(f"Clicked via JS: {js_clicked}")
+                        else:
+                            log(f"  ✅ Clicked via JS: {js_clicked}")
+                        await asyncio.sleep(2)
+                        clicked = True
+                except Exception as js_err:
+                    if isinstance(log, AutomationLogger):
+                        log.error(f"JS click failed: {str(js_err)[:60]}")
+                    else:
+                        log(f"  ⚠️  JS click failed: {str(js_err)[:60]}")
+
+            if not clicked:
+                if isinstance(log, AutomationLogger):
+                    log.error(f"Found claim row but couldn't click Action button")
+                else:
+                    log(f"  ⚠️  Found claim row but couldn't click Action button")
 
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Row scan error: {e}")
         else:
             log(f"  ⚠️  Row scan error: {e}")
+
+    # Return new page detection outside the try-except block so exceptions propagate immediately!
+    if clicked:
+        return await _detect_new_page(page, context, pages_before, log)
+
     return None
 
 
