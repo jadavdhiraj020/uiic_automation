@@ -65,17 +65,26 @@ def get_shared_ocr():
                 # In source runs, fall back to ~/.paddleocr (standard PaddleOCR default).
                 # This single code path covers both environments without duplication
                 # and correctly handles the case where the user overrides PADDLEOCR_HOME.
-                if getattr(sys, "frozen", False):
+                is_frozen = getattr(sys, "frozen", False)
+                if is_frozen:
                     paddleocr_home = os.environ.get(
                         "PADDLEOCR_HOME",
                         os.path.join(sys._MEIPASS, ".paddleocr"),
                     )
                 else:
                     from pathlib import Path
-                    paddleocr_home = os.environ.get(
-                        "PADDLEOCR_HOME",
-                        str(Path.home() / ".paddleocr"),
-                    )
+                    paddleocr_home = os.environ.get("PADDLEOCR_HOME")
+                    if not paddleocr_home:
+                        repo_root = Path(__file__).resolve().parents[2]
+                        build_assets_ocr = repo_root / "build_assets" / "paddleocr"
+                        user_home_ocr = Path.home() / ".paddleocr"
+                        if (user_home_ocr / "whl" / "det").is_dir():
+                            paddleocr_home = str(user_home_ocr)
+                        elif (build_assets_ocr / "whl" / "det").is_dir():
+                            paddleocr_home = str(build_assets_ocr)
+                        else:
+                            paddleocr_home = str(user_home_ocr)
+
                 model_root = os.path.join(paddleocr_home, "whl")
                 logger.info("[OCR] model_root resolved to: %s", model_root)
 
@@ -85,14 +94,22 @@ def get_shared_ocr():
 
                 _missing = [n for n, d in [("det", det_dir), ("rec", rec_dir), ("cls", cls_dir)] if not os.path.isdir(d)]
                 if _missing:
-                    msg = (
-                        f"PaddleOCR models missing: {', '.join(_missing)}. "
-                        f"Expected in: {model_root}. "
-                        "Re-run the build with models cached in build_assets/paddleocr "
-                        "or pre-populate ~/.paddleocr/whl/ before first run."
-                    )
-                    logger.error(f"[OCR] {msg}")
-                    raise RuntimeError(msg)
+                    if is_frozen:
+                        msg = (
+                            f"PaddleOCR models missing: {', '.join(_missing)}. "
+                            f"Expected in: {model_root}. "
+                            "Re-run the build with models cached in build_assets/paddleocr "
+                            "or pre-populate ~/.paddleocr/whl/ before first run."
+                        )
+                        logger.error(f"[OCR] {msg}")
+                        raise RuntimeError(msg)
+                    else:
+                        logger.warning(
+                            f"[OCR] PaddleOCR models missing ({', '.join(_missing)}) in {model_root}. "
+                            "Auto-downloading required models for source run..."
+                        )
+                        os.environ["PADDLEOCR_HOME"] = paddleocr_home
+                        kwargs["download"] = True
 
                 if os.path.isdir(det_dir):
                     kwargs["det_model_dir"] = det_dir
@@ -101,7 +118,8 @@ def get_shared_ocr():
                 if os.path.isdir(cls_dir):
                     kwargs["cls_model_dir"] = cls_dir
 
-                kwargs["download"] = False  # Never download — use bundled/cached models only
+                if "download" not in kwargs:
+                    kwargs["download"] = False  # Never re-download if cached models are already present
                 _ocr = PaddleOCR(**kwargs)
                 elapsed = time.perf_counter() - start_time
                 logger.info(f"[OCR] Shared PaddleOCR singleton initialized successfully in {elapsed:.2f} seconds.")
