@@ -45,13 +45,38 @@ class _XlrdWrapper:
         return self._wb.sheet_names()
 
     def get_sheet(self, name):
-        if name not in self._sheets:
+        clean_name = str(name).strip().lower()
+        if clean_name not in self._sheets:
+            # 1. Try exact match
+            matched_sh = None
             try:
-                sh = self._wb.sheet_by_name(name)
-                self._sheets[name] = _XlrdSheetWrapper(sh)
+                matched_sh = self._wb.sheet_by_name(name)
             except Exception:
-                return None
-        return self._sheets[name]
+                # 2. Try case-insensitive / trimmed match across sheet names
+                for i in range(self._wb.nsheets):
+                    sh = self._wb.sheet_by_index(i)
+                    if sh.name.strip().lower() == clean_name:
+                        matched_sh = sh
+                        break
+
+            if matched_sh is not None:
+                self._sheets[clean_name] = _XlrdSheetWrapper(matched_sh)
+                return self._sheets[clean_name]
+
+            # 3. Fallback: if name is like "Sheet1", "Sheet2", try 1-based index
+            import re
+            m = re.match(r"^Sheet(\d+)$", clean_name, re.IGNORECASE)
+            if m:
+                idx = int(m.group(1)) - 1
+                if 0 <= idx < self._wb.nsheets:
+                    try:
+                        sh = self._wb.sheet_by_index(idx)
+                        self._sheets[clean_name] = _XlrdSheetWrapper(sh)
+                        return self._sheets[clean_name]
+                    except Exception:
+                        pass
+            return None
+        return self._sheets[clean_name]
 
     def all_sheets(self):
         for i in range(self._wb.nsheets):
@@ -81,12 +106,31 @@ class _OpenpyxlWrapper:
         return self._wb.sheetnames
 
     def get_sheet(self, name):
-        if name not in self._sheets:
+        clean_name = str(name).strip().lower()
+        if clean_name not in self._sheets:
+            # 1. Exact match
             if name in self._wb:
-                self._sheets[name] = _OpenpyxlSheetWrapper(self._wb[name])
-            else:
-                return None
-        return self._sheets[name]
+                self._sheets[clean_name] = _OpenpyxlSheetWrapper(self._wb[name])
+                return self._sheets[clean_name]
+
+            # 2. Case-insensitive / trimmed match
+            for real_name in self._wb.sheetnames:
+                if real_name.strip().lower() == clean_name:
+                    self._sheets[clean_name] = _OpenpyxlSheetWrapper(self._wb[real_name])
+                    return self._sheets[clean_name]
+
+            # 3. Fallback: if name is like "Sheet1", "Sheet2", try 1-based index
+            import re
+            m = re.match(r"^Sheet(\d+)$", clean_name, re.IGNORECASE)
+            if m:
+                idx = int(m.group(1)) - 1
+                names = self._wb.sheetnames
+                if 0 <= idx < len(names):
+                    real_name = names[idx]
+                    self._sheets[clean_name] = _OpenpyxlSheetWrapper(self._wb[real_name])
+                    return self._sheets[clean_name]
+            return None
+        return self._sheets[clean_name]
 
     def all_sheets(self):
         for n in self._wb.sheetnames:
@@ -213,11 +257,22 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                 # Found the label at (r_idx, c_idx)
                 
                 # ── Strategy 0: Inline value (e.g., "Mobile: 098761-35253" in one cell)
+                # Only check inline if:
+                # 1) User specified col_offset == 0 (explicitly in the same cell), OR
+                # 2) Cell starts with label (e.g. "Ref: XYZ") and is concise, NOT a huge multi-sentence paragraph.
                 inline_content = cell_str.replace(label_lower, "").strip(" :-\n\t")
-                if len(inline_content) > 3:
+                is_concise_inline = 0 < len(inline_content) <= 120 and len(inline_content.split()) <= 15
+                can_try_inline = (col_offset == 0) or (
+                    is_concise_inline and (
+                        cell_str.startswith(label_lower)
+                        or ":" in str(cell)
+                    )
+                )
+
+                if can_try_inline and len(inline_content) >= 1:
                     orig_cell = str(cell)
                     # Try splitting by colon or just removing the label text
-                    if ":" in orig_cell:
+                    if ":" in orig_cell and not allow_text_values:
                         val = orig_cell.split(":", 1)[-1].strip(" -\n\t")
                     else:
                         val = re.sub(re.escape(label), "", orig_cell, flags=re.IGNORECASE).strip(" -:\n\t")

@@ -143,7 +143,7 @@
     "col_offset": 5
   },
   "invoice_no": {
-    "sheet": "Sheet5",
+    "sheet": "ALL",
     "search_label": [
       "invoice_no",
       "Invoice No",
@@ -153,7 +153,7 @@
     "col_offset": 1
   },
   "invoice_date": {
-    "sheet": "Sheet5",
+    "sheet": "ALL",
     "search_label": [
       "invoice_date",
       "invoice date",
@@ -163,19 +163,30 @@
     "col_offset": 1
   },
   "final_report_no": {
-    "sheet": "Sheet1",
-    "search_label": "Ref:",
+    "sheet": "ALL",
+    "search_labels": [
+      "Ref:",
+      "Ref No",
+      "Ref No:",
+      "Report No",
+      "Report No:",
+      "Final Report No"
+    ],
     "row_offset": 0,
     "col_offset": 1
   },
   "final_report_date": {
-    "sheet": "Sheet1",
-    "search_label": "Date:",
+    "sheet": "ALL",
+    "search_labels": [
+      "Date:",
+      "Report Date",
+      "Final Report Date"
+    ],
     "row_offset": 0,
     "col_offset": 1
   },
   "traveling_expenses": {
-    "sheet": "Sheet5",
+    "sheet": "ALL",
     "search_label": [
       "traveling_expenses",
       "conveyance",
@@ -186,7 +197,7 @@
     "col_offset": 5
   },
   "professional_fee": {
-    "sheet": "Sheet5",
+    "sheet": "ALL",
     "search_label": [
       "professional_fee",
       "professional fee",
@@ -197,7 +208,7 @@
     "col_offset": 5
   },
   "daily_allowance": {
-    "sheet": "Sheet5",
+    "sheet": "ALL",
     "search_label": [
       "DAILY_ALLOWANCE",
       "daily allowance",
@@ -207,7 +218,7 @@
     "col_offset": 5
   },
   "photo_charges": {
-    "sheet": "Sheet5",
+    "sheet": "ALL",
     "search_label": [
       "photocharges",
       "PHOTOGRAPHS",

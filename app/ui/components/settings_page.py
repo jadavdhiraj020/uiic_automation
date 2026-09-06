@@ -419,6 +419,7 @@ class SettingsPage(QWidget):
             # Sheet Dropdown
             sheet_combo = SafeComboBox()
             sheet_combo.setObjectName("embeddedCombo")
+            sheet_combo.setEditable(True)
             sheet_combo.addItems(["ALL", "Sheet1", "Sheet2", "Sheet3", "Sheet4", "Sheet5", "Sheet6", "Sheet7", "Sheet8", "Sheet9", "Sheet10"])
             sheet_val = cfg.get("sheet", "ALL")
             idx = sheet_combo.findText(sheet_val)
