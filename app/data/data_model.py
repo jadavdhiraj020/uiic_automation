@@ -14,6 +14,7 @@ MULTI-PORTAL SUPPORT (2026-05-09):
   - UIIC fields are unchanged — 100% backward compatible.
   - New India fields are additive (new attributes with empty defaults).
 """
+import calendar
 import logging
 from datetime import date, datetime
 import re
@@ -22,6 +23,84 @@ from decimal import Decimal, InvalidOperation
 from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+def _add_one_calendar_month(date_str: str) -> str:
+    """
+    Add exactly 1 calendar month to date_str with valid month-end and leap-year handling.
+    Clamps to the last valid day of the target month (e.g. Jan 31 -> Feb 28/29).
+    Returns normalized DD/MM/YYYY string, or "" if date_str is empty/invalid.
+    """
+    if not date_str or not str(date_str).strip():
+        return ""
+    val = str(date_str).strip()
+
+    dt = None
+    for fmt in (
+        "%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%Y/%m/%d", "%d.%m.%Y",
+        "%Y-%m-%d %H:%M:%S", "%d-%m-%Y %H:%M:%S", "%d/%m/%Y %H:%M:%S",
+        "%B %d, %Y", "%b %d, %Y",
+    ):
+        try:
+            dt = datetime.strptime(val, fmt)
+            break
+        except ValueError:
+            pass
+
+    if dt is None:
+        m_text = re.search(r'(?:[A-Za-z]{3,9}\s+)?([A-Za-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})', val)
+        if m_text:
+            mon_str, d_str, y_str = m_text.groups()
+            for m_fmt in ("%b", "%B"):
+                try:
+                    mon_dt = datetime.strptime(mon_str, m_fmt)
+                    dt = datetime(int(y_str), mon_dt.month, int(d_str))
+                    break
+                except ValueError:
+                    pass
+
+    if dt is None:
+        m_text2 = re.search(r'(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9}),?\s+(\d{4})', val)
+        if m_text2:
+            d_str, mon_str, y_str = m_text2.groups()
+            for m_fmt in ("%b", "%B"):
+                try:
+                    mon_dt = datetime.strptime(mon_str, m_fmt)
+                    dt = datetime(int(y_str), mon_dt.month, int(d_str))
+                    break
+                except ValueError:
+                    pass
+
+    if dt is None:
+        m = re.search(r'(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})', val)
+        if m:
+            d, mon, y = m.groups()
+            try:
+                dt = datetime(int(y), int(mon), int(d))
+            except ValueError:
+                pass
+
+    if dt is None:
+        m2 = re.search(r'(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})', val)
+        if m2:
+            y, mon, d = m2.groups()
+            try:
+                dt = datetime(int(y), int(mon), int(d))
+            except ValueError:
+                pass
+
+    if dt is None:
+        logger.warning(f"Could not parse date for +1 month calculation: '{date_str}'")
+        return ""
+
+    # Calendar month calculation:
+    new_year = dt.year + (dt.month // 12)
+    new_month = (dt.month % 12) + 1
+    max_days = calendar.monthrange(new_year, new_month)[1]
+    new_day = min(dt.day, max_days)
+
+    return datetime(new_year, new_month, new_day).strftime("%d/%m/%Y")
+
 
 
 def _parse_amount_for_total(value) -> int:
@@ -137,11 +216,13 @@ class ClaimData:
     parts_age_dep_excl_gst: str = "0"
     parts_50_dep_excl_gst: str = "0"
     parts_nil_dep_excl_gst: str = "0"
+    gst_summary_parts: str = "0"
     nil_depreciation: str = ""
     parts_gst18_amount: str = "0"
 
     # ── Claim Assessment — Labour ─────────────────────────────────────────────
     labour_excl_gst: str = "0"
+    gst_summary_labour: str = "0"
 
     # ── Claim Assessment — Other Charges ─────────────────────────────────────
     workshop_invoice_no: str = ""
@@ -170,6 +251,8 @@ class ClaimData:
     # ── Surveyor Charges ──────────────────────────────────────────────────────
     traveling_expenses: str = "0"
     professional_fee: str = "0"
+    survey_fee: str = "0"
+    reinspection_fee: str = "0"
     daily_allowance: str = "0"
     photo_charges: str = "0"
     sfb_others: str = "0"               # NIA Survey Fee Bill "Others" amount
@@ -335,6 +418,23 @@ class ClaimData:
     surveyor_address: str = ""
     surveyor_pan: str = ""
 
+    # Property aliases for case flexibility (GST_summary_parts / GST_summary_labour)
+    @property
+    def GST_summary_parts(self) -> str:
+        return self.gst_summary_parts
+
+    @GST_summary_parts.setter
+    def GST_summary_parts(self, val: str):
+        self.gst_summary_parts = str(val or "0")
+
+    @property
+    def GST_summary_labour(self) -> str:
+        return self.gst_summary_labour
+
+    @GST_summary_labour.setter
+    def GST_summary_labour(self, val: str):
+        self.gst_summary_labour = str(val or "0")
+
 
     def calculate_derived_fields(self):
         """Calculate fields that are derived from other extracted values."""
@@ -347,10 +447,39 @@ class ClaimData:
             self.surveyor_mobile = _clean_mobile_10(self.surveyor_mobile)
             self._excel_logs.append(f"  📊 surveyor_mobile cleaned: '{self.surveyor_mobile}'")
 
-        # 1. Expected completion date aligns with date of survey
-        if self.date_of_survey:
-            self.expected_completion_date = self.date_of_survey
+        # 1. Expected completion date depends ONLY and ONLY on date_of_survey (+1 calendar month)
+        if self.date_of_survey and str(self.date_of_survey).strip():
+            self.expected_completion_date = _add_one_calendar_month(self.date_of_survey)
             self._excel_coords["expected_completion_date"] = self._excel_coords.get("date_of_survey", "")
+            self._excel_logs.append(
+                f"  📊 expected_completion_date: '{self.expected_completion_date}' (+1 month from date_of_survey '{self.date_of_survey}')"
+            )
+        else:
+            self.expected_completion_date = ""
+            self._excel_coords.pop("expected_completion_date", None)
+
+        # 1b. Survey time fallback for UIIC: if date_of_survey is present but time_hh is not set
+        if self.portal_id == "uiic":
+            if self.date_of_survey and not self.time_hh:
+                self.time_hh = "11"
+                self.time_mm = "00"
+                self._excel_coords["time_hh"] = "Default (11:00 AM)"
+                self._excel_logs.append("  📊 time_of_survey: '11:00' (Source: Default Fallback)")
+            elif not self.date_of_survey and self._excel_coords.get("time_hh", "").startswith("Default"):
+                self.time_hh = ""
+                self.time_mm = ""
+                self._excel_coords.pop("time_hh", None)
+
+        # 1c. Net Assessed Parts / Labour fallback from GST summary if primary field is 0 or empty
+        if (not self.parts_nil_dep_excl_gst or str(self.parts_nil_dep_excl_gst).strip() == "0") and (self.gst_summary_parts and str(self.gst_summary_parts).strip() != "0"):
+            self.parts_nil_dep_excl_gst = self.gst_summary_parts
+            if "parts_nil_dep_excl_gst" not in self._excel_coords and "gst_summary_parts" in self._excel_coords:
+                self._excel_coords["parts_nil_dep_excl_gst"] = f"{self._excel_coords['gst_summary_parts']} (GST Summary Parts)"
+
+        if (not self.labour_excl_gst or str(self.labour_excl_gst).strip() == "0") and (self.gst_summary_labour and str(self.gst_summary_labour).strip() != "0"):
+            self.labour_excl_gst = self.gst_summary_labour
+            if "labour_excl_gst" not in self._excel_coords and "gst_summary_labour" in self._excel_coords:
+                self._excel_coords["labour_excl_gst"] = f"{self._excel_coords['gst_summary_labour']} (GST Summary Labour)"
 
         # 2. Total Claimed Amount (Sum of surveyor charges)
         try:
@@ -941,9 +1070,11 @@ class ClaimData:
             ("Parts Age Dep (₹)",     self.parts_age_dep_excl_gst, False, _src("parts_age_dep_excl_gst")),
             ("Parts 50% Dep (₹)",     self.parts_50_dep_excl_gst,  False, _src("parts_50_dep_excl_gst")),
             ("Parts Nil Dep (₹)",     self.parts_nil_dep_excl_gst, False, _src("parts_nil_dep_excl_gst")),
+            ("GST Summary Parts (₹)", self.gst_summary_parts,      False, _src("gst_summary_parts")),
             ("Nil Depreciation",      self.nil_depreciation,       False, _src("nil_depreciation")),
             ("Parts GST 18% (₹)",     self.parts_gst18_amount,     False, _src("parts_gst18_amount")),
             ("Labour (₹)",            self.labour_excl_gst,        True,  _src("labour_excl_gst")),
+            ("GST Summary Labour (₹)",self.gst_summary_labour,     False, _src("gst_summary_labour")),
             ("Workshop Inv No",       self.workshop_invoice_no,   False, _src("workshop_invoice_no")),
             ("Workshop Inv Date",     self.workshop_invoice_date, False, _src("workshop_invoice_date")),
             ("Towing Charges (₹)",    self.towing_charges,        False, _src("towing_charges")),
@@ -957,7 +1088,9 @@ class ClaimData:
             ("Report No",             self.final_report_no,       True,  _src("final_report_no")),
             ("Report Date",           self.final_report_date,     False, _src("final_report_date")),
             ("Travel Exp (₹)",        self.traveling_expenses,    False, _src("traveling_expenses")),
-            ("Prof. Fee (₹)",         self.professional_fee,      False, _src("professional_fee")),
+            ("Survey Fee (₹)",        self.survey_fee,            False, _src("survey_fee")),
+            ("Reinspection Fee (₹)",  self.reinspection_fee,      False, _src("reinspection_fee")),
+            ("Prof. Fee (Total ₹)",   self.professional_fee,      False, _src("professional_fee") or "Sum(Survey+Reinsp)"),
             ("Daily Allow. (₹)",      self.daily_allowance,       False, _src("daily_allowance")),
             ("Photo Charges (₹)",     self.photo_charges,         False, _src("photo_charges")),
             ("Observation",           self.surveyor_observation,  False, _src("surveyor_observation")),

@@ -88,10 +88,32 @@
     "row_offset": 0,
     "col_offset": 8
   },
+  "gst_summary_parts": {
+    "sheet": "Sheet1",
+    "search_label": [
+      "GST SUMMARY – SPARES",
+      "GST SUMMARY - SPARES",
+      "GST SUMMARY SPARES",
+      "GST SUMMARY - PARTS",
+      "GST SUMMARY PARTS"
+    ],
+    "row_offset": 4,
+    "col_offset": 1
+  },
   "labour_excl_gst": {
     "sheet": "Sheet1",
     "search_label": "TOTAL (R/R, DENTING, C/W, PAINTING)",
     "row_offset": 0,
+    "col_offset": 1
+  },
+  "gst_summary_labour": {
+    "sheet": "Sheet1",
+    "search_label": [
+      "GST SUMMARY – LABOUR",
+      "GST SUMMARY - LABOUR",
+      "GST SUMMARY LABOUR"
+    ],
+    "row_offset": 4,
     "col_offset": 1
   },
   "towing_charges": {
@@ -196,13 +218,22 @@
     "row_offset": 0,
     "col_offset": 5
   },
-  "professional_fee": {
+  "survey_fee": {
     "sheet": "ALL",
     "search_label": [
-      "professional_fee",
-      "professional fee",
       "SURVEY FEE",
-      "SURVEY FEES"
+      "SURVEY FEES",
+      "survey fee"
+    ],
+    "row_offset": 0,
+    "col_offset": 5
+  },
+  "reinspection_fee": {
+    "sheet": "ALL",
+    "search_label": [
+      "REINSPECTION FEE",
+      "RE-INSPECTION FEE",
+      "reinspection fee"
     ],
     "row_offset": 0,
     "col_offset": 5

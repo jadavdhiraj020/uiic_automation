@@ -418,13 +418,39 @@ def _format_date(raw: str) -> str:
     val = str(raw).strip()
     
     # Try parsing common formats, particularly timestamps from Excel
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d-%m-%Y %H:%M:%S", "%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y", "%d.%m.%Y", "%Y/%m/%d", "%B %d, %Y"):
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d-%m-%Y %H:%M:%S", "%d-%m-%Y",
+        "%d/%m/%Y", "%m/%d/%Y", "%d.%m.%Y", "%Y/%m/%d", "%B %d, %Y", "%b %d, %Y",
+        "%a %b %d %Y", "%b %d %Y"
+    ):
         try:
             dt = datetime.strptime(val, fmt)
             return dt.strftime("%d/%m/%Y")
         except ValueError:
             pass
-            
+
+    # Regex for textual month names (e.g. 'Thu Apr 27 2023 ...' or 'Apr 27 2023' or 'April 27, 2023')
+    m_text = re.search(r'(?:[A-Za-z]{3,9}\s+)?([A-Za-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})', val)
+    if m_text:
+        mon_str, d_str, y_str = m_text.groups()
+        for m_fmt in ("%b", "%B"):
+            try:
+                mon_dt = datetime.strptime(mon_str, m_fmt)
+                return f"{int(d_str):02d}/{mon_dt.month:02d}/{y_str}"
+            except ValueError:
+                pass
+
+    # Regex for '27 Apr 2023' or '27th April 2023'
+    m_text2 = re.search(r'(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9}),?\s+(\d{4})', val)
+    if m_text2:
+        d_str, mon_str, y_str = m_text2.groups()
+        for m_fmt in ("%b", "%B"):
+            try:
+                mon_dt = datetime.strptime(mon_str, m_fmt)
+                return f"{int(d_str):02d}/{mon_dt.month:02d}/{y_str}"
+            except ValueError:
+                pass
+
     # Regex fallback if formats above fail
     m = re.search(r'(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})', val)
     if m:
@@ -436,21 +462,65 @@ def _format_date(raw: str) -> str:
         y, mon, d = m2.groups()
         return f"{int(d):02d}/{int(mon):02d}/{y}"
         
-    # Final fallback: if it looks like a timestamp (date + space + time), return just the date.
-    # Otherwise return the string as-is to preserve alphabetic dates that didn't match formats.
+    # Fallback: if it looks like a timestamp (date + space + time), return normalized date part
     if " " in val and ":" in val:
-        return val.split(" ")[0]
+        candidate = val.split(" ")[0]
+        if any(c.isdigit() for c in candidate) and any(c in "-/." for c in candidate):
+            return _format_date(candidate)
     return val
+
+
+def _parse_time_string(val: str) -> Optional[Tuple[str, str]]:
+    """
+    Parse a string for a valid time, converting to 24-hour (HH, MM).
+    Supports:
+      - 12h: '11:30 AM', '11.30am', '11 AM', '02:15 PM', '2.30 pm', 'at 11:30 AM'
+      - 24h: '14:30', '11:00', '09:15', '2023-04-27 11:30:00'
+    Ignores timezone indicators (e.g. GMT+0530, India Standard Time) since those
+    represent UTC midnight conversions rather than actual survey times.
+    Returns (hh_str, mm_str) or None.
+    """
+    if not val or not str(val).strip():
+        return None
+    s = str(val).strip()
+
+    # If the string contains timezone indicators (e.g. JS Date export), do not treat as survey time
+    if "gmt" in s.lower() or "utc" in s.lower() or "standard time" in s.lower():
+        return None
+
+    # 1. 12-hour AM/PM pattern (e.g. 11:30 AM, 11.30am, 2 PM)
+    m_ampm = re.search(r"\b(\d{1,2})[.:](\d{2})\s*([aA]\.?[mM]\.?|[pP]\.?[mM]\.?)\b", s)
+    if not m_ampm:
+        m_ampm = re.search(r"\b(\d{1,2})\s*([aA]\.?[mM]\.?|[pP]\.?[mM]\.?)\b", s)
+    if m_ampm:
+        h = int(m_ampm.group(1))
+        m = int(m_ampm.group(2)) if (m_ampm.lastindex >= 3 and m_ampm.group(2)) else 0
+        ampm = m_ampm.group(m_ampm.lastindex).replace(".", "").lower()
+        if 1 <= h <= 12 and 0 <= m <= 59:
+            if ampm == "pm" and h < 12:
+                h += 12
+            elif ampm == "am" and h == 12:
+                h = 0
+            return f"{h:02d}", f"{m:02d}"
+
+    # 2. 24-hour pattern (HH:MM or HH:MM:SS or HH.MM)
+    m_24 = re.search(r"\b([01]?\d|2[0-3])[.:]([0-5]\d)(?::[0-5]\d)?\b", s)
+    if m_24:
+        h = int(m_24.group(1))
+        m = int(m_24.group(2))
+        return f"{h:02d}", f"{m:02d}"
+
+    return None
 
 
 def _extract_time_from_adjacent_cells(wb, sheet_name, found_label, cfg, claim) -> bool:
     """Helper to scan adjacent cells for survey time if missing from main cell."""
-    time_found = False
     try:
         all_sheets = wb.all_sheets() if sheet_name == "ALL" else [wb.get_sheet(sheet_name)]
         for sh in all_sheets:
             if sh is None:
                 continue
+            sh_name = sh.name if hasattr(sh, "name") else "Sheet"
             for r_idx, row in enumerate(sh.rows()):
                 for c_idx, cell in enumerate(row):
                     cell_lower = str(cell).strip().lower()
@@ -461,30 +531,93 @@ def _extract_time_from_adjacent_cells(wb, sheet_name, found_label, cfg, claim) -
                             target_row = all_row_data[target_r]
                             for tc in range(c_idx + 1, len(target_row)):
                                 tc_str = str(target_row[tc]).strip()
-                                tm = re.search(r"(\d{1,2})[.:]?(\d{2})?\s*([aA]\.?[mM]\.?|[pP]\.?[mM]\.?)", tc_str)
-                                if tm:
-                                    h = int(tm.group(1))
-                                    m = tm.group(2) or "00"
-                                    ampm = tm.group(3).replace(".", "").lower()
-                                    if ampm == "pm" and h < 12:
-                                        h += 12
-                                    elif ampm == "am" and h == 12:
-                                        h = 0
-                                    claim.time_hh = f"{h:02d}"
-                                    claim.time_mm = f"{int(m):02d}"
-                                    time_found = True
-                                    logger.info(f"  [TIME] Extracted from adjacent cell R{target_r+1}C{tc+1}: {claim.time_hh}:{claim.time_mm}")
-                                    return True
-                                tm24 = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", tc_str)
-                                if tm24:
-                                    claim.time_hh = f"{int(tm24.group(1)):02d}"
-                                    claim.time_mm = f"{int(tm24.group(2)):02d}"
-                                    time_found = True
-                                    logger.info(f"  [TIME] Extracted 24h from adjacent cell R{target_r+1}C{tc+1}: {claim.time_hh}:{claim.time_mm}")
+                                parsed = _parse_time_string(tc_str)
+                                if parsed:
+                                    claim.time_hh, claim.time_mm = parsed
+                                    coord_str = f"R{target_r+1}C{tc+1} ({sh_name})"
+                                    claim._excel_coords["time_hh"] = coord_str
+                                    claim._excel_logs.append(
+                                        f"  📊 time_of_survey: '{claim.time_hh}:{claim.time_mm}' (Source: {coord_str})"
+                                    )
+                                    logger.info(f"  [TIME] Extracted from adjacent cell {coord_str}: {claim.time_hh}:{claim.time_mm}")
                                     return True
     except Exception as e:
         logger.warning(f"  [TIME] Adjacent cell scan failed: {e}")
     return False
+
+
+def _calculate_professional_fee(survey_fee: any, reinspection_fee: any) -> str:
+    """
+    Calculates professional_fee = survey_fee + reinspection_fee using Decimal arithmetic.
+    """
+    survey_raw = re.sub(r"[^\d.]", "", str(survey_fee or "0").replace(",", "").strip())
+    reinsp_raw = re.sub(r"[^\d.]", "", str(reinspection_fee or "0").replace(",", "").strip())
+    try:
+        val_survey = Decimal(survey_raw) if survey_raw else Decimal("0")
+    except (InvalidOperation, ValueError):
+        val_survey = Decimal("0")
+    try:
+        val_reinsp = Decimal(reinsp_raw) if reinsp_raw else Decimal("0")
+    except (InvalidOperation, ValueError):
+        val_reinsp = Decimal("0")
+
+    total_prof = val_survey + val_reinsp
+    if total_prof == Decimal("0"):
+        return "0"
+    if total_prof == total_prof.to_integral():
+        return str(int(total_prof))
+    return f"{total_prof:.2f}"
+
+
+def _find_email_by_regex(wb, sheet_name: str = "Sheet1") -> Tuple[Optional[str], Optional[str]]:
+    """
+    Scans the given sheet for a cell containing an email address ending in .com using regex.
+    Prioritizes cell I4 (Surveyor letterhead email) if present, then scans row-by-row.
+    Returns (clean_email, coord_str) or (None, None).
+    """
+    EMAIL_COM_REGEX = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.com\b", re.IGNORECASE)
+
+    sh = wb.get_sheet(sheet_name)
+    if not sh:
+        all_sh = wb.all_sheets()
+        sh = all_sh[0] if all_sh else None
+    if not sh:
+        return None, None
+
+    sh_name = sh.name if hasattr(sh, "name") else sheet_name
+    all_rows = list(sh.rows())
+    if not all_rows:
+        return None, None
+
+    # Priority 1: Check cell I4 (Row 4, Column I -> 0-based r=3, c=8)
+    if len(all_rows) > 3:
+        row4 = all_rows[3]
+        if len(row4) > 8:
+            val_i4 = str(row4[8] or "").strip()
+            if ".com" in val_i4.lower() and "@" in val_i4:
+                m = EMAIL_COM_REGEX.search(val_i4)
+                if m:
+                    email_clean = m.group(0).strip()
+                    coord_str = f"I4 ({sh_name})"
+                    logger.info(f"  [EMAIL REGEX] Found email at cell I4: {email_clean}")
+                    return email_clean, coord_str
+
+    # Priority 2: Scan all cells in the sheet for the first regex .com email match
+    for r_idx, row in enumerate(all_rows):
+        for c_idx, cell in enumerate(row):
+            if cell is None or cell == "":
+                continue
+            cell_str = str(cell).strip()
+            if ".com" in cell_str.lower() and "@" in cell_str:
+                m = EMAIL_COM_REGEX.search(cell_str)
+                if m:
+                    email_clean = m.group(0).strip()
+                    coord_str = f"R{r_idx+1}C{c_idx+1} ({sh_name})"
+                    logger.info(f"  [EMAIL REGEX] Found email at {coord_str}: {email_clean}")
+                    return email_clean, coord_str
+
+    return None, None
+
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
@@ -546,67 +679,89 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
         value = None
         found_label = ""
 
-        for current_label in labels:
-            if not current_label:
-                continue
-                
-            if sheet_name == "ALL":
-                for sh in wb.all_sheets():
-                    value, coord = _search_label(
-                        sh, current_label, row_off, col_off, is_date,
-                        allow_literal_values, allow_text_values
-                    )
-                    if value:
-                        sh_name = sh.name if hasattr(sh, 'name') else 'Sheet'
-                        src_str = f"{coord} ({sh_name})"
-                        claim._excel_coords[field_name] = src_str
-                        claim._excel_logs.append(f"  📊 {field_name}: '{value}' (Source: {src_str})")
-                        found_label = current_label
-                        break
-            else:
-                sh = wb.get_sheet(sheet_name)
-                if sh:
-                    value, coord = _search_label(
-                        sh, current_label, row_off, col_off, is_date,
-                        allow_literal_values, allow_text_values
-                    )
-                    if value:
-                        src_str = f"{coord} ({sheet_name})"
-                        claim._excel_coords[field_name] = src_str
-                        claim._excel_logs.append(f"  📊 {field_name}: '{value}' (Source: {src_str})")
-                        found_label = current_label
-                else:
-                    if current_label == labels[-1]: # Only warn on the last fallback try
-                        logger.warning(f"  [{field_name}] Sheet '{sheet_name}' not found in workbook")
+        # ── Priority 0 for email_id: Regex .com discovery on Sheet1 ──────────
+        if field_name == "email_id":
+            regex_email, regex_coord = _find_email_by_regex(wb, sheet_name=sheet_name)
+            if regex_email:
+                value = regex_email
+                claim._excel_coords[field_name] = regex_coord
+                claim._excel_logs.append(
+                    f"  📊 {field_name}: '{value}' (Source: {regex_coord} - Regex .com match)"
+                )
+                logger.info(f"  [REGEX FOUND] email_id = {value} at {regex_coord}")
 
-            if value:
-                break  # Found it, stop trying fallback labels
+        if not value:
+            for current_label in labels:
+                if not current_label:
+                    continue
+                
+                if sheet_name == "ALL":
+                    for sh in wb.all_sheets():
+                        value, coord = _search_label(
+                            sh, current_label, row_off, col_off, is_date,
+                            allow_literal_values, allow_text_values
+                        )
+                        if value:
+                            sh_name = sh.name if hasattr(sh, 'name') else 'Sheet'
+                            src_str = f"{coord} ({sh_name})"
+                            claim._excel_coords[field_name] = src_str
+                            claim._excel_logs.append(f"  📊 {field_name}: '{value}' (Source: {src_str})")
+                            found_label = current_label
+                            break
+                else:
+                    sh = wb.get_sheet(sheet_name)
+                    if sh:
+                        value, coord = _search_label(
+                            sh, current_label, row_off, col_off, is_date,
+                            allow_literal_values, allow_text_values
+                        )
+                        if value:
+                            src_str = f"{coord} ({sheet_name})"
+                            claim._excel_coords[field_name] = src_str
+                            claim._excel_logs.append(f"  📊 {field_name}: '{value}' (Source: {src_str})")
+                            found_label = current_label
+                    else:
+                        if current_label == labels[-1]: # Only warn on the last fallback try
+                            logger.warning(f"  [{field_name}] Sheet '{sheet_name}' not found in workbook")
+
+                if value:
+                    break  # Found it, stop trying fallback labels
 
         if value:
             if field_name == "date_of_survey":
-                # ── Extract time from the date string OR adjacent cells ──────
+                # ── Extract time from the date string, adjacent cells, or fallback ──
                 time_found = False
 
-                # First: try parsing time from the value itself
-                time_match = re.search(r"(\d{1,2})[.:]?(\d{2})?\s*([aA]\.?[mM]\.?|[pP]\.?[mM]\.?)", value)
-                if time_match:
-                    h = int(time_match.group(1))
-                    m = time_match.group(2) or "00"
-                    ampm = time_match.group(3).replace(".", "").lower()
-                    if ampm == "pm" and h < 12:
-                        h += 12
-                    elif ampm == "am" and h == 12:
-                        h = 0
-                    claim.time_hh = f"{h:02d}"
-                    claim.time_mm = f"{int(m):02d}"
+                # 1. Try parsing time from the value itself (e.g. '27/04/2023 11:30 AM', '14:15', '2023-04-27 11:30:00')
+                parsed_time = _parse_time_string(value)
+                if parsed_time:
+                    claim.time_hh, claim.time_mm = parsed_time
                     time_found = True
+                    claim._excel_coords["time_hh"] = claim._excel_coords.get("date_of_survey", "")
+                    claim._excel_logs.append(
+                        f"  📊 time_of_survey: '{claim.time_hh}:{claim.time_mm}' (Source: {claim._excel_coords['time_hh']})"
+                    )
+                    logger.info(f"  [TIME] Extracted from date cell: {claim.time_hh}:{claim.time_mm}")
 
-                # Second: if no time in value, scan adjacent cells in the row
+                # 2. If no time in value, scan adjacent cells in the row
                 if not time_found:
                     time_found = _extract_time_from_adjacent_cells(wb, sheet_name, found_label, cfg, claim)
 
-                if time_found:
-                    logger.info(f"  [TIME] Survey time set: HH={claim.time_hh} MM={claim.time_mm}")
+                # 3. Direct fallback for UIIC: If not found in date or adjacent cells, default to 11 HH and 00 MM
+                if not time_found and (portal_id == "uiic" or "date_of_survey" in mapping):
+                    def_time = str(automation_defaults.get("survey_time_default", "11:00") or "11:00")
+                    if ":" in def_time:
+                        parts = def_time.split(":")
+                        claim.time_hh = f"{int(parts[0]):02d}"
+                        claim.time_mm = f"{int(parts[1]):02d}"
+                    else:
+                        claim.time_hh = "11"
+                        claim.time_mm = "00"
+                    claim._excel_coords["time_hh"] = f"Default ({claim.time_hh}:{claim.time_mm})"
+                    claim._excel_logs.append(
+                        f"  📊 time_of_survey: '{claim.time_hh}:{claim.time_mm}' (Source: Default Fallback)"
+                    )
+                    logger.info("  [TIME FALLBACK] Survey time not found in Excel, defaulted to %s:%s", claim.time_hh, claim.time_mm)
 
             if is_date:
                 clean_date_val = re.sub(r"at.*$", "", str(value), flags=re.IGNORECASE).strip()
@@ -625,9 +780,22 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
                     raw_initial_loss,
                 )
 
-            setattr(claim, field_name, value)
+            if field_name.lower() in ("gst_summary_parts", "gst_summary_labour"):
+                clean_num = re.sub(r"[^\d.]", "", str(value or "0")).strip()
+                if clean_num:
+                    try:
+                        d_val = Decimal(clean_num)
+                        if d_val == d_val.to_integral():
+                            value = str(int(d_val))
+                        else:
+                            value = f"{d_val:.2f}"
+                    except (InvalidOperation, ValueError):
+                        pass
+
+            target_attr = "gst_summary_parts" if field_name.lower() == "gst_summary_parts" else "gst_summary_labour" if field_name.lower() == "gst_summary_labour" else field_name
+            setattr(claim, target_attr, value)
             found_count += 1
-            logger.info(f"  [FOUND] {field_name} = {value}")
+            logger.info(f"  [FOUND] {target_attr} = {value}")
         else:
             fallback = cfg.get("fallback_value")
             default_key_by_field = {
@@ -656,6 +824,32 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
                 logger.warning(f"  [MISSING] {field_name}: labels '{labels_str}' not found or value empty")
 
     # ── Calculate Derived Business Logic ──────────────────────────────────────
+    # Professional Fee calculation for UIIC: Survey Fee + Re-inspection Fee (Decimal monetary arithmetic).
+    # Guard: For New India, OIC, and other portals where professional_fee is directly mapped from Excel,
+    # never overwrite the extracted professional_fee with 0.
+    should_derive_prof_fee = (
+        portal_id == "uiic"
+        or ("survey_fee" in mapping or "reinspection_fee" in mapping)
+    ) and ("professional_fee" not in mapping or portal_id == "uiic")
+
+    if should_derive_prof_fee:
+        claim.professional_fee = _calculate_professional_fee(
+            getattr(claim, "survey_fee", "0"),
+            getattr(claim, "reinspection_fee", "0"),
+        )
+        if claim.professional_fee != "0" or getattr(claim, "survey_fee", "") or getattr(claim, "reinspection_fee", ""):
+            claim._excel_coords["professional_fee"] = "Calculated (Survey Fee + Reinspection Fee)"
+            claim._excel_logs.append(
+                f"  📊 professional_fee: '{claim.professional_fee}' "
+                f"(Source: Survey Fee '{claim.survey_fee or 0}' + Re-insp Fee '{claim.reinspection_fee or 0}')"
+            )
+            logger.info(
+                "  [CALC] professional_fee = %s (survey_fee=%s, reinspection_fee=%s)",
+                claim.professional_fee,
+                claim.survey_fee,
+                claim.reinspection_fee,
+            )
+
     if portal_id == "newindia" and claim._excel_coords.get("photo_charges") != "Hardcoded":
         photo_charges_default = str(automation_defaults.get("photo_charges_default", "200") or "200")
         claim.photo_charges = photo_charges_default

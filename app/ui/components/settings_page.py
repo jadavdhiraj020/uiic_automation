@@ -159,6 +159,7 @@ class SettingsPage(QWidget):
             "uiic": [
                 ("remarks_default", "Remarks Default", "Interim Report, Claim Assessment", "text"),
                 ("observation_default", "Observation Default", "Surveyor Observation fallback", "text"),
+                ("reinspection_output_filename", "Reinspection Output Filename", "Excel Sheet 3 extracted filename (default: reinspection.xlsx)", "text"),
             ] + _printable_rows,
             "newindia": [
                 ("remarks_default", "Remarks Default", "Remarks fallback", "text"),

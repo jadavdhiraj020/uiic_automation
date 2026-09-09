@@ -349,77 +349,53 @@ def _fallback_openpyxl_extraction(
 
 
 def _extract_sheet_for_reinspection(
-    full_path: str, folder_path: str, sheet_index: int
+    full_path: str,
+    folder_path: str,
+    sheet_index: int = 2,
+    output_filename: str = "reinspection.xlsx",
 ) -> str | None:
     """
-    Attempts to export a specific Excel sheet to PDF using multiple native
-    MS Excel COM strategies. If all PDF strategies fail, falls back to
-    openpyxl to extract the sheet as a new Excel file.
-    Returns the path to the generated file, or None if extraction failed entirely.
+    Extracts the 3rd sheet (0-based sheet_index=2) from the main Excel workbook
+    as a standalone Excel workbook.
+    Default filename: reinspection.xlsx (or configurable from settings).
     """
-    pdf_path = _join_export_path(folder_path, "Re-Inspection Report format.pdf")
-    excel_path = _join_export_path(folder_path, "Re-Inspection Report format.xlsx")
-    attempt_failures: List[str] = []
+    if not output_filename:
+        output_filename = "reinspection.xlsx"
+    excel_path = _join_export_path(folder_path, output_filename)
 
-    # Clean up existing generated files to avoid stale data
-    for p in (pdf_path, excel_path):
-        if os.path.exists(p):
-            try:
-                os.remove(p)
-            except OSError:
-                pass
-
-    # 1. PDF Strategies via win32com run in isolated subprocess or inline for testing
-    import sys
-    should_run_inline = "pytest" in sys.modules or bool(os.environ.get("PYTEST_CURRENT_TEST"))
-
-    # 0. Eager sheet count check using openpyxl in read-only mode (<50ms).
-    # This avoids starting COM entirely if sheet count is insufficient.
-    # We skip this check in unit tests (inline mode) to keep the original mocks and expectations intact.
-    if not should_run_inline:
+    # Clean up existing generated file to avoid stale data
+    if os.path.exists(excel_path):
         try:
-            import openpyxl
-            wb_check = openpyxl.load_workbook(full_path, read_only=True, keep_links=False)
-            num_sheets = len(wb_check.sheetnames)
-            wb_check.close()
-            if num_sheets < sheet_index + 1:
-                logger.warning(
-                    f"Excel file does not have {sheet_index + 1} sheets (Workbook has only {num_sheets} sheets). Cannot export PDF."
-                )
-                attempt_failures.append(f"Workbook has only {num_sheets} sheets")
-                return _fallback_openpyxl_extraction(full_path, excel_path, sheet_index, attempt_failures)
-        except Exception as e:
-            logger.warning(f"Failed to check sheet count via openpyxl pre-check: {e}")
+            os.remove(excel_path)
+        except OSError:
+            pass
 
-    if should_run_inline:
-        if run_headless_reinspection_com(full_path, pdf_path, sheet_index):
-            return pdf_path
-    else:
-        try:
-            import subprocess
-            if getattr(sys, "frozen", False):
-                cmd = [sys.executable, "--headless-reinspection-render", full_path, pdf_path, str(sheet_index)]
-            else:
-                main_py = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "main.py"))
-                cmd = [sys.executable, main_py, "--headless-reinspection-render", full_path, pdf_path, str(sheet_index)]
+    try:
+        import openpyxl
 
-            logger.info(f"Launching reinspection PDF render subprocess: {cmd}")
-            res = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', timeout=30)
-            if res.returncode == 0 and os.path.exists(pdf_path):
-                logger.info(f"✅ Generated {pdf_path} via reinspection subprocess")
-                return pdf_path
-            else:
-                err_msg = res.stderr or res.stdout or "Subprocess failed"
-                logger.warning(f"Subprocess reinspection PDF generation failed: {err_msg}")
-                attempt_failures.append(f"Subprocess error: {err_msg}")
-        except subprocess.TimeoutExpired:
-            logger.warning("Subprocess reinspection PDF generation timed out (30s limit). Terminating.")
-            attempt_failures.append("Subprocess timeout (30s)")
-        except Exception as e:
-            logger.warning(f"Subprocess reinspection PDF launch failed: {e}")
-            attempt_failures.append(f"Subprocess launch error: {e}")
-
-    return _fallback_openpyxl_extraction(full_path, excel_path, sheet_index, attempt_failures)
+        wb = openpyxl.load_workbook(full_path, data_only=True)
+        all_sheets = wb.sheetnames
+        if len(all_sheets) > sheet_index:
+            target_sheet = all_sheets[sheet_index]
+            logger.info(
+                f"Extracting Sheet {sheet_index + 1} ('{target_sheet}') into '{output_filename}'..."
+            )
+            for sheet_name in all_sheets:
+                if sheet_name != target_sheet:
+                    wb.remove(wb[sheet_name])
+            wb.save(excel_path)
+            logger.info(
+                f"✅ Generated {excel_path} from Sheet {sheet_index + 1} ('{target_sheet}')"
+            )
+            return excel_path
+        else:
+            logger.warning(
+                f"Excel file does not have {sheet_index + 1} sheets (Workbook has only {len(all_sheets)} sheets). Cannot extract reinspection sheet."
+            )
+            return None
+    except Exception as e:
+        logger.warning(f"openpyxl reinspection extraction failed: {e}")
+        return None
 
 
 def scan_folder(
@@ -501,16 +477,45 @@ def scan_folder(
     ) = get_doc_mapping_tuple(portal_id=portal_id)
     result.expected_docs = expected_docs
 
+    from app.utils import load_automation_defaults
+
+    automation_defaults = load_automation_defaults(portal_id=portal_id)
+    reinspection_output_filename = (
+        automation_defaults.get("reinspection_output_filename", "reinspection.xlsx")
+        or "reinspection.xlsx"
+    )
+    _reinspection_output_lower = reinspection_output_filename.lower()
+    _known_generated_reinspection = {
+        _reinspection_output_lower,
+        "reinspection.xlsx",
+        "re-inspection report format.pdf",
+        "re-inspection report format.xlsx",
+    }
+
     if not os.path.isdir(folder_path):
         logger.error("Folder not found: %s", folder_path)
         return result
 
-    # ── Pre-scan: Duplicate 'vehicle' files into 4 copies (Front/Rear/Left/Right)
+    # ── Pre-scan: Duplicate 'vehicle' / 'photo_sheet' files into 4 copies (Front/Rear/Left/Right)
     import shutil
 
     _vehicle_source_paths: Set[str] = (
         set()
     )  # Track original vehicle files to exclude from claim_related
+    _generated_vehicle_photos: Set[str] = set()
+    vehicle_photo_prefixes = claim_map.get(
+        "Vehicle Photographs", ["photo_sheet", "vehicle", "vehical"]
+    )
+    if not vehicle_photo_prefixes:
+        vehicle_photo_prefixes = ["photo_sheet", "vehicle", "vehical"]
+
+    _photo_slot_keys = [
+        "Vehicle Photograph (Front)",
+        "Vehicle Photograph(Rear)",
+        "Vehicle Photograph (Left)",
+        "Vehicle Photograph (Right)",
+    ]
+
     try:
         for fname in sorted(os.listdir(folder_path)):
             if _cancel_checkpoint("before_vehicle_photo_duplication"):
@@ -518,79 +523,81 @@ def scan_folder(
             if fname in _SKIP_FILES or os.path.isdir(os.path.join(folder_path, fname)):
                 continue
             fname_lower = fname.lower()
+            if re.match(r"^vehicle_photo_[1-4]\.", fname_lower):
+                continue
+            matches_photo_prefix = any(
+                fname_lower.startswith(p.lower().strip())
+                for p in vehicle_photo_prefixes
+                if p.strip()
+            )
             if (
-                fname_lower.startswith("vehical") or fname_lower.startswith("vehicle")
-            ) and "vehicle_photo_" not in fname_lower:
+                matches_photo_prefix
+                or fname_lower.startswith("vehical")
+                or fname_lower.startswith("vehicle")
+            ):
                 ext = Path(fname).suffix
                 source_path = os.path.join(folder_path, fname)
+                _vehicle_source_paths.add(os.path.normpath(source_path))
 
-                # Check if all 4 copies already exist — skip duplication if so
-                all_exist = all(
-                    os.path.exists(os.path.join(folder_path, f"vehicle_photo_{n}{ext}"))
-                    for n in range(1, 5)
-                )
-                if all_exist:
-                    logger.info(
-                        "All 4 vehicle_photo copies already exist — skipping duplication for %s",
-                        fname,
-                    )
-                    _vehicle_source_paths.add(os.path.normpath(source_path))
-                    continue
-
-                # Create 4 copies (Front, Rear, Left, Right)
+                # Create 4 copies (Front, Rear, Left, Right) from the first matching photo
                 for copy_num in range(1, 5):
                     if _cancel_checkpoint("before_vehicle_photo_copy"):
                         return result
                     new_name = f"vehicle_photo_{copy_num}{ext}"
                     new_path = os.path.join(folder_path, new_name)
-                    if os.path.exists(new_path):
-                        continue  # Don't overwrite existing copies
-                    try:
-                        shutil.copy2(source_path, new_path)
-                        _mark_generated(new_path)
-                        logger.info("Generated %s from %s", new_name, fname)
-                    except Exception as e:
-                        logger.error("Failed to copy %s to %s: %s", fname, new_name, e)
-                _vehicle_source_paths.add(os.path.normpath(source_path))
+                    if not os.path.exists(new_path):
+                        try:
+                            shutil.copy2(source_path, new_path)
+                            _mark_generated(new_path)
+                            logger.info("Generated %s from %s", new_name, fname)
+                        except Exception as e:
+                            logger.error("Failed to copy %s to %s: %s", fname, new_name, e)
+                    _generated_vehicle_photos.add(os.path.normpath(new_path))
+
+                # Assign the 4 slots immediately
+                for n, slot in enumerate(_photo_slot_keys, 1):
+                    copy_path = os.path.join(folder_path, f"vehicle_photo_{n}{ext}")
+                    if os.path.exists(copy_path):
+                        result.claim_doc_files[slot] = copy_path
+                        _generated_vehicle_photos.add(os.path.normpath(copy_path))
+                break  # Always copy first photo across all 4 slots as confirmed
     except Exception as e:
         logger.error("Error during vehicle photo duplication: %s", e)
 
-    # Prefer a user-provided reinspection PDF, if present, before any Excel extraction.
-    user_reinspection_pdf: Optional[str] = None
+    # Prefer a user-provided reinspection file (PDF/Excel), if present, before any Excel extraction.
+    user_reinspection_file: Optional[str] = None
     reinspection_keywords = assessment_map.get(
         "reinspection_report", []
     ) or upload_map.get("reinspection_report", [])
     for fname in sorted(os.listdir(folder_path)):
-        if _cancel_checkpoint("before_reinspection_pdf_scan"):
+        if _cancel_checkpoint("before_reinspection_scan"):
             return result
         full_path = os.path.join(folder_path, fname)
         if not os.path.isfile(full_path):
             continue
-        if Path(fname).suffix.lower() != ".pdf":
+        fname_lower = fname.lower()
+        if fname_lower in _known_generated_reinspection:
             continue
-        # Skip previously generated report files to avoid scanner priority collision
-        if fname.lower() in (
-            "re-inspection report format.pdf",
-            "re-inspection report format.xlsx",
-        ):
+        ext = Path(fname).suffix.lower()
+        if ext not in _DOC_EXTENSIONS and ext not in _EXCEL_EXTENSIONS:
             continue
-        fname_lower = fname.lower().replace("-", "_").replace(" ", "_")
-        if any(k in fname_lower for k in reinspection_keywords):
-            user_reinspection_pdf = full_path
+        fname_norm = fname_lower.replace("-", "_").replace(" ", "_")
+        if any(k in fname_norm for k in reinspection_keywords):
+            user_reinspection_file = full_path
             break
 
-    if user_reinspection_pdf:
+    if user_reinspection_file:
         if "reinspection_report" in upload_map:
-            result.upload_doc_files["reinspection_report"] = user_reinspection_pdf
+            result.upload_doc_files["reinspection_report"] = user_reinspection_file
             logger.info(
-                "Upload doc file [reinspection_report]: %s (user-provided PDF, skipping extraction)",
-                Path(user_reinspection_pdf).name,
+                "Upload doc file [reinspection_report]: %s (user-provided, skipping extraction)",
+                Path(user_reinspection_file).name,
             )
         else:
-            result.assessment_files["reinspection_report"] = user_reinspection_pdf
+            result.assessment_files["reinspection_report"] = user_reinspection_file
             logger.info(
-                "Assessment file [reinspection_report]: %s (user-provided PDF, skipping extraction)",
-                Path(user_reinspection_pdf).name,
+                "Assessment file [reinspection_report]: %s (user-provided, skipping extraction)",
+                Path(user_reinspection_file).name,
             )
 
     # Collect files starting with "other" for sequential Other 1/2/3 assignment
@@ -614,14 +621,17 @@ def scan_folder(
             "claim_others_documents_"
         ):
             continue
-        if fname_lower in [
-            "re-inspection report format.xlsx",
-            "re-inspection report format.pdf",
-        ]:
+        if fname_lower in _known_generated_reinspection:
+            continue
+        if (
+            re.match(r"^vehicle_photo_[1-4]\.", fname_lower)
+            or os.path.normpath(full_path) in _vehicle_source_paths
+            or os.path.normpath(full_path) in _generated_vehicle_photos
+        ):
             continue
 
         # Exclude Excels that match an assessment keyword (e.g. reinspection_report, estimate, etc.)
-        fname_norm = fname.lower().replace("-", "_").replace(" ", "_")
+        fname_norm = fname_lower.replace("-", "_").replace(" ", "_")
         assessment_key = _match_keyword(fname_norm, assessment_map)
         if assessment_key:
             continue
@@ -694,11 +704,20 @@ def scan_folder(
             )
             continue
 
+        # Skip assessment_report copies in main loop — will be derived from survey_report
+        if fname_lower.startswith("assessment_report."):
+            continue
+
+        # Skip vehicle source and generated vehicle photos in main loop
+        if (
+            re.match(r"^vehicle_photo_[1-4]\.", fname_lower)
+            or os.path.normpath(full_path) in _vehicle_source_paths
+            or os.path.normpath(full_path) in _generated_vehicle_photos
+        ):
+            continue
+
         # ── Handle our generated subset excel/pdf directly ────────────────────────
-        if fname_lower in [
-            "re-inspection report format.xlsx",
-            "re-inspection report format.pdf",
-        ]:
+        if fname_lower in _known_generated_reinspection:
             if (
                 os.path.exists(full_path)
                 and "reinspection_report" not in result.assessment_files
@@ -719,7 +738,7 @@ def scan_folder(
         # ── Excel file ────────────────────────────────────────────────────────
         if ext in _EXCEL_EXTENSIONS:
             # ── Check if this Excel matches an assessment keyword FIRST ────
-            fname_norm = fname.lower().replace("-", "_").replace(" ", "_")
+            fname_norm = fname_lower.replace("-", "_").replace(" ", "_")
             assessment_key = _match_keyword(fname_norm, assessment_map)
             if assessment_key:
                 if assessment_key not in result.assessment_files:
@@ -741,7 +760,7 @@ def scan_folder(
                 result.excel_path = full_path
                 logger.info("Excel found (main): %s", fname)
 
-                # ── Auto-extract Sheet 7 for Re-Inspection Report ─────────────
+                # ── Auto-extract Sheet 3 for Re-Inspection Report ─────────────
                 if (
                     "reinspection_report" in result.assessment_files
                     or "reinspection_report" in result.upload_doc_files
@@ -755,24 +774,24 @@ def scan_folder(
                     )
                 else:
                     # Try to find an existing generated report first
-                    pdf_path = os.path.join(
-                        folder_path, "Re-Inspection Report format.pdf"
-                    )
-                    excel_path = os.path.join(
-                        folder_path, "Re-Inspection Report format.xlsx"
+                    reinspection_file_path = os.path.join(
+                        folder_path, reinspection_output_filename
                     )
                     spot_path = (
-                        pdf_path
-                        if os.path.exists(pdf_path)
-                        else (excel_path if os.path.exists(excel_path) else None)
+                        reinspection_file_path
+                        if os.path.exists(reinspection_file_path)
+                        else None
                     )
 
                     if not spot_path:
                         if _cancel_checkpoint("before_reinspection_generation"):
                             return result
-                        # User confirmed Sheet 7 (index 6) is the correct target
+                        # Extract strict 3rd sheet (0-based sheet_index=2)
                         spot_path = _extract_sheet_for_reinspection(
-                            full_path, folder_path, sheet_index=6
+                            full_path,
+                            folder_path,
+                            sheet_index=2,
+                            output_filename=reinspection_output_filename,
                         )
                         if spot_path:
                             _mark_generated(spot_path)
@@ -791,7 +810,7 @@ def scan_folder(
                             )
                     else:
                         logger.warning(
-                            "Could not resolve reinspection_report from user PDF, existing generated files, or Excel extraction."
+                            "Could not resolve reinspection_report from user file, existing generated files, or Excel extraction."
                         )
             else:
                 if main_excel_keywords:
@@ -961,8 +980,6 @@ def scan_folder(
 
         try:
             if not os.path.exists(work_approval_path):
-                import shutil
-
                 shutil.copy2(invoice_path, work_approval_path)
                 _mark_generated(work_approval_path)
             result.claim_doc_files[work_approval_key] = work_approval_path
@@ -972,6 +989,34 @@ def scan_folder(
             )
         except Exception as e:
             logger.error("Failed to copy invoice to %s: %s", work_approval_name, e)
+
+    # ── Survey Report → Assessment Report Copy ────────────────────────────────
+    if "survey_report" in result.assessment_files:
+        if _cancel_checkpoint("before_survey_report_copy"):
+            return result
+        survey_path = result.assessment_files["survey_report"]
+        if survey_path and os.path.isfile(survey_path):
+            ext = Path(survey_path).suffix
+            assessment_name = f"assessment_report{ext}"
+            assessment_path = os.path.join(folder_path, assessment_name)
+            if os.path.normcase(os.path.normpath(survey_path)) != os.path.normcase(
+                os.path.normpath(assessment_path)
+            ):
+                try:
+                    shutil.copy2(survey_path, assessment_path)
+                    _mark_generated(assessment_path)
+                    logger.info(
+                        "Generated %s from survey report %s",
+                        assessment_name,
+                        Path(survey_path).name,
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Failed to copy survey report to %s: %s",
+                        assessment_name,
+                        e,
+                    )
+            result.assessment_files["assessment_report"] = assessment_path
 
     # ── Pre-compress mandatory upload files that exceed portal's 1.5 MB limit ─
     # This runs BEFORE automation starts so the UI shows the final file size
@@ -1060,6 +1105,11 @@ def scan_folder(
         "extracted_documents_data.md",
         "re-inspection report format.pdf",
         "re-inspection report format.xlsx",
+        "reinspection.xlsx",
+        _reinspection_output_lower,
+        "assessment_report.pdf",
+        "assessment_report.jpg",
+        "assessment_report.png",
         "claim_others_documents.pdf",  # skip our own output
         "claim_related_document_merged.pdf",  # skip legacy name
     }
@@ -1090,6 +1140,9 @@ def scan_folder(
     _used_paths.update(
         _vehicle_source_paths
     )  # exclude vehicle source (orig before duplication)
+    _used_paths.update(
+        _generated_vehicle_photos
+    )
 
     # ── Steps 2 & 3: Discover candidates + pre-merge (portal-gated) ──────────
     # Both candidate discovery and the PDF merge are gated on the portal's

@@ -2,7 +2,9 @@
   "_comment": "Basic user-facing automation defaults for UIIC. These are business values, not selectors, waits, retries, or upload internals.",
   "remarks_default": "Done",
   "observation_default": "Ok",
+  "survey_time_default": "11:00",
   "eager_folder_ocr": false,
+  "reinspection_output_filename": "reinspection.xlsx",
 
   "_comment_printable": "Printable Excel & PDF settings. Always enabled, no toggle.",
   "printable_output_excel_name": "Printable_Assessment.xlsx",

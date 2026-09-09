@@ -15,25 +15,10 @@
       "registration_certificate",
       "registration"
     ],
-    "Vehicle Photograph (Front)": [
-      "vehicle_photo_1",
-      "veh_front",
-      "photo_front"
-    ],
-    "Vehicle Photograph(Rear)": [
-      "vehicle_photo_2",
-      "veh_rear",
-      "photo_rear"
-    ],
-    "Vehicle Photograph (Left)": [
-      "vehicle_photo_3",
-      "veh_left",
-      "photo_left"
-    ],
-    "Vehicle Photograph (Right)": [
-      "vehicle_photo_4",
-      "veh_right",
-      "photo_right"
+    "Vehicle Photographs": [
+      "photo_sheet",
+      "vehicle",
+      "vehical"
     ],
     "Road Permit for Commercial Vehicle": [
       "road_permit",
@@ -110,10 +95,6 @@
     "Other 3"
   ],
   "claim_assessment_tab": {
-    "assessment_report": [
-      "assessment_report",
-      "assessment"
-    ],
     "survey_report": [
       "survey_report",
       "survey"

@@ -652,11 +652,18 @@ class DocumentReviewPanel(QWidget):
         compressed_keys = getattr(scan_result, "compressed_upload_doc_files", set()) or set()
         missing = [doc for doc in expected if doc not in claim_docs]
 
-        # Friendly display names for upload doc keys
+        # Friendly display names for upload doc and assessment keys
         _UPLOAD_LABELS = {
             "driving_license":          "Driving License",
             "registration_certificate": "Registration Certificate",
             "claim_form":               "Claim Form",
+        }
+        _ASSESSMENT_LABELS = {
+            "survey_report":            "Survey Report",
+            "assessment_report":        "Assessment Report",
+            "estimate":                 "Estimate",
+            "invoice":                  "Invoice",
+            "reinspection_report":      "Re-Inspection Report",
         }
 
         stats = QWidget()
@@ -680,7 +687,8 @@ class DocumentReviewPanel(QWidget):
         for k, v in claim_docs.items():
             mapped_rows.append((k, v, "claim_doc_files", "OK", False))
         for k, v in assessment.items():
-            mapped_rows.append((k, v, "assessment_files", "OK", False))
+            friendly = _ASSESSMENT_LABELS.get(k, k.replace("_", " ").title())
+            mapped_rows.append((friendly, v, "assessment_files", "OK", False))
         for k, v in upload_docs.items():
             friendly = _UPLOAD_LABELS.get(k, k.replace("_", " ").title())
             was_compressed = k in compressed_keys
