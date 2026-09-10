@@ -130,10 +130,10 @@ ASSESSMENT = {
     "report_no":          "#reportNo, #finalReportNo, #finalReportNumber, input[ng-model*='finalReportNo']",
     "report_date":        "#reportDate, #finalReportDate, input[ng-model*='finalReportDate']",
     # Surveyor charges — NOTE: profFeeAmount (not professionalFee)
-    "prof_fee":           "#profFeeAmount",
-    "travel":             "#travelExpense",
-    "daily_allowance":    "#dailyAllowance",
-    "photo":              "#photoCharge",
+    "prof_fee":           "#profFeeAmount, #profFee, #professionalFee, input[ng-model*='profFee'], input[name*='profFee']",
+    "travel":             "#travelExpense, #travelExpenses, #travelingExpenses, #travelCharge, input[ng-model*='travel'], input[name*='travel']",
+    "daily_allowance":    "#dailyAllowance, #dailyAllowances, input[ng-model*='dailyAllowance'], input[name*='dailyAllowance']",
+    "photo":              "#photoCharge, #photoCharges, #photoExpense, #photoExpenses, #photosAmount, #photosCharge, input[ng-model*='photoCharge'], input[ng-model*='photoCharges'], input[ng-model*='photo'], input[name*='photoCharge'], input[name*='photoCharges'], input[name*='photo'], input[id*='photoCharge'], input[id*='photoCharges']",
     "total":              "#totalClaimedAmt, #totalClaimAmt, #totalClaimed, #totalClaimedAmount, input[ng-model*='totalClaimed'], input[ng-model*='totalSurveyorCharges'], input[name*='totalClaim']",
     # Declaration
     "radio_declaration":  "input[name='ynPerused'][value='Y']",
