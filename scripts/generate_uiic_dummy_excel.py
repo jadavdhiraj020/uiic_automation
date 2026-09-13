@@ -176,11 +176,15 @@ def create_uiic_dummy_workbook(output_path: str):
     ws1["A22"].alignment = Alignment(horizontal="left", vertical="center", indent=1)
 
     ws1["A23"] = "Date and Time of Survey"
-    ws1["E23"] = "20/04/2026 11:30 AM"  # date_of_survey + survey time (col_offset: 4)
-    ws1["F23"] = "11:30 AM"             # Adjacent cell survey time
+    ws1["E23"] = "20/04/2026"           # date_of_survey (pure date, col_offset: 4)
+    ws1["F23"] = "Time"                 # time_of_survey label
+    ws1["G23"] = "11:30 AM"             # time_of_survey value
     ws1["A23"].font = font_bold
     ws1["E23"].font = font_bold
     ws1["E23"].fill = highlight_fill
+    ws1["F23"].font = font_bold
+    ws1["G23"].font = font_bold
+    ws1["G23"].fill = highlight_fill
 
     ws1["A24"] = "Place of survey"
     ws1["E24"] = "Authorized Service Workshop, Okhla Industrial Area Phase 3, New Delhi" # place_of_survey (col_offset: 4)

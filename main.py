@@ -135,9 +135,19 @@ def main() -> None:
                 sys.exit(1)
             excel_path = sys.argv[2]
             pdf_path = sys.argv[3]
+            print_mode = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] != "none" else None
+            scale = int(sys.argv[5]) if len(sys.argv) > 5 and sys.argv[5].isdigit() else None
+            col_range_raw = sys.argv[6] if len(sys.argv) > 6 and sys.argv[6] != "none" else None
+            col_range = tuple(col_range_raw.split(":")) if col_range_raw and ":" in col_range_raw else None
             try:
                 from app.data.printable_excel_service import run_headless_pdf_render_com
-                success = run_headless_pdf_render_com(excel_path, pdf_path)
+                success = run_headless_pdf_render_com(
+                    excel_path,
+                    pdf_path,
+                    print_mode=print_mode,
+                    scale=scale,
+                    col_range=col_range,
+                )
                 sys.exit(0 if success else 1)
             except Exception as e:
                 print(f"ERROR: Headless PDF render failed: {e}", file=sys.stderr)

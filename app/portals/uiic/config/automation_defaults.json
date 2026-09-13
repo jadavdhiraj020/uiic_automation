@@ -8,7 +8,8 @@
 
   "_comment_printable": "Printable Excel & PDF settings. Always enabled, no toggle.",
   "printable_output_excel_name": "Printable_Assessment.xlsx",
-  "printable_output_pdf_name": "Printable_Assessment.pdf",
+  "printable_output_pdf_name": "survey_report.pdf",
+  "printable_use_timestamp": false,
   "printable_print_mode": "scale_percentage",
   "printable_scale_percentage": 80,
   "printable_column_range": "A:L"

@@ -13,9 +13,24 @@
   },
   "date_of_survey": {
     "sheet": "ALL",
-    "search_label": "Date and Time of Survey",
+    "search_labels": [
+      "Date and Time of Survey",
+      "Date of Survey",
+      "Survey Date"
+    ],
     "row_offset": 0,
     "col_offset": 4
+  },
+  "time_of_survey": {
+    "sheet": "ALL",
+    "search_labels": [
+      "Time",
+      "Time of Survey",
+      "Survey Time",
+      "time of servey"
+    ],
+    "row_offset": 0,
+    "col_offset": 1
   },
   "place_of_survey": {
     "sheet": "ALL",
@@ -88,32 +103,10 @@
     "row_offset": 0,
     "col_offset": 8
   },
-  "gst_summary_parts": {
-    "sheet": "Sheet1",
-    "search_label": [
-      "GST SUMMARY – SPARES",
-      "GST SUMMARY - SPARES",
-      "GST SUMMARY SPARES",
-      "GST SUMMARY - PARTS",
-      "GST SUMMARY PARTS"
-    ],
-    "row_offset": 4,
-    "col_offset": 1
-  },
-  "labour_excl_gst": {
+  "labour_gst18_amount": {
     "sheet": "Sheet1",
     "search_label": "TOTAL (R/R, DENTING, C/W, PAINTING)",
     "row_offset": 0,
-    "col_offset": 1
-  },
-  "gst_summary_labour": {
-    "sheet": "Sheet1",
-    "search_label": [
-      "GST SUMMARY – LABOUR",
-      "GST SUMMARY - LABOUR",
-      "GST SUMMARY LABOUR"
-    ],
-    "row_offset": 4,
     "col_offset": 1
   },
   "towing_charges": {
@@ -180,6 +173,34 @@
       "invoice_date",
       "invoice date",
       "Date:"
+    ],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "workshop_invoice_no": {
+    "sheet": "ALL",
+    "search_labels": [
+      "workshop_invoice_no",
+      "Workshop Invoice No",
+      "Workshop Invoice Number",
+      "WS Invoice No",
+      "Work shop invoice",
+      "Repairer Invoice No",
+      "Garage Invoice No",
+      "Workshop Bill No"
+    ],
+    "row_offset": 0,
+    "col_offset": 1
+  },
+  "workshop_invoice_date": {
+    "sheet": "ALL",
+    "search_labels": [
+      "workshop_invoice_date",
+      "Workshop Invoice Date",
+      "WS Invoice Date",
+      "Work shop invoice date",
+      "Repairer Invoice Date",
+      "Workshop Bill Date"
     ],
     "row_offset": 0,
     "col_offset": 1

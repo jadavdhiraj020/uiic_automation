@@ -2,9 +2,18 @@ import os
 from pathlib import Path
 from app.data.excel_reader import extract_claim_data
 
-def test_dummy_uiic_excel_extraction():
+def test_dummy_uiic_excel_extraction(tmp_path, monkeypatch):
     """Verify that dummy_uiic_testing.xlsx extracts all required and optional fields cleanly."""
+    # Isolate from user AppData overrides
+    from app.utils import field_mapping_paths, read_json_file
+    bundled = read_json_file(field_mapping_paths(portal_id="uiic")["default"])
+    monkeypatch.setattr("app.utils.load_field_mapping", lambda portal_id=None: bundled)
+
     excel_path = "dummy_uiic_testing.xlsx" if os.path.exists("dummy_uiic_testing.xlsx") else "UIIC_TEST/dummy_uiic_testing.xlsx"
+    if not os.path.exists(excel_path):
+        from scripts.generate_uiic_dummy_excel import create_uiic_dummy_workbook
+        excel_path = str(tmp_path / "dummy_uiic_testing.xlsx")
+        create_uiic_dummy_workbook(excel_path)
     assert os.path.exists(excel_path), f"File {excel_path} should exist"
 
     claim = extract_claim_data(excel_path, portal_id="uiic")
@@ -21,7 +30,8 @@ def test_dummy_uiic_excel_extraction():
     assert claim.time_mm == "30"
     assert "Authorized Service Workshop" in claim.place_of_survey
     assert claim.initial_loss_amount == "75000"  # 75% of 100000
-    assert claim.final_report_no == "JDB/2026-27/UIIC/8744"
+    assert claim.final_report_no == "8744"
+    assert claim.labour_gst18_amount == "12000"
     assert claim.labour_excl_gst == "12000"
     assert claim.payment_to == "REPAIRER"
 
@@ -43,14 +53,12 @@ def test_dummy_uiic_excel_extraction():
     assert claim.parts_50_dep_excl_gst == "4500"
     assert claim.parts_nil_dep_excl_gst == "6000"
     assert claim.parts_gst18_amount == "4590"
-    assert claim.gst_summary_parts == "25500"
-    assert claim.gst_summary_labour == "12000"
     assert claim.towing_charges == "1500"
     assert claim.voluntary_excess == "0"
     assert claim.compulsory_excess == "1000"
     assert claim.imposed_excess == "0"
     assert claim.salvage_value == "1200"
-    assert claim.invoice_no == "INV-2026-0042"
+    assert claim.invoice_no == "0042"
     assert claim.invoice_date == "25/04/2026"
     assert claim.final_report_date == "25/04/2026"
     assert "Vehicle inspected" in claim.surveyor_observation or claim.surveyor_observation == "Ok"

@@ -623,6 +623,8 @@ def scan_folder(
             continue
         if fname_lower in _known_generated_reinspection:
             continue
+        if fname_lower.startswith("printable_assessment"):
+            continue
         if (
             re.match(r"^vehicle_photo_[1-4]\.", fname_lower)
             or os.path.normpath(full_path) in _vehicle_source_paths
@@ -706,6 +708,10 @@ def scan_folder(
 
         # Skip assessment_report copies in main loop — will be derived from survey_report
         if fname_lower.startswith("assessment_report."):
+            continue
+
+        # Skip printable assessment files in main loop
+        if fname_lower.startswith("printable_assessment.") or fname_lower.startswith("printable_assessment_"):
             continue
 
         # Skip vehicle source and generated vehicle photos in main loop
@@ -989,6 +995,73 @@ def scan_folder(
             )
         except Exception as e:
             logger.error("Failed to copy invoice to %s: %s", work_approval_name, e)
+
+    # ── UIIC: Auto-generate Survey Report from Excel ──────────────────────────
+    if portal_id == "uiic" and result.excel_path:
+        survey_filename = "survey_report.pdf"
+        survey_path = os.path.join(folder_path, survey_filename)
+        assessment_name = "assessment_report.pdf"
+        assessment_path = os.path.join(folder_path, assessment_name)
+
+        try:
+            import tempfile
+            import uuid
+            from app.data.printable_excel_service import (
+                _create_printable_excel,
+                _generate_pdf,
+                _validate_column_range,
+                _validate_scale,
+            )
+            from app.utils import load_automation_defaults
+
+            _pdefaults = dict(load_automation_defaults(portal_id="uiic") or {})
+            _mode = str(_pdefaults.get("printable_print_mode", "scale_percentage")).strip().lower()
+            _scale = _validate_scale(_pdefaults.get("printable_scale_percentage", 80))
+            _col_range = _validate_column_range(_pdefaults.get("printable_column_range", "A:L"))
+
+            temp_excel = os.path.join(
+                tempfile.gettempdir(), f"temp_survey_{uuid.uuid4().hex[:8]}.xlsx"
+            )
+            _plogs = []
+            try:
+                _create_printable_excel(
+                    result.excel_path,
+                    temp_excel,
+                    _mode,
+                    _scale if _mode == "scale_percentage" else None,
+                    _col_range if _mode == "column_range" else None,
+                    _plogs,
+                )
+                _generate_pdf(
+                    temp_excel,
+                    survey_path,
+                    _plogs,
+                    print_mode=_mode,
+                    scale=_scale,
+                    col_range=_col_range,
+                )
+            finally:
+                if os.path.exists(temp_excel):
+                    try:
+                        os.remove(temp_excel)
+                    except OSError:
+                        pass
+
+            if os.path.isfile(survey_path):
+                _mark_generated(survey_path)
+                result.assessment_files["survey_report"] = survey_path
+                logger.info("Auto-generated %s from main Excel", survey_filename)
+
+                # Clone freshly to assessment_report.pdf
+                try:
+                    shutil.copy2(survey_path, assessment_path)
+                    _mark_generated(assessment_path)
+                    result.assessment_files["assessment_report"] = assessment_path
+                    logger.info("Generated %s from %s", assessment_name, survey_filename)
+                except Exception as clone_err:
+                    logger.error("Failed to clone %s to %s: %s", survey_filename, assessment_name, clone_err)
+        except Exception as gen_err:
+            logger.warning("Could not auto-generate survey_report.pdf from Excel: %s", gen_err)
 
     # ── Survey Report → Assessment Report Copy ────────────────────────────────
     if "survey_report" in result.assessment_files:

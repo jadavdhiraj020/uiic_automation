@@ -525,15 +525,17 @@ async def _fill_labour(page, claim: ClaimData, log, _src) -> None:
         log("\n👷 Labour:")
         
     try:
-        _log_extraction(claim, log, "Labour (Excl GST)", claim.labour_excl_gst, "labour_excl_gst")
+        labour_val = claim.labour_gst18_amount or claim.labour_excl_gst
+        src_val = _src("labour_gst18_amount") or _src("labour_excl_gst")
+        _log_extraction(claim, log, "Labour (Excl GST)", labour_val, "labour_gst18_amount")
         await safe_fill_amount(page, ASSESSMENT["labour"],
-                               claim.labour_excl_gst, "Labour (Excl GST)", log,
-                               source=_src("labour_excl_gst"))
+                               labour_val, "Labour (Excl GST)", log,
+                               source=src_val)
         
-        _log_extraction(claim, log, "Labour GST 18%", claim.labour_excl_gst, "labour_excl_gst")
+        _log_extraction(claim, log, "Labour GST 18%", labour_val, "labour_gst18_amount")
         await safe_fill_amount(page, ASSESSMENT["gst_18_labour"],
-                               claim.labour_excl_gst, "Labour GST 18%", log,
-                               source=_src("labour_excl_gst"))
+                               labour_val, "Labour GST 18%", log,
+                               source=src_val)
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Labour section error: {e}")
@@ -551,15 +553,17 @@ async def _fill_workshop_invoice(page, claim: ClaimData, log, _src) -> None:
         log("\n🧾 Workshop Invoice:")
         
     try:
-        ws_no = str(claim.workshop_invoice_no).split(" ")[0].split("(")[0][:20]
+        ws_no_val = str(claim.workshop_invoice_no or "").strip()
+        ws_no = ws_no_val.split(" ")[0].split("(")[0][:20]
         _log_extraction(claim, log, "WS Invoice No", ws_no, "workshop_invoice_no")
         await safe_fill(page, ASSESSMENT["ws_invoice_no"],
                         ws_no, "WS Invoice No", log,
                         source=_src("workshop_invoice_no"))
         
-        _log_extraction(claim, log, "WS Invoice Date", claim.workshop_invoice_date, "workshop_invoice_date")
+        ws_date_val = str(claim.workshop_invoice_date or "").strip()
+        _log_extraction(claim, log, "WS Invoice Date", ws_date_val, "workshop_invoice_date")
         await safe_fill_date(page, ASSESSMENT["ws_invoice_date"],
-                             claim.workshop_invoice_date, "WS Invoice Date", log,
+                             ws_date_val, "WS Invoice Date", log,
                              source=_src("workshop_invoice_date"))
     except Exception as e:
         if isinstance(log, AutomationLogger):
@@ -624,19 +628,19 @@ async def _fill_invoice_details(page, claim: ClaimData, log, _src) -> None:
         log("\n📋 Invoice Details:")
         
     try:
-        inv_no   = claim.invoice_no   if claim.invoice_no.strip()   else claim.workshop_invoice_no
-        inv_date = claim.invoice_date if claim.invoice_date.strip() else claim.workshop_invoice_date
-        inv_no_clean = str(inv_no).split(" ")[0].split("(")[0][:20]
+        inv_no = str(claim.invoice_no or "").strip()
+        inv_date = str(claim.invoice_date or "").strip()
+        inv_no_clean = inv_no.split(" ")[0].split("(")[0][:20]
         
         _log_extraction(claim, log, "Invoice No", inv_no_clean, "invoice_no")
         await safe_fill(page, ASSESSMENT["invoice_no"],
                         inv_no_clean, "Invoice No", log,
-                        source=_src("invoice_no") or _src("workshop_invoice_no"))
+                        source=_src("invoice_no"))
         
         _log_extraction(claim, log, "Invoice Date", inv_date, "invoice_date")
         await safe_fill_date(page, ASSESSMENT["invoice_date"],
                              inv_date, "Invoice Date", log,
-                             source=_src("invoice_date") or _src("workshop_invoice_date"))
+                             source=_src("invoice_date"))
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Invoice details error: {e}")

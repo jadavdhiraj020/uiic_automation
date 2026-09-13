@@ -391,6 +391,7 @@ def test_process_printable_output_happy_path():
             "printable_output_pdf_name": "Printable_Assessment.pdf",
             "printable_print_mode": "scale_percentage",
             "printable_scale_percentage": 80,
+            "printable_use_timestamp": True,
         }
 
         # Mock PDF generator: COM succeeds.
@@ -409,8 +410,7 @@ def test_process_printable_output_happy_path():
                 logs=logs,
             )
 
-        # Filenames now include a timestamp — verify by checking the prefix/suffix
-        # and that the result paths are inside the output folder.
+        # Filenames include a timestamp when printable_use_timestamp is True
         files = os.listdir(tmp_dir)
         excel_files = [f for f in files if f.startswith("Printable_Assessment_") and f.endswith(".xlsx")]
         pdf_files = [f for f in files if f.startswith("Printable_Assessment_") and f.endswith(".pdf")]
@@ -434,6 +434,58 @@ def test_process_printable_output_happy_path():
         assert any("Printable Excel created" in line for line in logs), (
             f"Expected success log. Got: {logs}"
         )
+
+
+def test_process_printable_output_clean_overwrite():
+    """
+    Test clean un-timestamped overwrite behavior (default):
+    - Output files are named Printable_Assessment.xlsx and survey_report.pdf
+    - A second scan cleanly overwrites without creating duplicate files.
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        src_path = os.path.join(tmp_dir, "claim.xlsx")
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws["A1"] = "Claim Data"
+        wb.save(src_path)
+        wb.close()
+
+        settings = {
+            "printable_output_excel_name": "Printable_Assessment.xlsx",
+            "printable_output_pdf_name": "survey_report.pdf",
+            "printable_use_timestamp": False,
+        }
+
+        def fake_pdf_gen(excel_path, pdf_path, logs):
+            with open(pdf_path, "wb") as f:
+                f.write(b"%PDF-1.4 mock")
+            return True
+
+        with patch("app.data.printable_excel_service._generate_pdf_excel_com",
+                   side_effect=fake_pdf_gen):
+            logs = []
+            # Run 1
+            process_printable_output(
+                source_excel_path=src_path,
+                output_folder=tmp_dir,
+                settings=settings,
+                logs=logs,
+            )
+            # Run 2 (re-scan)
+            process_printable_output(
+                source_excel_path=src_path,
+                output_folder=tmp_dir,
+                settings=settings,
+                logs=logs,
+            )
+
+        files = os.listdir(tmp_dir)
+        pdf_files = [f for f in files if f.endswith(".pdf")]
+        excel_files = [f for f in files if f.endswith(".xlsx") and f != "claim.xlsx"]
+
+        # Exactly 1 PDF and 1 Excel, no duplicate timestamped copies
+        assert pdf_files == ["survey_report.pdf"]
+        assert excel_files == ["Printable_Assessment.xlsx"]
 
 
 # ── Fix #24: mtime-scan fallback path test ───────────────────────────────────

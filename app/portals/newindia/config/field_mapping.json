@@ -619,7 +619,7 @@
   },
   "time_of_survey": {
     "sheet": "ALL",
-    "search_labels": ["time of survey", "time of servey"],
+    "search_labels": ["Time", "time of survey", "Survey Time", "time of servey"],
     "row_offset": 0,
     "col_offset": 1,
     "allow_text_values": true,

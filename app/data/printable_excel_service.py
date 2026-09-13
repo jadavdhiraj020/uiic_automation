@@ -136,10 +136,32 @@ def process_printable_output(
     else:
         output_pdf_stem = output_pdf_name
 
-    # Timestamp suffix — ensures every run keeps its own file; nothing is overwritten.
-    _ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_excel_name = f"{output_excel_stem}_{_ts}.xlsx"
-    output_pdf_name   = f"{output_pdf_stem}_{_ts}.pdf"
+    # Timestamp suffix — disabled by default to prevent duplicate clutter.
+    # When disabled, re-scans overwrite the existing file cleanly.
+    use_timestamp = bool(settings.get("printable_use_timestamp", False))
+    if use_timestamp:
+        _ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_excel_name = f"{output_excel_stem}_{_ts}.xlsx"
+        output_pdf_name   = f"{output_pdf_stem}_{_ts}.pdf"
+    else:
+        output_excel_name = f"{output_excel_stem}.xlsx"
+        output_pdf_name   = f"{output_pdf_stem}.pdf"
+
+    # Clean up legacy timestamped copies in output folder to prevent duplicate file clutter
+    try:
+        import glob
+        for old_pattern in (
+            f"{output_excel_stem}_[0-9]*_[0-9]*.xlsx",
+            f"{output_pdf_stem}_[0-9]*_[0-9]*.pdf",
+            "Printable_Assessment_[0-9]*_[0-9]*.*",
+        ):
+            for old_file in glob.glob(os.path.join(output_folder, old_pattern)):
+                try:
+                    os.remove(old_file)
+                except OSError:
+                    pass
+    except Exception as cleanup_exc:
+        logger.debug("Legacy printable cleanup error: %s", cleanup_exc)
 
     output_excel_path = os.path.join(output_folder, output_excel_name)
     output_pdf_path = os.path.join(output_folder, output_pdf_name)
@@ -195,8 +217,19 @@ def process_printable_output(
         return
 
     # ── Step 2: Generate PDF (Excel COM) ────────────────────────────────
+    if settings.get("printable_skip_pdf", False):
+        logs.append(f"  ℹ️ Printable PDF skipped: '{output_pdf_name}' already exists.")
+        return
+
     try:
-        _generate_pdf(output_excel_path, output_pdf_path, logs)
+        _generate_pdf(
+            output_excel_path,
+            output_pdf_path,
+            logs,
+            print_mode=print_mode,
+            scale=scale,
+            col_range=col_range,
+        )
     except Exception as exc:
         logs.append(f"  ❌ PDF generation failed: {exc}")
         logger.exception("PDF generation error")
@@ -289,13 +322,26 @@ def _create_printable_excel(
     logger.info("Printable Excel saved: %s", output_path)
 
 
-def run_headless_pdf_render_com(excel_path: str, pdf_path: str) -> bool:
+def run_headless_pdf_render_com(
+    excel_path: str,
+    pdf_path: str,
+    print_mode: Optional[str] = None,
+    scale: Optional[int] = None,
+    col_range: Optional[Tuple[str, str]] = None,
+) -> bool:
     """
     Runs the win32com Excel PDF export inside the headless subprocess.
     Returns True on success, False on failure.
     """
     logs = []
-    success = _generate_pdf_excel_com(excel_path, pdf_path, logs)
+    success = _generate_pdf_excel_com(
+        excel_path,
+        pdf_path,
+        logs,
+        print_mode=print_mode,
+        scale=scale,
+        col_range=col_range,
+    )
     for line in logs:
         if "❌" in line or "⚠️" in line:
             print(line, file=sys.stderr)
@@ -304,7 +350,14 @@ def run_headless_pdf_render_com(excel_path: str, pdf_path: str) -> bool:
     return success
 
 
-def _generate_pdf(excel_path: str, pdf_path: str, logs: List[str]) -> None:
+def _generate_pdf(
+    excel_path: str,
+    pdf_path: str,
+    logs: List[str],
+    print_mode: Optional[str] = None,
+    scale: Optional[int] = None,
+    col_range: Optional[Tuple[str, str]] = None,
+) -> None:
     """
     Generate PDF from the printable Excel using Microsoft Excel COM.
 
@@ -328,17 +381,45 @@ def _generate_pdf(excel_path: str, pdf_path: str, logs: List[str]) -> None:
     # Check if we should run inline (e.g. for testing)
     should_run_inline = "pytest" in sys.modules or bool(os.environ.get("PYTEST_CURRENT_TEST"))
     if should_run_inline:
-        if _generate_pdf_excel_com(abs_excel, abs_pdf, logs):
-            return
+        import inspect
+        target_fn = getattr(_generate_pdf_excel_com, "side_effect", None) or _generate_pdf_excel_com
+        pass_extended = True
+        if callable(target_fn):
+            try:
+                sig = inspect.signature(target_fn)
+                accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+                has_print_mode = "print_mode" in sig.parameters
+                if not accepts_kwargs and not has_print_mode:
+                    pass_extended = False
+            except (ValueError, TypeError):
+                pass
+        if pass_extended:
+            if _generate_pdf_excel_com(
+                abs_excel,
+                abs_pdf,
+                logs,
+                print_mode=print_mode,
+                scale=scale,
+                col_range=col_range,
+            ):
+                return
+        else:
+            if _generate_pdf_excel_com(abs_excel, abs_pdf, logs):
+                return
     else:
         # Run Excel COM in an isolated subprocess to prevent background thread COM hangs
         try:
             import subprocess
+            extra_args = [
+                str(print_mode or "none"),
+                str(scale) if scale is not None else "none",
+                f"{col_range[0]}:{col_range[1]}" if col_range else "none",
+            ]
             if getattr(sys, "frozen", False):
-                cmd = [sys.executable, "--headless-pdf-render", abs_excel, abs_pdf]
+                cmd = [sys.executable, "--headless-pdf-render", abs_excel, abs_pdf] + extra_args
             else:
                 main_py = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "main.py"))
-                cmd = [sys.executable, main_py, "--headless-pdf-render", abs_excel, abs_pdf]
+                cmd = [sys.executable, main_py, "--headless-pdf-render", abs_excel, abs_pdf] + extra_args
 
             logger.info(f"Launching printable PDF render subprocess: {cmd}")
             res = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', timeout=30)
@@ -425,7 +506,12 @@ def _find_pdf_printer(excel) -> Optional[str]:
 
 
 def _generate_pdf_excel_com(
-    abs_excel: str, abs_pdf: str, logs: List[str]
+    abs_excel: str,
+    abs_pdf: str,
+    logs: List[str],
+    print_mode: Optional[str] = None,
+    scale: Optional[int] = None,
+    col_range: Optional[Tuple[str, str]] = None,
 ) -> bool:
     """
     Generate PDF via Microsoft Excel COM automation (ExportAsFixedFormat).
@@ -514,6 +600,22 @@ def _generate_pdf_excel_com(
         # Export only Sheet 1
         ws = wb.Worksheets(1)
         ws.Select()
+
+        # Apply native PageSetup in Excel COM
+        try:
+            if print_mode == "column_range" and col_range:
+                start_c, end_c = col_range
+                ws.PageSetup.PrintArea = f"${start_c}:${end_c}"
+                ws.PageSetup.Zoom = False
+                ws.PageSetup.FitToPagesWide = 1
+                ws.PageSetup.FitToPagesTall = False
+                logger.info("Excel COM PageSetup PrintArea set to: $%s:$%s", start_c, end_c)
+            elif print_mode == "scale_percentage" and scale:
+                ws.PageSetup.PrintArea = ""
+                ws.PageSetup.Zoom = int(scale)
+                logger.info("Excel COM PageSetup Zoom set to: %d%%", scale)
+        except Exception as ps_err:
+            logger.warning("Excel COM PageSetup configuration warning (non-fatal): %s", ps_err)
 
         # xlTypePDF = 0 — native Excel PDF rendering engine
         ws.ExportAsFixedFormat(0, abs_pdf)

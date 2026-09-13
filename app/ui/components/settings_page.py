@@ -226,18 +226,20 @@ class SettingsPage(QWidget):
         )
         l.addWidget(search_box)
 
-        self.mapping_table = QTableWidget(0, 4)
+        self.mapping_table = QTableWidget(0, 5)
         self.mapping_table.setObjectName("settingsTable")
         self.mapping_table.setAlternatingRowColors(True)
-        self.mapping_table.setHorizontalHeaderLabels(["FIELD NAME", "SEARCH LABEL", "SHEET", "COL OFFSET"])
+        self.mapping_table.setHorizontalHeaderLabels(["FIELD NAME", "SEARCH LABEL", "SHEET", "ROW OFFSET", "COL OFFSET"])
         self.mapping_table.verticalHeader().setVisible(False)
         self.mapping_table.verticalHeader().setDefaultSectionSize(48)
         self.mapping_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.mapping_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.mapping_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self.mapping_table.setColumnWidth(2, 120)
+        self.mapping_table.setColumnWidth(2, 110)
         self.mapping_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
         self.mapping_table.setColumnWidth(3, 100)
+        self.mapping_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        self.mapping_table.setColumnWidth(4, 100)
         self.mapping_table.setItemDelegateForColumn(1, TagDelegate(self.mapping_table))
         l.addWidget(self.mapping_table)
         s.setWidget(w); return s
@@ -275,10 +277,39 @@ class SettingsPage(QWidget):
     def _build_pdf_mapping_tab(self):
         s = QScrollArea(); s.setWidgetResizable(True); s.setFrameShape(QFrame.Shape.NoFrame)
         w = QWidget(); l = QVBoxLayout(w); l.setContentsMargins(32, 24, 32, 24); l.setSpacing(16)
-        inv_label = QLabel("Invoice No Labels"); inv_label.setObjectName("settingsFieldLabel"); l.addWidget(inv_label)
-        self.inp_pdf_inv = ChipLineEdit(); l.addWidget(self.inp_pdf_inv)
-        date_label = QLabel("Invoice Date Labels"); date_label.setObjectName("settingsFieldLabel"); l.addWidget(date_label)
-        self.inp_pdf_date = ChipLineEdit(); l.addWidget(self.inp_pdf_date)
+
+        # 1. Container for portals that use PDF invoice extraction (e.g. New India / OIC)
+        self.pdf_fields_container = QWidget()
+        pfl = QVBoxLayout(self.pdf_fields_container)
+        pfl.setContentsMargins(0, 0, 0, 0)
+        pfl.setSpacing(16)
+        inv_label = QLabel("Invoice No Labels"); inv_label.setObjectName("settingsFieldLabel"); pfl.addWidget(inv_label)
+        self.inp_pdf_inv = ChipLineEdit(); pfl.addWidget(self.inp_pdf_inv)
+        date_label = QLabel("Invoice Date Labels"); date_label.setObjectName("settingsFieldLabel"); pfl.addWidget(date_label)
+        self.inp_pdf_date = ChipLineEdit(); pfl.addWidget(self.inp_pdf_date)
+        l.addWidget(self.pdf_fields_container)
+
+        # 2. Informational card for UIIC (where invoice data is extracted directly from Excel)
+        self.pdf_uiic_info_container = QFrame()
+        self.pdf_uiic_info_container.setObjectName("settingsCard")
+        u_lay = QVBoxLayout(self.pdf_uiic_info_container)
+        u_lay.setContentsMargins(24, 20, 24, 20)
+        u_lay.setSpacing(8)
+
+        info_title = QLabel("ℹ️  PDF Invoice Mapping Not Required for UIIC")
+        info_title.setStyleSheet("font-size: 15px; font-weight: 600; color: #1E293B;")
+        u_lay.addWidget(info_title)
+
+        info_desc = QLabel(
+            "For UIIC, Invoice Number and Date are extracted directly from your Excel workbook\n"
+            "(provided by Base44). PDF text reading and OCR scanning for invoices are disabled\n"
+            "for UIIC to ensure 100% accuracy and faster automation."
+        )
+        info_desc.setStyleSheet("font-size: 13px; color: #64748B; line-height: 1.5;")
+        info_desc.setWordWrap(True)
+        u_lay.addWidget(info_desc)
+
+        l.addWidget(self.pdf_uiic_info_container)
         l.addStretch(); s.setWidget(w); return s
 
     def _load_data(self):
@@ -296,8 +327,14 @@ class SettingsPage(QWidget):
         self.inp_field_wait.setText(str(s.get("field_wait_ms", 600)))
         self.inp_manual_login_timeout.setText(str(s.get("manual_login_timeout_s", 45)))
         
-        self.inp_pdf_inv.setText(" | ".join(s.get("pdf_invoice_no_labels", [])))
-        self.inp_pdf_date.setText(" | ".join(s.get("pdf_invoice_date_labels", [])))
+        if self._portal_id == "uiic":
+            self.pdf_fields_container.setVisible(False)
+            self.pdf_uiic_info_container.setVisible(True)
+        else:
+            self.pdf_fields_container.setVisible(True)
+            self.pdf_uiic_info_container.setVisible(False)
+            self.inp_pdf_inv.setText(" | ".join(s.get("pdf_invoice_no_labels", [])))
+            self.inp_pdf_date.setText(" | ".join(s.get("pdf_invoice_date_labels", [])))
 
         # Automation Defaults
         defaults = load_automation_defaults(portal_id=self._portal_id)
@@ -430,13 +467,21 @@ class SettingsPage(QWidget):
                 sheet_combo.setCurrentText(sheet_val)
             self.mapping_table.setCellWidget(i, 2, sheet_combo)
 
+            # Row Offset SpinBox
+            row_spin = SafeSpinBox()
+            row_spin.setObjectName("embeddedSpin")
+            row_spin.setRange(0, 100)
+            row_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+            row_spin.setValue(int(cfg.get("row_offset", 0)))
+            self.mapping_table.setCellWidget(i, 3, row_spin)
+
             # Col Offset SpinBox
             offset_spin = SafeSpinBox()
             offset_spin.setObjectName("embeddedSpin")
             offset_spin.setRange(0, 100) # Prevent negative values as requested
             offset_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
             offset_spin.setValue(int(cfg.get("col_offset", 1)))
-            self.mapping_table.setCellWidget(i, 3, offset_spin)
+            self.mapping_table.setCellWidget(i, 4, offset_spin)
         self._filter_table(self.search_input.text())
 
         # Doc Mapping
@@ -521,9 +566,10 @@ class SettingsPage(QWidget):
                 "upload_wait_ms": _int_from_input(self.inp_upload_wait, "Upload Wait (ms)", 3000),
                 "field_wait_ms": _int_from_input(self.inp_field_wait, "Field Wait (ms)", 600),
                 "manual_login_timeout_s": _int_from_input(self.inp_manual_login_timeout, "Manual Login Timeout (s)", 45),
-                "pdf_invoice_no_labels": [l.strip() for l in self.inp_pdf_inv.text().split("|") if l.strip()],
-                "pdf_invoice_date_labels": [l.strip() for l in self.inp_pdf_date.text().split("|") if l.strip()],
             })
+            if self._portal_id != "uiic":
+                current_settings["pdf_invoice_no_labels"] = [l.strip() for l in self.inp_pdf_inv.text().split("|") if l.strip()]
+                current_settings["pdf_invoice_date_labels"] = [l.strip() for l in self.inp_pdf_date.text().split("|") if l.strip()]
             save_settings(current_settings, portal_id=self._portal_id)
 
             # Automation Defaults Save
@@ -645,12 +691,15 @@ class SettingsPage(QWidget):
                 sheet_combo = self.mapping_table.cellWidget(r, 2)
                 sh = sheet_combo.currentText() if sheet_combo else "ALL"
                 
-                offset_spin = self.mapping_table.cellWidget(r, 3)
+                row_spin = self.mapping_table.cellWidget(r, 3)
+                ro = row_spin.value() if row_spin else 0
+
+                offset_spin = self.mapping_table.cellWidget(r, 4)
                 co = offset_spin.value() if offset_spin else 1
                 
                 old = m.get(fn, {})
                 labels = [l.strip() for l in lt.split("|") if l.strip()]
-                nm[fn] = {**old, "sheet": sh, "search_labels": labels, "col_offset": co}
+                nm[fn] = {**old, "sheet": sh, "search_labels": labels, "row_offset": ro, "col_offset": co}
                 if "search_label" in nm[fn]: del nm[fn]["search_label"]
             save_field_mapping(nm, portal_id=self._portal_id)
 

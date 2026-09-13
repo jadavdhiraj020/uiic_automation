@@ -763,6 +763,16 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
                     )
                     logger.info("  [TIME FALLBACK] Survey time not found in Excel, defaulted to %s:%s", claim.time_hh, claim.time_mm)
 
+            if field_name == "time_of_survey":
+                parsed_time = _parse_time_string(value)
+                if parsed_time:
+                    claim.time_hh, claim.time_mm = parsed_time
+                    claim._excel_coords["time_hh"] = claim._excel_coords.get("time_of_survey", "")
+                    claim._excel_logs.append(
+                        f"  📊 time_of_survey: '{claim.time_hh}:{claim.time_mm}' (Source: {claim._excel_coords['time_hh']})"
+                    )
+                    logger.info(f"  [TIME] Extracted time_of_survey: {claim.time_hh}:{claim.time_mm}")
+
             if is_date:
                 clean_date_val = re.sub(r"at.*$", "", str(value), flags=re.IGNORECASE).strip()
                 value = _format_date(clean_date_val)
@@ -779,23 +789,9 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
                     value,
                     raw_initial_loss,
                 )
-
-            if field_name.lower() in ("gst_summary_parts", "gst_summary_labour"):
-                clean_num = re.sub(r"[^\d.]", "", str(value or "0")).strip()
-                if clean_num:
-                    try:
-                        d_val = Decimal(clean_num)
-                        if d_val == d_val.to_integral():
-                            value = str(int(d_val))
-                        else:
-                            value = f"{d_val:.2f}"
-                    except (InvalidOperation, ValueError):
-                        pass
-
-            target_attr = "gst_summary_parts" if field_name.lower() == "gst_summary_parts" else "gst_summary_labour" if field_name.lower() == "gst_summary_labour" else field_name
-            setattr(claim, target_attr, value)
+            setattr(claim, field_name, value)
             found_count += 1
-            logger.info(f"  [FOUND] {target_attr} = {value}")
+            logger.info(f"  [FOUND] {field_name} = {value}")
         else:
             fallback = cfg.get("fallback_value")
             default_key_by_field = {

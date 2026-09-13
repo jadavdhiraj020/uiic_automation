@@ -79,21 +79,26 @@ def _run_background_document_generation(
 
     # 1. Generate Printable Excel copy + PDF
     if getattr(scan_result, "excel_path", None):
-        try:
-            from app.data.printable_excel_service import process_printable_output
-            _output_dir = os.path.dirname(os.path.abspath(scan_result.excel_path))
-            bg_logger.info(f"Generating printable Excel/PDF copy for {Path(scan_result.excel_path).name}...")
-            process_printable_output(
-                source_excel_path=scan_result.excel_path,
-                output_folder=_output_dir,
-                settings=portal_defaults,
-                logs=bg_logs,
-                stop_cb=is_cancelled,
-            )
-            for line in bg_logs:
-                bg_logger.info(f"[Printable Output] {line.strip()}")
-        except Exception as print_exc:
-            bg_logger.warning(f"Printable Excel/PDF generation failed: {print_exc}")
+        if portal_id == "uiic":
+            bg_logger.info("UIIC: survey_report.pdf and assessment_report.pdf handled directly during scan; skipping duplicate background printable generation.")
+        else:
+            try:
+                from app.data.printable_excel_service import process_printable_output
+                _output_dir = os.path.dirname(os.path.abspath(scan_result.excel_path))
+                _settings = dict(portal_defaults or {})
+                bg_logger.info(f"Generating printable Excel/PDF copy for {Path(scan_result.excel_path).name}...")
+                process_printable_output(
+                    source_excel_path=scan_result.excel_path,
+                    output_folder=_output_dir,
+                    settings=_settings,
+                    logs=bg_logs,
+                    stop_cb=is_cancelled,
+                )
+                for line in bg_logs:
+                    bg_logger.info(f"[Printable Output] {line.strip()}")
+            except Exception as print_exc:
+                bg_logger.warning(f"Printable Excel/PDF generation failed: {print_exc}")
+
 
     # Helper function for audit path
     def _audit_path_for(path: str) -> str:
@@ -337,8 +342,8 @@ def _run_background_document_generation(
 class ClaimFolderService:
     """Extracts and prepares claim + document data from a selected folder."""
 
-    def __init__(self, config_dir: str, portal_id: str = "uiic"):
-        self.config_dir = config_dir
+    def __init__(self, config_dir: Optional[str] = None, portal_id: str = "uiic"):
+        self.config_dir = config_dir or ""
         self.portal_id = portal_id or "uiic"
 
     def _write_scan_policy_audit_events(self, events: List[dict]) -> None:
@@ -699,18 +704,11 @@ class ClaimFolderService:
                     )
 
             invoice_pdf = scan_result.assessment_files.get("invoice")
-            if eager_ocr:
-                if invoice_pdf:
-                    self._extract_pdf_invoice_data(
-                        scan_result, claim, logs, stop_cb=stop_cb
-                    )
-            else:
-                if invoice_pdf and os.path.exists(invoice_pdf):
-                    logs.append(
-                        f"Workshop Invoice PDF found: {Path(invoice_pdf).name} - OCR deferred to automation phase (OCR in background)."
-                    )
-                    claim._pending_invoice_ocr = True
-                    claim._pending_invoice_pdf_path = invoice_pdf
+            if invoice_pdf and os.path.exists(invoice_pdf):
+                logs.append(
+                    f"Workshop Invoice PDF found: {Path(invoice_pdf).name} (Invoice PDF/OCR extraction disabled; using Excel values)."
+                )
+            claim._pending_invoice_ocr = False
 
             # Run Cheque OCR during folder load if bank details are missing in Excel.
             if not getattr(claim, "ifsc_code", None) or not getattr(
@@ -930,90 +928,15 @@ class ClaimFolderService:
     def _extract_pdf_invoice_data(
         self, scan_result, claim, logs: List[str], stop_cb: Optional[callable] = None
     ) -> None:
+        """
+        Invoice PDF extraction is disabled in favor of authoritative Excel values.
+        """
         invoice_pdf = scan_result.assessment_files.get("invoice")
-        if not invoice_pdf or not os.path.exists(invoice_pdf):
-            return
-
-        try:
-            import pdfplumber
-        except ImportError:
-            logs.append("  Warning: pdfplumber not installed - cannot extract invoice data")
-            return
-
-        settings = load_settings(portal_id=getattr(claim, "portal_id", self.portal_id))
-        inv_labels = settings.get(
-            "pdf_invoice_no_labels",
-            ["Tax Invoice No.", "Invoice No", "Bill No", "Work shop invoice"],
-        )
-        date_labels = settings.get(
-            "pdf_invoice_date_labels",
-            ["Invoice Date and Time", "Bill Date", "Invoice Date", "date"],
-        )
-
-        logs.append(
-            f"Extracting Workshop Invoice details from PDF: {Path(invoice_pdf).name}"
-        )
-
-        ext_inv = None
-        ext_date = None
-
-        try:
-            with pdfplumber.open(invoice_pdf) as pdf:
-                # Collect text from all pages.
-                all_text = ""
-                all_lines: List[str] = []
-                for page in pdf.pages:
-                    if stop_cb and stop_cb():
-                        logs.append("Warning: PDF text extraction cancelled by user.")
-                        return
-                    page_text = page.extract_text() or ""
-                    if page_text:
-                        all_text += page_text + "\n"
-                        all_lines.extend(page_text.splitlines())
-
-                if not all_text.strip():
-                    if stop_cb and stop_cb():
-                        logs.append("Warning: PDF text extraction cancelled by user.")
-                        return
-                    # PDF has no extractable text (scanned images)
-                    logs.append(
-                        "  Warning: PDF has no extractable text (scanned image?), trying OCR..."
-                    )
-                    ext_inv, ext_date = self._ocr_extract_invoice(
-                        invoice_pdf, inv_labels, date_labels, logs, stop_cb=stop_cb
-                    )
-                else:
-                    # Strategy 1: Label-based inline extraction.
-                    ext_inv = self._find_invoice_no(all_text, all_lines, inv_labels)
-                    ext_date = self._find_invoice_date(all_text, all_lines, date_labels)
-
-            # Apply OCR/text extraction results.
-            if ext_inv:
-                claim.workshop_invoice_no = ext_inv
-                claim.vendor_invoice_number = ext_inv  # New India mapping
-                claim._excel_coords["workshop_invoice_no"] = "PDF Source"
-                claim._excel_coords["vendor_invoice_number"] = "PDF Source"
-                claim._excel_logs.append(
-                    f"  workshop_invoice_no: '{ext_inv}' (Source: PDF Source)"
-                )
-                logs.append(f"  Matched: WS Invoice No (from PDF): {ext_inv}")
-            else:
-                logs.append("  Warning: Invoice No not found in PDF")
-
-            if ext_date:
-                claim.workshop_invoice_date = ext_date
-                claim.vendor_invoice_date = ext_date  # New India mapping
-                claim._excel_coords["workshop_invoice_date"] = "PDF Source"
-                claim._excel_coords["vendor_invoice_date"] = "PDF Source"
-                claim._excel_logs.append(
-                    f"  workshop_invoice_date: '{ext_date}' (Source: PDF Source)"
-                )
-                logs.append(f"  Matched: WS Invoice Date (from PDF): {ext_date}")
-            else:
-                logs.append("  Warning: Invoice Date not found in PDF")
-
-        except Exception as exc:
-            logs.append(f"  Warning: Could not parse invoice PDF: {exc}")
+        if invoice_pdf and os.path.exists(invoice_pdf):
+            logs.append(
+                f"Info: Invoice PDF extraction is disabled - using Excel values for {Path(invoice_pdf).name}"
+            )
+        return
 
     def _find_invoice_no(
         self, full_text: str, lines: List[str], labels: List[str]

@@ -1,11 +1,23 @@
 import os
 import openpyxl
+import pytest
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import patch
 from app.data.data_model import ClaimData
 from app.data.excel_reader import _calculate_professional_fee
 from app.data.folder_scanner import scan_folder, _extract_sheet_for_reinspection
 from app.utils import load_doc_mapping, load_field_mapping, load_automation_defaults
+
+
+@pytest.fixture(autouse=True)
+def mock_excel_com_for_tests(monkeypatch):
+    """Ensure tests in this module do not invoke real COM automation on Excel unless explicitly tested."""
+    def fake_generate(excel_path, output_pdf_path, logs=None, *args, **kwargs):
+        Path(output_pdf_path).write_bytes(b"%PDF-1.4 mock auto pdf")
+        return True
+    monkeypatch.setattr("app.data.printable_excel_service._generate_pdf_excel_com", fake_generate)
+
 
 
 def test_survey_report_auto_copies_to_assessment_report(tmp_path):
@@ -76,13 +88,18 @@ def test_vehicle_photographs_single_prefix_maps_to_4_slots(tmp_path):
         assert (tmp_path / f"vehicle_photo_{i}.jpg").exists()
 
 
-def test_reinspection_3rd_sheet_extraction_and_manual_priority(tmp_path):
+def test_reinspection_3rd_sheet_extraction_and_manual_priority(tmp_path, monkeypatch):
     """
     Requirement 3:
     - Extracts 3rd sheet (index 2) from main Excel into reinspection.xlsx.
     - Prioritizes user-provided manual reinspection file if present.
     - Ensures reinspection.xlsx is excluded from main Excel candidates.
     """
+    # Isolate from user AppData overrides
+    from app.utils import doc_mapping_paths, read_json_file
+    bundled = read_json_file(doc_mapping_paths(portal_id="uiic")["default"])
+    monkeypatch.setattr("app.utils.load_doc_mapping", lambda portal_id=None: bundled)
+
     # 1. Create a 3-sheet workbook
     wb = openpyxl.Workbook()
     ws1 = wb.active
@@ -330,7 +347,7 @@ def test_professional_fee_cross_portal_isolation(tmp_path):
     assert claim_uiic.professional_fee == "2750", "UIIC professional_fee must equal survey_fee + reinspection_fee"
 
 
-def test_survey_time_extraction_and_fallback(tmp_path):
+def test_survey_time_extraction_and_fallback(tmp_path, monkeypatch):
     """
     Test survey time extraction and fallback:
     1. Robust _parse_time_string for 12h and 24h formats.
@@ -339,6 +356,7 @@ def test_survey_time_extraction_and_fallback(tmp_path):
     4. Fallback to 11 HH and 00 MM when time is missing in Excel.
     5. Blank when date_of_survey is missing.
     """
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     from app.data.excel_reader import _parse_time_string, extract_claim_data
 
     # 1. Parsing tests
@@ -364,19 +382,37 @@ def test_survey_time_extraction_and_fallback(tmp_path):
     assert c1.time_hh == "15"
     assert c1.time_mm == "30"
 
-    # 3. Time in adjacent cell
+    # 3. Dedicated "Time" field on same row
     wb2 = openpyxl.Workbook()
     ws2 = wb2.active
     ws2.title = "Sheet1"
     ws2["A1"] = "Date and Time of Survey"
     ws2["E1"] = "27/04/2023"
-    ws2["F1"] = "02:15 PM"
-    f2 = tmp_path / "time_adjacent.xlsx"
+    ws2["F1"] = "Time"
+    ws2["G1"] = "02:15 PM"
+    f2 = tmp_path / "time_separate.xlsx"
     wb2.save(str(f2))
 
     c2 = extract_claim_data(str(f2), portal_id="uiic")
+    assert c2.date_of_survey == "27/04/2023"
     assert c2.time_hh == "14"
     assert c2.time_mm == "15"
+
+    # 3b. Dedicated "Time of Survey" field on next row
+    wb2b = openpyxl.Workbook()
+    ws2b = wb2b.active
+    ws2b.title = "Sheet1"
+    ws2b["A1"] = "Date and Time of Survey"
+    ws2b["E1"] = "27/04/2023"
+    ws2b["A2"] = "Time of Survey"
+    ws2b["E2"] = "15:30"
+    f2b = tmp_path / "time_row2.xlsx"
+    wb2b.save(str(f2b))
+
+    c2b = extract_claim_data(str(f2b), portal_id="uiic")
+    assert c2b.date_of_survey == "27/04/2023"
+    assert c2b.time_hh == "15"
+    assert c2b.time_mm == "30"
 
     # 4. Missing time in Excel -> Fallback to 11:00
     wb3 = openpyxl.Workbook()
@@ -411,85 +447,390 @@ def test_survey_time_extraction_and_fallback(tmp_path):
     assert preview4["Time of Survey"] == ""
 
 
-def test_gst_summary_parts_and_labour_config_and_preview(tmp_path):
+def test_gst_summary_parts_and_labour_removed_from_config_and_preview():
     """
-    Verifies that gst_summary_parts and gst_summary_labour:
-    1. Are defined in UIIC field_mapping.json with editable search_label, sheet, and offsets.
-    2. Exist on ClaimData with case-insensitive property aliases (GST_summary_parts/GST_summary_labour).
-    3. Appear in UI preview table for UIIC workspace.
-    4. Automatically populate Net Assessed Parts (parts_nil_dep_excl_gst) and Labour (labour_excl_gst)
-       when primary fields are 0/empty.
-    5. Successfully extract from Excel via configured search labels and offsets.
+    Verifies that gst_summary_parts and gst_summary_labour are completely removed:
+    1. Not present in UIIC field_mapping.json.
+    2. Not present in UI preview table for UIIC workspace.
     """
     from app.utils import load_field_mapping
     from app.data.data_model import ClaimData
-    from app.data.excel_reader import extract_claim_data
 
-    # 1. Config presence
+    # 1. Field mapping configuration check
     mapping = load_field_mapping(portal_id="uiic")
-    assert "gst_summary_parts" in mapping
-    assert "gst_summary_labour" in mapping
-    assert "GST SUMMARY – SPARES" in mapping["gst_summary_parts"]["search_label"] or \
-           "GST SUMMARY – SPARES" in mapping["gst_summary_parts"].get("search_labels", [])
-    assert "GST SUMMARY – LABOUR" in mapping["gst_summary_labour"]["search_label"] or \
-           "GST SUMMARY – LABOUR" in mapping["gst_summary_labour"].get("search_labels", [])
+    assert "gst_summary_parts" not in mapping
+    assert "gst_summary_labour" not in mapping
 
-    # 2. Data model and property aliases
+    # 2. UI preview table check
     claim = ClaimData(portal_id="uiic")
-    assert claim.gst_summary_parts == "0"
-    assert claim.gst_summary_labour == "0"
-    assert claim.GST_summary_parts == "0"
-    assert claim.GST_summary_labour == "0"
+    preview_labels = [item[0] for item in claim.all_fields_for_preview()]
+    assert "GST Summary Parts (₹)" not in preview_labels
+    assert "GST Summary Labour (₹)" not in preview_labels
 
-    claim.GST_summary_parts = "15420"
-    claim.GST_summary_labour = "3850"
-    assert claim.gst_summary_parts == "15420"
-    assert claim.gst_summary_labour == "3850"
 
-    # 3. UI preview table contains the fields
-    preview = dict((item[0], item[1]) for item in claim.all_fields_for_preview())
-    assert "GST Summary Parts (₹)" in preview
-    assert preview["GST Summary Parts (₹)"] == "15420"
-    assert "GST Summary Labour (₹)" in preview
-    assert preview["GST Summary Labour (₹)"] == "3850"
 
-    # 4. Fallback into Net Assessed Parts and Labour when 0
-    claim.parts_nil_dep_excl_gst = "0"
-    claim.labour_excl_gst = "0"
-    claim.calculate_derived_fields()
-    assert claim.parts_nil_dep_excl_gst == "15420"
-    assert claim.labour_excl_gst == "3850"
+def test_survey_report_auto_generated_from_excel_when_missing(tmp_path, monkeypatch):
+    """
+    Test auto-generation of survey_report.pdf from Excel when missing:
+    1. Folder has only data.xlsx (no manual survey PDF).
+    2. scan_folder generates survey_report.pdf from Sheet 1 and clones it to assessment_report.pdf.
+    3. Both are mapped to assessment_files without timestamp suffixes.
+    4. Re-scanning overwrites cleanly without creating duplicate timestamped files.
+    """
+    from unittest.mock import patch
 
-    # Existing non-zero values are NOT overwritten
-    claim2 = ClaimData(portal_id="uiic")
-    claim2.parts_nil_dep_excl_gst = "8888"
-    claim2.labour_excl_gst = "2222"
-    claim2.gst_summary_parts = "15420"
-    claim2.gst_summary_labour = "3850"
-    claim2.calculate_derived_fields()
-    assert claim2.parts_nil_dep_excl_gst == "8888"
-    assert claim2.labour_excl_gst == "2222"
+    # Isolate from user AppData overrides
+    from app.utils import doc_mapping_paths, read_json_file
+    bundled = read_json_file(doc_mapping_paths(portal_id="uiic")["default"])
+    monkeypatch.setattr("app.utils.load_doc_mapping", lambda portal_id=None: bundled)
 
-    # 5. Extraction from Excel
+    # 1. Create a dummy Excel workbook
+    wb = openpyxl.Workbook()
+    ws1 = wb.active
+    ws1.title = "Survey report"
+    ws1["A1"] = "MOTOR FINAL SURVEY REPORT"
+    ws1["B2"] = "Claim Data"
+
+    excel_path = tmp_path / "claim_data.xlsx"
+    wb.save(str(excel_path))
+    wb.close()
+
+    # Mock PDF generator to write a mock PDF
+    def fake_pdf_gen(excel_path, pdf_path, logs):
+        with open(pdf_path, "wb") as f:
+            f.write(b"%PDF-1.4 mock survey report content")
+        return True
+
+    with patch("app.data.printable_excel_service._generate_pdf_excel_com", side_effect=fake_pdf_gen):
+        # First scan
+        result = scan_folder(str(tmp_path), portal_id="uiic")
+
+        # Verify survey_report and assessment_report are both generated and mapped
+        assert "survey_report" in result.assessment_files
+        assert "assessment_report" in result.assessment_files
+
+        survey_path = Path(result.assessment_files["survey_report"])
+        assessment_path = Path(result.assessment_files["assessment_report"])
+
+        assert survey_path.name == "survey_report.pdf"
+        assert assessment_path.name == "assessment_report.pdf"
+        assert survey_path.exists()
+        assert assessment_path.exists()
+
+        # Both files contain the generated content
+        assert survey_path.read_bytes() == b"%PDF-1.4 mock survey report content"
+        assert assessment_path.read_bytes() == b"%PDF-1.4 mock survey report content"
+
+        # Second scan (re-scan)
+        result2 = scan_folder(str(tmp_path), portal_id="uiic")
+
+        # Verify no duplicate timestamped files were created in the folder
+        files = os.listdir(tmp_path)
+        pdf_files = [f for f in files if f.endswith(".pdf")]
+
+        assert sorted(pdf_files) == ["assessment_report.pdf", "survey_report.pdf"]
+        assert len([f for f in files if "Printable_Assessment" in f]) == 0
+
+
+def test_invoice_pdf_extraction_disabled_and_excel_retained(tmp_path):
+    """
+    Verify that invoice PDF text/OCR extraction is disabled, so Excel values
+    are authoritative and never overwritten by invoice PDF files.
+    """
+    from app.ui.services.claim_folder_service import ClaimFolderService
+    from app.data.folder_scanner import FolderScanResult
+
+    service = ClaimFolderService(portal_id="uiic")
+
+    # Mock an invoice PDF file in tmp_path
+    invoice_pdf = tmp_path / "workshop_invoice.pdf"
+    invoice_pdf.write_bytes(b"%PDF-1.4 dummy invoice text with Invoice No: PDF-INV-999")
+
+    claim = ClaimData()
+    claim.invoice_no = "EXCEL-INV-100"
+    claim.invoice_date = "12/03/2026"
+    claim.workshop_invoice_no = "WS-INV-555"
+    claim.workshop_invoice_date = "10/03/2026"
+
+    scan_result = FolderScanResult()
+    scan_result.folder_path = str(tmp_path)
+    scan_result.assessment_files = {"invoice": str(invoice_pdf)}
+
+    logs = []
+    service._extract_pdf_invoice_data(scan_result, claim, logs)
+
+    # Values must remain their own distinct Excel values with ZERO mixing
+    assert claim.invoice_no == "EXCEL-INV-100"
+    assert claim.workshop_invoice_no == "WS-INV-555"
+    assert claim.workshop_invoice_date == "10/03/2026"
+    assert getattr(claim, "_pending_invoice_ocr", False) is False
+
+
+def test_excel_invoice_and_workshop_invoice_independent_validation():
+    """
+    Verify that invoice_no and workshop_invoice_no are validated independently
+    without any cross-fallback or mixing.
+    """
+    claim = ClaimData()
+    claim.invoice_no = "EXCEL-INV-200"
+    claim.invoice_date = "15/04/2026"
+    claim.workshop_invoice_no = "WS-300"
+    claim.workshop_invoice_date = "14/04/2026"
+    claim.assessment_files = {"invoice": "mock_invoice.pdf"}
+
+    # Validation should not complain about invoice missing when both are present
+    errors, warnings = claim._validate_uiic()
+    assert not any("Workshop Invoice No" in w for w in warnings)
+    assert not any("Workshop Invoice Date" in w for w in warnings)
+
+    # If workshop_invoice_no is empty, the workshop warning MUST appear even if invoice_no is set
+    partial_claim = ClaimData()
+    partial_claim.invoice_no = "EXCEL-INV-200"
+    partial_claim.invoice_date = "15/04/2026"
+    partial_claim.assessment_files = {"invoice": "mock_invoice.pdf"}
+    _, partial_warnings = partial_claim._validate_uiic()
+    assert "Workshop Invoice No not found in Excel" in partial_warnings
+    assert "Workshop Invoice Date not found in Excel" in partial_warnings
+
+
+def test_background_generation_skips_pdf_when_already_exists(tmp_path):
+    """
+    Verify Issue 3 fix: If survey_report.pdf was already generated during the scan,
+    process_printable_output skips redundant PDF render via printable_skip_pdf setting.
+    """
+    from app.data.printable_excel_service import process_printable_output
+
+    excel_path = tmp_path / "data.xlsx"
+    wb = openpyxl.Workbook()
+    wb.active["A1"] = "Data"
+    wb.save(str(excel_path))
+    wb.close()
+
+    logs = []
+    settings = {
+        "printable_output_excel_name": "Printable_Assessment.xlsx",
+        "printable_output_pdf_name": "survey_report.pdf",
+        "printable_skip_pdf": True,
+    }
+
+    process_printable_output(
+        source_excel_path=str(excel_path),
+        output_folder=str(tmp_path),
+        settings=settings,
+        logs=logs,
+    )
+    assert any("Printable PDF skipped" in line for line in logs)
+
+
+def test_uiic_clean_number_suffix_extraction():
+    """
+    Verify that invoice_no, workshop_invoice_no, and final_report_no
+    are cleaned to their trailing number suffix for UIIC without affecting other portals:
+    - 'INV-2026-0042' -> '0042' (preserves leading zeros)
+    - 'JDB/2026-27/PORTAL/8744' -> '8744'
+    - 'ABSD/2026-27/PORTAL/12434' -> '12434'
+    - '8744' -> '8744'
+    """
+    from app.data.data_model import ClaimData, _extract_number_suffix
+
+    # 1. Helper function checks
+    assert _extract_number_suffix("INV-2026-0042") == "0042"
+    assert _extract_number_suffix("JDB/2026-27/PORTAL/8744") == "8744"
+    assert _extract_number_suffix("ABSD/2026-27/PORTAL/12434") == "12434"
+    assert _extract_number_suffix("8744") == "8744"
+    assert _extract_number_suffix("") == ""
+
+    # 2. UIIC portal post-processing
+    c_uiic = ClaimData(portal_id="uiic")
+    c_uiic.invoice_no = "INV-2026-0042"
+    c_uiic.final_report_no = "JDB/2026-27/PORTAL/8744"
+    c_uiic.workshop_invoice_no = "INV-2026-0042"
+    c_uiic.calculate_derived_fields()
+
+    assert c_uiic.invoice_no == "0042"
+    assert c_uiic.final_report_no == "8744"
+    assert c_uiic.workshop_invoice_no == "0042"
+
+    preview_uiic = dict((item[0], item[1]) for item in c_uiic.all_fields_for_preview())
+    assert preview_uiic["Invoice No"] == "0042"
+    assert preview_uiic["Report No"] == "8744"
+
+    # 3. Isolation: Other portals (e.g. New India, OIC) are untouched
+    c_nia = ClaimData(portal_id="newindia")
+    c_nia.invoice_no = "INV-2026-0042"
+    c_nia.final_report_no = "JDB/2026-27/PORTAL/8744"
+    c_nia.calculate_derived_fields()
+
+    assert c_nia.invoice_no == "INV-2026-0042"
+    assert c_nia.final_report_no == "JDB/2026-27/PORTAL/8744"
+
+
+def test_uiic_settings_pdf_mapping_toggles():
+    """
+    Verify that in SettingsPage:
+    1. In UIIC mode: pdf_fields_container is hidden, pdf_uiic_info_container is visible.
+    2. In non-UIIC mode (e.g. New India): pdf_fields_container is visible, info container is hidden.
+    """
+    import sys
+    from PyQt6.QtWidgets import QApplication
+    from app.ui.components.settings_page import SettingsPage
+
+    app = QApplication.instance()
+    if not app:
+        app = QApplication(sys.argv)
+
+    page = SettingsPage()
+    # Default is uiic: fields container hidden, info container visible
+    assert page._portal_id == "uiic"
+    assert page.pdf_fields_container.isHidden() is True
+    assert page.pdf_uiic_info_container.isHidden() is False
+
+    # Switch to newindia: fields container visible, info container hidden
+    page.set_portal("newindia")
+    assert page._portal_id == "newindia"
+    assert page.pdf_fields_container.isHidden() is False
+    assert page.pdf_uiic_info_container.isHidden() is True
+
+    # Switch back to uiic
+    page.set_portal("uiic")
+    assert page._portal_id == "uiic"
+    assert page.pdf_fields_container.isHidden() is True
+    assert page.pdf_uiic_info_container.isHidden() is False
+
+
+def test_generate_pdf_excel_com_sets_pagesetup_print_area_for_column_range(monkeypatch):
+    """
+    Reason 2 verification: When print_mode="column_range", Excel COM directly
+    configures ws.PageSetup.PrintArea = f"${start_c}:${end_c}", ws.PageSetup.Zoom = False,
+    and FitToPagesWide = 1 to guarantee the print area is honored by the COM print engine.
+    """
+    monkeypatch.undo()
+    from unittest.mock import MagicMock, patch
+    from app.data.printable_excel_service import _generate_pdf_excel_com
+
+    mock_excel = MagicMock()
+    mock_wb = MagicMock()
+    mock_ws = MagicMock()
+
+    mock_excel.Workbooks.Open.return_value = mock_wb
+    mock_wb.Worksheets.return_value = mock_ws
+    mock_dispatch = MagicMock(return_value=mock_excel)
+
+    mock_win32 = MagicMock()
+    mock_win32.client = MagicMock()
+    mock_win32.client.DispatchEx = mock_dispatch
+    mock_pythoncom = MagicMock()
+
+    with patch.dict("sys.modules", {
+        "win32com": mock_win32,
+        "win32com.client": mock_win32.client,
+        "pythoncom": mock_pythoncom,
+    }):
+        with patch("app.data.printable_excel_service._find_pdf_printer", return_value="Microsoft Print to PDF"):
+            logs = []
+            res = _generate_pdf_excel_com(
+                "dummy.xlsx",
+                "dummy.pdf",
+                logs,
+                print_mode="column_range",
+                col_range=("A", "B"),
+            )
+
+    assert res is True
+    assert mock_ws.PageSetup.PrintArea == "$A:$B"
+    assert mock_ws.PageSetup.Zoom is False
+    assert mock_ws.PageSetup.FitToPagesWide == 1
+    assert mock_ws.PageSetup.FitToPagesTall is False
+    mock_ws.ExportAsFixedFormat.assert_called_once()
+
+
+def test_generate_pdf_excel_com_sets_pagesetup_zoom_for_scale_percentage(monkeypatch):
+    """
+    Reason 2 verification: When print_mode="scale_percentage", Excel COM directly
+    clears ws.PageSetup.PrintArea and sets ws.PageSetup.Zoom to the integer scale.
+    """
+    monkeypatch.undo()
+    from unittest.mock import MagicMock, patch
+    from app.data.printable_excel_service import _generate_pdf_excel_com
+
+    mock_excel = MagicMock()
+    mock_wb = MagicMock()
+    mock_ws = MagicMock()
+
+    mock_excel.Workbooks.Open.return_value = mock_wb
+    mock_wb.Worksheets.return_value = mock_ws
+    mock_dispatch = MagicMock(return_value=mock_excel)
+
+    mock_win32 = MagicMock()
+    mock_win32.client = MagicMock()
+    mock_win32.client.DispatchEx = mock_dispatch
+    mock_pythoncom = MagicMock()
+
+    with patch.dict("sys.modules", {
+        "win32com": mock_win32,
+        "win32com.client": mock_win32.client,
+        "pythoncom": mock_pythoncom,
+    }):
+        with patch("app.data.printable_excel_service._find_pdf_printer", return_value="Microsoft Print to PDF"):
+            logs = []
+            res = _generate_pdf_excel_com(
+                "dummy.xlsx",
+                "dummy.pdf",
+                logs,
+                print_mode="scale_percentage",
+                scale=75,
+            )
+
+    assert res is True
+    assert mock_ws.PageSetup.PrintArea == ""
+    assert mock_ws.PageSetup.Zoom == 75
+    mock_ws.ExportAsFixedFormat.assert_called_once()
+
+
+def test_uiic_scan_folder_freshly_regenerates_and_overwrites_survey_report(tmp_path):
+    """
+    Reason 1 verification: Re-scanning freshly re-generates and overwrites
+    survey_report.pdf and syncs to assessment_report.pdf instead of skipping
+    when the file already exists on disk.
+    """
+    import openpyxl
+    from unittest.mock import patch
+    from app.data.folder_scanner import scan_folder
+
+    # Create dummy Excel matching uiic excel_keywords ("main1")
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Sheet1"
-    ws["D10"] = "GST SUMMARY – SPARES"
-    # Row offset = 4, Col offset = 1 -> Row 14, Col E
-    ws.cell(row=14, column=5, value=12550.0)
+    ws["A1"] = "Data"
+    excel_path = tmp_path / "main1.xlsx"
+    wb.save(str(excel_path))
+    wb.close()
 
-    ws["D20"] = "GST SUMMARY – LABOUR"
-    ws.cell(row=24, column=5, value="₹ 4,300")
+    # Pre-existing stale survey_report.pdf
+    survey_path = tmp_path / "survey_report.pdf"
+    with open(survey_path, "wb") as f:
+        f.write(b"%PDF-1.4 OLD_REPORT")
 
-    f = tmp_path / "test_gst_summary.xlsx"
-    wb.save(str(f))
+    # Mock generator that writes NEW_REPORT
+    def fake_render(excel_in, pdf_out, logs, **kwargs):
+        with open(pdf_out, "wb") as f:
+            f.write(b"%PDF-1.4 NEW_REPORT")
+        return True
 
-    extracted = extract_claim_data(str(f), portal_id="uiic")
-    assert extracted.gst_summary_parts == "12550"
-    assert extracted.gst_summary_labour == "4300"
-    assert extracted.parts_nil_dep_excl_gst == "12550"
-    assert extracted.labour_excl_gst == "4300"
+    with patch("app.data.printable_excel_service._generate_pdf_excel_com", side_effect=fake_render):
+        result = scan_folder(str(tmp_path), portal_id="uiic")
 
+    # Must be mapped
+    assert result.assessment_files.get("survey_report") == str(survey_path)
+    assessment_path = tmp_path / "assessment_report.pdf"
+    assert result.assessment_files.get("assessment_report") == str(assessment_path)
+
+    # Must be overwritten with NEW_REPORT
+    with open(survey_path, "rb") as f:
+        assert f.read() == b"%PDF-1.4 NEW_REPORT"
+
+    with open(assessment_path, "rb") as f:
+        assert f.read() == b"%PDF-1.4 NEW_REPORT"
 
 
 

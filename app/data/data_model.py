@@ -165,6 +165,24 @@ def clean_mobile_number(raw: Optional[str]) -> str:
 _clean_mobile_10 = clean_mobile_number
 
 
+def _extract_number_suffix(val: Optional[str]) -> str:
+    """
+    Extract the last segment after delimiters '/', '-', or '\\'.
+    Preserves leading zeros.
+    e.g. 'INV-2026-0042' -> '0042'
+         'JDB/2026-27/PORTAL/8744' -> '8744'
+         'ABSD/2026-27/PORTAL/12434' -> '12434'
+         '8744' -> '8744'
+    """
+    if not val or not str(val).strip():
+        return ""
+    s = str(val).strip()
+    parts = [p.strip() for p in re.split(r'[/\\-]', s) if p.strip()]
+    if parts:
+        return parts[-1]
+    return s
+
+
 def _normalise_time(raw: str) -> str:
     """Normalize time to HH:MM (24-hour format) for Website 2."""
     s = str(raw).strip()
@@ -216,13 +234,11 @@ class ClaimData:
     parts_age_dep_excl_gst: str = "0"
     parts_50_dep_excl_gst: str = "0"
     parts_nil_dep_excl_gst: str = "0"
-    gst_summary_parts: str = "0"
     nil_depreciation: str = ""
     parts_gst18_amount: str = "0"
 
     # ── Claim Assessment — Labour ─────────────────────────────────────────────
-    labour_excl_gst: str = "0"
-    gst_summary_labour: str = "0"
+    labour_gst18_amount: str = "0"
 
     # ── Claim Assessment — Other Charges ─────────────────────────────────────
     workshop_invoice_no: str = ""
@@ -418,22 +434,23 @@ class ClaimData:
     surveyor_address: str = ""
     surveyor_pan: str = ""
 
-    # Property aliases for case flexibility (GST_summary_parts / GST_summary_labour)
+    # Property aliases for backward compatibility and naming flexibility
     @property
-    def GST_summary_parts(self) -> str:
-        return self.gst_summary_parts
+    def labour_excl_gst(self) -> str:
+        return self.labour_gst18_amount
 
-    @GST_summary_parts.setter
-    def GST_summary_parts(self, val: str):
-        self.gst_summary_parts = str(val or "0")
+    @labour_excl_gst.setter
+    def labour_excl_gst(self, val: str):
+        self.labour_gst18_amount = str(val or "0")
 
     @property
-    def GST_summary_labour(self) -> str:
-        return self.gst_summary_labour
+    def labours_gst18_amount(self) -> str:
+        return self.labour_gst18_amount
 
-    @GST_summary_labour.setter
-    def GST_summary_labour(self, val: str):
-        self.gst_summary_labour = str(val or "0")
+    @labours_gst18_amount.setter
+    def labours_gst18_amount(self, val: str):
+        self.labour_gst18_amount = str(val or "0")
+
 
 
     def calculate_derived_fields(self):
@@ -463,24 +480,33 @@ class ClaimData:
             if self.date_of_survey and not self.time_hh:
                 self.time_hh = "11"
                 self.time_mm = "00"
+                self.time_of_survey = f"{self.time_hh}:{self.time_mm}"
                 self._excel_coords["time_hh"] = "Default (11:00 AM)"
+                self._excel_coords["time_of_survey"] = self._excel_coords["time_hh"]
                 self._excel_logs.append("  📊 time_of_survey: '11:00' (Source: Default Fallback)")
             elif not self.date_of_survey and self._excel_coords.get("time_hh", "").startswith("Default"):
                 self.time_hh = ""
                 self.time_mm = ""
+                self.time_of_survey = ""
                 self._excel_coords.pop("time_hh", None)
+                self._excel_coords.pop("time_of_survey", None)
 
-        # 1c. Net Assessed Parts / Labour fallback from GST summary if primary field is 0 or empty
-        if (not self.parts_nil_dep_excl_gst or str(self.parts_nil_dep_excl_gst).strip() == "0") and (self.gst_summary_parts and str(self.gst_summary_parts).strip() != "0"):
-            self.parts_nil_dep_excl_gst = self.gst_summary_parts
-            if "parts_nil_dep_excl_gst" not in self._excel_coords and "gst_summary_parts" in self._excel_coords:
-                self._excel_coords["parts_nil_dep_excl_gst"] = f"{self._excel_coords['gst_summary_parts']} (GST Summary Parts)"
-
-        if (not self.labour_excl_gst or str(self.labour_excl_gst).strip() == "0") and (self.gst_summary_labour and str(self.gst_summary_labour).strip() != "0"):
-            self.labour_excl_gst = self.gst_summary_labour
-            if "labour_excl_gst" not in self._excel_coords and "gst_summary_labour" in self._excel_coords:
-                self._excel_coords["labour_excl_gst"] = f"{self._excel_coords['gst_summary_labour']} (GST Summary Labour)"
-
+            # 1c. Clean suffix for invoice_no, workshop_invoice_no, and final_report_no (UIIC)
+            if self.invoice_no and str(self.invoice_no).strip():
+                clean_inv = _extract_number_suffix(self.invoice_no)
+                if clean_inv:
+                    self.invoice_no = clean_inv
+                    self._excel_logs.append(f"  📊 invoice_no cleaned suffix: '{self.invoice_no}'")
+            if self.workshop_invoice_no and str(self.workshop_invoice_no).strip():
+                clean_ws = _extract_number_suffix(self.workshop_invoice_no)
+                if clean_ws:
+                    self.workshop_invoice_no = clean_ws
+                    self._excel_logs.append(f"  📊 workshop_invoice_no cleaned suffix: '{self.workshop_invoice_no}'")
+            if self.final_report_no and str(self.final_report_no).strip():
+                clean_rep = _extract_number_suffix(self.final_report_no)
+                if clean_rep:
+                    self.final_report_no = clean_rep
+                    self._excel_logs.append(f"  📊 final_report_no cleaned suffix: '{self.final_report_no}'")
         # 2. Total Claimed Amount (Sum of surveyor charges)
         try:
             calculated_total = 0
@@ -728,9 +754,9 @@ class ClaimData:
             errors.append("Invoice File is missing")
 
         if not self.workshop_invoice_no:
-            warnings.append("Workshop Invoice No not found in PDF")
+            warnings.append("Workshop Invoice No not found in Excel")
         if not self.workshop_invoice_date:
-            warnings.append("Workshop Invoice Date not found in PDF")
+            warnings.append("Workshop Invoice Date not found in Excel")
         if not self.claim_doc_files:
             warnings.append("No claim documents found in folder")
 
@@ -789,6 +815,8 @@ class ClaimData:
             warnings.append("Survey Time (HH) not set — field will be skipped")
         if not self.workshop_invoice_no:
             warnings.append("Workshop Invoice No not found in Excel")
+        if not self.workshop_invoice_date:
+            warnings.append("Workshop Invoice Date not found in Excel")
         if not self.surveyor_observation:
             warnings.append("Surveyor Observation is empty")
         if not self.assessment_files:
@@ -1070,11 +1098,9 @@ class ClaimData:
             ("Parts Age Dep (₹)",     self.parts_age_dep_excl_gst, False, _src("parts_age_dep_excl_gst")),
             ("Parts 50% Dep (₹)",     self.parts_50_dep_excl_gst,  False, _src("parts_50_dep_excl_gst")),
             ("Parts Nil Dep (₹)",     self.parts_nil_dep_excl_gst, False, _src("parts_nil_dep_excl_gst")),
-            ("GST Summary Parts (₹)", self.gst_summary_parts,      False, _src("gst_summary_parts")),
             ("Nil Depreciation",      self.nil_depreciation,       False, _src("nil_depreciation")),
             ("Parts GST 18% (₹)",     self.parts_gst18_amount,     False, _src("parts_gst18_amount")),
-            ("Labour (₹)",            self.labour_excl_gst,        True,  _src("labour_excl_gst")),
-            ("GST Summary Labour (₹)",self.gst_summary_labour,     False, _src("gst_summary_labour")),
+            ("Labour GST 18% (₹)",   self.labour_gst18_amount,    True,  _src("labour_gst18_amount") or _src("labour_excl_gst")),
             ("Workshop Inv No",       self.workshop_invoice_no,   False, _src("workshop_invoice_no")),
             ("Workshop Inv Date",     self.workshop_invoice_date, False, _src("workshop_invoice_date")),
             ("Towing Charges (₹)",    self.towing_charges,        False, _src("towing_charges")),
