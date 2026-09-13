@@ -64,6 +64,11 @@ class SettingsPage(QWidget):
         h_lay = QHBoxLayout(header); h_lay.setContentsMargins(32, 0, 32, 0)
         title = QLabel("Settings"); title.setObjectName("settingsTitle")
         h_lay.addWidget(title); h_lay.addStretch(); root.addWidget(header)
+        h_lay.addWidget(QLabel("DocWriter login:"))
+        self.btn_change_docwriter_login = QPushButton("Change Login")
+        self.btn_forget_docwriter_login = QPushButton("Forget Login")
+        h_lay.addWidget(self.btn_change_docwriter_login)
+        h_lay.addWidget(self.btn_forget_docwriter_login)
 
         # Tabs
         self.tab_bar = QFrame(); tl = QHBoxLayout(self.tab_bar); tl.setContentsMargins(32, 10, 32, 0)

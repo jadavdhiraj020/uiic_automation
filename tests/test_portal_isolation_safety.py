@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -19,6 +20,27 @@ def test_scan_folder_never_uses_invoice_as_cancelled_cheque(tmp_path):
     assert result.policy_events[0]["policy_decision"] == "no_fallback_used"
     assert result.policy_events[0]["portal_id"] == "newindia"
     assert result.assessment_files["invoice"].endswith("final_invoice.pdf")
+
+
+def test_newindia_upload_documents_are_not_also_unrecognised(tmp_path):
+    from app.data.folder_scanner import scan_folder
+
+    expected = {
+        "driving_license": "driving_license.pdf",
+        "registration_certificate": "rc_book.pdf",
+        "claim_form": "claim_form.pdf",
+    }
+    for filename in expected.values():
+        (tmp_path / filename).write_bytes(b"%PDF-1.4\n")
+
+    result = scan_folder(str(tmp_path), portal_id="newindia")
+
+    assert {
+        key: Path(value).name for key, value in result.upload_doc_files.items()
+    } == expected
+    assert not {
+        Path(value).name for value in result.unknown_files
+    }.intersection(expected.values())
 
 
 def test_scan_folder_cleans_only_current_scan_generated_files(tmp_path):

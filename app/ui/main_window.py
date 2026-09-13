@@ -5,6 +5,7 @@ Modularized version delegating to component classes.
 
 import os
 from datetime import datetime
+from pathlib import Path
 
 from PyQt6.QtCore import (
     Qt,
@@ -17,6 +18,7 @@ from PyQt6.QtGui import (
     QColor,
     QIcon,
     QPainter,
+    QPainterPath,
     QPen,
     QPixmap,
 )
@@ -107,12 +109,21 @@ class MainWindow(QMainWindow):
 
         def _draw_progress(p, s):
             pen = QPen(QColor("#94A3B8"))
-            pen.setWidthF(1.6)
+            pen.setWidthF(1.5)
             p.setPen(pen)
-            p.drawEllipse(3, 3, 12, 12)
-            p.setBrush(QColor("#94A3B8"))
-            p.setPen(Qt.PenStyle.NoPen)
-            p.drawEllipse(QPointF(9, 4), 1.5, 1.5)
+            path = QPainterPath()
+            path.moveTo(4.5, 13)
+            path.quadTo(2.5, 13, 2.5, 10.5)
+            path.quadTo(2.5, 8.5, 4.8, 8.2)
+            path.quadTo(5.2, 5.2, 8.5, 5.2)
+            path.quadTo(11.2, 5.2, 12.2, 7.2)
+            path.quadTo(15.5, 7.5, 15.5, 10.5)
+            path.quadTo(15.5, 13, 13.5, 13)
+            path.lineTo(4.5, 13)
+            p.drawPath(path)
+            p.drawLine(9, 8, 9, 12)
+            p.drawLine(7, 10, 9, 12)
+            p.drawLine(11, 10, 9, 12)
 
         def _draw_settings(p, s):
             import math
@@ -158,6 +169,11 @@ class MainWindow(QMainWindow):
 
         self.stack.addWidget(self.workspace_page)  # 0
         self.stack.addWidget(self.settings_page)  # 1
+        from app.web_sync.page import WebQueuePage
+        self.web_queue = WebQueuePage(self)
+        self.settings_page.btn_change_docwriter_login.clicked.connect(self.web_queue.change_login)
+        self.settings_page.btn_forget_docwriter_login.clicked.connect(self.web_queue.forget_login)
+        self.stack.addWidget(self.web_queue)  # 2
         lay.addWidget(self.stack, 1)
 
     def _build_topbar(self):
@@ -180,6 +196,7 @@ class MainWindow(QMainWindow):
             [
                 ("  Workspace", self._icon_home),
                 ("  Settings", self._icon_settings),
+                ("  Web Queue", self._icon_progress),
             ]
         ):
             b = QPushButton(name)
@@ -506,6 +523,14 @@ class MainWindow(QMainWindow):
             self.workspace_page.inp_folder.setText(folder)
             self._scan_folder(folder)
 
+    def _open_web_case(self, current):
+        index = self.portal_combo.findData(current["portal"])
+        self.portal_combo.setCurrentIndex(index)
+        self.workspace_page.inp_folder.setText(current["folder"])
+        self.web_queue.workspace_scan_started(current["folder"])
+        self._scan_folder(current["folder"])
+        self._switch_page(0)
+
     def _scan_folder(self, folder):
         if self._claim and hasattr(self._claim, "_background_generation_stop_event"):
             try:
@@ -553,7 +578,8 @@ class MainWindow(QMainWindow):
         # Initialize thread and worker
         self._scan_thread = QThread()
         self._scan_worker = FolderScanWorker(
-            folder, config_dir, portal_id, scan_token=scan_token
+            folder, config_dir, portal_id, scan_token=scan_token,
+            main_excel_name=self.web_queue.excel_for(folder) if hasattr(self, "web_queue") else None,
         )
         self._scan_worker.moveToThread(self._scan_thread)
 
@@ -627,6 +653,13 @@ class MainWindow(QMainWindow):
             self.workspace_page.set_scan_failed()
             self._set_status("error", "Scan Failed")
 
+        if hasattr(self, "web_queue"):
+            self.web_queue.workspace_scan_completed(
+                getattr(result, "scan_folder", ""),
+                bool(result.success),
+                "Folder scan failed" if not result.success else "",
+            )
+
         # Re-enable buttons
         self.workspace_page.btn_start.setEnabled(True)
         btn_browse = self.workspace_page.findChild(QPushButton, "btnBrowse")
@@ -644,6 +677,18 @@ class MainWindow(QMainWindow):
                 self, "No Data", "Please select a claim folder with valid data first."
             )
             return
+
+        scan_context = getattr(self._claim, "_scan_context", None)
+        web_folder = getattr(scan_context, "claim_folder_path", "") if scan_context else ""
+        if (
+            web_folder and hasattr(self, "web_queue")
+            and (Path(web_folder) / "web_sync_manifest.json").exists()
+        ):
+            active = self.web_queue.state.current
+            active_folder = active.get("folder", "") if active else ""
+            if not active_folder or Path(active_folder).resolve() != Path(web_folder).resolve():
+                self.web_queue.start_automation_for_folder(web_folder)
+                return
 
         if self._worker:
             return
@@ -681,6 +726,12 @@ class MainWindow(QMainWindow):
 
         portal_id = scan_context.portal_id
         settings = load_settings(portal_id=portal_id)
+        if hasattr(self, "web_queue"):
+            try:
+                settings.update(self.web_queue.settings_for(scan_context.claim_folder_path, portal_id))
+            except Exception as exc:
+                QMessageBox.warning(self, "Web case cannot start", str(exc))
+                return
 
         self._thread = QThread()
         self._worker = AutomationWorker(
@@ -716,12 +767,20 @@ class MainWindow(QMainWindow):
         self.status_pill.style().polish(self.status_pill)
 
         self._thread.start()
+        if hasattr(self, "web_queue"):
+            self.web_queue.refresh()
 
     def _stop_automation(self):
+        if hasattr(self, "web_queue") and getattr(self.web_queue, "_pending_start_case_id", None):
+            self.web_queue._pending_start_case_id = None
+        if getattr(self, "_scan_worker", None) and hasattr(self._scan_worker, "request_stop"):
+            self._scan_worker.request_stop()
         if self._worker:
             self._worker.stop()
             self.workspace_page.btn_stop.setEnabled(False)
             self.log("Stopping...")
+            if hasattr(self, "web_queue"):
+                self.web_queue.refresh()
 
     def _on_automation_ui_reset(self, success, message):
         """Called when automation finishes — updates UI. Thread may still be winding down."""
@@ -738,6 +797,8 @@ class MainWindow(QMainWindow):
         self._worker = None
         self._thread = None
         self._set_portal_selector_locked(False)
+        if hasattr(self, "web_queue"):
+            self.web_queue.refresh()
         self._write_portal_audit_event(
             "portal_switch_unlocked_after_automation",
             portal_id=get_active_portal_id() or "uiic",
@@ -761,6 +822,12 @@ class MainWindow(QMainWindow):
             pass
         except Exception:
             pass
+
+        if hasattr(self, "web_queue") and hasattr(self.web_queue, "append_log"):
+            try:
+                self.web_queue.append_log(clean_text, phase="Portal")
+            except Exception:
+                pass
 
         if self._log_file and not self._log_file.closed:
             try:
@@ -807,6 +874,8 @@ class MainWindow(QMainWindow):
         )
 
     def closeEvent(self, event):
+        if hasattr(self, "web_queue"):
+            self.web_queue.shutdown()
         # Cancel any active background document generation thread
         if self._claim and hasattr(self._claim, "_background_generation_stop_event"):
             try:

@@ -243,6 +243,8 @@ async def do_login(
     from app.automation.captcha_solver import solve_captcha_from_bytes
 
     async def handle_login_dialog(dialog):
+        from app.web_sync.submission import capture_native_before_dismiss
+        await capture_native_before_dismiss(page, dialog)
         await _accept_dialog(dialog, log)
 
     try:

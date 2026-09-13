@@ -640,6 +640,11 @@ class AutomationEngine:
 
             # Create context without viewport to allow --start-maximized to work
             context = await browser.new_context(no_viewport=True)
+            web_submission = settings.get("_web_submission")
+            if web_submission:
+                from app.web_sync.submission import SubmissionMonitor
+                monitor = SubmissionMonitor(**web_submission)
+                await monitor.install(context)
             page = await context.new_page()
 
             # --- CIRCUIT BREAKER MONITOR ---

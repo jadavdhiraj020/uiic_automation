@@ -166,6 +166,8 @@ async def dismiss_portal_popup(
         _log_msg(log, "info", f"Popup overlay detected{ctx}: [{ptype}] -> {body[:120]}")
 
         try:
+            from app.web_sync.submission import capture_before_dismiss
+            await capture_before_dismiss(page)
             dismiss_res: dict = await page.evaluate(_JS_DISMISS_POPUP)
         except Exception:
             return None if classify else False
@@ -181,6 +183,7 @@ async def dismiss_portal_popup(
             try:
                 still_open: dict = await page.evaluate(_JS_DETECT_POPUP)
                 if still_open.get("found"):
+                    await capture_before_dismiss(page)
                     await page.evaluate(_JS_DISMISS_POPUP)
                     await asyncio.sleep(0.5)
             except Exception:

@@ -243,6 +243,8 @@ async def fill_claim_documents(page, claim: ClaimData, log_cb, settings: dict = 
         log(f"\n📤 Processing {len(queue)} document rows...")
 
     async def _handle_dialog(dialog):
+        from app.web_sync.submission import capture_native_before_dismiss
+        await capture_native_before_dismiss(page, dialog)
         dialog_msg = (dialog.message[:80] + "...") if dialog.message and len(dialog.message) > 80 else (dialog.message or "(empty)")
         if isinstance(log, AutomationLogger):
             log.info(f"Portal alert: '{dialog_msg}' auto-accepted")

@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import os
 import sys
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Optional
 
 APP_SLUG = "UIIC_Surveyor_Automation"
+scan_main_excel = ContextVar("scan_main_excel", default=None)
 
 
 def _get_portal_registry():
@@ -273,7 +275,10 @@ def load_doc_mapping(portal_id: Optional[str] = None) -> dict[str, Any]:
     paths = doc_mapping_paths(portal_id=portal_id)
     base = read_json_file(paths["default"]) or {}
     user = read_json_file(paths["user"]) or {}
-    return _merge_doc_mapping(base, user)
+    merged = _merge_doc_mapping(base, user)
+    if scan_main_excel.get():
+        merged["main_excel_keywords"] = [scan_main_excel.get()]
+    return merged
 
 
 def save_doc_mapping(mapping: dict[str, Any], portal_id: Optional[str] = None) -> str:

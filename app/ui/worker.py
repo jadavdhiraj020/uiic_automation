@@ -53,12 +53,14 @@ class FolderScanWorker(QObject):
         config_dir: str,
         portal_id: str = "uiic",
         scan_token: int = 0,
+        main_excel_name=None,
     ):
         super().__init__()
         self.folder = folder
         self.config_dir = config_dir
         self.portal_id = portal_id
         self.scan_token = scan_token
+        self.main_excel_name = main_excel_name
         self._stop_requested = False
 
     def request_stop(self):
@@ -67,6 +69,8 @@ class FolderScanWorker(QObject):
 
     def run(self):
         from app.ui.services.claim_folder_service import ClaimFolderService
+        from app.utils import scan_main_excel
+        token = scan_main_excel.set(self.main_excel_name)
         try:
             service = ClaimFolderService(config_dir=self.config_dir, portal_id=self.portal_id)
             result = service.process_folder(self.folder, stop_cb=lambda: self._stop_requested)
@@ -88,4 +92,6 @@ class FolderScanWorker(QObject):
             result.scan_portal_id = self.portal_id
             result.scan_folder = self.folder
             self.done_signal.emit(result)
+        finally:
+            scan_main_excel.reset(token)
 

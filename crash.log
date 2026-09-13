@@ -1,0 +1,18 @@
+UIIC Surveyor Automation — Fatal Crash Report
+============================================================
+Traceback (most recent call last):
+  File "C:\Users\jadav\Coding\uiic_automation\main.py", line 140, in main
+    success = run_headless_pdf_render_com(excel_path, pdf_path)
+  File "C:\Users\jadav\Coding\uiic_automation\app\data\printable_excel_service.py", line 301, in run_headless_pdf_render_com
+    print(line, file=sys.stderr)
+OSError: [Errno 22] Invalid argument
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\jadav\Coding\uiic_automation\main.py", line 234, in <module>
+    main()
+  File "C:\Users\jadav\Coding\uiic_automation\main.py", line 143, in main
+    print(f"ERROR: Headless PDF render failed: {e}", file=sys.stderr)
+OSError: [Errno 22] Invalid argument
+

@@ -240,6 +240,8 @@ async def dismiss_portal_popup(
 
         # ── Dismiss ───────────────────────────────────────────────────────────
         try:
+            from app.web_sync.submission import capture_before_dismiss
+            await capture_before_dismiss(page)
             dismiss_res: dict = await page.evaluate(_JS_DISMISS_POPUP)
         except Exception as exc:
             _log_msg(log, "error", f"Popup dismissal JS error{ctx}: {str(exc)[:80]}")
@@ -262,6 +264,7 @@ async def dismiss_portal_popup(
                 still_open: dict = await page.evaluate(_JS_DETECT_POPUP)
                 if still_open.get("found"):
                     _log_msg(log, "warning", f"Popup still visible{ctx} — retrying once...")
+                    await capture_before_dismiss(page)
                     await page.evaluate(_JS_DISMISS_POPUP)
                     await asyncio.sleep(0.8)
                     # Check again

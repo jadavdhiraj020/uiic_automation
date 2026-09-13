@@ -8,7 +8,7 @@ QWidget {
 }
 
 /* ── Root Containers ──────────────── */
-QMainWindow, #rootWidget, #homePage, #progressPage, #workspacePage, #workspaceScrollInner {
+QMainWindow, #rootWidget, #homePage, #progressPage, #workspacePage, #workspaceScrollInner, #webQueuePageRoot, #webQueueScrollInner {
     background-color: #F8FAFC;
 }
 
@@ -940,3 +940,188 @@ QLineEdit#settingsInput::placeholder {
     font-weight: 400;
     font-style: italic;
 }
+
+#validationSuccess {
+    background-color: #ECFDF5;
+    color: #065F46;
+    border: 1px solid #A7F3D0;
+    border-radius: 6px;
+    padding: 14px;
+    font-weight: 700;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   WEB QUEUE PAGE
+   ══════════════════════════════════════════════════════════════════════ */
+
+#webQueuePageRoot {
+    background-color: #F8FAFC;
+}
+
+#webQueueScrollInner {
+    background-color: #F8FAFC;
+}
+
+QListWidget#webQueueList {
+    background-color: #FFFFFF;
+    border: 1px solid #CBD5E1;
+    border-radius: 6px;
+    outline: none;
+    padding: 6px;
+}
+
+QListWidget#webQueueList::item {
+    border-radius: 8px;
+    margin: 3px 0;
+    border: none;
+    background: transparent;
+}
+
+QListWidget#webQueueList::item:hover {
+    background: transparent;
+    border: none;
+}
+
+QListWidget#webQueueList::item:selected {
+    background: transparent;
+    border: none;
+}
+
+/* ── Web Queue Active Case Bar ── */
+QFrame#activeCaseBar {
+    background-color: #F8FAFC;
+    border: 1px solid #E2E8F0;
+    border-radius: 6px;
+}
+
+/* ── Web Queue Start Button ── */
+QPushButton#btnWebStart {
+    background-color: #2563EB;
+    color: #FFFFFF;
+    border: 1px solid #1D4ED8;
+    border-radius: 6px;
+    font-size: 9.5pt;
+    font-weight: 700;
+    padding: 8px 18px;
+}
+
+QPushButton#btnWebStart:hover {
+    background-color: #1D4ED8;
+    border-color: #1E40AF;
+}
+
+QPushButton#btnWebStart:pressed {
+    background-color: #1E40AF;
+}
+
+QPushButton#btnWebStart:disabled {
+    background-color: #F1F5F9;
+    color: #94A3B8;
+    border: 1px solid #E2E8F0;
+}
+
+/* ── Web Queue Stop / Fail Button ── */
+QPushButton#btnWebStop {
+    background-color: #FFFFFF;
+    color: #DC2626;
+    border: 1px solid #FCA5A5;
+    border-radius: 6px;
+    font-size: 9.5pt;
+    font-weight: 700;
+    padding: 8px 16px;
+}
+
+QPushButton#btnWebStop:hover {
+    background-color: #FEF2F2;
+    border-color: #EF4444;
+    color: #B91C1C;
+}
+
+QPushButton#btnWebStop:pressed {
+    background-color: #FEE2E2;
+}
+
+QPushButton#btnWebStop:disabled {
+    background-color: #F8FAFC;
+    color: #CBD5E1;
+    border: 1px solid #E2E8F0;
+}
+
+/* ── Web Queue Connect Button ── */
+QPushButton#btnWebConnect {
+    background-color: #0F172A;
+    color: #FFFFFF;
+    border: 1px solid #0F172A;
+    border-radius: 6px;
+    font-size: 9.5pt;
+    font-weight: 700;
+    padding: 6px 16px;
+    min-width: 90px;
+}
+
+QPushButton#btnWebConnect:hover {
+    background-color: #1E293B;
+    border-color: #1E293B;
+}
+
+QPushButton#btnWebConnect:pressed {
+    background-color: #334155;
+}
+
+QPushButton#btnWebConnect:disabled {
+    background-color: #E2E8F0;
+    color: #94A3B8;
+    border: 1px solid #CBD5E1;
+}
+
+/* ── Web Queue Save Credentials Button ── */
+QPushButton#btnSaveCreds {
+    background-color: #059669;
+    color: #FFFFFF;
+    border: 1px solid #047857;
+    border-radius: 6px;
+    font-size: 9.5pt;
+    font-weight: 700;
+    padding: 8px 18px;
+}
+
+QPushButton#btnSaveCreds:hover {
+    background-color: #047857;
+    border-color: #065F46;
+}
+
+QPushButton#btnSaveCreds:pressed {
+    background-color: #065F46;
+}
+
+/* ── Web Queue Poll Button ── */
+QPushButton#btnPollQueue {
+    background-color: #FFFFFF;
+    color: #334155;
+    border: 1px solid #CBD5E1;
+    border-radius: 6px;
+    font-size: 8.5pt;
+    font-weight: 700;
+    padding: 5px 14px;
+}
+
+QPushButton#btnPollQueue:hover {
+    background-color: #F1F5F9;
+    color: #0F172A;
+    border-color: #94A3B8;
+}
+
+/* ── Password Eye Toggle Button ── */
+QPushButton#iconButton {
+    background-color: transparent;
+    border: 1px solid #CBD5E1;
+    border-radius: 6px;
+    padding: 0px;
+    margin: 0px;
+}
+
+QPushButton#iconButton:hover {
+    background-color: #F1F5F9;
+    border-color: #94A3B8;
+}
+

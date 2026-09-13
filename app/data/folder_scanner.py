@@ -861,11 +861,13 @@ def scan_folder(
             continue
 
         # ── Try Upload Document tab match (DL, RC, Claim Form) ────────────────
+        upload_assigned = False
         if upload_map:
             upload_key = _match_keyword(fname_lower, upload_map)
             if upload_key:
                 if upload_key not in result.upload_doc_files:
                     result.upload_doc_files[upload_key] = full_path
+                    upload_assigned = True
                     logger.info("Upload doc [%s]: %s", upload_key, fname)
                 else:
                     logger.info(
@@ -913,6 +915,12 @@ def scan_folder(
                 continue
             result.claim_doc_files[claim_type] = full_path
             logger.info("Claim doc [%s]: %s", claim_type, fname)
+            continue
+
+        # A document-upload match is already a valid scanner assignment.  The
+        # checks above still allow intentional dual mapping, but a file that
+        # matched only an upload slot must not also be reported as unknown.
+        if upload_assigned:
             continue
 
         # ── No match ──────────────────────────────────────────────────────────

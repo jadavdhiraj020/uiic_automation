@@ -351,6 +351,7 @@ hiddenimports.extend(
         "pythoncom",
         "pywintypes",
         "win32api",
+        "win32crypt",  # Windows DPAPI for local Web Queue surveyor profiles
         "win32com",
         "win32com.client",
         "win32com.client.dynamic",
