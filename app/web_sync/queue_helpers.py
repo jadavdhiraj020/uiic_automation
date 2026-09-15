@@ -18,10 +18,11 @@ def is_stale_dispatch_error(error):
     )
 
 
-def short_insurer_label(insurer):
-    if not insurer or not str(insurer).strip():
+def short_insurer_label(insurer, portal_id=None):
+    if not insurer and not portal_id:
         return ""
     try:
-        return {"uiic": "UIIC", "newindia": "New India", "oic": "OIC"}[portal_for(insurer)]
+        portal = portal_for(insurer, portal_id=portal_id)
+        return {"uiic": "UIIC", "newindia": "New India", "oic": "OIC"}[portal]
     except (KeyError, ValueError):
-        return str(insurer).strip()
+        return str(insurer).strip() if insurer else ""

@@ -296,19 +296,82 @@ class CaseRepository:
             self._recovery_path(case_id).unlink(missing_ok=True)
 
 
-def portal_for(insurer):
+VALID_PORTALS = {"uiic", "newindia", "oic"}
+
+
+def portal_for(insurer=None, portal_id=None):
+    # 1. During staging / routing, use portal_id FIRST if provided
+    if portal_id is not None and str(portal_id).strip():
+        pid = str(portal_id).strip().lower()
+        if pid in VALID_PORTALS:
+            return pid
+        raise ValueError(f"Unsupported portal: {portal_id}")
+
+    # If insurer is a dict (a job object), check job.get("portal_id") first
+    if isinstance(insurer, dict):
+        job_pid = insurer.get("portal_id")
+        if job_pid is not None and str(job_pid).strip():
+            pid = str(job_pid).strip().lower()
+            if pid in VALID_PORTALS:
+                return pid
+            raise ValueError(f"Unsupported portal: {job_pid}")
+        insurer = insurer.get("insurer")
+
+    # 2. Fallback to insurer name string
+    if not insurer or not isinstance(insurer, str) or not str(insurer).strip():
+        raise ValueError(f"Unsupported insurer: {insurer}")
+
     names = {
         "uiic": "uiic", "nia": "newindia", "oic": "oic",
         "newindia": "newindia",
         "united india insurance company limited": "uiic",
         "the new india assurance company limited": "newindia",
         "new india assurance company limited": "newindia",
+        "the new india insurance company limited": "newindia",
+        "new india insurance company limited": "newindia",
+        "the oriental insurance company limited": "oic",
         "oriental insurance company limited": "oic",
         "united india": "uiic", "united india insurance": "uiic",
+        "united india insurance company": "uiic",
+        "the united india insurance company": "uiic",
+        "the united india insurance company limited": "uiic",
         "new india": "newindia", "new india assurance": "newindia", "new india insurance": "newindia",
+        "new india assurance company": "newindia",
+        "the new india assurance company": "newindia",
+        "new india insurance company": "newindia",
+        "the new india insurance company": "newindia",
         "oriental": "oic", "oriental insurance": "oic",
+        "oriental insurance company": "oic",
+        "the oriental insurance company": "oic",
     }
-    try:
-        return names[" ".join(insurer.lower().split())]
-    except (KeyError, AttributeError):
-        raise ValueError(f"Unsupported insurer: {insurer}") from None
+
+    raw = str(insurer).strip().lower()
+    # Direct match on clean whitespace
+    exact_clean = " ".join(raw.split())
+    if exact_clean in names:
+        return names[exact_clean]
+
+    # Clean punctuation and normalize standard company abbreviations without fuzzy matching:
+    # - "ltd." / "ltd" -> "limited"
+    # - "co." / "co" -> "company"
+    cleaned = re.sub(r"[^\w\s]", " ", raw)
+    tokens = cleaned.split()
+    token_map = {
+        "ltd": "limited",
+        "co": "company",
+        "corp": "company",
+        "corporation": "company",
+    }
+    normalized_tokens = [token_map.get(t, t) for t in tokens]
+    normalized_phrase = " ".join(normalized_tokens)
+
+    if normalized_phrase in names:
+        return names[normalized_phrase]
+
+    # Normalize leading "the "
+    if normalized_phrase.startswith("the "):
+        without_the = normalized_phrase[4:].strip()
+        if without_the in names:
+            return names[without_the]
+
+    raise ValueError(f"Unsupported insurer: {insurer}")

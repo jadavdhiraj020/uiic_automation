@@ -488,6 +488,36 @@ def test_process_printable_output_clean_overwrite():
         assert excel_files == ["Printable_Assessment.xlsx"]
 
 
-# ── Fix #24: mtime-scan fallback path test ───────────────────────────────────
+# ── Fix: Process & Office Resiliency Helpers tests ────────────────────────────
+
+def test_safe_log_print():
+    from app.data.printable_excel_service import _safe_log_print
+    # Should not raise even with None or closed stream
+    _safe_log_print("test info", is_error=False)
+    _safe_log_print("test error", is_error=True)
+
+
+def test_get_excel_pid_with_mock():
+    from app.data.printable_excel_service import _get_excel_pid
+    mock_excel = MagicMock()
+    # Mock should be safely ignored and return None
+    assert _get_excel_pid(mock_excel) is None
+    assert _get_excel_pid(None) is None
+
+
+def test_is_process_running():
+    from app.data.printable_excel_service import _is_process_running
+    # Negative / 0 PIDs return False
+    assert _is_process_running(0) is False
+    assert _is_process_running(-1) is False
+    # Current PID should be running
+    assert _is_process_running(os.getpid()) is True
+
+
+def test_unblock_office_resiliency_empty_path():
+    from app.data.printable_excel_service import unblock_office_resiliency
+    assert unblock_office_resiliency("") is False
+    assert unblock_office_resiliency(None) is False
+
 
 

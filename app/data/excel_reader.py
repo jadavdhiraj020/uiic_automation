@@ -86,6 +86,22 @@ class _XlrdWrapper:
                 self._sheets[name] = _XlrdSheetWrapper(sh)
         return list(self._sheets.values())
 
+    def close(self):
+        if self._wb is not None:
+            try:
+                self._wb.release_resources()
+            except Exception:
+                pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def __del__(self):
+        self.close()
+
 
 class _XlrdSheetWrapper:
     def __init__(self, sh):
@@ -137,6 +153,22 @@ class _OpenpyxlWrapper:
             if n not in self._sheets:
                 self._sheets[n] = _OpenpyxlSheetWrapper(self._wb[n])
         return list(self._sheets.values())
+
+    def close(self):
+        if self._wb is not None:
+            try:
+                self._wb.close()
+            except Exception:
+                pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def __del__(self):
+        self.close()
 
 
 class _OpenpyxlSheetWrapper:
@@ -927,5 +959,10 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
     if not claim.bank_payment_to:
         claim.bank_payment_to = "Insured"
         claim._excel_logs.append(f"  📊 bank_payment_to: '{claim.bank_payment_to}' (Source: Default Fallback)")
+
+    try:
+        wb.close()
+    except Exception:
+        pass
 
     return claim

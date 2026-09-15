@@ -322,6 +322,27 @@ def _create_printable_excel(
     logger.info("Printable Excel saved: %s", output_path)
 
 
+def _safe_log_print(msg: str, is_error: bool = False) -> None:
+    """
+    Safely write a message to sys.stderr or sys.stdout in headless mode.
+    Guards against OSError: [Errno 22] Invalid argument in PyInstaller
+    windowed GUI mode on Windows where console handles may be invalid.
+    """
+    target = sys.stderr if is_error else sys.stdout
+    if target is not None:
+        try:
+            print(msg, file=target)
+            return
+        except OSError:
+            pass
+        except Exception:
+            pass
+    if is_error:
+        logger.warning(msg)
+    else:
+        logger.info(msg)
+
+
 def run_headless_pdf_render_com(
     excel_path: str,
     pdf_path: str,
@@ -343,10 +364,8 @@ def run_headless_pdf_render_com(
         col_range=col_range,
     )
     for line in logs:
-        if "❌" in line or "⚠️" in line:
-            print(line, file=sys.stderr)
-        else:
-            print(line)
+        is_error = "❌" in line or "⚠️" in line
+        _safe_log_print(line, is_error=is_error)
     return success
 
 
@@ -439,6 +458,7 @@ def _generate_pdf(
         except subprocess.TimeoutExpired:
             logs.append("  ❌ PDF generation timed out (30s limit).")
             logger.warning("Subprocess printable PDF generation timed out (30s limit). Terminating.")
+            _cleanup_orphaned_automation_excel_processes()
             return
         except Exception as exc:
             logs.append(f"  ❌ Subprocess launch failed: {exc}")
@@ -452,6 +472,134 @@ def _generate_pdf(
     )
 
 
+# ── Process & Office Resiliency Helpers ──────────────────────────────────────
+
+def unblock_office_resiliency(file_path: str) -> bool:
+    """
+    Checks if Microsoft Excel marked the file as corrupt/crashed in
+    HKCU\\Software\\Microsoft\\Office\\<version>\\Excel\\Resiliency\\DisabledItems.
+    If so, deletes the entry so Excel will not block opening the file via COM.
+    Returns True if an entry was removed, False otherwise.
+    """
+    if not file_path or sys.platform != "win32":
+        return False
+
+    import winreg
+    target_norm = os.path.normcase(os.path.normpath(os.path.abspath(file_path)))
+    target_base = os.path.basename(target_norm)
+    removed_any = False
+
+    # Check common Office versions: 16.0 (2016/2019/365), 15.0 (2013), 14.0 (2010)
+    for ver in ("16.0", "15.0", "14.0"):
+        key_path = f"Software\\Microsoft\\Office\\{ver}\\Excel\\Resiliency\\DisabledItems"
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_READ | winreg.KEY_WRITE
+            ) as key:
+                num_values = winreg.QueryInfoKey(key)[1]
+                to_delete = []
+                for i in range(num_values):
+                    try:
+                        val_name, val_data, _ = winreg.EnumValue(key, i)
+                        if isinstance(val_data, bytes):
+                            try:
+                                decoded = val_data.decode("utf-16le", errors="ignore").lower()
+                                if target_norm in decoded or target_base in decoded:
+                                    to_delete.append(val_name)
+                            except Exception:
+                                pass
+                    except OSError:
+                        break
+                for val_name in to_delete:
+                    try:
+                        winreg.DeleteValue(key, val_name)
+                        logger.info("Unblocked %s from Office Resiliency (Office %s)", file_path, ver)
+                        removed_any = True
+                    except Exception as del_err:
+                        logger.warning("Failed to delete Office Resiliency value %s: %s", val_name, del_err)
+        except (FileNotFoundError, OSError):
+            continue
+        except Exception as e:
+            logger.debug("Office resiliency check exception on Office %s: %s", ver, e)
+
+    return removed_any
+
+
+def _get_excel_pid(excel_app) -> Optional[int]:
+    """Retrieve the Windows PID of the Excel COM process."""
+    if not excel_app or sys.platform != "win32":
+        return None
+    try:
+        # Guard against unittest.mock objects
+        if hasattr(excel_app, "_mock_return_value") or type(excel_app).__name__ in ("MagicMock", "Mock", "NonCallableMagicMock"):
+            return None
+        hwnd = getattr(excel_app, "Hwnd", None)
+        if isinstance(hwnd, int) and hwnd > 0:
+            import ctypes
+            from ctypes import wintypes
+            pid = wintypes.DWORD()
+            ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value:
+                return pid.value
+    except Exception:
+        pass
+    return None
+
+
+def _is_process_running(pid: int) -> bool:
+    """Check whether a process with the given PID is currently active."""
+    if not pid or pid <= 0 or sys.platform != "win32":
+        return False
+    import ctypes
+    SYNCHRONIZE = 0x00100000
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, False, pid)
+    if not handle:
+        return False
+    try:
+        exit_code = ctypes.c_ulong()
+        if ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            STILL_ACTIVE = 259
+            return exit_code.value == STILL_ACTIVE
+        return False
+    finally:
+        ctypes.windll.kernel32.CloseHandle(handle)
+
+
+def _kill_excel_process(pid: int) -> None:
+    """Forcefully terminate an Excel process by PID."""
+    if not pid or pid <= 0 or sys.platform != "win32":
+        return
+    import ctypes
+    PROCESS_TERMINATE = 0x0001
+    handle = ctypes.windll.kernel32.OpenProcess(PROCESS_TERMINATE, False, pid)
+    if handle:
+        try:
+            ctypes.windll.kernel32.TerminateProcess(handle, 1)
+            logger.info("Terminated Excel PID %d via TerminateProcess", pid)
+        finally:
+            ctypes.windll.kernel32.CloseHandle(handle)
+
+
+def _cleanup_orphaned_automation_excel_processes() -> None:
+    """
+    Terminates lingering background headless Excel processes (windowless /automation -Embedding)
+    to prevent file locks and memory leaks if a subprocess times out.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import subprocess
+        subprocess.run(
+            ["taskkill", "/F", "/FI", "IMAGENAME eq EXCEL.EXE", "/FI", "WINDOWTITLE eq N/A"],
+            capture_output=True,
+            timeout=5,
+        )
+        logger.info("Cleaned up orphaned headless automation Excel processes")
+    except Exception as exc:
+        logger.debug("Cleanup orphaned Excel processes error (non-fatal): %s", exc)
+
+
 def _find_pdf_printer(excel) -> Optional[str]:
     """
     Auto-detect the 'Microsoft Print to PDF' printer name+port string.
@@ -459,8 +607,7 @@ def _find_pdf_printer(excel) -> Optional[str]:
     Strategy (in order):
       1. win32print.EnumPrinters() — asks Windows for the actual installed
          name, so the port suffix is always correct regardless of machine.
-      2. Port-list brute-force — tries all common Ne0x: and PORTPROMPT:
-         variants, as a fallback when win32print is unavailable.
+      2. Port-list brute-force — tries common Ne0x: ports as fallback.
 
     Returns the full ActivePrinter string (e.g. 'Microsoft Print to PDF on Ne01:')
     or None if no matching printer is found.
@@ -474,10 +621,12 @@ def _find_pdf_printer(excel) -> Optional[str]:
             for info in printers:
                 name = info.get("pPrinterName", "") if isinstance(info, dict) else info[2]
                 if "Microsoft Print to PDF" in name or "Microsoft XPS" in name:
-                    # Excel's ActivePrinter format is "Name on Port:"
                     port = info.get("pPortName", "") if isinstance(info, dict) else info[3]
+                    # Skip prompt ports (e.g. 'PORTPROMPT:') — setting ActivePrinter to a prompt
+                    # port throws a COM exception in Excel and blocks headless rendering.
+                    if port and "prompt" in str(port).lower():
+                        continue
                     full = f"{name} on {port}"
-                    # Verify Excel accepts this string
                     try:
                         excel.ActivePrinter = full
                         logger.debug("Printer set via EnumPrinters: %s", full)
@@ -487,12 +636,10 @@ def _find_pdf_printer(excel) -> Optional[str]:
     except Exception as enum_exc:
         logger.debug("win32print.EnumPrinters unavailable: %s", enum_exc)
 
-    # ── Strategy 2: Port-list brute-force ─────────────────────────────────
+    # ── Strategy 2: Port-list brute-force (NeXX ports only, no prompt ports)
     _CANDIDATES = (
         [f"Microsoft Print to PDF on Ne{i:02d}:" for i in range(10)]
-        + ["Microsoft Print to PDF on PORTPROMPT:"]
         + [f"Microsoft XPS Document Writer on Ne{i:02d}:" for i in range(10)]
-        + ["Microsoft XPS Document Writer on PORTPROMPT:"]
     )
     for candidate in _CANDIDATES:
         try:
@@ -529,17 +676,21 @@ def _generate_pdf_excel_com(
 
     excel = None
     wb = None
-    com_initialized = False  # Issue 2: track init state to guard CoUninitialize
+    com_initialized = False
+    excel_pid = None
+
+    # Unblock the file if Microsoft Office Resiliency quarantined it previously
+    try:
+        unblock_office_resiliency(abs_excel)
+    except Exception as unblock_exc:
+        logger.debug("Office resiliency unblock check failed (non-fatal): %s", unblock_exc)
+
     try:
         if getattr(sys, "frozen", False):
             try:
                 import win32com.client.gencache as gencache
 
                 # ── Compute the writable cache path ───────────────────────────────
-                # Priority: GEN_PY_DIR (set by runtime_hook.py) → PYWIN32_CACHE_DIR →
-                # fallback to a known-good AppData subdirectory.
-                # We create the directory eagerly so gencache never hits a missing-dir
-                # error on first access (which also manifests as a PermissionError).
                 _gen_dir = (
                     os.environ.get("GEN_PY_DIR")
                     or os.environ.get("PYWIN32_CACHE_DIR")
@@ -551,13 +702,7 @@ def _generate_pdf_excel_com(
                     )
                 )
                 os.makedirs(_gen_dir, exist_ok=True)
-
-                # Mark writable first so internal guards don't reject our override.
                 gencache.is_readonly = False
-
-                # Override the path resolver so gencache always writes to _gen_dir
-                # regardless of where win32com.__file__ resolves to inside _MEIPASS.
-                # Capture _gen_dir in closure so it stays correct for the process lifetime.
                 _frozen_gen_dir = _gen_dir
                 gencache.GetGeneratePath = lambda: _frozen_gen_dir
 
@@ -565,26 +710,27 @@ def _generate_pdf_excel_com(
                     "win32com gencache redirected to writable path: %s", _gen_dir
                 )
             except Exception as cache_exc:
-                # Surface as WARNING (not debug) — if gencache is read-only in the
-                # frozen EXE, COM dispatch will still work but may generate spurious
-                # TypeErrors for complex COM objects. Visible in production logs.
                 logger.warning(
                     "win32com gencache setup failed in frozen EXE (non-fatal): %s. "
                     "COM dispatch will proceed without gen-cache optimisation.",
                     cache_exc,
                 )
 
-
         pythoncom.CoInitialize()
         com_initialized = True
         excel = win32com.client.DispatchEx("Excel.Application")
+        excel_pid = _get_excel_pid(excel)
         excel.Visible = False
         excel.DisplayAlerts = False
+        try:
+            excel.AskToUpdateLinks = False
+        except Exception:
+            pass
+        try:
+            excel.EnableEvents = False
+        except Exception:
+            pass
 
-        # Issue 1: Auto-detect working PDF printer via EnumPrinters + port-list.
-        # ExportAsFixedFormat requires a working printer driver even for PDF.
-        # Excel caches the last-used printer which may be unavailable
-        # (e.g. 'AnyDesk Printer' when remote desktop is disconnected).
         printer_set = _find_pdf_printer(excel)
         if printer_set:
             logger.debug("ActivePrinter resolved to: %s", printer_set)
@@ -595,7 +741,12 @@ def _generate_pdf_excel_com(
             )
             logger.warning("No PDF printer found; ExportAsFixedFormat may fail.")
 
-        wb = excel.Workbooks.Open(abs_excel, ReadOnly=True)
+        wb = excel.Workbooks.Open(
+            abs_excel,
+            UpdateLinks=0,
+            ReadOnly=True,
+            IgnoreReadOnlyRecommended=True,
+        )
 
         # Export only Sheet 1
         ws = wb.Worksheets(1)
@@ -625,8 +776,6 @@ def _generate_pdf_excel_com(
         return True
 
     except Exception as exc:
-        # COM errors are tuples: (hresult, description, excepinfo, ...).
-        # excepinfo[2] holds the human-readable Excel error message.
         exc_args = getattr(exc, "args", ())
         if (exc_args and isinstance(exc_args[0], int)
                 and len(exc_args) >= 3
@@ -646,16 +795,27 @@ def _generate_pdf_excel_com(
                 wb.Close(SaveChanges=False)
             except Exception:
                 pass
+            wb = None
         if excel:
             try:
                 excel.Quit()
             except Exception:
                 pass
+            excel = None
+
+        # Ensure Excel process has exited; if still running, kill it to prevent orphaned handles
+        if excel_pid and _is_process_running(excel_pid):
+            import time
+            time.sleep(0.2)
+            if _is_process_running(excel_pid):
+                _kill_excel_process(excel_pid)
+
         # Drop Python references before GC collect so refcount hits 0.
-        del wb, excel
-        # Issue 2: run gc and CoUninitialize in independent try/except blocks
-        # so a gc failure cannot shadow a CoUninitialize call, and
-        # CoUninitialize is only called if CoInitialize actually succeeded.
+        try:
+            del wb, excel
+        except Exception:
+            pass
+
         try:
             import gc
             gc.collect()

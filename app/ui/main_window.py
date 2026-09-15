@@ -660,8 +660,9 @@ class MainWindow(QMainWindow):
                 "Folder scan failed" if not result.success else "",
             )
 
-        # Re-enable buttons
-        self.workspace_page.btn_start.setEnabled(True)
+        # Re-enable buttons — but not Start if automation is already running
+        if not self._worker:
+            self.workspace_page.btn_start.setEnabled(True)
         btn_browse = self.workspace_page.findChild(QPushButton, "btnBrowse")
         if btn_browse:
             btn_browse.setEnabled(True)

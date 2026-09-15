@@ -309,6 +309,7 @@ def run_headless_reinspection_com(full_path: str, pdf_path: str, sheet_index: in
 def _fallback_openpyxl_extraction(
     full_path: str, excel_path: str, sheet_index: int, attempt_failures: List[str]
 ) -> str | None:
+    wb = None
     try:
         import openpyxl
 
@@ -335,6 +336,12 @@ def _fallback_openpyxl_extraction(
     except Exception as e:
         logger.warning(f"openpyxl fallback extraction failed: {e}")
         attempt_failures.append(f"openpyxl fallback error: {e}")
+    finally:
+        if wb is not None:
+            try:
+                wb.close()
+            except Exception:
+                pass
 
     if attempt_failures:
         logger.warning(
@@ -370,6 +377,7 @@ def _extract_sheet_for_reinspection(
         except OSError:
             pass
 
+    wb = None
     try:
         import openpyxl
 
@@ -396,6 +404,12 @@ def _extract_sheet_for_reinspection(
     except Exception as e:
         logger.warning(f"openpyxl reinspection extraction failed: {e}")
         return None
+    finally:
+        if wb is not None:
+            try:
+                wb.close()
+            except Exception:
+                pass
 
 
 def scan_folder(

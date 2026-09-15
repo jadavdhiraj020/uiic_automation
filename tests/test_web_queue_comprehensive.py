@@ -1185,6 +1185,148 @@ def test_portal_for_all_supported_insurers():
         portal_for("HDFC ERGO General Insurance")
 
 
+def test_portal_id_routing_and_fallback_normalization():
+    # 1. portal_id=uiic + any insurer text -> UIIC
+    assert portal_for("Any insurer text", portal_id="uiic") == "uiic"
+    assert portal_for("Unknown Insurer Ltd.", portal_id="uiic") == "uiic"
+    assert portal_for("HDFC ERGO General Insurance", portal_id="uiic") == "uiic"
+    assert portal_for({"insurer": "Random Insurer", "portal_id": "uiic"}) == "uiic"
+    assert portal_for({"portal_id": "uiic"}) == "uiic"
+
+    # 2. portal_id=newindia -> New India
+    assert portal_for(None, portal_id="newindia") == "newindia"
+    assert portal_for("", portal_id="newindia") == "newindia"
+    assert portal_for("Some Insurer Ltd", portal_id="newindia") == "newindia"
+    assert portal_for({"insurer": "Custom", "portal_id": "newindia"}) == "newindia"
+
+    # 3. portal_id=oic -> OIC
+    assert portal_for(None, portal_id="oic") == "oic"
+    assert portal_for("", portal_id="oic") == "oic"
+    assert portal_for("Some Insurer Ltd", portal_id="oic") == "oic"
+    assert portal_for({"insurer": "Custom", "portal_id": "oic"}) == "oic"
+
+    # 4. Old job without portal_id still works
+    assert portal_for("United India Insurance") == "uiic"
+    assert portal_for("UIIC") == "uiic"
+    assert portal_for({"insurer": "United India Insurance"}) == "uiic"
+    assert portal_for("New India Assurance") == "newindia"
+    assert portal_for("NIA") == "newindia"
+    assert portal_for({"insurer": "New India Assurance"}) == "newindia"
+    assert portal_for("Oriental Insurance") == "oic"
+    assert portal_for("OIC") == "oic"
+    assert portal_for({"insurer": "Oriental Insurance"}) == "oic"
+
+    # 5. Case 1609 stages correctly (insurer="UNITED INDIA INSURANCE COMPANY LTD.")
+    assert portal_for("UNITED INDIA INSURANCE COMPANY LTD.") == "uiic"
+    assert portal_for({"case_ref": "JDB/2026-27/PORTAL/1609", "insurer": "UNITED INDIA INSURANCE COMPANY LTD."}) == "uiic"
+    assert portal_for("United India Insurance Co. Ltd.") == "uiic"
+    assert portal_for("The New India Assurance Co. Ltd.") == "newindia"
+    assert portal_for("The Oriental Insurance Co. Ltd.") == "oic"
+    assert portal_for("Oriental Insurance Co. Ltd.") == "oic"
+    assert portal_for("United India Insurance Co") == "uiic"
+
+    # 6. Unknown portal raises ValueError
+    with pytest.raises(ValueError, match="Unsupported portal"):
+        portal_for("UIIC", portal_id="bajaj")
+    with pytest.raises(ValueError, match="Unsupported portal"):
+        portal_for(None, portal_id="unknown")
+    with pytest.raises(ValueError, match="Unsupported portal"):
+        portal_for({"insurer": "UIIC", "portal_id": "tata_aig"})
+    with pytest.raises(ValueError, match="Unsupported insurer"):
+        portal_for("Unknown Insurer Without Portal ID")
+
+
+def test_portal_id_staging_in_queue_page(qapp, tmp_path):
+    job_uiic = {
+        **SAMPLE_JOB_UIIC,
+        "case_id": "case_test_uiic",
+        "insurer": "Random Insurer Name Ltd.",
+        "portal_id": "uiic",
+    }
+    job_nia = {
+        **SAMPLE_JOB_NIA,
+        "case_id": "case_test_nia",
+        "insurer": "Another Custom Insurer",
+        "portal_id": "newindia",
+    }
+    job_oic = {
+        **SAMPLE_JOB_OIC,
+        "case_id": "case_test_oic",
+        "insurer": "Third Custom Insurer",
+        "portal_id": "oic",
+    }
+    job_old = {
+        **SAMPLE_JOB_UIIC,
+        "case_id": "case_test_old",
+        "insurer": "United India Insurance",
+    }
+    job_old.pop("portal_id", None)
+    job_1609 = {
+        **SAMPLE_JOB_UIIC,
+        "case_id": "case_test_1609",
+        "case_ref": "JDB/2026-27/PORTAL/1609",
+        "insurer": "UNITED INDIA INSURANCE COMPANY LTD.",
+    }
+    job_1609.pop("portal_id", None)
+
+    all_jobs = [job_uiic, job_nia, job_oic, job_old, job_1609]
+    page, server, _window, _opened = make_test_queue_page(tmp_path, all_jobs)
+    try:
+        # 1. portal_id="uiic" + any insurer text -> routes to UIIC folder
+        page._stage_case(job_uiic, automatic=True)
+        rec_uiic = page._record("case_test_uiic")
+        assert rec_uiic["portal"] == "uiic"
+        assert rec_uiic["local_status"] == "ready"
+        assert "\\UIIC\\" in rec_uiic["folder"] or "/UIIC/" in rec_uiic["folder"]
+
+        # 2. portal_id="newindia" -> routes to New India folder
+        page._stage_case(job_nia, automatic=True)
+        rec_nia = page._record("case_test_nia")
+        assert rec_nia["portal"] == "newindia"
+        assert rec_nia["local_status"] == "ready"
+        assert "\\New India\\" in rec_nia["folder"] or "/New India/" in rec_nia["folder"]
+
+        # 3. portal_id="oic" -> routes to OIC folder
+        page._stage_case(job_oic, automatic=True)
+        rec_oic = page._record("case_test_oic")
+        assert rec_oic["portal"] == "oic"
+        assert rec_oic["local_status"] == "ready"
+        assert "\\OIC\\" in rec_oic["folder"] or "/OIC/" in rec_oic["folder"]
+
+        # 4. Old job without portal_id -> falls back to insurer name and works
+        page._stage_case(job_old, automatic=True)
+        rec_old = page._record("case_test_old")
+        assert rec_old["portal"] == "uiic"
+        assert rec_old["local_status"] == "ready"
+        assert "\\UIIC\\" in rec_old["folder"] or "/UIIC/" in rec_old["folder"]
+
+        # 5. Case 1609 stages correctly without portal_id
+        page._stage_case(job_1609, automatic=True)
+        rec_1609 = page._record("case_test_1609")
+        assert rec_1609["portal"] == "uiic"
+        assert rec_1609["local_status"] == "ready"
+        assert "\\UIIC\\" in rec_1609["folder"] or "/UIIC/" in rec_1609["folder"]
+
+        # 6. Unknown portal_id -> Stage Failed safely, no download, no claim
+        job_bad = {
+            **SAMPLE_JOB_UIIC,
+            "case_id": "case_test_bad_portal",
+            "portal_id": "unknown_portal",
+        }
+        server_claims_before = len(server.claimed_ids)
+        page._stage_case(job_bad, automatic=True)
+        rec_bad = page._record("case_test_bad_portal")
+        assert rec_bad["local_status"] == "stage failed"
+        assert rec_bad["phase"] == "stage failed"
+        assert rec_bad["portal"] is None
+        assert "Needs Attention" in rec_bad["folder"]
+        assert len(server.claimed_ids) == server_claims_before
+        assert "Stage Failed" in page.result.text()
+    finally:
+        page.shutdown()
+        page.close()
+
+
 def test_confirms_submission_string_matcher_comprehensive():
     # True positives
     assert confirms_submission("Report submitted successfully")

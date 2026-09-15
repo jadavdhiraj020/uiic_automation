@@ -261,7 +261,7 @@ class CaseListDelegate(QStyledItemDelegate):
         # 2. Insurer Pill Badge
         if insurer:
             display_insurer = short_insurer_label(insurer)
-            ins_lower = insurer.lower()
+            ins_lower = f"{insurer.lower()} {display_insurer.lower()}"
             if "united" in ins_lower or "uiic" in ins_lower:
                 ins_bg, ins_border, ins_col = QColor("#EFF6FF"), QColor("#BFDBFE"), QColor("#1D4ED8")
             elif "new india" in ins_lower or "nia" in ins_lower:
@@ -1836,7 +1836,7 @@ class WebQueuePage(QWidget):
         claim_context = getattr(getattr(self.window, "_claim", None), "_scan_context", None)
         claim_folder = Path(getattr(claim_context, "claim_folder_path", "")).resolve() if claim_context else None
         workspace_ready = bool(
-            selected and selected.get("local_status") in ("workspace ready", "needs final resolution", "automation active")
+            selected and selected.get("local_status") in ("workspace ready", "needs final resolution")
             and selected_folder == claim_folder and not selected.get("local_copy_deleted")
             and (not current or selected_id == active_id)
         )
@@ -2008,7 +2008,7 @@ class WebQueuePage(QWidget):
         if existing and self._valid_stage(existing) and not force:
             return
         try:
-            portal = portal_for(job.get("insurer"))
+            portal = portal_for(job.get("insurer"), portal_id=job.get("portal_id"))
         except ValueError as exc:
             folder = self.cases_root / "Needs Attention" / readable_case_folder(job)
             self.case_repo.upsert(
@@ -2456,7 +2456,7 @@ class WebQueuePage(QWidget):
                     record and value.get("case_id") == case_id
                     and _dispatch_id(value) == _dispatch_id(record)
                     and value.get("surveyor_profile_id") == original_job.get("surveyor_profile_id")
-                    and portal_for(value.get("insurer")) == portal_for(original_job.get("insurer"))
+                    and portal_for(value.get("insurer"), portal_id=value.get("portal_id")) == portal_for(original_job.get("insurer"), portal_id=original_job.get("portal_id"))
                 )
             except ValueError:
                 identity_matches = False
@@ -2467,7 +2467,7 @@ class WebQueuePage(QWidget):
             else:
                 claimed_job = {**original_job, **value}
                 active = {
-                    **record, "job": claimed_job, "portal": portal_for(value.get("insurer")),
+                    **record, "job": claimed_job, "portal": portal_for(value.get("insurer"), portal_id=value.get("portal_id")),
                     "phase": "automation active", "local_status": "automation active",
                     "base44_status": "automation_in_progress",
                     "claimed_at": datetime.now(timezone.utc).isoformat(),
@@ -2555,7 +2555,7 @@ class WebQueuePage(QWidget):
                 self.cred_feedback.clear()
 
             try:
-                portal = portal_for(job.get("insurer"))
+                portal = portal_for(job.get("insurer"), portal_id=job.get("portal_id"))
                 self.insurer.setCurrentIndex(self.insurer.findData(portal))
             except ValueError as exc:
                 self.insurer.setCurrentIndex(-1)
@@ -2638,7 +2638,7 @@ class WebQueuePage(QWidget):
             self.result.setText("Finish the current Workspace operation before opening another staged case.")
             return
         try:
-            portal = portal_for(job.get("insurer"))
+            portal = portal_for(job.get("insurer"), portal_id=job.get("portal_id"))
         except ValueError as exc:
             self.case_repo.upsert(job["case_id"], local_status="needs attention", last_error=str(exc))
             self.result.setText(f"Needs Attention: {exc}")
@@ -2740,7 +2740,7 @@ class WebQueuePage(QWidget):
             return
         job = selected.get("job", self.selected_job or {})
         try:
-            portal = portal_for(job.get("insurer"))
+            portal = portal_for(job.get("insurer"), portal_id=job.get("portal_id"))
             self.store.get(job.get("surveyor_profile_id", ""), portal)
         except Exception as exc:
             self.result.setText(f"Needs Attention: {exc}. Base44 was not claimed.")
