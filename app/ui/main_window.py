@@ -347,18 +347,13 @@ class MainWindow(QMainWindow):
         if self._scan_worker:
             self._scan_worker.request_stop()
         self._active_scan_token = None
-        self._set_status("running", "Cancelling Scan...")
+        self._set_status("ready", "Scan Cancelled")
         self.workspace_page.doc_status_label.setText(
             "Portal changed. Cancelling current scan; please rescan for the selected portal."
         )
         self._append_log(
             "[Portal Isolation] Portal changed during scan. Current scan was "
             "cancelled and its result will be ignored. Please rescan the folder."
-        )
-        QMessageBox.information(
-            self,
-            "Scan Cancelled",
-            "The current scan was cancelled because the portal changed. Please rescan the folder for the selected portal.",
         )
         self._write_portal_audit_event(
             "scan_cancelled_due_to_portal_change",
@@ -374,11 +369,7 @@ class MainWindow(QMainWindow):
         """Handle portal dropdown change — switch all config resolution."""
         if self._worker:
             self._reset_portal_combo_to_active()
-            QMessageBox.information(
-                self,
-                "Automation Running",
-                "Automation is running. Please stop the current automation before switching portal.",
-            )
+            self._set_status("running", "Portal switch blocked: Stop automation first")
             self._append_log(
                 "[Portal Isolation] Portal switch blocked because automation is running. "
                 "Stop the current automation before switching portal."
@@ -447,11 +438,6 @@ class MainWindow(QMainWindow):
             self._append_log(
                 "[Portal Isolation] Cleared scanned claim data because portal "
                 f"changed from {old_name} to {new_name}. Please rescan the folder."
-            )
-            QMessageBox.information(
-                self,
-                "Rescan Required",
-                "Claim data was cleared because the portal changed. Please rescan the folder for the selected portal.",
             )
         return had_claim
 
@@ -524,8 +510,15 @@ class MainWindow(QMainWindow):
             self._scan_folder(folder)
 
     def _open_web_case(self, current):
-        index = self.portal_combo.findData(current["portal"])
-        self.portal_combo.setCurrentIndex(index)
+        target_portal = current.get("portal") or "uiic"
+        index = self.portal_combo.findData(target_portal)
+        if index >= 0:
+            if self.portal_combo.currentIndex() != index:
+                self.portal_combo.setCurrentIndex(index)
+            else:
+                set_active_portal(target_portal)
+        else:
+            self._append_log(f"⚠️ Warning: Portal '{target_portal}' not found in dropdown; keeping active portal.")
         self.workspace_page.inp_folder.setText(current["folder"])
         self.web_queue.workspace_scan_started(current["folder"])
         self._scan_folder(current["folder"])
@@ -540,11 +533,7 @@ class MainWindow(QMainWindow):
         from app.ui.worker import FolderScanWorker
 
         if self._is_scan_running():
-            QMessageBox.information(
-                self,
-                "Scan Running",
-                "A folder scan is still running. Please wait for it to stop before starting another scan.",
-            )
+            self._set_status("running", "Scan in progress...")
             self._append_log(
                 "[Portal Isolation] New scan blocked because a previous scan is still running."
             )
@@ -674,9 +663,8 @@ class MainWindow(QMainWindow):
 
     def _start_automation(self):
         if not self._claim:
-            QMessageBox.warning(
-                self, "No Data", "Please select a claim folder with valid data first."
-            )
+            self._set_status("error", "Please select a claim folder with valid data first.")
+            self.log("Start blocked: Please select a claim folder with valid data first.")
             return
 
         scan_context = getattr(self._claim, "_scan_context", None)
@@ -700,28 +688,19 @@ class MainWindow(QMainWindow):
 
         scan_context = getattr(self._claim, "_scan_context", None)
         if scan_context is None:
-            QMessageBox.critical(
-                self,
-                "Rescan Required",
-                "This claim does not have a scan portal context. Please rescan the folder before starting automation.",
-            )
+            self._set_status("error", "Rescan required: Scanned claim has no portal context.")
             self.log(
-                "[Portal Isolation] Start blocked: scanned claim has no portal context."
+                "[Portal Isolation] Start blocked: scanned claim has no portal context. Please rescan the folder."
             )
             return
 
         current_portal_id = get_active_portal_id()
         if current_portal_id != scan_context.portal_id:
-            QMessageBox.critical(
-                self,
-                "Portal Mismatch",
-                "This claim was scanned for "
-                f"{scan_context.portal_display_name}. Please rescan after changing portals.",
-            )
+            self._set_status("error", f"Portal mismatch: Scanned for {scan_context.portal_display_name}.")
             self.log(
                 "[Portal Isolation] Start blocked: current portal "
                 f"'{current_portal_id}' differs from scanned portal "
-                f"'{scan_context.portal_id}'."
+                f"'{scan_context.portal_id}'. Please rescan after changing portals."
             )
             return
 
@@ -731,7 +710,8 @@ class MainWindow(QMainWindow):
             try:
                 settings.update(self.web_queue.settings_for(scan_context.claim_folder_path, portal_id))
             except Exception as exc:
-                QMessageBox.warning(self, "Web case cannot start", str(exc))
+                self._set_status("error", f"Web case cannot start: {exc}")
+                self.log(f"Web case start blocked: {exc}")
                 return
 
         self._thread = QThread()
@@ -792,6 +772,11 @@ class MainWindow(QMainWindow):
         self.status_text.setText("Ready")
         self.status_pill.style().unpolish(self.status_pill)
         self.status_pill.style().polish(self.status_pill)
+        if hasattr(self, "web_queue") and hasattr(self.web_queue, "automation_finished"):
+            try:
+                self.web_queue.automation_finished(success, message)
+            except Exception:
+                pass
 
     def _on_thread_fully_stopped(self):
         """Called by thread.finished — thread OS object has fully stopped. Safe to clear."""

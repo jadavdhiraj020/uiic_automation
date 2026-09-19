@@ -833,7 +833,33 @@ async def fill_claim_assessment(page, claim: ClaimData,
 
     if isinstance(log, AutomationLogger):
         log.step(4, 4, "Uploading Assessment Documents")
-    await _upload_all(page, claim, log, settings=settings)
+
+    async def _handle_assessment_dialog(dialog):
+        from app.web_sync.submission import capture_native_before_dismiss
+        await capture_native_before_dismiss(page, dialog)
+        dialog_msg = (dialog.message[:80] + "...") if dialog.message and len(dialog.message) > 80 else (dialog.message or "(empty)")
+        if isinstance(log, AutomationLogger):
+            log.info(f"Assessment dialog: '{dialog_msg}' auto-accepted")
+        else:
+            log(f"    ℹ️  Assessment dialog: '{dialog_msg}' → auto-accepted")
+        try:
+            await dialog.accept()
+        except Exception:
+            pass
+
+    try:
+        page.remove_all_listeners("dialog")
+    except Exception:
+        pass
+    page.on("dialog", _handle_assessment_dialog)
+
+    try:
+        await _upload_all(page, claim, log, settings=settings)
+    finally:
+        try:
+            page.remove_all_listeners("dialog")
+        except Exception:
+            pass
 
     if isinstance(log, AutomationLogger):
         log.success("Claim Assessment tab complete.")

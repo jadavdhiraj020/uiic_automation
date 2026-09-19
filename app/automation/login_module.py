@@ -66,8 +66,20 @@ async def _dismiss_alert(page, log, timeout: int = 4000):
 
 async def _get_error_text(page) -> str:
     try:
-        err = (await page.locator(SEL_ERROR_MSG).first.inner_text()).strip()
-        return err
+        locs = page.locator(SEL_ERROR_MSG)
+        count = await locs.count()
+        for i in range(count):
+            el = locs.nth(i)
+            try:
+                if await el.is_visible(timeout=300):
+                    txt = (await el.inner_text()).strip()
+                    if txt:
+                        return txt
+            except Exception:
+                continue
+        if count > 0:
+            return (await locs.first.inner_text()).strip()
+        return ""
     except Exception:
         return ""
 

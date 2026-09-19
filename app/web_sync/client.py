@@ -198,25 +198,28 @@ class Client:
         visible = []
         unidentifiable = 0
         needs_attention = 0
+        skipped = 0
         required = ("case_id", "case_ref", "insurer", "surveyor_profile_id", "automation_dispatch_id")
         for raw_job in jobs:
             if not isinstance(raw_job, dict) or raw_job.get("status") != "queued_for_automation":
+                skipped += 1
                 continue
             if not isinstance(raw_job.get("case_id"), str) or not raw_job["case_id"].strip():
                 unidentifiable += 1
+                skipped += 1
                 continue
             job = dict(raw_job)
             errors = [key for key in required if not isinstance(job.get(key), str) or not job[key].strip()]
-            job["_queue_validation_errors"] = errors
             if errors:
+                job["_queue_validation_errors"] = errors
                 needs_attention += 1
             visible.append(job)
 
         warnings = []
+        if skipped:
+            warnings.append(f"Skipped {skipped} invalid or unidentifiable queue item(s).")
         if needs_attention:
             warnings.append(f"{needs_attention} queued case(s) need missing Base44 fields corrected; they remain visible.")
-        if unidentifiable:
-            warnings.append(f"{unidentifiable} queued item(s) have no case_id and cannot be displayed safely.")
         if pagination_warning:
             warnings.append(pagination_warning)
         self.queue_warning = " ".join(warnings)

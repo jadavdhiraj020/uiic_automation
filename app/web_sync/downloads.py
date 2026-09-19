@@ -58,7 +58,7 @@ def download_case(client, case_id, folder, progress=None, automation_dispatch_id
     manifest = client.call("getAutomationCaseFiles", request_identity)
     if manifest.get("case_id") != case_id:
         raise ValueError("Manifest case_id mismatch")
-    if manifest.get("automation_dispatch_id") != automation_dispatch_id:
+    if manifest.get("automation_dispatch_id") and manifest.get("automation_dispatch_id") != automation_dispatch_id:
         raise ValueError("Manifest automation_dispatch_id mismatch")
     files = manifest.get("files")
     if not isinstance(files, list) or not files:

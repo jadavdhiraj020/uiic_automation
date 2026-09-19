@@ -123,6 +123,7 @@ async def navigate_to_claim(
     Navigate to Worklist → select claim type → filter by claim no → click Action.
     Returns the claim details Page (may be a new tab) if found, or None.
     """
+    claim_no = str(claim_no or "").strip()
     claim_type = settings.get("claim_type", "Non Maruti")
     
     if isinstance(log, AutomationLogger):
@@ -376,6 +377,7 @@ async def _find_and_click_claim(page: Page, claim_no: str, log) -> Optional[Page
     Search current table page for claim_no; click its Action button.
     Returns the new page (if a new tab opened) or same page, or None if not found.
     """
+    claim_no = str(claim_no or "").strip()
     clicked = False
     context = page.context
     pages_before = set(id(p) for p in context.pages)

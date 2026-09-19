@@ -1,4 +1,4 @@
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt, QSize, QTimer
 from PyQt6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap, QPainterPath
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel,
@@ -94,7 +94,7 @@ class SettingsPage(QWidget):
         br = QPushButton("  Reset to Defaults  ")
         br.setObjectName("btnSettingsReset")
         br.clicked.connect(self._reset_defaults); fl.addWidget(br); fl.addStretch()
-        bs = QPushButton("  Save All Settings  "); bs.setObjectName("btnSettingsSave"); bs.setMinimumSize(180, 42); bs.clicked.connect(self._save_all); fl.addWidget(bs)
+        self.btn_save = QPushButton("  Save All Settings  "); self.btn_save.setObjectName("btnSettingsSave"); self.btn_save.setMinimumSize(180, 42); self.btn_save.clicked.connect(self._save_all); fl.addWidget(self.btn_save)
         root.addWidget(footer)
 
     def _switch_tab(self, idx):
@@ -734,9 +734,14 @@ class SettingsPage(QWidget):
             save_doc_mapping(dm, portal_id=self._portal_id)
 
             self.append_log("\u2705  Settings saved.")
-            QMessageBox.information(self, "Success", "All settings saved.")
+            if hasattr(self, "btn_save"):
+                self.btn_save.setText("  ✓ Settings Saved!  ")
+                QTimer.singleShot(2500, lambda: self.btn_save.setText("  Save All Settings  "))
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Save failed: {e}")
+            self.append_log(f"❌  Save failed: {e}")
+            if hasattr(self, "btn_save"):
+                self.btn_save.setText("  ⚠ Save Failed  ")
+                QTimer.singleShot(3000, lambda: self.btn_save.setText("  Save All Settings  "))
 
     def _reset_defaults(self):
         if QMessageBox.question(self, "Reset", "Reset all to defaults?") == QMessageBox.StandardButton.Yes:
