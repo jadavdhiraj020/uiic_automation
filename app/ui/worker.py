@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from PyQt6.QtCore import QObject, pyqtSignal
 
 class AutomationWorker(QObject):
@@ -12,34 +13,47 @@ class AutomationWorker(QObject):
         self.settings_override = settings_override
         self.portal_id         = portal_id
         self._engine           = None
+        self._stop_event       = threading.Event()
 
     def run(self):
         from app.automation.engine import AutomationEngine
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        self._engine = AutomationEngine(
-            log_cb    = lambda msg: self.log_signal.emit(msg),
-            step_cb   = lambda i, s: self.step_signal.emit(i, s),
-            portal_id = self.portal_id,
-        )
+        loop = None
+        success = False
+        message = "Automation stopped before it started."
         try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            self._engine = AutomationEngine(
+                log_cb    = lambda msg: self.log_signal.emit(msg),
+                step_cb   = lambda i, s: self.step_signal.emit(i, s),
+                portal_id = self.portal_id,
+            )
+            if self._stop_event.is_set():
+                self._engine.request_stop()
             result = loop.run_until_complete(
                 self._engine.run_automation(self.claim, self.settings_override)
             )
             success = bool(getattr(result, "success", False))
             message = getattr(result, "message", "Automation finished.")
-            self.done_signal.emit(success, message)
         except BaseException as e:
-            self.done_signal.emit(False, str(e))
+            message = f"{type(e).__name__}: {e}"
         finally:
-            try:
-                loop.run_until_complete(loop.shutdown_asyncgens())
-            except Exception:
-                pass
-            asyncio.set_event_loop(None)
-            loop.close()
+            if loop is not None:
+                try:
+                    loop.run_until_complete(loop.shutdown_asyncgens())
+                except Exception:
+                    pass
+                finally:
+                    asyncio.set_event_loop(None)
+                    try:
+                        loop.close()
+                    except Exception as exc:
+                        success = False
+                        message = f"Automation event loop could not close cleanly ({type(exc).__name__}): {exc}"
+            self.done_signal.emit(success, message)
 
     def stop(self):
+        self._stop_event.set()
         if self._engine:
             self._engine.request_stop()
 
@@ -85,8 +99,8 @@ class FolderScanWorker(QObject):
                 success=False,
                 scan_result=None,
                 claim=None,
-                log_lines=[f"❌ Folder scanning crashed: {e}"],
-                error=str(e),
+                log_lines=[f"❌ Folder scanning crashed ({type(e).__name__}): {e}"],
+                error=f"{type(e).__name__}: {e}",
             )
             result.scan_token = self.scan_token
             result.scan_portal_id = self.portal_id

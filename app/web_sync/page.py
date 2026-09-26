@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shutil
 import stat
+import requests
 
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QRect, QRectF, QSize, QUrl, QEvent, QPointF
 from PyQt6.QtGui import (
@@ -15,7 +16,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLineEdit, QPushButton,
-    QLabel, QListWidget, QComboBox, QInputDialog, QScrollArea, QFrame,
+    QLabel, QListWidget, QComboBox, QScrollArea, QFrame,
     QStyledItemDelegate, QStyle, QMessageBox, QTableWidget, QTableWidgetItem,
     QHeaderView, QCheckBox, QFileDialog, QApplication, QStackedWidget
 )
@@ -30,8 +31,10 @@ from app.ui.components.widgets import (
 )
 from app.ui.components.table_clipboard import attach_row_copy_on_double_click
 from app.utils import user_data_dir, load_settings
-from .client import Client, ApiError
+from app.portals.registry import get_active_portal_id
+from .client import Client, ApiError, DownloadLimitError
 from .zip_downloads import download_case_preferred as download_case
+from .zip_downloads import ZipIntegrityError, ZipIdentityError, UnsafeZipError
 from .storage import (
     CaseRepository, CaseState, CompletedCaseStore,
     CredentialStore, OperatorCredentialStore, readable_case_folder,
@@ -43,6 +46,9 @@ from .queue_helpers import (
     short_insurer_label,
 )
 from .manifest import StagedCaseValidationError, validate_staged_case
+
+
+RECEIPT_HANDOFF = "receipt_v1"
 
 
 def _make_eye_toggle(line_edit: QLineEdit) -> QPushButton:
@@ -149,6 +155,9 @@ class CaseListDelegate(QStyledItemDelegate):
                     if self.list_widget and hasattr(self.list_widget, "viewport"):
                         self.list_widget.viewport().setCursor(Qt.CursorShape.ArrowCursor)
                 return False
+            if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                if any(r.contains(pt) for r in rects.values()):
+                    return True
             if event.type() == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
                 if self.page:
                     if rects["start"].contains(pt):
@@ -163,8 +172,8 @@ class CaseListDelegate(QStyledItemDelegate):
                             self.page.delete_case_by_index(index)
                         else:
                             self.page.result.setText(
-                                "Delete Case is disabled for the active unresolved case. "
-                                "Submit it successfully or deliberately Stop/Fail it first."
+                                "Delete Case is disabled while automation or scanning is active. "
+                                "Stop automation first before deleting."
                             )
                         return True
         return super().editorEvent(event, model, option, index)
@@ -455,22 +464,22 @@ class ResultBannerLabel(QLabel):
         super().setText(text)
         self._update_style(text)
 
-    def set_report_result(self, text, reported_status, returned_status):
-        outcome = "attention"
-        if reported_status == "success" and returned_status == "uploaded":
-            outcome = "success"
-        super().setText(text)
-        self._update_style(text, outcome)
-
     def _update_style(self, text, outcome=None):
         t = (text or "").lower()
         now_str = datetime.now().strftime("%H:%M:%S")
 
-        if self._on_update and text and text != "No result yet.":
+        last_logged = getattr(self, "_last_logged_state", None)
+        if self._on_update and text and text != "No result yet." and last_logged != (text, outcome):
+            self._last_logged_state = (text, outcome)
             try:
                 self._on_update(text, outcome)
             except Exception:
                 pass
+
+        pill_base = (
+            "border-radius: 12px; font-weight: 700; font-size: 8pt; "
+            "padding: 3px 12px; font-family: 'Segoe UI', sans-serif; letter-spacing: 0.3px;"
+        )
 
         if not text or text == "No result yet.":
             self._frame.setStyleSheet(
@@ -479,7 +488,9 @@ class ResultBannerLabel(QLabel):
             )
             self.setStyleSheet("color: #64748B; font-weight: 500; font-size: 9.5pt;")
             self._status_pill.setText("  IDLE  ")
-            self._status_pill.setStyleSheet("background-color: #F1F5F9; color: #64748B; border: 1px solid #CBD5E1; border-radius: 4px; font-weight: 700; font-size: 7.5pt; padding: 2px 8px;")
+            self._status_pill.setStyleSheet(
+                f"background-color: #F1F5F9; color: #64748B; border: 1.5px solid #CBD5E1; {pill_base}"
+            )
             self._time_label.setText("Standing by for case activity")
         elif outcome == "success":
             self._frame.setStyleSheet(
@@ -488,34 +499,55 @@ class ResultBannerLabel(QLabel):
             )
             self.setStyleSheet("color: #065F46; font-weight: 700; font-size: 10pt;")
             self._status_pill.setText("  CONFIRMED SUCCESS  ")
-            self._status_pill.setStyleSheet("background-color: #D1FAE5; color: #047857; border: 1px solid #6EE7B7; border-radius: 4px; font-weight: 800; font-size: 7.5pt; padding: 2px 8px;")
+            self._status_pill.setStyleSheet(
+                f"background-color: #DCFCE7; color: #15803D; border: 1.5px solid #86EFAC; {pill_base}"
+            )
             self._time_label.setText(f"Recorded at {now_str}")
         elif outcome == "attention" or any(k in t for k in ("ready_for_upload", "pending", "error", "fail", "cannot", "unable", "invalid", "missing", "wrong", "blocked", "uncertain", "needs attention")):
-            self._frame.setStyleSheet(
-                "QFrame#resultBanner { background-color: #FEF2F2; border: 1px solid #FCA5A5; "
-                "border-radius: 6px; padding: 12px 16px; }"
-            )
-            self.setStyleSheet("color: #991B1B; font-weight: 700; font-size: 10pt;")
-            self._status_pill.setText("  FAILED / NEEDS ATTENTION  ")
-            self._status_pill.setStyleSheet("background-color: #FEE2E2; color: #B91C1C; border: 1px solid #FCA5A5; border-radius: 4px; font-weight: 800; font-size: 7.5pt; padding: 2px 8px;")
-            self._time_label.setText(f"Logged at {now_str}")
+            is_critical_error = outcome in ("failed", "error") or any(k in t for k in ("error", "failed", "crash", "crashed", "cannot", "unable", "fatal", "rejected", "unauthorized")) or ("fail" in t and "ready_for_upload" not in t and "attention" not in t)
+            if is_critical_error:
+                self._frame.setStyleSheet(
+                    "QFrame#resultBanner { background-color: #FEF2F2; border: 1px solid #FCA5A5; "
+                    "border-radius: 6px; padding: 12px 16px; }"
+                )
+                self.setStyleSheet("color: #991B1B; font-weight: 700; font-size: 10pt;")
+                self._status_pill.setText("  FAILED / NEEDS ATTENTION  ")
+                self._status_pill.setStyleSheet(
+                    f"background-color: #FEF2F2; color: #DC2626; border: 1.5px solid #FECACA; {pill_base}"
+                )
+                self._time_label.setText(f"Failed at {now_str}")
+            else:
+                self._frame.setStyleSheet(
+                    "QFrame#resultBanner { background-color: #FFFBEB; border: 1px solid #FDE68A; "
+                    "border-radius: 6px; padding: 12px 16px; }"
+                )
+                self.setStyleSheet("color: #92400E; font-weight: 700; font-size: 10pt;")
+                self._status_pill.setText("  FAILED / NEEDS ATTENTION  ")
+                self._status_pill.setStyleSheet(
+                    f"background-color: #FFFBEB; color: #D97706; border: 1.5px solid #FDE68A; {pill_base}"
+                )
+                self._time_label.setText(f"Attention at {now_str}")
         elif any(k in t for k in ("download", "downloading", "progress", "processing", "claiming", "syncing")):
-            self._frame.setStyleSheet(
-                "QFrame#resultBanner { background-color: #FFFBEB; border: 1px solid #FDE68A; "
-                "border-radius: 6px; padding: 12px 16px; }"
-            )
-            self.setStyleSheet("color: #92400E; font-weight: 600; font-size: 9.5pt;")
-            self._status_pill.setText("  DOWNLOADING / PROCESSING  ")
-            self._status_pill.setStyleSheet("background-color: #FEF3C7; color: #B45309; border: 1px solid #FCD34D; border-radius: 4px; font-weight: 800; font-size: 7.5pt; padding: 2px 8px;")
-            self._time_label.setText(f"Updated at {now_str}")
-        elif any(k in t for k in ("ready", "workspace", "prepared")):
             self._frame.setStyleSheet(
                 "QFrame#resultBanner { background-color: #EFF6FF; border: 1px solid #BFDBFE; "
                 "border-radius: 6px; padding: 12px 16px; }"
             )
             self.setStyleSheet("color: #1E40AF; font-weight: 600; font-size: 9.5pt;")
+            self._status_pill.setText("  DOWNLOADING / PROCESSING  ")
+            self._status_pill.setStyleSheet(
+                f"background-color: #EFF6FF; color: #1D4ED8; border: 1.5px solid #BFDBFE; {pill_base}"
+            )
+            self._time_label.setText(f"Updated at {now_str}")
+        elif any(k in t for k in ("ready", "workspace", "prepared")):
+            self._frame.setStyleSheet(
+                "QFrame#resultBanner { background-color: #F0FDF4; border: 1px solid #BBF7D0; "
+                "border-radius: 6px; padding: 12px 16px; }"
+            )
+            self.setStyleSheet("color: #166534; font-weight: 600; font-size: 9.5pt;")
             self._status_pill.setText("  READY IN WORKSPACE  ")
-            self._status_pill.setStyleSheet("background-color: #DBEAFE; color: #1D4ED8; border: 1px solid #93C5FD; border-radius: 4px; font-weight: 800; font-size: 7.5pt; padding: 2px 8px;")
+            self._status_pill.setStyleSheet(
+                f"background-color: #F0FDF4; color: #166534; border: 1.5px solid #BBF7D0; {pill_base}"
+            )
             self._time_label.setText(f"Updated at {now_str}")
         else:
             self._frame.setStyleSheet(
@@ -524,7 +556,9 @@ class ResultBannerLabel(QLabel):
             )
             self.setStyleSheet("color: #334155; font-weight: 600; font-size: 9.5pt;")
             self._status_pill.setText("  QUEUED / ACTIVITY  ")
-            self._status_pill.setStyleSheet("background-color: #EFF6FF; color: #1D4ED8; border: 1px solid #BFDBFE; border-radius: 4px; font-weight: 800; font-size: 7.5pt; padding: 2px 8px;")
+            self._status_pill.setStyleSheet(
+                f"background-color: #F8FAFC; color: #334155; border: 1.5px solid #CBD5E1; {pill_base}"
+            )
             self._time_label.setText(f"Updated at {now_str}")
 
 
@@ -742,10 +776,12 @@ class WebQueuePage(QWidget):
         # working copies in the Windows user's Automations folder.  An explicit
         # root remains isolated for development/embedded use.
         self.cases_root = Path(root) / "cases" if root is not None else Path.home() / "Automations"
+        self.logs_root = self.cases_root / "logs"
         self.store = CredentialStore(self.root / "portal_credentials.dpapi")
         self.operator_store = OperatorCredentialStore(self.root / "operator_credentials.dpapi")
         self.completed_store = CompletedCaseStore(self.root / "completed_cases.json")
         self.state_error = ""
+        self.handoff_mode = RECEIPT_HANDOFF
         self.state_recovery_blocked = ""
         try:
             self.case_repo = CaseRepository(self.root / "state")
@@ -793,7 +829,9 @@ class WebQueuePage(QWidget):
         self.completed_cases = []
         self.selected_job = None
         self._pending_start_case_id = None
+        self._receipt_in_flight = None
         self._credential_case_id = None
+        self._changing_login = False
         self.busy = False
         self.closing = False
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="web-sync")
@@ -802,6 +840,7 @@ class WebQueuePage(QWidget):
         self.staging_dispatches = {}
         self.deleted_case_ids = set()
         self._live_log_entries = []
+        self._last_queue_warning = ""
         self.completed.connect(self._completed)
         self.staging_completed.connect(self._staging_completed)
         self.download_progress.connect(self._download_progress)
@@ -824,6 +863,7 @@ class WebQueuePage(QWidget):
             self._recover_evidence()
         except (ValueError, OSError) as exc:
             self.state_error = f"Web Queue recovery needs attention: {exc}"
+        self._cleanup_old_failed_folders()
         if self.state_error or self.state_recovery_blocked:
             self.result.setText(self.state_error or self.state_recovery_blocked)
         self.refresh()
@@ -847,30 +887,6 @@ class WebQueuePage(QWidget):
         self.rail.stage_selected.connect(self.set_stage)
         rail_lay.addWidget(self.rail, 1)
 
-        # Rail Bottom Actions (Start & Stop)
-        rail_actions = QWidget()
-        rail_actions.setObjectName("railActions")
-        al = QVBoxLayout(rail_actions)
-        al.setContentsMargins(18, 12, 18, 18)
-        al.setSpacing(8)
-
-        self.start_button = QPushButton("Start Automation")
-        self.start_button.setObjectName("btnStart")
-        self.start_button.setMinimumHeight(42)
-        self.start_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.start_button.clicked.connect(self.start_automation)
-        al.addWidget(self.start_button)
-
-        self.stop_button = QPushButton("Stop")
-        self.stop_button.setObjectName("btnStop")
-        self.stop_button.setMinimumHeight(38)
-        self.stop_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.stop_button.setToolTip("Stops running automation safely. When stopped, click again to deliberately fail/report.")
-        self.stop_button.clicked.connect(self.stop_or_fail_case)
-        self.fail_button = self.stop_button
-        al.addWidget(self.stop_button)
-
-        rail_lay.addWidget(rail_actions)
         outer_layout.addWidget(rail_wrap)
 
         # ── Right Content Area ─────────────────────────────────────────
@@ -977,11 +993,10 @@ class WebQueuePage(QWidget):
         self.list.setMouseTracking(True)
         self.list.setItemDelegate(CaseListDelegate(self.list, page=self))
         self.list.currentRowChanged.connect(self._selected)
-        self.list.itemClicked.connect(self._case_clicked)
-        self.list.itemDoubleClicked.connect(lambda _item: self.start_case())
+        self.list.itemDoubleClicked.connect(self._case_clicked)
         qc_lay.addWidget(self.list)
 
-        self.empty_label = QLabel("No queued or current case. Click Refresh or connect to DocWriter.")
+        self.empty_label = QLabel("No Ready cases yet. Incoming downloads appear here after verification; see Live Logs for failures.")
         self.empty_label.setObjectName("helperTextItalic")
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty_label.setStyleSheet("padding: 14px; color: #94A3B8; font-size: 9pt;")
@@ -1233,6 +1248,19 @@ class WebQueuePage(QWidget):
         self.connect_button.clicked.connect(self.connect_client)
         fr_lay.addWidget(self.connect_button, 0, Qt.AlignmentFlag.AlignBottom)
 
+        self.cancel_login_button = QPushButton("Cancel")
+        self.cancel_login_button.setObjectName("btnWebCancelLogin")
+        self.cancel_login_button.setMinimumHeight(34)
+        self.cancel_login_button.setMinimumWidth(80)
+        self.cancel_login_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.cancel_login_button.setStyleSheet(
+            "background-color: #FFFFFF; color: #475569; font-weight: 700; "
+            "border: 1px solid #CBD5E1; border-radius: 6px; padding: 6px 14px;"
+        )
+        self.cancel_login_button.clicked.connect(self.cancel_change_login)
+        self.cancel_login_button.setVisible(False)
+        fr_lay.addWidget(self.cancel_login_button, 0, Qt.AlignmentFlag.AlignBottom)
+
         cfb_lay.addWidget(form_row)
 
         conn_note = QLabel("🔒 Operator login saved with Windows DPAPI. Access tokens stay in memory.")
@@ -1318,10 +1346,6 @@ class WebQueuePage(QWidget):
         )
         tb_lay.addWidget(search_widget, 1)
 
-        # Status pill & timestamp placed directly in toolbar next to search
-        tb_lay.addWidget(self.result_status_pill)
-        tb_lay.addWidget(self.result_time_label)
-
         self.log_auto_scroll = QCheckBox("Auto-scroll")
         self.log_auto_scroll.setChecked(True)
         self.log_auto_scroll.setStyleSheet("font-size: 8.5pt; color: #475569; font-weight: 600;")
@@ -1396,12 +1420,17 @@ class WebQueuePage(QWidget):
             phase = "Portal"
         else:
             phase = "Sync"
-        level = "Success" if outcome == "success" or "success" in t else (
-            "Error" if outcome == "attention" or any(w in t for w in ("failed", "error", "unable", "cannot")) else "Info"
-        )
-        current = self.state.current if getattr(self, "state", None) else None
-        current_case_id = (current or {}).get("job", {}).get("case_id")
-        self.append_log(text, phase=phase, level=level, case_id=current_case_id)
+        if outcome == "success" or any(w in t for w in ("confirmed", "uploaded", "complete", "completed")):
+            level = "Success"
+        elif outcome in ("failed", "error") or any(w in t for w in ("error", "failed", "crash", "crashed", "exception", "cannot", "unable", "fatal", "rejected", "unauthorized")):
+            level = "Error"
+        elif outcome == "attention" or any(w in t for w in ("attention", "missing", "warning", "conflict", "blocked", "uncertain", "needs attention")):
+            level = "Warning"
+        else:
+            level = "Info"
+        # Banner text can describe the queue or connection while a different
+        # case owns Workspace. Do not attribute it to that active case.
+        self.append_log(text, phase=phase, level=level, case_id="")
 
     def append_log(self, text: str, phase: str = "Sync", level: str = None, case_id: str = None):
         if not text or self.closing:
@@ -1416,25 +1445,64 @@ class WebQueuePage(QWidget):
         now_str = datetime.now().strftime("%H:%M:%S")
         if not level:
             lower = clean.lower()
-            if any(w in lower for w in ("error", "fail", "failed", "cannot", "unable", "invalid", "missing")):
+            if any(w in lower for w in ("error", "crash", "crashed", "exception", "cannot", "unable", "fatal", "rejected", "unauthorized")) or ("fail" in lower and "needs attention" not in lower):
                 level = "Error"
-            elif any(w in lower for w in ("warn", "warning", "conflict", "attention", "claimed elsewhere")):
+            elif any(w in lower for w in ("warn", "warning", "conflict", "attention", "missing", "claimed elsewhere", "stale", "retry", "invalid", "needs attention")):
                 level = "Warning"
-            elif any(w in lower for w in ("success", "confirmed", "ready", "uploaded", "complete", "completed")):
+            elif any(w in lower for w in ("success", "confirmed", "verified", "uploaded", "complete", "completed")):
                 level = "Success"
             else:
                 level = "Info"
+
+        # Resolve case metadata for rich context
+        case_ref = ""
+        vehicle_no = ""
+        insurer = ""
+        target_case_id = case_id
+        try:
+            state_obj = self.__dict__.get("state")
+            if target_case_id is None and state_obj and getattr(state_obj, "current", None):
+                target_case_id = state_obj.current.get("job", {}).get("case_id")
+        except Exception:
+            pass
+
+        if target_case_id:
+            record = self._record(target_case_id) if hasattr(self, "_record") else None
+            job = (record.get("job") if isinstance(record, dict) else None) or {}
+            if not job and hasattr(self, "jobs"):
+                job = next((j for j in self.jobs if j.get("case_id") == target_case_id), {})
+            case_ref = str(job.get("case_ref") or (record.get("case_ref") if isinstance(record, dict) else "") or target_case_id).strip()
+            vehicle_no = str(job.get("vehicle_no") or (record.get("vehicle_no") if isinstance(record, dict) else "") or "").strip()
+            insurer = str(job.get("insurer") or (record.get("insurer") if isinstance(record, dict) else "") or "").strip()
+
+        case_tag = ""
+        if case_ref and case_ref != "None":
+            parts = [case_ref]
+            if vehicle_no:
+                parts.append(vehicle_no)
+            if insurer:
+                parts.append(short_insurer_label(insurer))
+            case_tag = " | ".join(parts)
+
+        # Include case tag if available and not already in text
+        display_action = clean
+        if case_tag and case_ref not in clean:
+            display_action = f"[{case_tag}]  {clean}"
 
         entry = {
             "time": now_str,
             "level": level,
             "phase": phase or "Sync",
-            "action": clean,
-            "search": f"{now_str} {level} {phase} {clean}".lower(),
+            "action": display_action,
+            "raw_action": clean,
+            "case_id": target_case_id,
+            "case_ref": case_ref,
+            "vehicle_no": vehicle_no,
+            "insurer": insurer,
+            "search": f"{now_str} {level} {phase} {case_tag} {target_case_id or ''} {clean}".lower(),
         }
         self._live_log_entries.append(entry)
-        if case_id:
-            self._append_case_log(case_id, entry)
+        self._append_case_log(target_case_id, entry)
 
         if not hasattr(self, "logs_table"):
             return
@@ -1464,46 +1532,106 @@ class WebQueuePage(QWidget):
         phase_item = QTableWidgetItem(str(phase).upper())
         phase_item.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
         phase_item.setForeground(QColor("#475569"))
+        phase_item.setBackground(QColor("#F8FAFC"))
         phase_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        action_item = QTableWidgetItem(clean)
+        action_item = QTableWidgetItem(display_action)
         action_item.setFont(QFont("Segoe UI", 8))
         action_item.setForeground(QColor("#0F172A"))
-        action_item.setToolTip(clean)
+
+        # Comprehensive structured tooltip for instant details
+        tt_lines = [
+            f"Time:     {now_str}",
+            f"Level:    {level.upper()}",
+            f"Phase:    {str(phase).upper()}",
+        ]
+        if case_ref:
+            tt_lines.append(f"Case Ref: {case_ref}")
+        if vehicle_no:
+            tt_lines.append(f"Vehicle:  {vehicle_no}")
+        if insurer:
+            tt_lines.append(f"Insurer:  {short_insurer_label(insurer)}")
+        if target_case_id:
+            tt_lines.append(f"Case ID:  {target_case_id}")
+        tt_lines.append(f"\nDetails:\n{clean}")
+        action_item.setToolTip("\n".join(tt_lines))
+        action_item.setData(Qt.ItemDataRole.UserRole, entry)
 
         self.logs_table.setItem(row, 0, time_item)
         self.logs_table.setItem(row, 1, level_item)
         self.logs_table.setItem(row, 2, phase_item)
         self.logs_table.setItem(row, 3, action_item)
 
-        q = self.log_search_input.text().strip().lower() if hasattr(self, "log_search_input") else ""
-        if q and q not in entry["search"]:
-            self.logs_table.setRowHidden(row, True)
-        elif hasattr(self, "log_auto_scroll") and self.log_auto_scroll.isChecked() and not q:
-            self.logs_table.scrollToBottom()
+        try:
+            q = self.log_search_input.text().strip().lower() if hasattr(self, "log_search_input") else ""
+            if q and q not in entry["search"]:
+                self.logs_table.setRowHidden(row, True)
+            elif hasattr(self, "log_auto_scroll") and self.log_auto_scroll.isChecked() and not q:
+                self.logs_table.scrollToBottom()
+        except RuntimeError:
+            pass
 
     def _append_case_log(self, case_id, entry):
-        """Append one readable event to the selected case's own audit log."""
-        record = self._record(case_id)
-        if (record or {}).get("local_copy_deleted") or (record or {}).get("deleted_by_operator"):
-            return
-        folder_value = (record or {}).get("folder")
-        if not folder_value:
-            return
+        """Persist every Web Queue event away from folders being staged or deleted."""
         try:
-            folder = Path(folder_value)
-            folder.mkdir(parents=True, exist_ok=True)
+            self.logs_root.mkdir(parents=True, exist_ok=True)
             timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
             action = str(entry.get("action", "")).replace("\r", " ").replace("\n", " ").strip()
+            identity = f" [case_id={case_id}]" if case_id else ""
+            if case_id:
+                record = self._record(case_id)
+                dispatch_id = _dispatch_id(record) if record else ""
+                if dispatch_id:
+                    identity += f" [dispatch_id={dispatch_id}]"
             line = (
                 f"{timestamp} [{entry.get('level', 'Info')}] "
-                f"[{entry.get('phase', 'Sync')}] {action}\n"
+                f"[{entry.get('phase', 'Sync')}]" + identity + f" {action}\n"
             )
-            with (folder / "case_activity.log").open("a", encoding="utf-8") as output:
+            with (self.logs_root / "web_queue.log").open("a", encoding="utf-8") as output:
                 output.write(line)
         except OSError:
             # A logging failure must never interrupt staging or portal work.
             return
+
+    def _save_failed_staging_log(self, details):
+        """Keep failure evidence outside the incomplete folder that must be deleted."""
+        path = self.logs_root / "failed_staging.log"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as output:
+                output.write(f"\n[{datetime.now().astimezone().isoformat(timespec='seconds')}]\n")
+                for detail in details:
+                    output.write(str(detail).replace("\r", " ").replace("\n", " ") + "\n")
+                output.flush()
+                os.fsync(output.fileno())
+        except OSError as exc:
+            return None, exc
+        return path, None
+
+    def _cleanup_old_failed_folders(self):
+        """Remove incomplete case folders left by failures from older runs."""
+        if not self.case_repo:
+            return
+        allowed_parents = {
+            (self.cases_root / name).resolve()
+            for name in ("UIIC", "New India", "OIC", "Needs Attention")
+        }
+        for record in self._records():
+            if record.get("local_status") != "stage failed" or not record.get("folder"):
+                continue
+            folder = Path(record["folder"]).resolve()
+            if folder.parent not in allowed_parents or self._valid_stage(record):
+                continue
+            try:
+                self._delete_local_folder(record)
+                if folder.exists():
+                    raise OSError("The incomplete case folder could not be removed")
+                self.case_repo.upsert(record["case_id"], folder="", latest_excel="")
+            except (OSError, ValueError) as exc:
+                self.append_log(
+                    f"Could not clean the old incomplete folder for {record['case_id']}: {exc}",
+                    phase="Stage", level="Warning", case_id=record["case_id"],
+                )
 
     def _filter_live_logs(self, query):
         q = (query or "").strip().lower()
@@ -1544,7 +1672,7 @@ class WebQueuePage(QWidget):
 
     def _recover_evidence(self):
         current = self.state.current
-        if current and current.get("folder") and not current.get("pending_report"):
+        if current and current.get("folder"):
             path = Path(current["folder"]) / "Portal_Submission_Result.json"
             if path.exists():
                 record = json.loads(path.read_text(encoding="utf-8"))
@@ -1626,7 +1754,17 @@ class WebQueuePage(QWidget):
         return None
 
     def _display_status(self, record, automation_running=False):
+        if (record or {}).get("local_status") == "stale/replaced":
+            return "Stale / Replaced"
         return self._status_for(record, automation_running)
+
+    def _show_incoming_case(self, record):
+        """Only expose a dispatch after its durable local copy is verified."""
+        return bool(
+            record
+            and record.get("local_status") in ("ready", "workspace ready", "automation active", "needs final resolution")
+            and self._valid_stage(record)
+        )
 
     def _history(self):
         try:
@@ -1671,16 +1809,19 @@ class WebQueuePage(QWidget):
                 continue
             next_number += 1
             errors = self._job_validation_errors(job)
-            records[case_id] = self.case_repo.upsert(
-                case_id,
-                job=job,
-                display_number=next_number,
-                automation_dispatch_id=job.get("automation_dispatch_id", ""),
-                automation_dispatched_at=job.get("automation_dispatched_at", ""),
-                local_status="needs attention" if errors else "discovered",
-                phase="needs attention" if errors else "discovered",
-                last_error=("Missing Base44 fields: " + ", ".join(errors)) if errors else "",
-            )
+            changes = {
+                "job": job, "display_number": next_number,
+                "handoff_mode": RECEIPT_HANDOFF,
+                "automation_dispatch_id": job.get("automation_dispatch_id", ""),
+                "automation_dispatched_at": job.get("automation_dispatched_at", ""),
+            }
+            if not record:
+                changes.update(
+                    local_status="needs attention" if errors else "discovered",
+                    phase="needs attention" if errors else "discovered",
+                    last_error=("Missing Base44 fields: " + ", ".join(errors)) if errors else "",
+                )
+            records[case_id] = self.case_repo.upsert(case_id, **changes)
 
     def _resize_case_list(self):
         """Show every incoming case card and leave scrolling to the outer page."""
@@ -1726,6 +1867,8 @@ class WebQueuePage(QWidget):
             record = records.get(case_id)
             if record and (record.get("deleted_by_operator") or record.get("local_status") in ("deleted", "completed")):
                 continue
+            if not self._show_incoming_case(record):
+                continue
             kind = "resolved" if record and record.get("base44_status") in ("uploaded", "ready_for_upload") else ("staged" if record else "queued")
             rows.append((job, kind, self._display_status(record), record or {"case_id": case_id, "job": job, "local_status": "discovered"}))
             shown_ids.add(case_id)
@@ -1733,6 +1876,8 @@ class WebQueuePage(QWidget):
             if case_id in shown_ids or case_id == active_id or case_id in deleted_ids or case_id in completed_ids:
                 continue
             if record.get("deleted_by_operator") or record.get("local_status") in ("deleted", "completed"):
+                continue
+            if not self._show_incoming_case(record):
                 continue
             rows.append((record.get("job", record), "staged", self._display_status(record), record))
             shown_ids.add(case_id)
@@ -1757,6 +1902,32 @@ class WebQueuePage(QWidget):
         else:
             self.selected_job = None
 
+    def _workspace_ready_for_selected(self, selected, current):
+        selected_id = (selected or {}).get("case_id") or (selected or {}).get("job", {}).get("case_id")
+        active_id = current.get("job", {}).get("case_id") if current else None
+        selected_folder = Path(selected["folder"]).resolve() if selected and selected.get("folder") else None
+        claim_context = getattr(getattr(self.window, "_claim", None), "_scan_context", None)
+        claim_folder = Path(getattr(claim_context, "claim_folder_path", "")).resolve() if claim_context else None
+        return bool(
+            selected and selected.get("local_status") in ("workspace ready", "needs final resolution", "automation active")
+            and selected_folder == claim_folder and not selected.get("local_copy_deleted")
+            and (not current or selected_id == active_id)
+        )
+
+    def _can_start_selected_case(self, selected=None, current=None):
+        selected = self._selected_case_record() if selected is None else selected
+        current = self.state.current if current is None else current
+        is_worker_busy = bool(self.window and (
+            getattr(self.window, "_worker", None) or getattr(self.window, "_scan_thread", None)
+            or getattr(self.window, "_thread", None)
+        ))
+        return bool(
+            self._workspace_ready_for_selected(selected, current)
+            and not self.state_error and not self.state_recovery_blocked
+            and self.client and (not self.busy or self._receipt_in_flight is not None)
+            and not is_worker_busy
+        )
+
     def refresh(self):
         current = self.state.current
         self._rebuild_case_lists()
@@ -1774,31 +1945,7 @@ class WebQueuePage(QWidget):
         selected = self._selected_case_record()
         selected_id = (selected or {}).get("case_id") or (selected or {}).get("job", {}).get("case_id")
         active_id = current.get("job", {}).get("case_id") if current else None
-        selected_folder = Path(selected["folder"]).resolve() if selected and selected.get("folder") else None
-        claim_context = getattr(getattr(self.window, "_claim", None), "_scan_context", None)
-        claim_folder = Path(getattr(claim_context, "claim_folder_path", "")).resolve() if claim_context else None
-        workspace_ready = bool(
-            selected and selected.get("local_status") in ("workspace ready", "needs final resolution", "automation active")
-            and selected_folder == claim_folder and not selected.get("local_copy_deleted")
-            and (not current or selected_id == active_id)
-        )
-        is_worker_busy = bool(self.window and (getattr(self.window, "_worker", None) or getattr(self.window, "_scan_thread", None)))
-        self.start_button.setEnabled(
-            workspace_ready and not self.state_error and not self.state_recovery_blocked
-            and bool(self.client) and not self.busy
-            and not is_worker_busy
-            and not (current and current.get("pending_report"))
-        )
-        is_running = bool(self.window and getattr(self.window, "_worker", None))
-        if is_running:
-            self.stop_button.setText("Stop")
-            self.stop_button.setEnabled(True)
-        elif current:
-            self.stop_button.setText("Fail / Release")
-            self.stop_button.setEnabled(not self.busy and not current.get("pending_report"))
-        else:
-            self.stop_button.setText("Stop")
-            self.stop_button.setEnabled(False)
+        workspace_ready = self._workspace_ready_for_selected(selected, current)
         selected_kind = self._selected_kind()
         self.mark_completed_button.setEnabled(selected_kind in ("active", "resolved") and not self.busy)
         selected_entry = selected
@@ -1814,11 +1961,14 @@ class WebQueuePage(QWidget):
 
         # Update connected state UI toggle
         is_connected = bool(self.client)
+        show_form = getattr(self, "_changing_login", False) or not is_connected
         if hasattr(self, "conn_connected_box"):
-            self.conn_connected_box.setVisible(is_connected)
-            self.conn_form_box.setVisible(not is_connected)
+            self.conn_connected_box.setVisible(is_connected and not show_form)
+            self.conn_form_box.setVisible(show_form)
             if is_connected and hasattr(self.client, "email"):
                 self.conn_operator_email.setText(f"Operator: {self.client.email}")
+        if hasattr(self, "cancel_login_button"):
+            self.cancel_login_button.setVisible(bool(is_connected and getattr(self, "_changing_login", False)))
 
         # Update badge
         count = len(self.jobs)
@@ -1893,6 +2043,8 @@ class WebQueuePage(QWidget):
             metadata.append(f"Type: {event['doc_type']}")
         if event.get("file_id"):
             metadata.append(f"File ID: {event['file_id']}")
+        if event.get("index") and event.get("total"):
+            metadata.append(f"File: {event['index']}/{event['total']}")
         if metadata:
             message = f"{message} | {' | '.join(metadata)}"
         level = "Error" if kind == "file_error" else ("Warning" if kind == "warning" else ("Success" if kind in ("file_complete", "complete") else "Info"))
@@ -1978,10 +2130,13 @@ class WebQueuePage(QWidget):
             self.refresh()
             return
         insurer_folder = {"uiic": "UIIC", "newindia": "New India", "oic": "OIC"}[portal]
-        folder = self.cases_root / insurer_folder / readable_case_folder(job)
+        folder_name = readable_case_folder(job)
+        folder_name += "__" + hashlib.sha256(dispatch_id.encode("utf-8")).hexdigest()[:8]
+        folder = self.cases_root / insurer_folder / folder_name
         self.case_repo.upsert(
             case_id, job=job, portal=portal,
             folder=str(folder), local_status="staging", phase="staging",
+            handoff_mode=RECEIPT_HANDOFF,
             base44_status=job.get("status", "queued_for_automation"),
             automation_dispatch_id=dispatch_id,
             automation_dispatched_at=job.get("automation_dispatched_at", ""),
@@ -1992,7 +2147,8 @@ class WebQueuePage(QWidget):
         stage_source = "Auto-staging" if automatic else ("Restaging" if force else "Staging")
         self.append_log(
             f"{stage_source} started for {job.get('case_ref', case_id)} "
-            f"(case ID: {case_id}; Drive -> {folder}). No Base44 claim has been made.",
+            f"(case ID: {case_id}; dispatch: {dispatch_id}; local folder: {folder}). "
+            "No Base44 claim has been made.",
             phase="Stage", level="Info", case_id=case_id,
         )
         self.result.setText(
@@ -2008,8 +2164,13 @@ class WebQueuePage(QWidget):
             ).hexdigest()[:16]
             temporary = folder.parent / f"{folder.name}.staging.{partial_id}"
             temporary.mkdir(parents=True, exist_ok=True)
-            if folder.is_dir():
+            (temporary / "case_activity.log").unlink(missing_ok=True)
+            # Only resume files from this exact dispatch. A resend must not
+            # inherit either documents or portal evidence from the old send.
+            if folder.is_dir() and existing and _dispatch_id(existing) == dispatch_id:
                 for existing_file in folder.iterdir():
+                    if existing_file.name == "case_activity.log":
+                        continue  # Old in-folder logs are historical; new logs live in Automations/logs.
                     resume_file = temporary / existing_file.name
                     if existing_file.is_file() and not resume_file.exists():
                         shutil.copy2(existing_file, resume_file)
@@ -2022,13 +2183,9 @@ class WebQueuePage(QWidget):
                 current_record = self._record(case_id)
                 if _dispatch_id(current_record) != dispatch_id:
                     raise RuntimeError("This download belongs to a replaced Base44 dispatch")
-                old_log = folder / "case_activity.log"
-                old_log_content = old_log.read_text(encoding="utf-8") if old_log.exists() else ""
                 if folder.exists():
                     shutil.rmtree(folder)
                 temporary.replace(folder)
-                if old_log_content:
-                    (folder / "case_activity.log").write_text(old_log_content, encoding="utf-8")
                 return {
                     "folder": str(folder),
                     "latest_excel": latest_excel,
@@ -2053,7 +2210,7 @@ class WebQueuePage(QWidget):
         future.add_done_callback(finished)
 
     def _stage_failure_messages(self, record, error):
-        """Build an operator-readable staging diagnosis without changing cloud state."""
+        """Report the observed failure without guessing at an unproven Drive cause."""
         job = record.get("job", {})
         case_id = job.get("case_id") or record.get("case_id") or "Unknown"
         case_ref = job.get("case_ref") or case_id
@@ -2061,16 +2218,22 @@ class WebQueuePage(QWidget):
         base44_status = job.get("status") or record.get("base44_status") or "Unknown"
         drive_folder_id = str(job.get("drive_folder_id") or "").strip()
         drive_folder_link = str(job.get("drive_folder_link") or "").strip()
-        is_manifest_404 = isinstance(error, ApiError) and error.status == 404
+        dispatch_id = _dispatch_id(record) or "Not supplied"
+        is_manifest_404 = (
+            isinstance(error, ApiError) and error.status == 404
+            and error.operation == "getAutomationCaseFiles"
+        )
 
         summary = (
-            f"Stage Failed — {case_ref}: {error}. "
-            "The case was not claimed and automatic staging will not retry it until you click Restage."
+            f"Case {case_ref} did not download completely: {error}. "
+            "Please send this case again from Base44 after correcting the problem."
         )
         details = [
             (
                 f"Stage failed | Case ref: {case_ref} | Vehicle: {vehicle_no} | "
-                f"Case ID: {case_id} | Base44 status: {base44_status} | API error: {error}"
+                f"Case ID: {case_id} | Dispatch: {dispatch_id} | "
+                f"Base44 status reported in queue: {base44_status} | "
+                f"Error type: {type(error).__name__} | Error: {error}"
             )
         ]
         if is_manifest_404:
@@ -2090,15 +2253,39 @@ class WebQueuePage(QWidget):
                 )
             details.append(
                 "Operator action: In DocWriter, confirm the case has a Drive folder and downloadable "
-                "files, then return to App-3 and click Restage."
+                "files, then send the case to App-3 again."
             )
+        elif isinstance(error, ApiError):
+            details.append(
+                f"Observed: Base44 function {error.operation} returned HTTP {error.status}"
+                f"{f' ({error.code})' if error.code else ''}. "
+                "The HTTP response alone does not prove which Drive file or folder caused it."
+            )
+        elif isinstance(error, requests.exceptions.Timeout):
+            details.append(
+                "Observed: the network request timed out before a complete response was received. "
+                "App-3 cannot tell from this error whether Base44, Drive, or the connection was slow."
+            )
+        elif isinstance(error, DownloadLimitError):
+            details.append("Observed: the downloaded response exceeded the configured safety limit.")
+        elif isinstance(error, ZipIdentityError):
+            details.append("Observed: the ZIP case or dispatch identity did not match this queued send.")
+        elif isinstance(error, UnsafeZipError):
+            details.append("Observed: ZIP member validation rejected an unsafe archive entry.")
+        elif isinstance(error, ZipIntegrityError):
+            details.append("Observed: ZIP or extracted-file integrity verification failed.")
         else:
             details.append(
-                "Operator action: Correct the Base44, Drive, or network problem shown above, then "
-                "click Restage."
+                "Observed: staging raised the error above. The exact remote or local root cause "
+                "is not proven by this error alone."
+            )
+        if not is_manifest_404:
+            details.append(
+                "Operator action: Check the reported function/error and send a fresh dispatch "
+                "from Base44 after the problem is corrected."
             )
         details.append(
-            f"Safety: claimAutomationCase was not called. Base44 remains {base44_status}. "
+            f"Safety: no Base44 automation claim was made. Last observed queue status: {base44_status}. "
             "Other queued cases may continue staging."
         )
         return summary, details
@@ -2125,6 +2312,14 @@ class WebQueuePage(QWidget):
                     pass
             self.refresh()
             return
+        if not error:
+            try:
+                validate_staged_case(
+                    value["folder"], case_id, staged_dispatch_id,
+                    value["latest_excel"], verify_md5=True,
+                )
+            except (OSError, ValueError, StagedCaseValidationError) as exc:
+                error = exc
         if _is_stale_dispatch_error(error):
             message = "This staged send was replaced by a newer Base44 dispatch. Waiting for the next incoming-case refresh."
             self.case_repo.upsert(
@@ -2142,6 +2337,25 @@ class WebQueuePage(QWidget):
                 case_id, local_status="stage failed", phase="stage failed",
                 last_error=str(error),
             )
+            try:
+                self._delete_local_folder(record)
+                folder_value = record.get("folder")
+                if folder_value and Path(folder_value).exists():
+                    raise OSError("The incomplete case folder could not be removed")
+            except (OSError, ValueError) as cleanup_error:
+                details.append(f"Local cleanup needs attention: {cleanup_error}")
+                summary += f" Local cleanup needs attention: {cleanup_error}"
+            else:
+                # Keep dispatch identity and failure state for polling/receipt retry,
+                # but do not leave a log-only case folder to be recreated by logging.
+                self.case_repo.upsert(case_id, folder="", latest_excel="")
+                details.append("The incomplete local working folder was removed.")
+            self.case_repo.upsert(
+                case_id, receipt_required=True, receipt_status="failed",
+                receipt_pending=True, receipt_acknowledged=False,
+                receipt_last_error="", receipt_acknowledged_at="",
+            )
+            failure_log, log_error = self._save_failed_staging_log(details)
             self.result.setText(summary)
             for index, message in enumerate(details):
                 self.append_log(
@@ -2150,18 +2364,35 @@ class WebQueuePage(QWidget):
                     level="Error" if index < 2 else ("Warning" if message.startswith("Operator action") else "Info"),
                     case_id=case_id,
                 )
+            if failure_log:
+                self.append_log(f"Failed-transfer details saved to {failure_log}",
+                                phase="Stage", level="Info", case_id=case_id)
+            else:
+                self.append_log(f"Could not save failed-transfer details: {log_error}",
+                                phase="Stage", level="Warning", case_id=case_id)
+            self.refresh()
+            QMessageBox.warning(self, "Case Download Failed", summary)
         else:
             self.case_repo.upsert(
                 case_id, **value, local_status="ready", phase="ready",
                 staged_at=datetime.now(timezone.utc).isoformat(), last_error="",
+                receipt_required=True,
+                receipt_status="received",
+                receipt_pending=True,
+                receipt_acknowledged=False,
+                receipt_last_error="",
+                receipt_acknowledged_at="",
             )
-            msg = f"{record['job'].get('case_ref', case_id)} downloaded locally and is Ready. Base44 remains queued."
+            msg = f"{record['job'].get('case_ref', case_id)} downloaded locally and is Ready."
+            msg += " Sending the DocWriter delivery receipt in the background."
             self.result.setText(msg)
             self.append_log(
                 f"{msg} Local folder: {value.get('folder', record.get('folder', 'Unknown'))}",
                 phase="Stage", level="Success", case_id=case_id,
             )
         self.refresh()
+        if not record.get("deleted_by_operator"):
+            QTimer.singleShot(0, self._send_pending_receipt)
         QTimer.singleShot(0, self._maybe_auto_pickup)
 
     def run_task(self, operation, function):
@@ -2190,8 +2421,13 @@ class WebQueuePage(QWidget):
         if not self.email.text().strip() or not self.password.text():
             self.result.setText("Enter operator email and password.")
             return
+        self._changing_login = True
+        previous_session = getattr(self.client, "session", None)
         previous_client = self.client
-        self.client = Client(self.email.text().strip(), self.password.text())
+        try:
+            self.client = Client(self.email.text().strip(), self.password.text(), session=previous_session)
+        except TypeError:
+            self.client = Client(self.email.text().strip(), self.password.text())
         if previous_client:
             previous_client.close()
         self.password.clear()
@@ -2218,6 +2454,7 @@ class WebQueuePage(QWidget):
         except Exception:
             self.connection.setText("Disconnected")
             self.result.setText("Unable to read saved DocWriter login. Use Settings → Change Login or Forget Login.")
+            self._changing_login = True
             if hasattr(self, "conn_connected_box"):
                 self.conn_connected_box.setVisible(False)
                 self.conn_form_box.setVisible(True)
@@ -2229,12 +2466,19 @@ class WebQueuePage(QWidget):
         if hasattr(self.window, "_switch_page"):
             self.window._switch_page(2)
         self.set_stage(1)
+        self._changing_login = True
         if hasattr(self, "conn_connected_box"):
             self.conn_connected_box.setVisible(False)
             self.conn_form_box.setVisible(True)
+        if hasattr(self, "cancel_login_button"):
+            self.cancel_login_button.setVisible(bool(self.client))
         self.password.clear()
         self.password.setFocus()
         self.result.setText("Enter the DocWriter operator email/password and click Connect. A successful login replaces the saved login.")
+
+    def cancel_change_login(self):
+        self._changing_login = False
+        self.refresh()
 
     def forget_login(self):
         if self.busy or self.staging_ids:
@@ -2248,6 +2492,7 @@ class WebQueuePage(QWidget):
         if self.client:
             self.client.close()
         self.client = None
+        self._changing_login = True
         self.email.clear()
         self.password.clear()
         self.jobs = []
@@ -2258,13 +2503,39 @@ class WebQueuePage(QWidget):
 
     def poll(self):
         if self.client and not self.busy and not self.state_error:
-            current = self.state.current
-            if current and current.get("pending_report"):
-                payload = dict(current["pending_report"])
-                self.run_task("report", lambda: self.client.report(payload))
-            else:
-                self.run_task("poll", self.client.jobs)
+            self.run_task("poll", self.client.jobs)
         self.refresh()
+
+    def _send_pending_receipt(self):
+        if self.closing or self.busy or not self.client or not self.case_repo or self.state_error:
+            return
+        for record in self._records():
+            if not record.get("receipt_pending"):
+                continue
+            if record.get("local_status") == "stale/replaced":
+                continue
+            case_id, dispatch_id = record.get("case_id"), _dispatch_id(record)
+            if not case_id or not dispatch_id:
+                continue
+            receipt_status = record.get("receipt_status") or "received"
+            if receipt_status == "received":
+                try:
+                    validate_staged_case(record.get("folder"), case_id, dispatch_id,
+                                         record.get("latest_excel"), verify_md5=True)
+                except (OSError, ValueError, StagedCaseValidationError) as exc:
+                    self.case_repo.upsert(case_id, receipt_pending=False,
+                                          local_status="needs attention", phase="needs attention",
+                                          receipt_last_error=str(exc), last_error=str(exc))
+                    self.append_log(f"Delivery receipt blocked: local files no longer verify: {exc}",
+                                    phase="Receipt", level="Error", case_id=case_id)
+                    self.refresh()
+                    continue
+            elif receipt_status != "failed":
+                continue
+            self._receipt_in_flight = (case_id, dispatch_id, receipt_status)
+            client = self.client
+            self.run_task("receipt", lambda: client.acknowledge_receipt(case_id, dispatch_id, receipt_status))
+            return
 
     def _reconcile_jobs(self):
         incoming = {job["case_id"]: job for job in self.jobs}
@@ -2283,12 +2554,22 @@ class WebQueuePage(QWidget):
             }
             validation_errors = self._job_validation_errors(job)
             if validation_errors and case_id != active_id:
+                err_desc = ", ".join(validation_errors)
+                err_text = "Missing Base44 fields: " + err_desc
+                already_flagged = bool(record and record.get("last_error") == err_text and record.get("local_status") == "needs attention")
                 changes.update(
                     local_status="needs attention",
                     phase="needs attention",
-                    last_error="Missing Base44 fields: " + ", ".join(validation_errors),
+                    last_error=err_text,
                 )
                 self.case_repo.upsert(case_id, **changes)
+                case_ref = job.get("case_ref") or case_id
+                if not already_flagged:
+                    self.append_log(
+                        f"Case {case_ref} is missing required Base44 field(s): '{err_desc}'. "
+                        f"Auto-staging paused until corrected on DocWriter server.",
+                        phase="Sync", level="Warning", case_id=case_id,
+                    )
                 continue
             if not local_dispatch:
                 # Migration for valid pre-dispatch records: bind the existing
@@ -2303,7 +2584,23 @@ class WebQueuePage(QWidget):
                         phase="Sync", level="Warning", case_id=case_id,
                     )
                     continue
+                previous_folders = list(record.get("previous_dispatch_folders") or [])
+                if record.get("folder") and not any(
+                    item.get("automation_dispatch_id") == local_dispatch for item in previous_folders
+                ):
+                    previous_folders.append({
+                        "automation_dispatch_id": local_dispatch,
+                        "folder": record["folder"],
+                    })
                 changes.update(
+                    previous_dispatch_folders=previous_folders,
+                    handoff_mode=self.handoff_mode,
+                    receipt_required=False,
+                    receipt_status="",
+                    receipt_pending=False,
+                    receipt_acknowledged=False,
+                    receipt_last_error="",
+                    receipt_acknowledged_at="",
                     display_number=self._next_display_number(),
                     deleted_by_operator=False,
                     deleted_dispatch_id="",
@@ -2314,6 +2611,7 @@ class WebQueuePage(QWidget):
                     last_error="",
                     last_message="",
                 )
+                changes["folder"] = ""
                 self.deleted_case_ids.discard(case_id)
                 self.append_log(
                     f"New Base44 dispatch received for this case ({incoming_dispatch}). "
@@ -2335,137 +2633,109 @@ class WebQueuePage(QWidget):
 
     def _completed(self, operation, value, error):
         self.busy = False
+        if operation == "receipt":
+            self._receipt_completed(value, error)
+            return
         if error:
-            if operation.startswith("claim:"):
-                case_id = operation.split(":", 1)[1]
-                if _is_stale_dispatch_error(error):
-                    self.case_repo.upsert(
-                        case_id, local_status="stale/replaced", phase="stale/replaced",
-                        last_error=str(error),
-                    )
-                    self.result.setText("This case was resent/replaced. Refresh the incoming cases. No insurer browser was started.")
-                elif isinstance(error, ApiError) and error.status == 409:
-                    self.case_repo.upsert(
-                        case_id, local_status="claimed elsewhere", phase="claimed elsewhere",
-                        base44_status="automation_in_progress", last_error=str(error),
-                    )
-                    self.result.setText("Claimed Elsewhere: another App-3 computer started this case. No insurer browser was started.")
-                else:
-                    self.case_repo.upsert(
-                        case_id, local_status="workspace ready", phase="workspace ready",
-                        last_error=str(error),
-                    )
-                    self.result.setText(f"Needs Attention: Base44 claim failed. Automation was not started: {error}")
-                self.refresh()
-                return
-            if operation == "report" and _is_stale_dispatch_error(error):
-                current = self.state.current
-                message = (
-                    "Base44 rejected this result because the case dispatch was replaced. "
-                    "Local portal evidence was preserved; the Workspace remains locked for attention."
-                )
-                if current:
-                    folder = current.get("folder")
-                    if folder and Path(folder).exists():
-                        atomic_json(Path(folder) / "Web_Sync_Stale_Result.json", {
-                            "case_id": current["job"].get("case_id"),
-                            "automation_dispatch_id": _dispatch_id(current),
-                            "message": message,
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                        })
-                    self._active_update(
-                        pending_report=None,
-                        phase="needs final resolution",
-                        local_status="needs attention",
-                        last_message=message,
-                        last_error=str(error),
-                    )
-                self.connection.setText("Connected to DocWriter")
-                self.result.setText(f"Needs Attention: {message}")
-                self.refresh()
-                return
             self.result.setText(str(error))
             if isinstance(error, ApiError) and error.status == 401:
                 self.connection.setText("Disconnected — sign in again")
-            elif operation in ("login", "poll", "report"):
+            elif operation in ("login", "poll"):
                 self.connection.setText("Disconnected — retrying every 30 seconds")
+            if operation == "login":
+                self._changing_login = True
             self.refresh()
             return
         self.connection.setText("Connected to DocWriter")
         if operation in ("login", "poll"):
+            if operation == "login":
+                self._changing_login = False
             self.jobs = value
             self._reconcile_jobs()
-            if getattr(self.client, "queue_warning", ""):
-                self.result.setText(self.client.queue_warning)
-        elif operation.startswith("claim:"):
-            case_id = operation.split(":", 1)[1]
-            record = self._record(case_id)
-            original_job = record.get("job", {}) if record else {}
-            try:
-                identity_matches = bool(
-                    record and value.get("case_id") == case_id
-                    and _dispatch_id(value) == _dispatch_id(record)
-                    and value.get("surveyor_profile_id") == original_job.get("surveyor_profile_id")
-                    and portal_for(value.get("insurer"), portal_id=value.get("portal_id")) == portal_for(original_job.get("insurer"), portal_id=original_job.get("portal_id"))
+            queue_warning = getattr(self.client, "queue_warning", "")
+            if queue_warning and queue_warning != self._last_queue_warning:
+                self.append_log(queue_warning, phase="Sync", level="Warning", case_id="")
+            elif not queue_warning and self._last_queue_warning:
+                self.append_log("The previously reported Base44 queue-data warning has cleared.",
+                                phase="Sync", level="Success", case_id="")
+            self._last_queue_warning = queue_warning
+            if operation == "login" and not queue_warning:
+                email = getattr(self.client, "email", "") or "operator"
+                self.append_log(
+                    f"Connected to Base44 DocWriter ({email}). {len(self.jobs)} assigned case(s) found in queue.",
+                    phase="Sync", level="Success"
                 )
-            except ValueError:
-                identity_matches = False
-            if not identity_matches:
-                if record:
-                    self.case_repo.upsert(case_id, local_status="needs attention", last_error="Claimed job identity changed")
-                self.result.setText("Needs Attention: claimed case no longer matches the selected local case. Automation was not started.")
-            else:
-                claimed_job = {**original_job, **value}
-                active = {
-                    **record, "job": claimed_job, "portal": portal_for(value.get("insurer"), portal_id=value.get("portal_id")),
-                    "phase": "automation active", "local_status": "automation active",
-                    "base44_status": "automation_in_progress",
-                    "claimed_at": datetime.now(timezone.utc).isoformat(),
-                }
-                self.state.set(active)
-                self.case_repo.set(active)
-                self.result.setText("Case claimed by this App-3. Starting insurer automation.")
-                self.window._start_automation()
-        elif operation == "report":
-            current = self.state.current
-            if current.get("folder") and Path(current["folder"]).exists():
-                atomic_json(Path(current["folder"]) / "Web_Sync_Report_Acknowledgement.json", value)
-            reported_status = current["pending_report"]["status"]
-            if reported_status == "success" and value["status"] == "uploaded":
-                self.case_repo.upsert(
-                    current["job"]["case_id"], local_status="submitted successfully",
-                    phase="submitted successfully", base44_status="uploaded",
-                    pending_report=None,
-                )
-                self.completed_store.upsert(self._history_entry(
-                    current, section="workspace", base44_status="uploaded",
-                    display_result="Submitted Successfully", unresolved=False,
-                ))
-            elif current.get("locally_completed"):
-                self.case_repo.upsert(
-                    current["job"]["case_id"], local_status="completed", phase="completed",
-                    base44_status=value["status"], pending_report=None,
-                )
-                self.completed_store.upsert(self._history_entry(
-                    current, section="completed", base44_status=value["status"],
-                    display_result="Failed / Needs Attention", unresolved=False,
-                ))
-            else:
-                has_local = bool(current.get("folder") and Path(current["folder"]).is_dir())
-                new_status = "workspace ready" if has_local else "stopped"
-                self.case_repo.upsert(
-                    current["job"]["case_id"], local_status=new_status,
-                    phase=new_status, base44_status=value["status"],
-                    pending_report=None,
-                )
-            self.state.set(None)
-            self.result.set_report_result(
-                f"Base44 acknowledged: {value['status']}. Stop/close the previous browser before starting another case.",
-                reported_status, value["status"],
-            )
         self.refresh()
         if operation in ("login", "poll") and not error:
             QTimer.singleShot(0, self._maybe_auto_pickup)
+            QTimer.singleShot(0, self._send_pending_receipt)
+
+    def _receipt_completed(self, acknowledgement, error):
+        identity = self._receipt_in_flight
+        self._receipt_in_flight = None
+        if not identity:
+            return
+        case_id, dispatch_id, receipt_status = identity
+        record = self._record(case_id)
+        if not record or _dispatch_id(record) != dispatch_id or (record.get("receipt_status") or "received") != receipt_status:
+            self.append_log("Ignored delivery receipt result for a replaced dispatch.",
+                            phase="Receipt", level="Warning", case_id=case_id)
+            self.refresh()
+            return
+        if error:
+            if _is_stale_dispatch_error(error):
+                self.case_repo.upsert(case_id, receipt_pending=False,
+                                      local_status="stale/replaced", phase="stale/replaced",
+                                      receipt_last_error=str(error), last_error=str(error))
+                current = self.state.current
+                if current and current.get("job", {}).get("case_id") == case_id and _dispatch_id(current) == dispatch_id:
+                    self._active_update(receipt_pending=False, local_status="stale/replaced",
+                                        phase="stale/replaced", last_error=str(error))
+                    if getattr(self.window, "_worker", None):
+                        self.window._stop_automation()
+                    else:
+                        self.state.set(None)
+                self.result.setText("Needs Attention: Base44 replaced this dispatch. Start is disabled for its local copy.")
+                self.append_log(f"Receipt rejected as stale; no receipt accepted: {error}",
+                                phase="Receipt", level="Warning", case_id=case_id)
+            else:
+                if record.get("receipt_last_error") != str(error):
+                    self.append_log(f"Delivery receipt pending; will retry after the next connection check: {error}",
+                                    phase="Receipt", level="Warning", case_id=case_id)
+                self.case_repo.upsert(case_id, receipt_pending=True, receipt_last_error=str(error))
+            self.refresh()
+            return
+        acknowledged_at = acknowledgement.get("app3_received_at") or datetime.now(timezone.utc).isoformat()
+        self.case_repo.upsert(case_id, receipt_pending=False, receipt_acknowledged=True,
+                              receipt_last_error="", receipt_acknowledged_at=acknowledged_at)
+        current = self.state.current
+        if current and current.get("job", {}).get("case_id") == case_id and _dispatch_id(current) == dispatch_id:
+            self._active_update(receipt_pending=False, receipt_acknowledged=True,
+                                receipt_last_error="", receipt_acknowledged_at=acknowledged_at)
+        folder = record.get("folder")
+        if folder and Path(folder).is_dir():
+            try:
+                evidence = {
+                    "case_id": case_id,
+                    "automation_dispatch_id": dispatch_id,
+                    "receipt_status": acknowledgement["receipt_status"],
+                    "duplicate": acknowledgement["duplicate"],
+                }
+                if receipt_status == "received":
+                    evidence["app3_received_at"] = acknowledged_at
+                atomic_json(Path(folder) / "App3_Receipt_Acknowledgement.json", evidence)
+            except OSError as exc:
+                self.append_log(f"Base44 receipt was acknowledged, but local evidence could not be saved: {exc}",
+                                phase="Receipt", level="Warning", case_id=case_id)
+        self.append_log(
+            ("Base44 acknowledged the verified local case receipt. " if receipt_status == "received"
+             else "Base44 acknowledged the failed case transfer. ")
+            + f"Dispatch: {dispatch_id}; result: {acknowledgement['receipt_status']}; "
+              f"duplicate: {acknowledgement['duplicate']}.",
+            phase="Receipt", level="Success" if receipt_status == "received" else "Warning", case_id=case_id,
+        )
+        self.refresh()
+        QTimer.singleShot(0, self._send_pending_receipt)
 
     def _selected(self, row):
         if 0 <= row < self.list.count():
@@ -2584,6 +2854,16 @@ class WebQueuePage(QWidget):
             self.result.setText("Restage Required: this case was deleted locally. Click Restage to download it again.")
             self.refresh()
             return
+        if status == "needs attention":
+            last_err = record.get("last_error") or "Missing required case data"
+            case_name = job.get("case_ref") or record.get("case_ref") or "Case"
+            self.result.setText(f"Needs Attention for {case_name}: {last_err}")
+            self.append_log(
+                f"Selected case {case_name} cannot be opened in Workspace: {last_err}.",
+                phase="Sync", level="Warning", case_id=job.get("case_id"),
+            )
+            self.refresh()
+            return
         if status not in ("ready", "workspace ready", "automation active", "needs final resolution") or not self._valid_stage(record):
             return
         if self.window._worker or self.window._scan_thread:
@@ -2603,7 +2883,7 @@ class WebQueuePage(QWidget):
             phase="Workspace", level="Info", case_id=job["case_id"],
         )
         self.window._open_web_case(prepared)
-        self.result.setText("Scanning the selected local case. Base44 has not been claimed.")
+        self.result.setText("Scanning the selected local case for Workspace review.")
 
     def restage_selected(self):
         record = self._selected_case_record()
@@ -2642,7 +2922,6 @@ class WebQueuePage(QWidget):
         portal_result = self._portal_result(folder)
         message = (
             changes.pop("result", None) or portal_result.get("portal_message")
-            or (current.get("pending_report") or {}).get("portal_message")
             or current.get("last_message") or job.get("result", "")
         )
         return {
@@ -2663,49 +2942,79 @@ class WebQueuePage(QWidget):
     def start_automation(self):
         self._recover_evidence()
         selected = self._selected_case_record()
-        if not self.start_button.isEnabled() or not selected:
-            return
+        if not self._can_start_selected_case(selected) or not selected:
+            if not selected:
+                self.result.setText("Needs Attention: No case selected.")
+            else:
+                self.result.setText("Needs Attention: Web Queue case is not ready to start.")
+            return False
         case_id = selected.get("case_id") or selected.get("job", {}).get("case_id")
         current = self.state.current
         if current:
             if current["job"]["case_id"] == case_id:
+                if current.get("local_status") == "stale/replaced":
+                    self.result.setText("Needs Attention: this dispatch was replaced. Start is disabled.")
+                    return False
                 self.window._start_automation()
                 self.refresh()
-            return
+                return True
+            return False
         job = selected.get("job", self.selected_job or {})
         try:
             portal = portal_for(job.get("insurer"), portal_id=job.get("portal_id"))
-            # ── Main Default: Global Settings from Settings page ─────────────
             portal_settings = load_settings(portal_id=portal)
             has_creds = bool(portal_settings.get("username") and portal_settings.get("password"))
-            if not has_creds and hasattr(self, "store") and self.store:
-                try:
-                    c = self.store.get(job.get("surveyor_profile_id", ""), portal)
-                    has_creds = bool(c.get("username") and c.get("password"))
-                except Exception:
-                    has_creds = False
             if not has_creds:
                 raise ValueError(f"Please configure {portal.upper()} portal username and password in Settings")
         except Exception as exc:
-            self.result.setText(f"Needs Attention: {exc}. Base44 was not claimed.")
+            self.result.setText(f"Needs Attention: {exc}. Automation was not started.")
             self.append_log(
-                f"Start Automation blocked: {exc}. Base44 was not claimed.",
+                f"Start Automation blocked: {exc}. Automation was not started.",
                 phase="Automation", level="Error", case_id=case_id,
             )
-            return
-        self.result.setText("Claiming the selected case before insurer automation starts…")
-        self.append_log(
-            "Operator clicked Start Automation. Claiming this case in Base44 before opening the insurer automation.",
-            phase="Automation", level="Info", case_id=case_id,
-        )
+            return False
         dispatch_id = _dispatch_id(job)
         if not dispatch_id:
             self.result.setText("Needs Attention: this case has no automation_dispatch_id. Base44 was not claimed.")
-            return
-        self.run_task(
-            f"claim:{case_id}",
-            lambda: self.client.claim(case_id, dispatch_id),
-        )
+            return False
+        # Intentional: staging and the received-receipt path already verify MD5.
+        # Start runs on the Qt GUI thread, so check manifest identity, file presence,
+        # and sizes here without hashing every document again. A same-size change
+        # made after staging is not detected at this Start boundary.
+        validation_error = self._stage_validation_error(selected, verify_md5=False)
+        if validation_error:
+            self.case_repo.upsert(case_id, local_status="needs attention", phase="needs attention",
+                                  last_error=validation_error)
+            self.result.setText(f"Needs Attention: local case verification failed: {validation_error}")
+            self.refresh()
+            return False
+        if any(getattr(self.window, name, None) is not None for name in ("_worker", "_thread", "_scan_thread")):
+            self.result.setText("Wait for the previous Workspace operation to stop completely.")
+            return False
+        scan_context = getattr(getattr(self.window, "_claim", None), "_scan_context", None)
+        scanned_folder = getattr(scan_context, "claim_folder_path", "") if scan_context else ""
+        if not scanned_folder or Path(scanned_folder).resolve() != Path(selected.get("folder", "")).resolve():
+            self.result.setText("Open and scan this case in Workspace before starting automation.")
+            return False
+        if getattr(scan_context, "portal_id", None) != portal:
+            self.result.setText("Rescan this case with its correct insurer portal before starting automation.")
+            return False
+        if get_active_portal_id() != portal:
+            self.result.setText("Select this case's insurer portal in Workspace before starting automation.")
+            return False
+        active = {
+            **selected, "job": job, "portal": portal,
+            "phase": "automation active", "local_status": "automation active",
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self.state.set(active)
+        self.case_repo.set({"case_id": case_id, **active})
+        self.result.setText("Starting insurer automation for the locally Ready case.")
+        self.append_log("Operator started local insurer automation. No Base44 claim was sent.",
+                        phase="Automation", level="Info", case_id=case_id)
+        self.window._start_automation()
+        self.refresh()
+        return True
 
     def start_automation_for_folder(self, folder):
         target = Path(folder).resolve()
@@ -2722,20 +3031,9 @@ class WebQueuePage(QWidget):
             if record.get("folder") and Path(record["folder"]).resolve() == target:
                 self.list.setCurrentRow(index)
                 self.refresh()
-                self.start_automation()
-                return True
+                return bool(self.start_automation())
         self.result.setText("Needs Attention: this Web Sync folder has no staged case state.")
         return False
-
-    def stop_or_fail_case(self):
-        if self._pending_start_case_id:
-            self._pending_start_case_id = None
-        if self.window._worker:
-            self.window._stop_automation()
-            self.result.setText("Stopping automation safely. The Base44 case remains in progress until you deliberately fail it or submission succeeds.")
-            self.refresh()
-            return
-        self.fail_case()
 
     def workspace_scan_completed(self, folder, success, message=""):
         record = next((item for item in self._records() if item.get("folder") and Path(item["folder"]).resolve() == Path(folder).resolve()), None)
@@ -2776,25 +3074,17 @@ class WebQueuePage(QWidget):
         if not current:
             return
         case_id = current.get("job", {}).get("case_id") or current.get("case_id")
-        if not success:
-            clean_msg = message or "Automation stopped"
-            self._active_update(
-                local_status="workspace ready",
-                phase="workspace ready",
-                last_message=clean_msg,
-            )
-            if case_id:
-                self.case_repo.upsert(
-                    case_id,
-                    local_status="workspace ready",
-                    phase="workspace ready",
-                    last_message=clean_msg,
-                )
-            self.result.setText(f"Automation stopped: {clean_msg}. Workspace remains ready to retry.")
-            self.append_log(
-                f"Automation stopped: {clean_msg}. Workspace remains ready to retry.",
-                phase="Automation", level="Warning", case_id=case_id,
-            )
+        if current.get("local_status") == "stale/replaced":
+            self.state.set(None)
+            self.result.setText("This dispatch was replaced; the local automation has stopped.")
+        else:
+            clean_msg = message or "Browser closed without confirmed Final Submit"
+            self.case_repo.upsert(case_id, local_status="workspace ready", phase="workspace ready",
+                                  last_message=clean_msg)
+            self.state.set(None)
+            self.result.setText(f"Automation ended without confirmed Final Submit: {clean_msg}. Case remains Ready to retry.")
+            self.append_log("Browser/automation ended without confirmed Final Submit; local case remains available to retry.",
+                            phase="Automation", level="Warning", case_id=case_id)
         self.refresh()
 
     def workspace_scan_started(self, folder):
@@ -2897,12 +3187,19 @@ class WebQueuePage(QWidget):
         case_id = (record.get("job", record)).get("case_id")
         current = self.state.current
         active_id = current.get("job", {}).get("case_id") if current else None
+        is_worker_running = bool(self.window and (
+            getattr(self.window, "_worker", None) or getattr(self.window, "_scan_thread", None)
+            or getattr(self.window, "_thread", None)
+        ))
         if active_id and active_id == case_id:
-            self.result.setText(
-                "Delete Case is disabled for the active unresolved case. "
-                "Submit it successfully or deliberately Stop/Fail it first."
-            )
-            return
+            if is_worker_running:
+                self.result.setText(
+                    "Delete Case is disabled while automation or scanning is active. "
+                    "Stop automation first before deleting."
+                )
+                return
+            # Release the active case state since the operator is deliberately deleting it
+            self.state.set(None)
         try:
             self._delete_local_folder(record)
             deleted_dispatch_id = _dispatch_id(record)
@@ -3016,7 +3313,10 @@ class WebQueuePage(QWidget):
             self._stage_case(metadata.get("job", {}), force=True)
             return
         is_active_current = bool(current and active_id == case_id)
-        is_worker_running = bool(self.window and (getattr(self.window, "_worker", None) or getattr(self.window, "_scan_thread", None)))
+        is_worker_running = bool(self.window and (
+            getattr(self.window, "_worker", None) or getattr(self.window, "_scan_thread", None)
+            or getattr(self.window, "_thread", None)
+        ))
         allowed_status = ("ready", "workspace ready", "automation active") if (is_active_current and not is_worker_running) else ("ready", "workspace ready")
         if status not in allowed_status or not self._valid_stage(record):
             validation_error = self._stage_validation_error(record, verify_md5=False)
@@ -3027,7 +3327,7 @@ class WebQueuePage(QWidget):
                 )
                 self.result.setText(f"Needs Attention: staged case validation failed: {validation_error}")
                 self.append_log(
-                    f"Start Automation blocked before claim: {validation_error}",
+                    f"Start Automation blocked before browser launch: {validation_error}",
                     phase="Automation", level="Error", case_id=case_id,
                 )
                 self.refresh()
@@ -3065,15 +3365,24 @@ class WebQueuePage(QWidget):
         row = index.row() if hasattr(index, "row") else int(index)
         if 0 <= row < self.list.count():
             metadata = self.list.item(row).data(Qt.ItemDataRole.UserRole) or {}
-            self.delete_current_local_copy(metadata.get("record") or {})
+            self.delete_current_local_copy(metadata.get("record") or metadata.get("job") or {})
 
     def can_delete_case_metadata(self, metadata):
         record = metadata.get("record") if isinstance(metadata, dict) else None
         job = metadata.get("job") if isinstance(metadata, dict) else None
         case_id = (record or {}).get("case_id") or (job or {}).get("case_id")
+        if not case_id:
+            return False
         current = self.state.current
         active_id = current.get("job", {}).get("case_id") if current else None
-        return bool(case_id and case_id != active_id)
+        is_worker_running = bool(self.window and (
+            getattr(self.window, "_worker", None) or getattr(self.window, "_scan_thread", None)
+            or getattr(self.window, "_thread", None)
+        ))
+        if active_id and active_id == case_id:
+            if is_worker_running:
+                return False
+        return True
 
     def _selected_completed(self):
         if hasattr(self, "completed_list"):
@@ -3189,33 +3498,16 @@ class WebQueuePage(QWidget):
             if (Path(folder) / "web_sync_manifest.json").exists():
                 raise ValueError("This web case is not the current active case. Select it through Web Queue.")
             return {}
-        if current.get("pending_report") or portal != current["portal"]:
-            raise ValueError("Web case cannot start with this portal or while a result is pending")
-
-        # Check surveyor profile-specific credentials in store first
-        creds = {}
-        if hasattr(self, "store") and self.store:
-            try:
-                creds = self.store.get(current["job"].get("surveyor_profile_id", ""), portal)
-            except Exception:
-                creds = {}
-
-        # Fallback to Global Settings from Settings page if not found in surveyor profile store
-        if not creds.get("username") or not creds.get("password"):
-            portal_settings = load_settings(portal_id=portal)
-            if portal_settings.get("username") and portal_settings.get("password"):
-                creds = {
-                    "username": portal_settings.get("username"),
-                    "password": portal_settings.get("password"),
-                    "surveyor_code": portal_settings.get("surveyor_code", ""),
-                }
-
-        if not creds.get("username") or not creds.get("password"):
-            raise ValueError(f"Please configure {portal.upper()} portal username and password in Settings")
-
+        if portal != current["portal"]:
+            raise ValueError("Web case cannot start with a different portal")
+        if current.get("local_status") == "stale/replaced":
+            raise ValueError("This Base44 dispatch was replaced")
+        settings = load_settings(portal_id=portal)
+        if not (settings.get("username") and settings.get("password")):
+            raise ValueError(f"{portal.upper()} login credentials are not configured. Please open Settings and enter the username and password.")
+        creds = {key: settings.get(key, "") for key in ("username", "password", "surveyor_code")}
         return {
-            **creds,
-            "browser_headless": False,
+            **creds, "browser_headless": False,
             "_web_submission": {
                 "case_id": current["job"]["case_id"],
                 "automation_dispatch_id": _dispatch_id(current),
@@ -3226,100 +3518,38 @@ class WebQueuePage(QWidget):
 
     def _submission(self, record):
         current = self.state.current
-        if not current or current["job"]["case_id"] != record["case_id"] or current.get("pending_report"):
+        if not current or current["job"]["case_id"] != record["case_id"]:
             return
         self.result.setText(record["portal_message"])
         if record["confirmed_success"]:
-            self._active_update(
-                phase="report pending", local_status="report pending",
-                pending_report={
-                    "case_id": record["case_id"],
-                    "automation_dispatch_id": _dispatch_id(current),
-                    "status": "success",
-                    "portal_message": record["portal_message"],
-                },
-            )
-            self.poll()
+            case_id = current["job"]["case_id"]
+            self.case_repo.upsert(case_id, phase="submitted successfully",
+                                  local_status="submitted successfully",
+                                  last_message=record["portal_message"],
+                                  completed_at=record.get("timestamp") or datetime.now(timezone.utc).isoformat())
+            self.completed_store.upsert(self._history_entry(
+                current, section="workspace", display_result="Submitted Successfully",
+                unresolved=False,
+            ))
+            self.state.set(None)
+            self.append_log("Insurer Final Submit was confirmed and saved locally. No Base44 outcome was sent.",
+                            phase="Automation", level="Success", case_id=case_id)
         else:
-            self._active_update(last_message=record["portal_message"], local_status="needs final resolution")
+            self._active_update(last_message=record["portal_message"],
+                                local_status="needs final resolution", phase="needs final resolution")
         self.refresh()
 
     def fail_case(self):
         self._recover_evidence()
         current = self.state.current
-        if not current or self.busy or current.get("pending_report"):
-            return
-
-        is_stale = bool(
-            current.get("phase") == "needs final resolution"
-            or _is_stale_dispatch_error(current.get("last_error"))
-            or "stale_dispatch" in str(current.get("last_error", ""))
-            or "dispatch was replaced" in str(current.get("last_message", ""))
-        )
-        if is_stale:
-            case_id = (current.get("job") or {}).get("case_id") or current.get("case_id")
-            if case_id:
-                self.case_repo.upsert(
-                    case_id,
-                    local_status="stale/replaced",
-                    phase="stale/replaced",
-                    pending_report=None,
-                    last_message="Released by operator after cloud dispatch rejection.",
-                )
-            record = {
-                "case_id": case_id,
-                "portal_message": "Operator released stale dispatch locally.",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "confirmed_success": False,
-                "operator_stopped": True,
-            }
-            if current.get("folder") and Path(current["folder"]).exists():
-                atomic_json(Path(current["folder"]) / "Portal_Submission_Result_Operator_Stop.json", record)
-            self.state.set(None)
-            self.result.setText("Case released locally. Workspace unlocked.")
-            self.append_log(
-                f"Case {current.get('job', {}).get('case_ref', case_id)} released locally. Workspace unlocked.",
-                phase="Web Queue", level="Info", case_id=case_id,
-            )
-            self.refresh()
-            return
-
-        reason = (current.get("last_message") or "").strip()
-        if not reason:
-            if getattr(QInputDialog.getText, "__code__", None) and QInputDialog.getText.__code__.co_name == "<lambda>":
-                reason, accepted = QInputDialog.getText(
-                    self,
-                    "Deliberately stop / fail case",
-                    "Reason this case cannot presently be completed:",
-                    text=current.get("last_message", ""),
-                )
-                if not accepted or not reason.strip():
-                    return
-            else:
-                reason = "Stopped by operator"
-        self._recover_evidence()
-        if not self.state.current or self.state.current.get("pending_report"):
+        if not current or self.busy:
             return
         self.window._stop_automation()
-        record = {
-            "case_id": current["job"]["case_id"],
-            "portal_message": reason,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "confirmed_success": False,
-            "operator_stopped": True,
-        }
-        if current.get("folder") and Path(current["folder"]).exists():
-            atomic_json(Path(current["folder"]) / "Portal_Submission_Result_Operator_Stop.json", record)
-        self._active_update(
-            phase="report pending", local_status="report pending",
-            pending_report={
-                "case_id": record["case_id"],
-                "automation_dispatch_id": _dispatch_id(current),
-                "status": "failed",
-                "portal_message": reason,
-            },
-        )
-        self.poll()
+        self._active_update(local_status="workspace ready", phase="workspace ready",
+                            last_message="Automation stopped locally; case remains available to retry")
+        self.state.set(None)
+        self.result.setText("Automation stopped locally. The case remains available to retry.")
+        self.refresh()
 
     def shutdown(self):
         self.closing = True

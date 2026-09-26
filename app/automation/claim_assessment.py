@@ -847,17 +847,13 @@ async def fill_claim_assessment(page, claim: ClaimData,
         except Exception:
             pass
 
-    try:
-        page.remove_all_listeners("dialog")
-    except Exception:
-        pass
     page.on("dialog", _handle_assessment_dialog)
 
     try:
         await _upload_all(page, claim, log, settings=settings)
     finally:
         try:
-            page.remove_all_listeners("dialog")
+            page.remove_listener("dialog", _handle_assessment_dialog)
         except Exception:
             pass
 

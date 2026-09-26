@@ -676,6 +676,7 @@ def _generate_pdf_excel_com(
 
     excel = None
     wb = None
+    ws = None
     com_initialized = False
     excel_pid = None
 
@@ -790,7 +791,12 @@ def _generate_pdf_excel_com(
         return False
 
     finally:
+        ws = None
         if wb:
+            try:
+                wb.Saved = True
+            except Exception:
+                pass
             try:
                 wb.Close(SaveChanges=False)
             except Exception:
@@ -803,16 +809,9 @@ def _generate_pdf_excel_com(
                 pass
             excel = None
 
-        # Ensure Excel process has exited; if still running, kill it to prevent orphaned handles
-        if excel_pid and _is_process_running(excel_pid):
-            import time
-            time.sleep(0.2)
-            if _is_process_running(excel_pid):
-                _kill_excel_process(excel_pid)
-
-        # Drop Python references before GC collect so refcount hits 0.
+        # Drop Python references and collect garbage BEFORE process termination
         try:
-            del wb, excel
+            del ws, wb, excel
         except Exception:
             pass
 
@@ -821,8 +820,16 @@ def _generate_pdf_excel_com(
             gc.collect()
         except Exception as gc_exc:
             logger.debug("gc.collect warning (non-fatal): %s", gc_exc)
+
         if com_initialized:
             try:
                 pythoncom.CoUninitialize()
             except Exception as uninit_exc:
                 logger.warning("CoUninitialize warning (non-fatal): %s", uninit_exc)
+
+        # Ensure Excel process has exited; if still running after COM release, kill it
+        if excel_pid and _is_process_running(excel_pid):
+            import time
+            time.sleep(0.2)
+            if _is_process_running(excel_pid):
+                _kill_excel_process(excel_pid)

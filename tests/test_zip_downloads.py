@@ -99,6 +99,7 @@ def _forbid_fallback(monkeypatch):
 
 def _capture_fallback(monkeypatch):
     calls = []
+    monkeypatch.setattr(zip_downloads, "ENABLE_FALLBACK", True)
 
     def parallel_failure(*_args, **_kwargs):
         raise zip_downloads.ParallelDownloadError("parallel unavailable in ZIP unit test")
@@ -292,8 +293,12 @@ class _Archive:
         return self.members
 
 
-def test_uncompressed_limit_rejected():
+def test_uncompressed_limit_rejected(monkeypatch):
     archive = _Archive([_Info("large.bin", 10 * 1024 * 1024, 100 * 1024 * 1024 + 1)])
+    # Intentional design: By default (None), large cases are permitted without artificial limit
+    assert zip_downloads._inspect_archive(archive) is not None
+    # When explicitly configured, the safety limit is enforced
+    monkeypatch.setattr(zip_downloads, "MAX_UNCOMPRESSED_BYTES", 100 * 1024 * 1024)
     with pytest.raises(zip_downloads.UnsafeZipError, match="100 MiB"):
         zip_downloads._inspect_archive(archive)
 
@@ -304,8 +309,12 @@ def test_expansion_ratio_rejected():
         zip_downloads._inspect_archive(archive)
 
 
-def test_member_count_limit_rejected():
+def test_member_count_limit_rejected(monkeypatch):
     archive = _Archive([_Info(f"file-{number}.bin", 1, 1) for number in range(201)])
+    # Intentional design: By default (None), cases with many members are permitted without artificial limit
+    assert zip_downloads._inspect_archive(archive) is not None
+    # When explicitly configured, the member limit is enforced
+    monkeypatch.setattr(zip_downloads, "MAX_MEMBERS", 200)
     with pytest.raises(zip_downloads.UnsafeZipError, match="200 members"):
         zip_downloads._inspect_archive(archive)
 
@@ -338,6 +347,7 @@ def test_fallback_reconfirms_dispatch_and_uses_existing_downloader(tmp_path, mon
 
 
 def test_zip_failure_prefers_parallel_before_sequential(tmp_path, monkeypatch):
+    monkeypatch.setattr(zip_downloads, "ENABLE_FALLBACK", True)
     monkeypatch.setattr(zip_downloads, "DOWNLOAD_MODE", "zip_preferred")
     parallel_calls = []
 
@@ -364,3 +374,72 @@ def test_individual_only_rollback_skips_zip_request(tmp_path, monkeypatch):
     ) == "fallback.xlsx"
     assert not client.calls
     assert len(calls) == 1
+
+
+def test_local_zip_without_manifest_extracts_and_stages_safely(tmp_path, monkeypatch):
+    from app.web_sync.manifest import validate_staged_case
+
+    monkeypatch.setattr(zip_downloads, "DOWNLOAD_MODE", "zip_preferred")
+    _forbid_fallback(monkeypatch)
+
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("Printable_Assessment_2026.xlsx", b"excel_bytes")
+        archive.writestr("rc_document.pdf", b"rc_bytes")
+        archive.writestr("subfolder/vehicle_photo.jpg", b"photo_bytes")
+
+    client = ZipClient(output.getvalue())
+    events = []
+    latest = zip_downloads.download_case_preferred(
+        client, CASE_ID, tmp_path, progress=events.append,
+        automation_dispatch_id=DISPATCH_ID,
+    )
+
+    assert latest == "Printable_Assessment_2026.xlsx"
+    assert (tmp_path / "Printable_Assessment_2026.xlsx").read_bytes() == b"excel_bytes"
+    assert (tmp_path / "rc_document.pdf").read_bytes() == b"rc_bytes"
+    assert (tmp_path / "vehicle_photo.jpg").read_bytes() == b"photo_bytes"
+
+    manifest_data = validate_staged_case(
+        tmp_path, CASE_ID, DISPATCH_ID, "Printable_Assessment_2026.xlsx", verify_md5=True,
+    )
+    assert manifest_data["complete"] is True
+    assert manifest_data["latest_excel"] == "Printable_Assessment_2026.xlsx"
+    assert len(manifest_data["files"]) == 3
+    assert events[-1]["kind"] == "complete"
+
+
+def test_local_zip_failure_skips_individual_fallback(tmp_path, monkeypatch):
+    monkeypatch.setattr(zip_downloads, "DOWNLOAD_MODE", "zip_preferred")
+    calls = _capture_fallback(monkeypatch)
+
+    # Local ZIP without Excel workbook fails verification and must NEVER call fallback
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("only_a_pdf.pdf", b"pdf_data")
+
+    client = ZipClient(output.getvalue())
+    with pytest.raises(zip_downloads.LocalCaseZipError):
+        zip_downloads.download_case_preferred(
+            client, CASE_ID, tmp_path, automation_dispatch_id=DISPATCH_ID,
+        )
+
+    # Verify fallback was completely skipped
+    assert len(calls) == 0
+
+
+def test_drive_zip_failure_default_skips_fallback(tmp_path, monkeypatch):
+    calls = []
+
+    def fallback(*_args, **_kwargs):
+        calls.append(True)
+        return "fallback.xlsx"
+
+    monkeypatch.setattr(zip_downloads, "download_case_parallel", fallback)
+    monkeypatch.setattr(zip_downloads, "download_case", fallback)
+    client = ZipClient(errors=[ApiError(500, "getAutomationCaseZip")] * 3)
+    with pytest.raises(ApiError):
+        zip_downloads.download_case_preferred(
+            client, CASE_ID, tmp_path, automation_dispatch_id=DISPATCH_ID,
+        )
+    assert len(calls) == 0

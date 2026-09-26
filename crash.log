@@ -1,18 +1,12 @@
 UIIC Surveyor Automation — Fatal Crash Report
 ============================================================
 Traceback (most recent call last):
-  File "C:\Users\jadav\Coding\uiic_automation\main.py", line 140, in main
-    success = run_headless_pdf_render_com(excel_path, pdf_path)
-  File "C:\Users\jadav\Coding\uiic_automation\app\data\printable_excel_service.py", line 301, in run_headless_pdf_render_com
-    print(line, file=sys.stderr)
-OSError: [Errno 22] Invalid argument
-
-During handling of the above exception, another exception occurred:
-
-Traceback (most recent call last):
-  File "C:\Users\jadav\Coding\uiic_automation\main.py", line 234, in <module>
+  File "C:\Users\jadav\Coding\uiic_automation\main.py", line 256, in <module>
     main()
-  File "C:\Users\jadav\Coding\uiic_automation\main.py", line 143, in main
-    print(f"ERROR: Headless PDF render failed: {e}", file=sys.stderr)
-OSError: [Errno 22] Invalid argument
+  File "C:\Users\jadav\Coding\uiic_automation\main.py", line 237, in main
+    from app.ui.main_window import MainWindow
+  File "C:\Users\jadav\Coding\uiic_automation\app\ui\main_window.py", line 949
+    self._log_file.write(f"[{today} {match.group(1)}] {identity} {match.group(2).replace(chr(10), '\\n')}\n")
+                                                                                                            ^
+SyntaxError: f-string expression part cannot include a backslash
 

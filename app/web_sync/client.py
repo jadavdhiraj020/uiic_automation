@@ -5,7 +5,7 @@ import threading
 
 import requests
 
-APP_ID = "6a906023a09ef23a2e1dfcaf"
+APP_ID = "6ab74380b9e0063628bc990a"
 BASE_URL = f"https://base44.app/api/apps/{APP_ID}"
 _INDIVIDUAL_DOWNLOAD_SLOTS = threading.BoundedSemaphore(3)
 _QUEUE_PAGE_LIMIT = 25
@@ -161,11 +161,11 @@ class Client:
                 kind = response.headers.get("Content-Type", "").lower()
                 if "json" in kind or "text/html" in kind:
                     raise ValueError("Download returned an error document instead of a binary file")
-                limit = 512 * 1024 * 1024 if max_bytes is None else int(max_bytes)
-                if limit <= 0:
+                limit = None if max_bytes is None else int(max_bytes)
+                if limit is not None and limit <= 0:
                     raise ValueError("Download limit must be positive")
                 content_length = response.headers.get("Content-Length")
-                if content_length:
+                if content_length and limit is not None:
                     try:
                         declared_length = int(content_length)
                     except (TypeError, ValueError):
@@ -178,7 +178,7 @@ class Client:
                         if self._closed.is_set():
                             raise ClientClosedError("Web Sync download cancelled because App-3 is closing")
                         total += len(chunk)
-                        if total > limit:
+                        if limit is not None and total > limit:
                             raise DownloadLimitError(f"Download exceeds the {limit:,}-byte safety limit")
                         output.write(chunk)
                 if not total:
@@ -200,6 +200,7 @@ class Client:
         needs_attention = 0
         skipped = 0
         required = ("case_id", "case_ref", "insurer", "surveyor_profile_id", "automation_dispatch_id")
+        problem_cases = []
         for raw_job in jobs:
             if not isinstance(raw_job, dict) or raw_job.get("status") != "queued_for_automation":
                 skipped += 1
@@ -213,13 +214,18 @@ class Client:
             if errors:
                 job["_queue_validation_errors"] = errors
                 needs_attention += 1
+                case_ref = str(job.get("case_ref") or job.get("case_id") or "").strip()
+                problem_cases.append(f"{case_ref} (missing: {', '.join(errors)})")
             visible.append(job)
 
         warnings = []
         if skipped:
             warnings.append(f"Skipped {skipped} invalid or unidentifiable queue item(s).")
         if needs_attention:
-            warnings.append(f"{needs_attention} queued case(s) need missing Base44 fields corrected; they remain visible.")
+            detail = "; ".join(problem_cases[:3])
+            if len(problem_cases) > 3:
+                detail += f" and {len(problem_cases) - 3} more"
+            warnings.append(f"{needs_attention} queued case(s) need missing Base44 fields corrected: {detail}.")
         if pagination_warning:
             warnings.append(pagination_warning)
         self.queue_warning = " ".join(warnings)
@@ -228,32 +234,29 @@ class Client:
             self.auto_pickup_blocker = "Oldest queue item has missing case data. Correct it in Base44 before automatic staging can continue."
         return visible
 
-    def claim(self, case_id, automation_dispatch_id):
+    def acknowledge_receipt(self, case_id, automation_dispatch_id, receipt_status="received"):
+        """Report one verified transfer outcome for the current dispatch."""
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError("Receipt requires case_id")
         if not isinstance(automation_dispatch_id, str) or not automation_dispatch_id.strip():
-            raise ValueError("Claim requires automation_dispatch_id")
-        data = self.call("claimAutomationCase", {
+            raise ValueError("Receipt requires automation_dispatch_id")
+        if receipt_status not in ("received", "failed"):
+            raise ValueError("Receipt status must be received or failed")
+        data = self.call("acknowledgeApp3Receipt", {
             "case_id": case_id,
             "automation_dispatch_id": automation_dispatch_id,
+            "receipt_status": receipt_status,
         })
-        job = data.get("job")
         if (
-            data.get("claimed") is not True or not isinstance(job, dict)
-            or job.get("case_id") != case_id
-            or job.get("automation_dispatch_id") != automation_dispatch_id
-            or job.get("status") != "automation_in_progress"
+            data.get("ok") is not True
+            or data.get("case_id") != case_id
+            or data.get("automation_dispatch_id") != automation_dispatch_id
+            or data.get("receipt_status") != receipt_status
+            or not isinstance(data.get("duplicate"), bool)
+            or (receipt_status == "received" and (
+                not isinstance(data.get("app3_received_at"), str)
+                or not data["app3_received_at"].strip()
+            ))
         ):
-            raise ValueError("Claim was not confirmed")
-        job = dict(job)
-        job.setdefault("automation_dispatch_id", automation_dispatch_id)
-        return job
-
-    def report(self, payload):
-        if payload.get("status") not in ("success", "failed"):
-            raise ValueError("Invalid result status")
-        if not isinstance(payload.get("automation_dispatch_id"), str) or not payload["automation_dispatch_id"].strip():
-            raise ValueError("Result report requires automation_dispatch_id")
-        data = self.call("reportAutomationResult", payload)
-        expected = "uploaded" if payload["status"] == "success" else "ready_for_upload"
-        if data.get("ok") is not True or data.get("case_id") != payload["case_id"] or data.get("status") != expected:
-            raise ValueError("Result acknowledgement did not match this case")
+            raise ValueError("Receipt acknowledgement did not match this dispatch")
         return data

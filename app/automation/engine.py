@@ -3,7 +3,7 @@ import logging
 import time
 import os
 import threading
-from contextlib import suppress
+from contextlib import AsyncExitStack, suppress
 from typing import Callable, List, Optional
 
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
@@ -584,7 +584,8 @@ class AutomationEngine:
         """Main entry point for claim automation."""
         if settings is None:
             settings = {}
-        self._stop_requested = False
+        if self._check_stop():
+            return AutomationRunResult(False, "Automation stopped by user.")
 
         # Determine steps based on portal
         if self.portal_id == "newindia":
@@ -625,7 +626,13 @@ class AutomationEngine:
 
         field_delay = _setting_int(settings, "field_wait_ms", "field_delay_ms", 400)
 
-        async with async_playwright() as p:
+        async with async_playwright() as p, AsyncExitStack() as resources:
+            async def close_resource(resource, name):
+                try:
+                    await asyncio.wait_for(resource.close(), timeout=10)
+                except Exception as exc:
+                    self.log.warning(f"Could not close Playwright {name} cleanly: {exc}")
+
             # 1. Launch Browser
             browser_type = p.chromium
             launch_args = ["--start-maximized"]
@@ -637,9 +644,15 @@ class AutomationEngine:
                 args=launch_args,
                 slow_mo=_setting_int(settings, "browser_slow_mo_ms", "slow_mo_ms", 0),
             )
+            resources.push_async_callback(close_resource, browser, "browser")
+            if self._check_stop():
+                return AutomationRunResult(False, "Automation stopped by user.")
 
             # Create context without viewport to allow --start-maximized to work
             context = await browser.new_context(no_viewport=True)
+            resources.push_async_callback(close_resource, context, "context")
+            if self._check_stop():
+                return AutomationRunResult(False, "Automation stopped by user.")
             web_submission = settings.get("_web_submission")
             if web_submission:
                 from app.web_sync.submission import SubmissionMonitor
@@ -1288,20 +1301,15 @@ class AutomationEngine:
                 self.log.exception("Automation failed", exc)
                 return AutomationRunResult(False, f"Automation failed: {exc}")
             finally:
-                if health_task and not health_task.done():
-                    health_task.cancel()
-                    with suppress(asyncio.CancelledError):
+                if health_task:
+                    if not health_task.done():
+                        health_task.cancel()
+                    try:
                         await health_task
-                # IMPORTANT: browser.close() MUST be called here explicitly.
-                # We use `async with async_playwright() as p:` which only stops
-                # the Playwright server — it does NOT auto-close the browser.
-                # The browser is launched manually via `browser_type.launch()`,
-                # so we are solely responsible for closing it in all exit paths.
-                # Do NOT switch to `async with browser:` here; that pattern
-                # conflicts with the circuit-breaker monitor task and causes
-                # RuntimeWarnings on graceful stop paths.
-                await browser.close()
-
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception as exc:
+                        self.log.warning(f"Health monitor stopped with an error: {exc}")
                 # Clean up temporary pre-compressed files registered during scanning
                 temp_files = getattr(claim, "_temporary_files", [])
                 if temp_files:

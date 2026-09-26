@@ -1,11 +1,133 @@
 import os
 import glob
+import asyncio
 import pytest
 import threading
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from app.automation.engine import AutomationEngine
 from app.automation.automation_logger import AutomationLogger
 from app.portals.registry import PortalInfo
+
+
+@pytest.mark.parametrize("failure_point", ["context", "page", "context_close"])
+def test_playwright_setup_failure_closes_owned_resources(monkeypatch, failure_point):
+    import app.automation.engine as engine_module
+
+    closed = []
+
+    class Context:
+        async def new_page(self):
+            if failure_point in ("page", "context_close"):
+                raise RuntimeError("page setup failed")
+
+        async def close(self):
+            closed.append("context")
+            if failure_point == "context_close":
+                raise RuntimeError("context close failed")
+
+    class Browser:
+        async def new_context(self, **_kwargs):
+            if failure_point == "context":
+                raise RuntimeError("context setup failed")
+            return Context()
+
+        async def close(self):
+            closed.append("browser")
+
+    class Chromium:
+        async def launch(self, **_kwargs):
+            return Browser()
+
+    class Playwright:
+        chromium = Chromium()
+
+    class PlaywrightManager:
+        async def __aenter__(self):
+            return Playwright()
+
+        async def __aexit__(self, *_args):
+            closed.append("driver")
+
+    monkeypatch.setattr(engine_module, "async_playwright", PlaywrightManager)
+    engine = AutomationEngine(portal_id="uiic", log_cb=lambda _text: None, step_cb=lambda *_args: None)
+    with pytest.raises(RuntimeError, match="setup failed"):
+        asyncio.run(engine.run_automation(SimpleNamespace(), {"browser_headless": True}))
+    assert closed == (["browser", "driver"] if failure_point == "context" else ["context", "browser", "driver"])
+
+
+def test_automation_worker_remembers_stop_before_engine_exists(monkeypatch):
+    import app.automation.engine as engine_module
+    from app.ui.worker import AutomationWorker
+
+    started = []
+
+    class Engine:
+        def __init__(self, **_kwargs):
+            self.stop_requested = False
+
+        def request_stop(self):
+            self.stop_requested = True
+
+        async def run_automation(self, _claim, _settings):
+            started.append(self.stop_requested)
+            return SimpleNamespace(success=False, message="Stopped")
+
+    monkeypatch.setattr(engine_module, "AutomationEngine", Engine)
+    worker = AutomationWorker(SimpleNamespace())
+    worker.stop()
+    worker.run()
+    assert started == [True]
+
+
+def test_window_close_waits_for_worker_without_forcing_thread_exit():
+    from app.ui.main_window import MainWindow
+
+    calls = []
+
+    class Thread:
+        def quit(self):
+            calls.append("quit")
+
+    class Worker:
+        def stop(self):
+            calls.append("stop")
+
+    class Button:
+        def setEnabled(self, value):
+            calls.append(("enabled", value))
+
+    class Event:
+        def ignore(self):
+            calls.append("ignored")
+
+    window = SimpleNamespace(
+        _claim=None, _thread=Thread(), _worker=Worker(),
+        _scan_thread=None, _scan_worker=None, _close_requested=False,
+        _automation_stopping=False,
+        workspace_page=SimpleNamespace(btn_start=Button(), btn_stop=Button()),
+        _set_status=lambda *_args: calls.append("status"),
+        log=lambda _text: calls.append("log"),
+    )
+    MainWindow.closeEvent(window, Event())
+    assert window._close_requested
+    assert window._automation_stopping
+    assert "ignored" in calls and "stop" in calls and "quit" in calls
+    assert ("enabled", False) in calls
+
+
+def test_start_blocked_until_previous_thread_finished():
+    from app.ui.main_window import MainWindow
+
+    calls = []
+    window = SimpleNamespace(
+        _close_requested=False, _thread=object(), _worker=None,
+        _automation_stopping=True,
+        _set_status=lambda *_args: calls.append("status"),
+        log=lambda _text: calls.append("blocked"),
+    )
+    MainWindow._start_automation(window)
+    assert calls == ["status", "blocked"]
 
 
 # 1. Test thread-safety and backward-compatible stop event property
@@ -266,3 +388,49 @@ async def test_dialog_listener_cleanup():
             pass
 
     mock_page.remove_all_listeners.assert_any_call("dialog")
+
+
+def test_portal_for_alias_normalization():
+    from app.web_sync.storage import portal_for
+
+    assert portal_for(portal_id="nia") == "newindia"
+    assert portal_for(portal_id="NIA") == "newindia"
+    assert portal_for(portal_id="newindia") == "newindia"
+    assert portal_for(portal_id="uiic") == "uiic"
+    assert portal_for(portal_id="oic") == "oic"
+    assert portal_for({"portal_id": "nia", "insurer": "NIA"}) == "newindia"
+
+
+
+
+
+
+def test_web_queue_append_log_structured_case_context(tmp_path):
+    from PyQt6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    from app.web_sync.page import WebQueuePage
+
+    page = WebQueuePage.__new__(WebQueuePage)
+    page.closing = False
+    page._live_log_entries = []
+    from PyQt6.QtWidgets import QTableWidget, QLineEdit
+    page.logs_table = QTableWidget(0, 4)
+    page.logs_table.setHorizontalHeaderLabels(["TIME", "LEVEL", "PHASE", "ACTION"])
+    page.log_search_input = QLineEdit()
+    page._record = lambda cid: {"job": {"case_ref": "REF-999", "vehicle_no": "KA01AB1234", "insurer": "uiic"}}
+    page._append_case_log = lambda cid, entry: None
+
+    page.append_log("Downloaded RC_Book.pdf (1.2 MB)", phase="Download", level="Success", case_id="c_123")
+    assert page.logs_table.rowCount() == 1
+    action_text = page.logs_table.item(0, 3).text()
+    assert "REF-999" in action_text
+    assert "KA01AB1234" in action_text
+    assert "Downloaded RC_Book.pdf" in action_text
+
+    tooltip = page.logs_table.item(0, 3).toolTip()
+    assert "Case Ref: REF-999" in tooltip
+    assert "Vehicle:  KA01AB1234" in tooltip
+
+    # Verify missing fields text is classified as Warning
+    page.append_log("1 queued case(s) need missing Base44 fields corrected; they remain visible.", phase="Sync", level=None)
+    assert page.logs_table.item(1, 1).text() == "WARNING"

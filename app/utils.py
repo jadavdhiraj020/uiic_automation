@@ -71,6 +71,11 @@ def user_data_dir(*parts: str) -> str:
     return os.path.join(base, APP_SLUG, *parts)
 
 
+def automation_logs_dir(*parts: str) -> str:
+    """Operator-visible logs, separate from case folders being staged or deleted."""
+    return str(Path.home().joinpath("Automations", "logs", *parts))
+
+
 def ensure_dir(path: str) -> str:
     os.makedirs(path, exist_ok=True)
     return path

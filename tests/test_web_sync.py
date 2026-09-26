@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import QLabel
 
 from app.web_sync.client import APP_ID, ApiError, Client
 from app.web_sync.downloads import download_case, flat_name, safe_canonical_name
-from app.web_sync.storage import AutoPickupPreference, CaseState, CompletedCaseStore, CredentialStore, portal_for
+from app.web_sync.storage import AutoPickupPreference, CaseState, CompletedCaseStore, CredentialStore, portal_for, atomic_json
 from app.web_sync.submission import SubmissionMonitor, confirms_submission
 
 
@@ -101,6 +101,14 @@ class DummyServer:
             assert set(body) <= {"case_id", "automation_dispatch_id", "status", "portal_message", "confirmation_no"}
             self.reports.append(body)
             return Response(data={"ok": True, **body, "status": "uploaded" if body["status"] == "success" else "ready_for_upload"})
+        if operation == "acknowledgeApp3Receipt":
+            return Response(data={
+                "ok": True, "case_id": body["case_id"],
+                "automation_dispatch_id": body["automation_dispatch_id"],
+                "receipt_status": body["receipt_status"],
+                "duplicate": False,
+                **({"app3_received_at": "2026-09-26T10:00:00Z"} if body["receipt_status"] == "received" else {}),
+            })
         raise AssertionError(operation)
 
 
@@ -127,7 +135,6 @@ def test_dummy_case_contract_binary_flat_and_relogin(tmp_path):
     client, server = client_server()
     assert client.jobs() == [JOB]
     assert server.logins == 2
-    client.claim(JOB["case_id"], JOB["automation_dispatch_id"])
     latest = download_case(client, JOB["case_id"], tmp_path, automation_dispatch_id=JOB["automation_dispatch_id"])
     manifest = json.loads((tmp_path / "web_sync_manifest.json").read_text())
     assert manifest["latest_excel"] == latest
@@ -136,11 +143,8 @@ def test_dummy_case_contract_binary_flat_and_relogin(tmp_path):
         assert (tmp_path / item["local_name"]).read_bytes() == b"\x00\xff\x01RAW\x00" + item["file_id"].encode()
         assert item["remote_path"] == "Individual/RC.pdf"
     assert all(p.is_file() for p in tmp_path.iterdir())
-    client.report({"case_id": JOB["case_id"], "automation_dispatch_id": JOB["automation_dispatch_id"], "status": "success", "portal_message": "Report submitted successfully"})
-    assert server.reports[0]["status"] == "success"
-    with pytest.raises(ApiError) as conflict:
-        client.claim(JOB["case_id"], JOB["automation_dispatch_id"])
-    assert conflict.value.status == 409
+    receipt = client.acknowledge_receipt(JOB["case_id"], JOB["automation_dispatch_id"], "received")
+    assert receipt["receipt_status"] == "received"
 
 
 def test_401_retries_only_once():
@@ -198,7 +202,6 @@ def test_safe_canonical_names(name, expected):
 
 def test_partial_download_and_bad_manifest_never_become_ready(tmp_path):
     client, server = client_server()
-    client.claim(JOB["case_id"], JOB["automation_dispatch_id"])
     server.files[0]["is_latest_corrected_excel"] = False
     with pytest.raises(ValueError, match="exactly one"):
         download_case(client, JOB["case_id"], tmp_path, automation_dispatch_id=JOB["automation_dispatch_id"])
@@ -517,7 +520,17 @@ def test_incoming_staging_downloads_without_claim_or_workspace(qapp, tmp_path, m
     try:
         def stage(_client, _case_id, folder, progress=None, **_kwargs):
             Path(folder).mkdir(parents=True, exist_ok=True)
-            (Path(folder) / "web_sync_manifest.json").write_text("{}", encoding="utf-8")
+            workbook = b"dummy workbook"
+            (Path(folder) / "latest.xlsx").write_bytes(workbook)
+            atomic_json(Path(folder) / "web_sync_manifest.json", {
+                "case_id": _case_id,
+                "automation_dispatch_id": JOB["automation_dispatch_id"],
+                "complete": True,
+                "latest_excel": "latest.xlsx",
+                "files": [{"local_name": "latest.xlsx", "size_bytes": len(workbook),
+                           "md5_checksum": hashlib.md5(workbook).hexdigest(),
+                           "is_latest_corrected_excel": True}],
+            })
             return "latest.xlsx"
         monkeypatch.setattr(module, "download_case", stage)
         page._maybe_auto_pickup()
@@ -659,23 +672,6 @@ def test_credential_editor_clears_unsaved_values_without_changing_store(qapp, tm
         page.close()
 
 
-def test_banner_requires_success_report_and_uploaded_ack(qapp):
-    from PyQt6.QtWidgets import QFrame, QLabel
-    from app.web_sync.page import ResultBannerLabel
-    frame, pill, timestamp = QFrame(), QLabel(), QLabel()
-    banner = ResultBannerLabel(frame, pill, timestamp)
-    banner.setText("Report submitted successfully")
-    assert "CONFIRMED SUCCESS" not in pill.text()
-    banner.setText("Base44 acknowledged: ready_for_upload")
-    assert pill.text().strip() == "FAILED / NEEDS ATTENTION"
-    banner.set_report_result("Base44 acknowledged: ready_for_upload", "failed", "ready_for_upload")
-    assert pill.text().strip() == "FAILED / NEEDS ATTENTION"
-    banner.set_report_result("Base44 acknowledged: uploaded", "failed", "uploaded")
-    assert "CONFIRMED SUCCESS" not in pill.text()
-    banner.set_report_result("Base44 acknowledged: uploaded", "success", "uploaded")
-    assert pill.text().strip() == "CONFIRMED SUCCESS"
-    banner.setText("Report not submitted successfully: DL pending")
-    assert "CONFIRMED SUCCESS" not in pill.text()
 
 
 @pytest.fixture(scope="module")
@@ -736,85 +732,10 @@ def activate_case(page):
     return prepared
 
 
-def test_queue_one_case_error_correction_success_and_manual_isolation(qapp, tmp_path):
-    page, server, opened = queue_page(qapp, tmp_path)
-    try:
-        activate_case(page)
-        assert len(opened) == 1
-        current = page.state.current
-        assert current["phase"] == "automation active"
-        assert page.excel_for(current["folder"]) == current["latest_excel"]
-        settings = page.settings_for(current["folder"], "uiic")
-        assert settings["username"] == "local-portal-user"
-        assert settings["surveyor_code"] == "SC-1"
-        assert page.settings_for(str(tmp_path / "manual-folder"), "uiic") == {}
-        records = []
-        def callback(record):
-            records.append(record)
-            page._submission(record)
-        monitor = SubmissionMonitor(JOB["case_id"], current["folder"], callback)
-        asyncio.run(monitor.capture({"message": "DL verification pending", "kind": "dom", "attempt": 1}))
-        assert not server.reports
-        assert page.state.current["last_message"] == "DL verification pending"
-        # A second Start resumes the current case rather than claiming another.
-        page.start_automation()
-        assert len([c for c in server.calls if c[0] == "claimAutomationCase"]) == 1
-        asyncio.run(monitor.capture({"message": "Report submitted successfully", "kind": "dom", "attempt": 2}))
-        assert server.reports == [{
-            "case_id": JOB["case_id"],
-            "automation_dispatch_id": JOB["automation_dispatch_id"],
-            "status": "success", "portal_message": "Report submitted successfully",
-        }]
-        assert page.state.current is None
-        assert Path(current["folder"], "Web_Sync_Report_Acknowledgement.json").exists()
-        with pytest.raises(ValueError, match="not the current"):
-            page.settings_for(current["folder"], "uiic")
-        assert all("local-portal-secret" not in json.dumps(c[1]) for c in server.calls)
-        page.window._worker = object()
-        page.start_case()
-        assert len([c for c in server.calls if c[0] == "claimAutomationCase"]) == 1
-    finally:
-        page.shutdown()
-        page.close()
 
 
-def test_failed_report_stays_pending_until_retry(qapp, tmp_path):
-    page, server, opened = queue_page(qapp, tmp_path)
-    try:
-        activate_case(page)
-        original = page.client.report
-        def unavailable(payload):
-            raise ApiError(503, "reportAutomationResult")
-        page.client.report = unavailable
-        page._submission({"case_id": JOB["case_id"], "confirmed_success": True, "portal_message": "Report submitted successfully"})
-        assert page.state.current["pending_report"]["status"] == "success"
-        page.start_automation()
-        assert len(opened) == 1
-        page.client.report = original
-        page.poll()
-        assert page.state.current is None
-        assert len(server.reports) == 1
-    finally:
-        page.shutdown()
-        page.close()
 
 
-def test_deliberate_failure_exact_status(qapp, tmp_path, monkeypatch):
-    from PyQt6.QtWidgets import QInputDialog
-    page, server, _ = queue_page(qapp, tmp_path)
-    try:
-        activate_case(page)
-        monkeypatch.setattr(QInputDialog, "getText", lambda *args, **kwargs: ("Voucher pending", True))
-        page.fail_case()
-        assert server.reports == [{
-            "case_id": JOB["case_id"],
-            "automation_dispatch_id": JOB["automation_dispatch_id"],
-            "status": "failed", "portal_message": "Voucher pending",
-        }]
-        assert page.state.current is None
-    finally:
-        page.shutdown()
-        page.close()
 
 
 def test_main_window_manual_browse_unchanged_and_web_handoff(qapp, tmp_path, monkeypatch):
@@ -890,32 +811,13 @@ def test_corrupt_sync_journal_does_not_break_manual_ui(qapp, tmp_path):
     page = WebQueuePage(window, tmp_path)
     try:
         assert page.state_error
-        assert not page.start_button.isEnabled()
+        assert not page._can_start_selected_case()
         assert page.settings_for(str(tmp_path / "manual"), "uiic") == {}
     finally:
         page.shutdown()
         page.close()
 
 
-def test_saved_success_is_reported_before_resume(qapp, tmp_path):
-    from app.web_sync.storage import atomic_json
-    page, server, opened = queue_page(qapp, tmp_path)
-    try:
-        activate_case(page)
-        folder = page.state.current["folder"]
-        atomic_json(Path(folder) / "Portal_Submission_Result.json", {
-            "case_id": JOB["case_id"], "confirmed_success": True,
-            "portal_message": "Report submitted successfully", "timestamp": "2026-09-10T10:00:00+00:00",
-        })
-        # Simulate browser shutdown between durable capture and the Qt callback.
-        page.start_automation()
-        assert page.state.current is None
-        assert len(server.reports) == 1
-        assert len(opened) == 1
-        assert len([c for c in server.calls if c[0] == "claimAutomationCase"]) == 1
-    finally:
-        page.shutdown()
-        page.close()
 
 
 def test_completed_case_store_persists_and_updates_one_case(tmp_path):
@@ -930,89 +832,34 @@ def test_completed_case_store_persists_and_updates_one_case(tmp_path):
     assert store.all() == []
 
 
-def test_mark_completed_unconfirmed_keeps_base44_lock_and_blocks_auto_pickup(qapp, tmp_path, monkeypatch):
-    from PyQt6.QtWidgets import QMessageBox
-    page, server, _ = queue_page(qapp, tmp_path)
-    try:
-        activate_case(page)
-        monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes)
-        page.mark_completed()
-        assert page.state.current is not None
-        assert page.state.current["locally_completed"] is True
-        assert page.state.current["phase"] == "needs final resolution"
-        assert page.state.current is not None
-        assert server.reports == []
-        entry = page.completed_store.all()[0]
-        assert entry["section"] == "completed"
-        assert entry["unresolved"] is True
-        assert entry["display_result"] == "Completed Locally — Base44 Unresolved"
-        assert page.completed_list.count() == 1
-    finally:
-        page.shutdown()
-        page.close()
 
 
-def test_delete_completed_copy_is_local_only_and_unresolved_lock_remains(qapp, tmp_path, monkeypatch):
-    from PyQt6.QtWidgets import QMessageBox
-    page, server, _ = queue_page(qapp, tmp_path)
-    try:
-        activate_case(page)
-        folder = Path(page.state.current["folder"])
-        assert folder.exists()
-        monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes)
-        page.mark_completed()
-        page.completed_list.setCurrentRow(0)
-        page.delete_completed_local_copy()
-        assert not folder.exists()
-        assert page.state.current is not None
-        assert page.state.current["local_copy_deleted"] is True
-        assert page.state.current is not None
-        assert server.reports == []
-        assert page.completed_store.all()[0]["folder"] == ""
-    finally:
-        page.shutdown()
-        page.close()
 
 
-def test_confirmed_success_waits_in_workspace_until_marked_completed(qapp, tmp_path):
-    page, server, _ = queue_page(qapp, tmp_path)
-    try:
-        activate_case(page)
-        page._submission({
-            "case_id": JOB["case_id"], "confirmed_success": True,
-            "portal_message": "Report submitted successfully",
-        })
-        assert page.state.current is None
-        assert server.reports[-1]["status"] == "success"
-        assert page.completed_store.all()[0]["section"] == "workspace"
-        assert page._selected_kind() == "resolved"
-        page.mark_completed()
-        entry = page.completed_store.all()[0]
-        assert entry["section"] == "completed"
-        assert entry["base44_status"] == "uploaded"
-        assert entry["display_result"] == "Submitted Successfully"
-    finally:
-        page.shutdown()
-        page.close()
 
 
-def test_web_queue_start_automation_waits_for_workspace_and_uses_existing_action(qapp, tmp_path):
+def test_web_queue_start_automation_waits_for_workspace_and_uses_existing_action(qapp, tmp_path, monkeypatch):
+    import app.web_sync.page as page_module
     page, _, _ = queue_page(qapp, tmp_path)
     started = []
     page.window._start_automation = lambda: started.append(True)
     try:
+        monkeypatch.setattr(page_module, "load_settings", lambda portal_id=None: {"username": "test", "password": "test"})
+        monkeypatch.setattr(page_module, "get_active_portal_id", lambda: "uiic")
+        assert page.list.count() == 0
+        page._stage_case(JOB)
         page.start_case()
         page.refresh()
         record = page._selected_case_record()
         folder = record["folder"]
-        assert page.start_button.text().endswith("Start Automation")
-        assert not page.start_button.isEnabled()
+        assert not hasattr(page, "start_button")
+        assert not page._can_start_selected_case()
         page._case_clicked(page.list.currentItem())
         page.window._claim = SimpleNamespace(
-            _scan_context=SimpleNamespace(claim_folder_path=folder)
+            _scan_context=SimpleNamespace(claim_folder_path=folder, portal_id="uiic")
         )
         page.workspace_scan_completed(folder, True)
-        assert page.start_button.isEnabled()
+        assert page._can_start_selected_case()
         page.start_automation()
         assert started == [True]
     finally:
@@ -1141,4 +988,3 @@ def test_submission_monitor_accepts_dispatch_id_and_kwargs(tmp_path):
     assert monitor.case_id == "case_abc"
     assert monitor.automation_dispatch_id == "dispatch_123"
     assert monitor.folder == tmp_path
-

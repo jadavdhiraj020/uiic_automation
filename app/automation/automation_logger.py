@@ -138,10 +138,10 @@ class AutomationLogger:
                 self._json_log_file = log_file_path
             else:
                 # Resolve target path: logs/<portal_id>/<claim_no>_run_<timestamp>.json
-                from app.utils import user_data_dir, ensure_dir
+                from app.utils import automation_logs_dir, ensure_dir
 
                 try:
-                    log_dir = ensure_dir(user_data_dir("logs", portal_id.lower()))
+                    log_dir = ensure_dir(automation_logs_dir(portal_id.lower()))
                     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                     # PID is appended to make it unique per process execution
                     filename = f"{claim_no}_run_{ts}_{os.getpid()}.json"

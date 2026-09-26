@@ -10,6 +10,7 @@ from pathlib import Path
 from PyQt6.QtCore import (
     Qt,
     QThread,
+    QTimer,
     QPropertyAnimation,
     QEasingCurve,
     QPointF,
@@ -42,7 +43,7 @@ from app.utils import (
     resource_path,
     load_settings,
     doc_mapping_paths,
-    user_data_dir,
+    automation_logs_dir,
     ensure_dir,
 )
 from app.portals.registry import (
@@ -70,6 +71,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._worker = None
         self._thread = None
+        self._close_requested = False
+        self._automation_stopping = False
         self._claim = None
         self._scan_result = None
         self._log_file = None
@@ -311,7 +314,7 @@ class MainWindow(QMainWindow):
         try:
             import json
 
-            audit_path = os.path.join(user_data_dir("logs"), "portal_audit.jsonl")
+            audit_path = automation_logs_dir("portal_audit.jsonl")
             ensure_dir(os.path.dirname(audit_path))
             with open(audit_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(payload, ensure_ascii=False) + "\n")
@@ -455,7 +458,7 @@ class MainWindow(QMainWindow):
     def _open_log_file(self):
         success = False
         try:
-            log_dir = ensure_dir(user_data_dir("logs"))
+            log_dir = ensure_dir(automation_logs_dir())
             ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             base_log = os.path.join(log_dir, f"automation_{ts}_{os.getpid()}.log")
             self._log_file = open(base_log, "x", encoding="utf-8")
@@ -519,9 +522,18 @@ class MainWindow(QMainWindow):
                 set_active_portal(target_portal)
         else:
             self._append_log(f"⚠️ Warning: Portal '{target_portal}' not found in dropdown; keeping active portal.")
-        self.workspace_page.inp_folder.setText(current["folder"])
-        self.web_queue.workspace_scan_started(current["folder"])
-        self._scan_folder(current["folder"])
+        folder = current.get("folder", "")
+        self.workspace_page.inp_folder.setText(folder)
+        self.web_queue.workspace_scan_started(folder)
+        if self._is_scan_running():
+            def _start_scan_after_winddown():
+                if self._is_scan_running():
+                    QTimer.singleShot(50, _start_scan_after_winddown)
+                else:
+                    self._scan_folder(folder)
+            QTimer.singleShot(50, _start_scan_after_winddown)
+        else:
+            self._scan_folder(folder)
         self._switch_page(0)
 
     def _scan_folder(self, folder):
@@ -538,6 +550,19 @@ class MainWindow(QMainWindow):
                 "[Portal Isolation] New scan blocked because a previous scan is still running."
             )
             return
+
+        # Clear stale scan data so UI doesn't show old values during scan
+        self._claim = None
+        self._scan_result = None
+        self._scan_context = None
+        self.workspace_page.stat_fields.setText("—")
+        self.workspace_page.stat_docs.setText("—")
+        self.workspace_page.stat_missing.setText("—")
+        self.workspace_page.stat_status.setText("Ready")
+        self.workspace_page.data_panel.reset()
+        self.workspace_page.document_panel.reset()
+        self.workspace_page.rail.set_stage_state(1, "pending")
+        self.workspace_page.rail.set_stage_state(2, "pending")
 
         portal_id = get_active_portal_id() or "uiic"
         self._scan_generation += 1
@@ -636,6 +661,15 @@ class MainWindow(QMainWindow):
             self._scan_result = result.scan_result
             self._claim = None
             self._scan_context = None
+            scan_error = (
+                getattr(result, "error", "")
+                or next((line for line in reversed(result.log_lines) if str(line).strip()), "")
+                or "The scanner returned no detailed error. Review earlier scan messages."
+            )
+            self._append_log(
+                f"Scan failed | portal={current_portal_id} | "
+                f"folder={getattr(result, 'scan_folder', '')} | reason={scan_error}"
+            )
             self.workspace_page.doc_status_label.setText(
                 "❌ No valid Excel data source found."
             )
@@ -646,7 +680,7 @@ class MainWindow(QMainWindow):
             self.web_queue.workspace_scan_completed(
                 getattr(result, "scan_folder", ""),
                 bool(result.success),
-                "Folder scan failed" if not result.success else "",
+                scan_error if not result.success else "",
             )
 
         # Re-enable buttons — but not Start if automation is already running
@@ -655,16 +689,43 @@ class MainWindow(QMainWindow):
         btn_browse = self.workspace_page.findChild(QPushButton, "btnBrowse")
         if btn_browse:
             btn_browse.setEnabled(True)
+        if self._close_requested:
+            self.workspace_page.btn_start.setEnabled(False)
+            self._set_status("running", "Stopping...")
 
     def _on_scan_thread_finished(self):
         # Safely clean up thread and worker references
         self._scan_worker = None
         self._scan_thread = None
+        self._finish_pending_close()
+
+    def _show_start_blocked_warning(self, title: str, message: str):
+        if isinstance(self, QWidget):
+            try:
+                QMessageBox.warning(self, title, message)
+            except Exception:
+                pass
 
     def _start_automation(self):
+        def _warn(title: str, text: str):
+            fn = getattr(self, "_show_start_blocked_warning", None)
+            if fn:
+                fn(title, text)
+            elif isinstance(self, QWidget):
+                try:
+                    QMessageBox.warning(self, title, text)
+                except Exception:
+                    pass
+
+        if self._close_requested or self._thread is not None or self._worker is not None:
+            self._set_status("running", "Stopping..." if self._automation_stopping or self._close_requested else "Finishing previous run...")
+            self.log("Start blocked: wait for the previous automation thread to exit completely.")
+            _warn("Start Blocked", "Wait for the previous automation thread to exit completely.")
+            return
         if not self._claim:
             self._set_status("error", "Please select a claim folder with valid data first.")
             self.log("Start blocked: Please select a claim folder with valid data first.")
+            _warn("Start Blocked", "Please select a claim folder with valid data first.")
             return
 
         scan_context = getattr(self._claim, "_scan_context", None)
@@ -676,11 +737,14 @@ class MainWindow(QMainWindow):
             active = self.web_queue.state.current
             active_folder = active.get("folder", "") if active else ""
             if not active_folder or Path(active_folder).resolve() != Path(web_folder).resolve():
-                self.web_queue.start_automation_for_folder(web_folder)
+                started = self.web_queue.start_automation_for_folder(web_folder)
+                if not started:
+                    raw_err = self.web_queue.result.text() or "Web Queue could not start this case."
+                    err = raw_err.replace("Needs Attention: ", "").strip()
+                    self._set_status("error", err)
+                    self.log(f"Start blocked: {err}")
+                    _warn("Start Blocked", err)
                 return
-
-        if self._worker:
-            return
 
         self._switch_page(0)  # Workspace
         self.workspace_page.clear_logs()
@@ -692,19 +756,22 @@ class MainWindow(QMainWindow):
             self.log(
                 "[Portal Isolation] Start blocked: scanned claim has no portal context. Please rescan the folder."
             )
+            _warn("Start Blocked", "Scanned claim has no portal context. Please rescan the folder.")
             return
 
         current_portal_id = get_active_portal_id()
         if current_portal_id != scan_context.portal_id:
-            self._set_status("error", f"Portal mismatch: Scanned for {scan_context.portal_display_name}.")
-            self.log(
-                "[Portal Isolation] Start blocked: current portal "
-                f"'{current_portal_id}' differs from scanned portal "
+            msg = (
+                f"Current portal '{current_portal_id}' differs from scanned portal "
                 f"'{scan_context.portal_id}'. Please rescan after changing portals."
             )
+            self._set_status("error", f"Portal mismatch: Scanned for {scan_context.portal_display_name}.")
+            self.log(f"[Portal Isolation] Start blocked: {msg}")
+            _warn("Portal Mismatch", msg)
             return
 
         portal_id = scan_context.portal_id
+        portal_display = getattr(scan_context, "portal_display_name", "") or portal_id.upper()
         settings = load_settings(portal_id=portal_id)
         if hasattr(self, "web_queue"):
             try:
@@ -712,7 +779,15 @@ class MainWindow(QMainWindow):
             except Exception as exc:
                 self._set_status("error", f"Web case cannot start: {exc}")
                 self.log(f"Web case start blocked: {exc}")
+                _warn("Start Blocked", f"Web case cannot start: {exc}")
                 return
+
+        if not (settings.get("username") and settings.get("password")):
+            err = f"Please configure {portal_display} portal username and password in Settings."
+            self._set_status("error", err)
+            self.log(f"Start blocked: {err}")
+            _warn("Credentials Missing", err)
+            return
 
         self._thread = QThread()
         self._worker = AutomationWorker(
@@ -723,6 +798,7 @@ class MainWindow(QMainWindow):
         self._thread.started.connect(self._worker.run)
         self._worker.done_signal.connect(self._thread.quit)  # stop event loop
         self._worker.done_signal.connect(self._on_automation_ui_reset)  # update UI
+        self._thread.finished.connect(self._worker.deleteLater)
         self._thread.finished.connect(self._on_thread_fully_stopped)  # clear refs
 
         self._worker.log_signal.connect(self._append_log)
@@ -757,8 +833,11 @@ class MainWindow(QMainWindow):
         if getattr(self, "_scan_worker", None) and hasattr(self._scan_worker, "request_stop"):
             self._scan_worker.request_stop()
         if self._worker:
+            self._automation_stopping = True
             self._worker.stop()
             self.workspace_page.btn_stop.setEnabled(False)
+            self.workspace_page.btn_start.setEnabled(False)
+            self._set_status("running", "Stopping...")
             self.log("Stopping...")
             if hasattr(self, "web_queue"):
                 self.web_queue.refresh()
@@ -768,10 +847,12 @@ class MainWindow(QMainWindow):
         self._last_success = success
         self._last_message = message
         self.workspace_page.set_automation_finished(success)
-        self.status_pill.setProperty("status", "ready")
-        self.status_text.setText("Ready")
-        self.status_pill.style().unpolish(self.status_pill)
-        self.status_pill.style().polish(self.status_pill)
+        if self._thread is not None or self._close_requested:
+            self.workspace_page.btn_start.setEnabled(False)
+            self._set_status("running", "Stopping..." if self._automation_stopping or self._close_requested else "Finishing previous run...")
+        else:
+            self._set_status("ready", "Ready")
+            self.workspace_page.btn_start.setEnabled(bool(self._claim))
         if hasattr(self, "web_queue") and hasattr(self.web_queue, "automation_finished"):
             try:
                 self.web_queue.automation_finished(success, message)
@@ -779,9 +860,21 @@ class MainWindow(QMainWindow):
                 pass
 
     def _on_thread_fully_stopped(self):
-        """Called by thread.finished — thread OS object has fully stopped. Safe to clear."""
+        """Clear the worker only after Qt's finished signal and native thread exit."""
+        if self._thread is not None and not self._thread.wait(0):
+            # finished may fire just before the native thread fully exits.
+            # Poll cooperatively without blocking the UI event loop.
+            QTimer.singleShot(10, self._on_thread_fully_stopped)
+            return
+        stopped_by_operator = self._automation_stopping
         self._worker = None
         self._thread = None
+        self._automation_stopping = False
+        if self._close_requested:
+            self._finish_pending_close()
+            return
+        self._set_status("ready", "Ready")
+        self.workspace_page.btn_start.setEnabled(bool(self._claim))
         self._set_portal_selector_locked(False)
         if hasattr(self, "web_queue"):
             self.web_queue.refresh()
@@ -794,16 +887,42 @@ class MainWindow(QMainWindow):
         message = getattr(self, "_last_message", "Automation finished.")
         if success:
             self.log(f"SUCCESS: {message}")
+        elif stopped_by_operator:
+            self.log(f"STOPPED by user: {message}")
         else:
-            self.log(f"STOPPED: {message}")
+            self.log(f"FAILED: {message}")
+
+    def _finish_pending_close(self):
+        """Close after both worker threads have emitted finished on the UI thread."""
+        if self._close_requested and self._thread is None and self._scan_thread is None:
+            QTimer.singleShot(0, self.close)
+
+    def _workspace_log_context(self):
+        """Identify the loaded case without attributing manual-folder logs to it."""
+        context = {"portal": get_active_portal_id() or "uiic"}
+        scan_context = getattr(getattr(self, "_claim", None), "_scan_context", None)
+        folder = (getattr(scan_context, "claim_folder_path", "")
+                  or getattr(self, "_active_scan_folder", ""))
+        if folder:
+            context["folder"] = str(folder)
+        web_queue = getattr(self, "web_queue", None)
+        active = getattr(getattr(web_queue, "state", None), "current", None)
+        if isinstance(active, dict) and folder and active.get("folder"):
+            if os.path.normcase(os.path.abspath(str(folder))) == os.path.normcase(os.path.abspath(str(active["folder"]))):
+                job = active.get("job") or {}
+                context["case_id"] = str(job.get("case_id") or "")
+                context["case_ref"] = str(job.get("case_ref") or "")
+                context["dispatch_id"] = str(active.get("automation_dispatch_id") or job.get("automation_dispatch_id") or "")
+        return context
 
     def _append_log(self, text):
         clean_text = text
         if "\u200b" in text:
             clean_text = text.split("\u200b")[0].rstrip()
+        context = self._workspace_log_context()
 
         try:
-            self.workspace_page.append_log(text)
+            self.workspace_page.append_log(text, context=context)
         except RuntimeError:
             pass
         except Exception:
@@ -819,13 +938,22 @@ class MainWindow(QMainWindow):
             try:
                 import re
 
-                match = re.match(r"^\[(\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\] (.*)$", clean_text)
+                identity = " ".join(
+                    f"[{label}={context[label]}]"
+                    for label in ("portal", "case_ref", "case_id", "dispatch_id")
+                    if context.get(label)
+                )
+                if context.get("folder"):
+                    identity += f" [folder={context['folder']}]"
+                message = str(clean_text).replace("\r", " ").replace("\n", "\\n")
+                match = re.match(r"^\[(\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\] (.*)$", clean_text, re.DOTALL)
                 if match:
                     today = datetime.now().strftime("%Y-%m-%d")
-                    self._log_file.write(f"[{today} {match.group(1)}] {match.group(2)}\n")
+                    event_message = match.group(2).replace("\r", " ").replace("\n", "\\n")
+                    self._log_file.write(f"[{today} {match.group(1)}] {identity} {event_message}\n")
                 else:
                     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    self._log_file.write(f"[{ts}] {clean_text}\n")
+                    self._log_file.write(f"[{ts}] {identity} {message}\n")
                 self._log_file.flush()
             except Exception as e:
                 import logging
@@ -860,38 +988,33 @@ class MainWindow(QMainWindow):
         )
 
     def closeEvent(self, event):
-        if hasattr(self, "web_queue"):
-            self.web_queue.shutdown()
         # Cancel any active background document generation thread
         if self._claim and hasattr(self._claim, "_background_generation_stop_event"):
             try:
                 self._claim._background_generation_stop_event.set()
             except Exception:
                 pass
-        # ── Gracefully stop automation thread before closing ────────────────────
-        if self._thread and self._thread.isRunning():
-            if self._worker:
-                self._worker.stop()  # signal engine to stop
-            self._thread.quit()  # ask event loop to exit
-            if not self._thread.wait(5000):  # up to 5s graceful wait
-                self._thread.terminate()  # force-kill if still running
-                self._thread.wait(2000)
-
-        # ── Gracefully stop folder scanning thread before closing ───────────────
-        if (
-            hasattr(self, "_scan_thread")
-            and self._scan_thread
-            and self._scan_thread.isRunning()
-        ):
-            if hasattr(self, "_scan_worker") and self._scan_worker:
-                try:
+        if self._thread is not None or self._scan_thread is not None:
+            event.ignore()
+            if not self._close_requested:
+                self._close_requested = True
+                self._automation_stopping = bool(self._thread)
+                self._set_status("running", "Stopping...")
+                self.workspace_page.btn_start.setEnabled(False)
+                self.workspace_page.btn_stop.setEnabled(False)
+                if self._worker:
+                    self._worker.stop()
+                if self._thread:
+                    self._thread.quit()
+                if self._scan_worker:
                     self._scan_worker.request_stop()
-                except Exception:
-                    pass
-            self._scan_thread.quit()
-            if not self._scan_thread.wait(2000):  # up to 2s graceful wait
-                self._scan_thread.terminate()  # force-kill if still running
-                self._scan_thread.wait(1000)
+                if self._scan_thread:
+                    self._scan_thread.quit()
+                self.log("Stopping background work before closing...")
+            return
+
+        if hasattr(self, "web_queue"):
+            self.web_queue.shutdown()
 
         # Clean up temporary pre-compressed files registered during scanning
         if hasattr(self, "_claim") and self._claim:

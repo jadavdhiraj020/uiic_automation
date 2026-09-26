@@ -248,8 +248,8 @@ class StructuredLogsPanel(QWidget):
         attach_row_copy_on_double_click(self.table)
         root.addWidget(self.table, 1)
 
-    def append_log(self, text, portal_id="uiic", phase=""):
-        entry = self._parse_entry(text, portal_id, phase)
+    def append_log(self, text, portal_id="uiic", phase="", context=None):
+        entry = self._parse_entry(text, portal_id, phase, context)
         if not entry:
             return
         self._entries.append(entry)
@@ -265,13 +265,22 @@ class StructuredLogsPanel(QWidget):
         for row, entry in enumerate(self._entries):
             if visible_only and self.table.isRowHidden(row):
                 continue
-            rows.append(f"[{entry['time']}] [{entry['level']}] [{entry['phase']}] {entry['message']}")
+            details = entry.get("context") or {}
+            identity = " ".join(
+                f"[{key}={details[key]}]"
+                for key in ("case_ref", "case_id", "dispatch_id", "folder")
+                if details.get(key)
+            )
+            rows.append(
+                f"[{entry['time']}] [{entry['level']}] [{entry['phase']}] "
+                f"[portal={entry['portal']}] {identity} {entry['message']}".strip()
+            )
         return "\n".join(rows)
 
     def _set_auto_scroll(self, checked):
         self._auto_scroll = checked
 
-    def _parse_entry(self, text, portal_id, phase):
+    def _parse_entry(self, text, portal_id, phase, context=None):
         raw = "" if text is None else str(text)
         plain = html.unescape(re.sub(r"<[^>]+>", " ", raw)).strip()
 
@@ -293,7 +302,9 @@ class StructuredLogsPanel(QWidget):
 
         lower = plain.lower()
         level = "Info"
-        if any(x in lower for x in ("error", "failed", "❌", "stopped")):
+        if lower.startswith("stopped by user:"):
+            level = "Info"
+        elif any(x in lower for x in ("error", "failed", "❌")):
             level = "Error"
         elif any(x in lower for x in ("warning", "missing", "⚠")):
             level = "Warning"
@@ -309,13 +320,19 @@ class StructuredLogsPanel(QWidget):
             if phase_match:
                 inferred_phase = phase_match.group(1).strip()
 
+        context = context or {}
+        details = {
+            key: str(context.get(key) or "")
+            for key in ("case_ref", "case_id", "dispatch_id", "folder")
+        }
         return {
             "time": timestamp,
             "level": level,
-            "portal": (portal_id or "uiic").upper(),
+            "portal": str(context.get("portal") or portal_id or "uiic").upper(),
             "phase": inferred_phase or "General",
             "message": plain,
-            "search": " ".join([timestamp, level, portal_id or "", inferred_phase or "", plain]).lower(),
+            "context": details,
+            "search": " ".join([timestamp, level, str(context.get("portal") or portal_id or ""), inferred_phase or "", plain, *details.values()]).lower(),
         }
 
     def _clean_action_text(self, text):
@@ -349,7 +366,10 @@ class StructuredLogsPanel(QWidget):
                 item.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
                 item.setBackground(self._level_background(entry["level"]))
             if col == 3:
-                item.setToolTip(str(value))
+                details = entry.get("context") or {}
+                labels = ("case_ref", "case_id", "dispatch_id", "folder")
+                context_lines = [f"{label}: {details[label]}" for label in labels if details.get(label)]
+                item.setToolTip("\n".join([*context_lines, str(value)]))
             self.table.setItem(row, col, item)
         if self._auto_scroll and not self.search_input.text().strip():
             self.table.scrollToBottom()
@@ -815,10 +835,12 @@ class WorkspacePage(QWidget):
         al.setSpacing(8)
         self.btn_start = QPushButton("Start Automation")
         self.btn_start.setObjectName("btnStart")
+        self.btn_start.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_start.clicked.connect(self.start_clicked.emit)
         self.btn_stop = QPushButton("Stop")
         self.btn_stop.setObjectName("btnStop")
         self.btn_stop.setEnabled(False)
+        self.btn_stop.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_stop.clicked.connect(self.stop_clicked.emit)
         al.addWidget(self.btn_start)
         al.addWidget(self.btn_stop)
@@ -936,7 +958,7 @@ class WorkspacePage(QWidget):
         self.rail.set_stage_state(3, "done" if success else "failed")
         self.set_stage(3)
 
-    def append_log(self, text):
+    def append_log(self, text, context=None):
         clean_text = text
         if "\u200b" in text:
             clean_text = text.split("\u200b")[0].rstrip()
@@ -948,7 +970,10 @@ class WorkspacePage(QWidget):
             pass
 
         try:
-            self.logs_panel.append_log(text, portal_id=self._portal_id, phase=self._current_phase or "General")
+            self.logs_panel.append_log(
+                text, portal_id=self._portal_id,
+                phase=self._current_phase or "General", context=context,
+            )
         except RuntimeError:
             pass
         except Exception:

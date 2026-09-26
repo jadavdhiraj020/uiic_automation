@@ -265,7 +265,7 @@ def prepare_workspace(page):
     assert record["local_status"] == "ready"
     page._case_clicked(page.list.currentItem())
     page.window._claim = SimpleNamespace(
-        _scan_context=SimpleNamespace(claim_folder_path=record["folder"])
+        _scan_context=SimpleNamespace(claim_folder_path=record["folder"], portal_id=record["portal"])
     )
     page.workspace_scan_completed(record["folder"], True)
     page.refresh()
@@ -325,7 +325,6 @@ def test_dispatch_delete_same_poll_hidden_new_resend_reappears_and_persists(qapp
     finally:
         page.shutdown()
         page.close()
-
     restarted, _server, _window, _opened = make_test_queue_page(tmp_path, [resent])
     try:
         restarted.poll()
@@ -336,36 +335,6 @@ def test_dispatch_delete_same_poll_hidden_new_resend_reappears_and_persists(qapp
         restarted.close()
 
 
-def test_stale_dispatch_claim_does_not_start_browser(qapp, tmp_path):
-    current_job = {
-        **SAMPLE_JOB_UIIC,
-        "automation_dispatch_id": "dispatch-uiic-current",
-    }
-    page, server, window, _opened = make_test_queue_page(tmp_path, [current_job])
-    started = []
-    window._start_automation = lambda: started.append(True)
-    try:
-        page.store.save(current_job["surveyor_profile_id"], "uiic", "user", "secret", "SC")
-        page.poll()
-        record = page._record(current_job["case_id"])
-        old_job = {**current_job, "automation_dispatch_id": "dispatch-uiic-old"}
-        page.case_repo.upsert(
-            current_job["case_id"],
-            job=old_job,
-            automation_dispatch_id=old_job["automation_dispatch_id"],
-            local_status="workspace ready",
-            phase="workspace ready",
-        )
-        page.jobs = [old_job]
-        page.refresh()
-        page.start_automation()
-        assert not started
-        assert not server.claimed_ids
-        assert page._record(current_job["case_id"])["local_status"] == "stale/replaced"
-        assert "resent/replaced" in page.result.text()
-    finally:
-        page.shutdown()
-        page.close()
 
 
 def test_stale_dispatch_staging_stops_without_claim_or_retry(qapp, tmp_path):
@@ -390,84 +359,8 @@ def test_stale_dispatch_staging_stops_without_claim_or_retry(qapp, tmp_path):
         page.close()
 
 
-def test_stale_dispatch_result_preserves_evidence_and_workspace_lock(qapp, tmp_path):
-    current_job = {
-        **SAMPLE_JOB_UIIC,
-        "automation_dispatch_id": "dispatch-uiic-current",
-    }
-    page, server, _window, _opened = make_test_queue_page(tmp_path, [current_job])
-    try:
-        page.store.save(current_job["surveyor_profile_id"], "uiic", "user", "secret", "SC")
-        page.poll()
-        page._maybe_auto_pickup()
-        activate_case(page)
-        folder = Path(page.state.current["folder"])
-        atomic_json(folder / "Portal_Submission_Result.json", {
-            "case_id": current_job["case_id"],
-            "portal_message": "Submitted successfully",
-            "confirmed_success": True,
-        })
-        server.jobs_list = [{
-            **current_job,
-            "automation_dispatch_id": "dispatch-uiic-newer",
-        }]
-        page._submission({
-            "case_id": current_job["case_id"],
-            "portal_message": "Submitted successfully",
-            "confirmed_success": True,
-        })
-        assert page.state.current is not None
-        assert page.state.current["pending_report"] is None
-        assert page.state.current["local_status"] == "needs attention"
-        assert (folder / "Portal_Submission_Result.json").is_file()
-        assert (folder / "Web_Sync_Stale_Result.json").is_file()
-        assert "remains locked" in page.result.text()
-    finally:
-        page.shutdown()
-        page.close()
 
 
-def test_stale_dispatch_operator_stop_releases_workspace_lock(qapp, tmp_path, monkeypatch):
-    current_job = {
-        **SAMPLE_JOB_UIIC,
-        "automation_dispatch_id": "dispatch-uiic-current",
-    }
-    page, server, _window, _opened = make_test_queue_page(tmp_path, [current_job])
-    try:
-        page.store.save(current_job["surveyor_profile_id"], "uiic", "user", "secret", "SC")
-        page.poll()
-        page._maybe_auto_pickup()
-        activate_case(page)
-        folder = Path(page.state.current["folder"])
-        atomic_json(folder / "Portal_Submission_Result.json", {
-            "case_id": current_job["case_id"],
-            "portal_message": "Submitted successfully",
-            "confirmed_success": True,
-        })
-        server.jobs_list = [{
-            **current_job,
-            "automation_dispatch_id": "dispatch-uiic-newer",
-        }]
-        page._submission({
-            "case_id": current_job["case_id"],
-            "portal_message": "Submitted successfully",
-            "confirmed_success": True,
-        })
-        assert page.state.current is not None
-
-        # Operator clicks Stop on this stale case
-        from PyQt6.QtWidgets import QMessageBox
-        monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
-        page.stop_or_fail_case()
-
-        # Workspace lock must now be completely released!
-        assert page.state.current is None
-        assert page.can_delete_case_metadata({"job": current_job}) is True
-        assert (folder / "Portal_Submission_Result_Operator_Stop.json").is_file()
-        assert "Workspace unlocked" in page.result.text()
-    finally:
-        page.shutdown()
-        page.close()
 
 
 def test_old_local_state_attaches_current_dispatch_without_redownload(qapp, tmp_path):
@@ -604,7 +497,7 @@ def test_incoming_case_list_expands_and_uses_outer_page_scroll(qapp, tmp_path):
         SAMPLE_JOB_OIC,
         {**SAMPLE_JOB_UIIC, "case_id": "case_four", "case_ref": "REF/2026/UIIC/FOUR"},
     ]
-    page, _server, _window, _ = make_test_queue_page(tmp_path)
+    page, _server, _window, _ = make_test_queue_page(tmp_path, initial_jobs=jobs)
     try:
         assert page.list.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         assert page.list.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
@@ -612,6 +505,10 @@ def test_incoming_case_list_expands_and_uses_outer_page_scroll(qapp, tmp_path):
 
         page.jobs = jobs
         page.refresh()
+        assert page.list.count() == 0
+        for job in jobs:
+            page._stage_case(job)
+        qapp.processEvents()
 
         expected_minimum = len(jobs) * 122
         assert page.list.count() == len(jobs)
@@ -674,6 +571,8 @@ def test_queue_badge_grammar_and_empty_label(qapp, tmp_path):
         # Add 1 job
         server.jobs_list = [SAMPLE_JOB_UIIC]
         page.poll()
+        assert page.list.count() == 0
+        page._maybe_auto_pickup()
         assert page.list.count() == 1
         assert page.queue_badge.text() == "1 Incoming Case"
         assert page.empty_label.isHidden()
@@ -681,6 +580,7 @@ def test_queue_badge_grammar_and_empty_label(qapp, tmp_path):
         # Add 2 jobs
         server.jobs_list = [SAMPLE_JOB_UIIC, SAMPLE_JOB_NIA]
         page.poll()
+        page._maybe_auto_pickup()
         assert page.list.count() == 2
         assert page.queue_badge.text() == "2 Incoming Cases"
         assert page.empty_label.isHidden()
@@ -696,6 +596,7 @@ def test_row_selection_dpapi_safety_and_cred_feedback(qapp, tmp_path):
         page.store.save("profile_surveyor_uiic", "uiic", "user_uiic", "secret_uiic", "SC_UIIC")
 
         page.poll()
+        page._maybe_auto_pickup()
 
         # Select row 0 (UIIC)
         page.list.setCurrentRow(0)
@@ -734,52 +635,48 @@ def test_case_workspace_uses_one_row_for_selected_or_current_case(qapp, tmp_path
         # Save credentials so start_case can proceed
         page.store.save("profile_surveyor_uiic", "uiic", "u1", "p1", "c1")
         page.poll()
-        page.list.setCurrentRow(0)
+        assert page.list.count() == 0
 
-        # A queued case appears once; automation cannot start before preparation.
+        # A case stays hidden until its local copy is verified.
         assert page.state.current is None
-        assert page.list.count() == 1
-        assert SAMPLE_JOB_UIIC["case_ref"] in page.list.item(0).text()
-        assert page.list.item(0).text().endswith("Queued")
-        assert not page.start_button.isEnabled()
-        assert not page.fail_button.isEnabled()
+        assert not page._can_start_selected_case()
+        assert not hasattr(page, "fail_button")
 
-        # Manual Stage downloads it without creating an active automation case.
-        page.start_case()
+        page._maybe_auto_pickup()
+        page.list.setCurrentRow(0)
         assert page.state.current is None
         assert page.list.count() == 1
         assert SAMPLE_JOB_UIIC["case_ref"] in page.list.item(0).text()
         assert SAMPLE_JOB_UIIC["vehicle_no"] in page.list.item(0).text()
         assert "Ready" in page.list.item(0).text()
-        assert not page.fail_button.isEnabled()
+        assert not hasattr(page, "fail_button")
     finally:
         page.shutdown()
         page.close()
 
 
-def test_button_enable_disable_state_matrix(qapp, tmp_path):
+def test_start_readiness_state_matrix(qapp, tmp_path):
     page, server, window, _ = make_test_queue_page(tmp_path, initial_jobs=[SAMPLE_JOB_UIIC])
     try:
         page.poll()
-        page.list.setCurrentRow(0)
+        assert page.list.count() == 0
 
         # Baseline: Start Automation stays disabled until scan/Workspace readiness.
-        assert not page.start_button.isEnabled()
-        assert not page.fail_button.isEnabled()
+        assert not page._can_start_selected_case()
+        assert not hasattr(page, "fail_button")
 
         page.store.save("profile_surveyor_uiic", "uiic", "user", "password", "SC")
+        page._maybe_auto_pickup()
         prepared = prepare_workspace(page)
         folder = prepared["folder"]
         window._claim = SimpleNamespace(_scan_context=SimpleNamespace(claim_folder_path=folder))
         page.refresh()
-        assert page.start_button.isEnabled()
-        assert not page.fail_button.isEnabled()
+        assert page._can_start_selected_case()
 
         # Busy state disables all
         page.busy = True
         page.refresh()
-        assert not page.start_button.isEnabled()
-        assert not page.fail_button.isEnabled()
+        assert not page._can_start_selected_case()
         assert not page.connect_button.isEnabled()
         page.busy = False
         page.refresh()
@@ -787,29 +684,29 @@ def test_button_enable_disable_state_matrix(qapp, tmp_path):
         # Active worker disables start
         window._worker = object()
         page.refresh()
-        assert not page.start_button.isEnabled()
+        assert not page._can_start_selected_case()
         window._worker = None
 
         # Active scan thread disables start
         window._scan_thread = object()
         page.refresh()
-        assert not page.start_button.isEnabled()
+        assert not page._can_start_selected_case()
         window._scan_thread = None
 
         # State error disables start
         page.state_error = "Error"
         page.refresh()
-        assert not page.start_button.isEnabled()
+        assert not page._can_start_selected_case()
         page.state_error = ""
 
         # Disconnected client disables start
         saved_client = page.client
         page.client = None
         page.refresh()
-        assert not page.start_button.isEnabled()
+        assert not page._can_start_selected_case()
         page.client = saved_client
         page.refresh()
-        assert page.start_button.isEnabled()
+        assert page._can_start_selected_case()
     finally:
         page.shutdown()
         page.close()
@@ -921,40 +818,6 @@ def test_save_credentials_validation_and_banner_isolation(qapp, tmp_path):
 # SECTION 7: Portal Activity & Result Banner
 # ─────────────────────────────────────────────────────────────────────────────
 
-def test_result_banner_status_pills_and_invariants(qapp):
-    frame = QFrame()
-    pill = QLabel()
-    time_lbl = QLabel()
-    banner = ResultBannerLabel(frame, pill, time_lbl)
-
-    # 1. Default initial state
-    banner.setText("No result yet.")
-    assert "IDLE" in pill.text()
-
-    # 2. Downloading / Processing state
-    banner.setText("Downloading claim files from Base44...")
-    assert "DOWNLOADING / PROCESSING" in pill.text()
-
-    # 3. Error / Attention state
-    banner.setText("Needs Attention: Portal password incorrect")
-    assert "FAILED / NEEDS ATTENTION" in pill.text()
-
-    # 4. Normal activity goes to QUEUED / ACTIVITY
-    banner.setText("Report submitted successfully")
-    assert "CONFIRMED SUCCESS" not in pill.text()
-    assert "QUEUED / ACTIVITY" in pill.text()
-
-    # 5. Failed outcome acknowledged as ready_for_upload
-    banner.set_report_result("Base44 acknowledged: ready_for_upload", "failed", "ready_for_upload")
-    assert "FAILED / NEEDS ATTENTION" in pill.text()
-
-    # 6. Success outcome acknowledged as uploaded -> ONLY THEN CONFIRMED SUCCESS
-    banner.set_report_result("Base44 acknowledged: uploaded", "success", "uploaded")
-    assert "CONFIRMED SUCCESS" in pill.text()
-
-    # 7. Failure with negation in text
-    banner.setText("Report not submitted successfully: duplicate invoice")
-    assert "CONFIRMED SUCCESS" not in pill.text()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1031,94 +894,10 @@ def test_auto_pickup_stages_without_credentials_and_never_claims(qapp, tmp_path)
 # SECTION 9: Full Case Lifecycle & Error Recovery
 # ─────────────────────────────────────────────────────────────────────────────
 
-def test_full_case_lifecycle_start_submit_report_and_ack(qapp, tmp_path):
-    page, server, window, opened = make_test_queue_page(tmp_path, initial_jobs=[SAMPLE_JOB_UIIC])
-    try:
-        page.store.save("profile_surveyor_uiic", "uiic", "user", "pass", "SC")
-        page.poll()
-        page.list.setCurrentRow(0)
-
-        # 1. Stage, scan, then explicitly start insurer automation.
-        activate_case(page)
-        assert len(opened) == 1
-        current = page.state.current
-        assert current["phase"] == "automation active"
-        claim_folder = current["folder"]
-        assert Path(claim_folder, "web_sync_manifest.json").exists()
-
-        # 2. Portal submission monitor detects successful submission
-        records = []
-        monitor = SubmissionMonitor(SAMPLE_JOB_UIIC["case_id"], claim_folder, lambda rec: (records.append(rec), page._submission(rec)))
-        asyncio.run(monitor.capture({"message": "Report submitted successfully", "kind": "dom", "attempt": 1}))
-
-        # 3. Report was sent to Base44
-        assert len(server.reports) == 1
-        assert server.reports[0]["status"] == "success"
-        assert server.reports[0]["case_id"] == SAMPLE_JOB_UIIC["case_id"]
-
-        # 4. State is reset to None, acknowledgement written
-        assert page.state.current is None
-        assert Path(claim_folder, "Web_Sync_Report_Acknowledgement.json").exists()
-        assert "CONFIRMED SUCCESS" in page.result_status_pill.text()
-    finally:
-        page.shutdown()
-        page.close()
 
 
-def test_deliberate_failure_with_reason(qapp, tmp_path, monkeypatch):
-    page, server, window, _ = make_test_queue_page(tmp_path, initial_jobs=[SAMPLE_JOB_UIIC])
-    try:
-        page.store.save("profile_surveyor_uiic", "uiic", "user", "pass", "SC")
-        page.poll()
-        page.list.setCurrentRow(0)
-        activate_case(page)
-        assert page.state.current is not None
-
-        # User clicks Stop / Fail Case and provides reason
-        monkeypatch.setattr(QInputDialog, "getText", lambda *args, **kwargs: ("Chassis mismatch", True))
-        page.fail_case()
-
-        assert len(server.reports) == 1
-        assert server.reports[0]["status"] == "failed"
-        assert server.reports[0]["portal_message"] == "Chassis mismatch"
-        assert page.state.current is None
-        assert "FAILED / NEEDS ATTENTION" in page.result_status_pill.text()
-    finally:
-        page.shutdown()
-        page.close()
 
 
-def test_network_failure_503_preserves_pending_report_for_retry(qapp, tmp_path):
-    page, server, window, _ = make_test_queue_page(tmp_path, initial_jobs=[SAMPLE_JOB_UIIC])
-    try:
-        page.store.save("profile_surveyor_uiic", "uiic", "user", "pass", "SC")
-        page.poll()
-        page.list.setCurrentRow(0)
-        activate_case(page)
-
-        # Simulate 503 error on reporting result
-        server.fail_report_with_503 = True
-
-        page._submission({
-            "case_id": SAMPLE_JOB_UIIC["case_id"],
-            "confirmed_success": True,
-            "portal_message": "Report submitted successfully",
-        })
-
-        # Pending report preserved in state journal
-        assert page.state.current is not None
-        assert page.state.current["pending_report"]["status"] == "success"
-
-        # Server recovers
-        server.fail_report_with_503 = False
-
-        # Next poll will automatically retry the pending report first
-        page.poll()
-        assert len(server.reports) == 1
-        assert page.state.current is None
-    finally:
-        page.shutdown()
-        page.close()
 
 
 def test_corrupt_journal_graceful_recovery(qapp, tmp_path):
@@ -1126,7 +905,7 @@ def test_corrupt_journal_graceful_recovery(qapp, tmp_path):
     page, server, window, _ = make_test_queue_page(tmp_path)
     try:
         assert bool(page.state_error) is True
-        assert not page.start_button.isEnabled()
+        assert not page._can_start_selected_case()
         # App still runs safely without crashing
         page.poll()
         assert page.list.count() >= 0
@@ -1139,33 +918,6 @@ def test_corrupt_journal_graceful_recovery(qapp, tmp_path):
 # SECTION 10: Manual Browse Folder & Insurer Isolation Safety
 # ─────────────────────────────────────────────────────────────────────────────
 
-def test_manual_browse_folder_settings_isolation(qapp, tmp_path):
-    page, server, window, _ = make_test_queue_page(tmp_path, initial_jobs=[SAMPLE_JOB_UIIC])
-    try:
-        page.store.save("profile_surveyor_uiic", "uiic", "secret_user", "secret_pass", "SC_SEC")
-        page.poll()
-        page.list.setCurrentRow(0)
-        activate_case(page)
-
-        web_folder = page.state.current["folder"]
-        manual_folder = str(tmp_path / "user_manual_folder")
-
-        # 1. Web sync folder returns active credentials
-        web_settings = page.settings_for(web_folder, "uiic")
-        assert web_settings["username"] == "secret_user"
-        assert web_settings["surveyor_code"] == "SC_SEC"
-
-        # 2. Manual folder MUST NOT receive web credentials
-        manual_settings = page.settings_for(manual_folder, "uiic")
-        assert manual_settings == {}
-
-        # 3. After case completion, previous web folder settings cannot be accessed
-        page.state.set(None)
-        with pytest.raises(ValueError, match="not the current active case"):
-            page.settings_for(web_folder, "uiic")
-    finally:
-        page.shutdown()
-        page.close()
 
 
 def test_portal_for_all_supported_insurers():
@@ -1369,19 +1121,6 @@ def test_client_automatic_token_refresh_on_401():
     assert server.logins == 2
 
 
-def test_client_conflict_409_already_claimed():
-    server = ComprehensiveMockServer([SAMPLE_JOB_UIIC])
-    client = Client("op@test.invalid", "secret", session=server)
-
-    # First claim succeeds
-    res1 = client.claim(SAMPLE_JOB_UIIC["case_id"], SAMPLE_JOB_UIIC["automation_dispatch_id"])
-    assert res1["case_id"] == SAMPLE_JOB_UIIC["case_id"]
-    assert res1["status"] == "automation_in_progress"
-
-    # Second claim returns 409 conflict
-    with pytest.raises(ApiError) as exc_info:
-        client.claim(SAMPLE_JOB_UIIC["case_id"], SAMPLE_JOB_UIIC["automation_dispatch_id"])
-    assert exc_info.value.status == 409
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1421,8 +1160,6 @@ def test_flat_name_sanitization_and_windows_reserved_names():
 def test_download_case_generates_manifest_and_flattens_files(tmp_path):
     server = ComprehensiveMockServer([SAMPLE_JOB_UIIC])
     client = Client("op@test.invalid", "secret", session=server)
-    client.claim(SAMPLE_JOB_UIIC["case_id"], SAMPLE_JOB_UIIC["automation_dispatch_id"])
-
     dest_folder = tmp_path / "downloaded_claim"
     latest_excel_file = download_case(
         client, SAMPLE_JOB_UIIC["case_id"], dest_folder,
@@ -1463,63 +1200,6 @@ def test_atomic_json_roundtrip_and_safety(tmp_path):
 # SECTION 14: Sequential Multiple Case Lifecycle
 # ─────────────────────────────────────────────────────────────────────────────
 
-def test_sequential_multiple_case_lifecycle(qapp, tmp_path):
-    server = ComprehensiveMockServer([SAMPLE_JOB_UIIC, SAMPLE_JOB_NIA])
-    page, server, window, opened = make_test_queue_page(tmp_path, initial_jobs=[SAMPLE_JOB_UIIC, SAMPLE_JOB_NIA])
-    try:
-        # Pre-save credentials for both surveyors
-        page.store.save("profile_surveyor_uiic", "uiic", "u_uiic", "p_uiic", "SC1")
-        page.store.save("profile_surveyor_nia", "newindia", "u_nia", "p_nia", "SC2")
-
-        page.poll()
-        assert page.list.count() == 2
-
-        # ── Case 1: Start and complete successfully ──
-        page.list.setCurrentRow(0)
-        activate_case(page)
-        assert page.state.current is not None
-        assert page.state.current["job"]["case_id"] == SAMPLE_JOB_UIIC["case_id"]
-
-        page._submission({
-            "case_id": SAMPLE_JOB_UIIC["case_id"],
-            "confirmed_success": True,
-            "portal_message": "Report submitted successfully",
-        })
-        assert page.state.current is None
-        assert len(server.reports) == 1
-        assert server.reports[0]["status"] == "success"
-
-        # ── Case 2: Start and deliberate fail ──
-        page.poll()
-        # Case 1 waits locally for Mark Completed while Case 2 remains queued.
-        assert page.list.count() == 2
-        case_2_row = next(
-            index for index in range(page.list.count())
-            if (page.list.item(index).data(Qt.ItemDataRole.UserRole) or {}).get("job", {}).get("case_id")
-            == SAMPLE_JOB_NIA["case_id"]
-        )
-        page.list.setCurrentRow(case_2_row)
-        activate_case(page)
-        assert page.state.current is not None
-        assert page.state.current["job"]["case_id"] == SAMPLE_JOB_NIA["case_id"]
-
-        # Deliberately fail Case 2
-        page.state.current["pending_report"] = None
-        server.reports.clear()
-        page.client.report({
-            "case_id": SAMPLE_JOB_NIA["case_id"],
-            "automation_dispatch_id": SAMPLE_JOB_NIA["automation_dispatch_id"],
-            "status": "failed", "portal_message": "Chassis issue",
-        })
-        page.state.set(None)
-        page.refresh()
-
-        assert page.state.current is None
-        assert len(server.reports) == 1
-        assert server.reports[0]["status"] == "failed"
-    finally:
-        page.shutdown()
-        page.close()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1616,9 +1296,15 @@ def test_two_download_limit_and_one_failure_does_not_block_third(qapp, tmp_path,
             if case_id == SAMPLE_JOB_NIA["case_id"]:
                 raise RuntimeError("dummy download failure")
             Path(folder).mkdir(parents=True, exist_ok=True)
-            (Path(folder) / "latest.xlsx").write_bytes(b"excel")
+            workbook = b"excel"
+            (Path(folder) / "latest.xlsx").write_bytes(workbook)
+            dispatch_id = next(job["automation_dispatch_id"] for job in jobs if job["case_id"] == case_id)
             atomic_json(Path(folder) / "web_sync_manifest.json", {
-                "case_id": case_id, "latest_excel": "latest.xlsx", "files": [],
+                "case_id": case_id, "automation_dispatch_id": dispatch_id,
+                "latest_excel": "latest.xlsx", "complete": True,
+                "files": [{"local_name": "latest.xlsx", "size_bytes": len(workbook),
+                           "md5_checksum": hashlib.md5(workbook).hexdigest(),
+                           "is_latest_corrected_excel": True}],
             })
             return "latest.xlsx"
         finally:
@@ -1626,6 +1312,7 @@ def test_two_download_limit_and_one_failure_does_not_block_third(qapp, tmp_path,
                 running -= 1
 
     monkeypatch.setattr(page_module, "download_case", controlled_download)
+    monkeypatch.setattr(page_module.QMessageBox, "warning", lambda *args, **kwargs: None)
     try:
         page.poll()
         page.auto_pickup_enabled = True
@@ -1654,7 +1341,7 @@ def test_two_download_limit_and_one_failure_does_not_block_third(qapp, tmp_path,
         page.close()
 
 
-def test_manifest_404_stays_failed_until_explicit_restage(qapp, tmp_path, monkeypatch):
+def test_manifest_404_stays_hidden_until_new_dispatch(qapp, tmp_path, monkeypatch):
     import app.web_sync.page as page_module
 
     job = {
@@ -1687,23 +1374,24 @@ def test_manifest_404_stays_failed_until_explicit_restage(qapp, tmp_path, monkey
         assert attempts == [job["case_id"]]
         assert not server.claimed_ids
 
-        # Polling, Auto Pickup and selecting the failed row must leave it stable.
+        # Polling leaves the failed dispatch hidden and does not retry it.
         for _ in range(3):
             page.poll()
             page._maybe_auto_pickup()
             qapp.processEvents()
-        page._case_clicked(page.list.currentItem())
-        qapp.processEvents()
+        assert page.list.count() == 0
         assert attempts == [job["case_id"]]
 
         actions = "\n".join(entry["action"] for entry in page._live_log_entries)
         assert "no Drive folder ID and no Drive folder link" in actions
-        assert "claimAutomationCase was not called" in actions
-        assert "click Restage" in actions
-        assert "automatic staging will not retry it" in page.result.text()
+        assert "no Base44 automation claim was made" in actions
+        assert "send the case to App-3 again" in actions
+        assert "Please send this case again" in page.result.text()
 
-        # Explicit Restage is the only action that launches a second attempt.
-        page.restage_selected()
+        # A new Base44 dispatch is a fresh delivery attempt.
+        server.jobs_list = [{**job, "automation_dispatch_id": "new-dispatch-after-failure"}]
+        page.poll()
+        page._maybe_auto_pickup()
         deadline = time.monotonic() + 3
         while page.staging_ids and time.monotonic() < deadline:
             qapp.processEvents()
@@ -1716,10 +1404,13 @@ def test_manifest_404_stays_failed_until_explicit_restage(qapp, tmp_path, monkey
         page.close()
 
 
-def test_operator_can_start_case_c_before_case_a(qapp, tmp_path):
+def test_operator_can_start_case_c_before_case_a(qapp, tmp_path, monkeypatch):
+    import app.web_sync.page as page_module
     jobs = [SAMPLE_JOB_UIIC, SAMPLE_JOB_NIA, SAMPLE_JOB_OIC]
     page, server, _window, _opened = make_test_queue_page(tmp_path, initial_jobs=jobs)
     try:
+        monkeypatch.setattr(page_module, "load_settings", lambda portal_id=None: {"username": "test", "password": "test"})
+        monkeypatch.setattr(page_module, "get_active_portal_id", lambda: "oic")
         for job, portal in ((SAMPLE_JOB_UIIC, "uiic"), (SAMPLE_JOB_NIA, "newindia"), (SAMPLE_JOB_OIC, "oic")):
             page.store.save(job["surveyor_profile_id"], portal, f"{portal}-user", "secret", "SC")
         page.auto_pickup_enabled = True
@@ -1729,7 +1420,7 @@ def test_operator_can_start_case_c_before_case_a(qapp, tmp_path):
                      (page.list.item(index).data(Qt.ItemDataRole.UserRole) or {}).get("job", {}).get("case_id") == SAMPLE_JOB_OIC["case_id"])
         page.list.setCurrentRow(c_row)
         activate_case(page)
-        assert server.claimed_ids == {SAMPLE_JOB_OIC["case_id"]}
+        assert not server.claimed_ids
         assert page.state.current["job"]["case_id"] == SAMPLE_JOB_OIC["case_id"]
         assert page.state.current["portal"] == "oic"
         assert page._record(SAMPLE_JOB_UIIC["case_id"])["local_status"] == "ready"
@@ -1738,10 +1429,13 @@ def test_operator_can_start_case_c_before_case_a(qapp, tmp_path):
         page.close()
 
 
-def test_active_case_locks_workspace_but_other_staging_continues(qapp, tmp_path):
+def test_active_case_locks_workspace_but_other_staging_continues(qapp, tmp_path, monkeypatch):
+    import app.web_sync.page as page_module
     jobs = [SAMPLE_JOB_UIIC, SAMPLE_JOB_NIA, SAMPLE_JOB_OIC]
     page, server, _window, opened = make_test_queue_page(tmp_path, initial_jobs=jobs)
     try:
+        monkeypatch.setattr(page_module, "load_settings", lambda portal_id=None: {"username": "test", "password": "test"})
+        monkeypatch.setattr(page_module, "get_active_portal_id", lambda: "uiic")
         page.store.save(SAMPLE_JOB_UIIC["surveyor_profile_id"], "uiic", "a-user", "secret", "A")
         page.auto_pickup_enabled = True
         page.poll()
@@ -1757,27 +1451,12 @@ def test_active_case_locks_workspace_but_other_staging_continues(qapp, tmp_path)
         assert page.profile.text() == SAMPLE_JOB_UIIC["surveyor_profile_id"]
         assert page._record(SAMPLE_JOB_NIA["case_id"])["local_status"] == "ready"
         assert page.start_automation_for_folder(page._record(SAMPLE_JOB_NIA["case_id"])["folder"]) is False
-        assert server.claimed_ids == {SAMPLE_JOB_UIIC["case_id"]}
+        assert not server.claimed_ids
     finally:
         page.shutdown()
         page.close()
 
 
-def test_claim_conflict_marks_only_selected_case_claimed_elsewhere(qapp, tmp_path):
-    page, server, _window, opened = make_test_queue_page(tmp_path, initial_jobs=[SAMPLE_JOB_UIIC])
-    try:
-        page.store.save(SAMPLE_JOB_UIIC["surveyor_profile_id"], "uiic", "user", "secret", "SC")
-        page.poll()
-        prepare_workspace(page)
-        server.claimed_ids.add(SAMPLE_JOB_UIIC["case_id"])
-        page.start_automation()
-        assert page.state.current is None
-        assert page._record(SAMPLE_JOB_UIIC["case_id"])["local_status"] == "claimed elsewhere"
-        assert "Claimed Elsewhere" in page.result.text()
-        assert len(opened) == 1
-    finally:
-        page.shutdown()
-        page.close()
 
 
 def test_one_click_delete_is_local_only_and_hides_only_selected_case(qapp, tmp_path, monkeypatch):
@@ -1876,15 +1555,12 @@ def test_display_numbers_are_incremental_and_persist_after_restart(qapp, tmp_pat
     try:
         page.jobs = jobs
         page.refresh()
-        assert page.list.count() == 4
+        assert page.list.count() == 0
         first_numbers = {
             job["case_id"]: page._record(job["case_id"])["display_number"]
             for job in jobs
         }
         assert [first_numbers[job["case_id"]] for job in jobs] == [1, 2, 3, 4]
-        assert [page.list.item(index).text().split(" | ", 1)[0] for index in range(4)] == [
-            "#001", "#002", "#003", "#004",
-        ]
     finally:
         page.shutdown()
         page.close()
@@ -1902,7 +1578,10 @@ def test_display_numbers_are_incremental_and_persist_after_restart(qapp, tmp_pat
         restored.close()
 
 
-def test_restart_restores_active_lock_and_ready_inbox(qapp, tmp_path):
+def test_restart_restores_active_lock_and_ready_inbox(qapp, tmp_path, monkeypatch):
+    import app.web_sync.page as page_module
+    monkeypatch.setattr(page_module, "load_settings", lambda portal_id=None: {"username": "test", "password": "test"})
+    monkeypatch.setattr(page_module, "get_active_portal_id", lambda: "uiic")
     jobs = [SAMPLE_JOB_UIIC, SAMPLE_JOB_NIA]
     page, _server, _window, _opened = make_test_queue_page(tmp_path, initial_jobs=jobs)
     page.store.save(SAMPLE_JOB_UIIC["surveyor_profile_id"], "uiic", "user", "secret", "SC")
@@ -1946,6 +1625,8 @@ def test_streamlined_layout_without_kpi_cards(qapp, tmp_path):
         # Initial state after polling server
         page.poll()
         page.refresh()
+        assert page.list.count() == 0
+        page._maybe_auto_pickup()
         assert page.list.count() == 2
         assert page.queue_badge.text() == "2 Incoming Cases"
     finally:
@@ -2147,6 +1828,7 @@ def test_view_images_button_and_delegate_action(qapp, tmp_path):
         assert page.view_images_button.cursor().shape() == Qt.CursorShape.PointingHandCursor
 
         page.poll()
+        page._maybe_auto_pickup()
         assert page.list.count() == 1
         page.list.setCurrentRow(0)
         assert page.view_images_button.isEnabled()
@@ -2218,11 +1900,14 @@ def test_per_case_card_has_only_three_simple_actions(qapp, tmp_path, monkeypatch
         page.close()
 
 
-def test_card_start_automation_scans_then_claims_and_starts_without_second_click(qapp, tmp_path):
+def test_card_start_automation_scans_then_starts_without_second_click(qapp, tmp_path, monkeypatch):
+    import app.web_sync.page as page_module
     page, server, window, opened = make_test_queue_page(tmp_path, initial_jobs=[SAMPLE_JOB_UIIC])
     started = []
     window._start_automation = lambda: started.append(True)
     try:
+        monkeypatch.setattr(page_module, "load_settings", lambda portal_id=None: {"username": "test", "password": "test"})
+        monkeypatch.setattr(page_module, "get_active_portal_id", lambda: "uiic")
         page.store.save(SAMPLE_JOB_UIIC["surveyor_profile_id"], "uiic", "user", "secret", "SC")
         page.poll()
         page._maybe_auto_pickup()
@@ -2234,13 +1919,47 @@ def test_card_start_automation_scans_then_claims_and_starts_without_second_click
         assert not server.claimed_ids
 
         window._claim = SimpleNamespace(
-            _scan_context=SimpleNamespace(claim_folder_path=record["folder"])
+            _scan_context=SimpleNamespace(claim_folder_path=record["folder"], portal_id="uiic")
         )
         page.workspace_scan_completed(record["folder"], True)
 
-        assert server.claimed_ids == {SAMPLE_JOB_UIIC["case_id"]}
+        assert not server.claimed_ids
         assert started == [True]
         assert page.state.current["job"]["case_id"] == SAMPLE_JOB_UIIC["case_id"]
+    finally:
+        page.shutdown()
+        page.close()
+
+def test_background_poll_does_not_hide_login_form_while_changing_login(qapp, tmp_path):
+    """Verify that background 30s timer polling/refresh does not switch away from login form while typing."""
+    page, server, window, _ = make_test_queue_page(tmp_path)
+    try:
+        # Initially connected
+        assert not page.conn_connected_box.isHidden()
+        assert page.conn_form_box.isHidden()
+
+        # User clicks Change Login to type new credentials
+        page.change_login()
+        assert page.conn_connected_box.isHidden()
+        assert not page.conn_form_box.isHidden()
+        assert not page.cancel_login_button.isHidden()
+
+        # User starts typing password
+        page.password.setText("typing_my_new_password")
+
+        # Simulate 30s background timer firing repeatedly while user is on this page
+        for _ in range(3):
+            page.poll()
+            page.refresh()
+            # Form MUST NOT vanish and connected card MUST NOT take over
+            assert not page.conn_form_box.isHidden(), "Login form vanished during background refresh!"
+            assert page.conn_connected_box.isHidden(), "Connected card prematurely took over login form!"
+            assert page.password.text() == "typing_my_new_password"
+
+        # User clicks Cancel to abort
+        page.cancel_change_login()
+        assert not page.conn_connected_box.isHidden()
+        assert page.conn_form_box.isHidden()
     finally:
         page.shutdown()
         page.close()
