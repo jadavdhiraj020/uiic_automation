@@ -738,13 +738,17 @@ class MainWindow(QMainWindow):
             active_folder = active.get("folder", "") if active else ""
             if not active_folder or Path(active_folder).resolve() != Path(web_folder).resolve():
                 started = self.web_queue.start_automation_for_folder(web_folder)
-                if not started:
+                if started is False:
                     raw_err = self.web_queue.result.text() or "Web Queue could not start this case."
                     err = raw_err.replace("Needs Attention: ", "").strip()
                     self._set_status("error", err)
                     self.log(f"Start blocked: {err}")
                     _warn("Start Blocked", err)
-                return
+                    return
+                if started is True:
+                    return
+                # No visible Web Queue case owns this folder. Use the original
+                # Browse Folder start path instead of rejecting readable files.
 
         self._switch_page(0)  # Workspace
         self.workspace_page.clear_logs()
