@@ -188,47 +188,24 @@ else:
         "Run:  build.bat  to download Chromium before building the EXE."
     )
 
-paddleocr_cache = first_existing(
-    BUILD_ASSETS / "paddleocr",
-    Path.home() / ".paddleocr",
-)
-if paddleocr_cache:
-    # Fail-fast: all three model trees must be present and non-empty.
-    # A partial bundle (e.g. only det downloaded) causes silent CAPTCHA failures
-    # on client machines. Catch it at build time so the developer sees it immediately.
-    _required_ocr_dirs = {
-        "whl/det": "Text detection model",
-        "whl/rec": "Text recognition model",
-        "whl/cls": "Text direction classifier",
-    }
-    _ocr_errors = []
-    for _subdir, _label in _required_ocr_dirs.items():
-        _p = paddleocr_cache / Path(_subdir.replace("/", os.sep))
-        if not _p.is_dir() or not any(_p.iterdir()):
-            _ocr_errors.append(f"  - {_label}: {_p}")
-    if _ocr_errors:
-        raise FileNotFoundError(
-            "[spec] PaddleOCR model bundle is incomplete — missing or empty:\n"
-            + "\n".join(_ocr_errors)
-            + "\nRun:  build.bat  (step 5 — PaddleOCR download) to populate models,\n"
-            "then re-run build.bat to rebuild the EXE."
-        )
-    add_directory(datas, paddleocr_cache, ".paddleocr")
+# RapidOCR models and configuration (self-contained, no external download needed)
+rapidocr_pkg_dir = SITE_PACKAGES / "rapidocr_onnxruntime"
+if rapidocr_pkg_dir.is_dir():
+    add_directory(datas, rapidocr_pkg_dir / "models", "rapidocr_onnxruntime/models")
+    if (rapidocr_pkg_dir / "config.yaml").is_file():
+        datas.append((str(rapidocr_pkg_dir / "config.yaml"), "rapidocr_onnxruntime"))
+    print(f"[spec] RapidOCR package collected from {rapidocr_pkg_dir}")
 else:
-    raise FileNotFoundError(
-        "[spec] PaddleOCR model cache not found.\n"
-        "Expected: build_assets\\paddleocr\\whl\\{det,rec,cls}\\  OR  ~/.paddleocr/\n"
-        "Run:  build.bat  to download PaddleOCR models before building the EXE."
-    )
+    raise FileNotFoundError(f"[spec] rapidocr_onnxruntime not found in {SITE_PACKAGES}")
 
-
-
-
-# Native paddle DLLs collected explicitly into paddle/libs.
-paddle_libs_dir = SITE_PACKAGES / "paddle" / "libs"
-if paddle_libs_dir.exists():
-    for dll_path in paddle_libs_dir.glob("*.dll"):
-        binaries.append((str(dll_path), "paddle/libs"))
+# Native ONNX Runtime DLLs collected explicitly into onnxruntime/capi.
+ort_capi_dir = SITE_PACKAGES / "onnxruntime" / "capi"
+if ort_capi_dir.is_dir():
+    for dll_path in ort_capi_dir.glob("*.dll"):
+        binaries.append((str(dll_path), "onnxruntime/capi"))
+    print(f"[spec] ONNX Runtime native DLLs collected from {ort_capi_dir}")
+else:
+    raise FileNotFoundError(f"[spec] onnxruntime/capi not found in {SITE_PACKAGES}")
 
 # PyInstaller's pywin32 hooks usually collect these DLLs, but we keep an
 # explicit pass because printable PDF export depends on COM in production.
@@ -240,8 +217,8 @@ if pywin32_system32.exists():
 
 # Community-proven collect-all coverage for tricky packages.
 for package_name in (
-    "paddle",
-    "paddleocr",
+    "rapidocr_onnxruntime",
+    "onnxruntime",
     "Cython",
     "numpy",
     "PIL",
@@ -300,23 +277,10 @@ hiddenimports.extend(
         "numpy",
         "PIL",
         "cv2",
-        "paddle",
-        "paddle.base",
-        "paddle.dataset",
-        "paddle.distributed",
-        "paddle.framework",
-        "paddle.io",
-        "paddle.nn",
-        "paddle.optimizer",
-        "paddle.utils",
-        "paddle.vision",
-        "paddleocr",
-        "paddleocr.paddleocr",
-        "paddleocr.ppocr",
-        "paddleocr.ppocr.data",
-        "paddleocr.ppocr.modeling",
-        "paddleocr.ppocr.postprocess",
-        "paddleocr.ppocr.utils",
+        "rapidocr_onnxruntime",
+        "onnxruntime",
+        "onnxruntime.capi",
+        "onnxruntime.capi._pybind_state",
         "lmdb",
         "scipy",
         "scipy.io",

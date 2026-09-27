@@ -19,9 +19,9 @@ pypdfium2==5.7.1
 pandas==2.3.3
 pywin32==306 ; sys_platform == "win32"
 
-# OCR engine
-paddlepaddle==2.6.2
-paddleocr==2.10.0
+# OCR engine (Lightweight ONNX Runtime)
+rapidocr-onnxruntime==1.4.4
+onnxruntime==1.23.2
 
 # PaddleOCR dynamic/runtime dependencies
 lmdb==2.2.0

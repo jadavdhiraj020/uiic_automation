@@ -38,38 +38,23 @@ if _is_frozen():
     os.makedirs(os.path.join(user_base, "logs"), exist_ok=True)
     os.makedirs(os.path.join(user_base, "cache"), exist_ok=True)
 
+    # Register ONNX Runtime C++ DLL directory
+    ort_capi = os.path.join(base, "onnxruntime", "capi")
+    if os.path.isdir(ort_capi):
+        os.environ["PATH"] = ort_capi + os.pathsep + os.environ.get("PATH", "")
+        try:
+            os.add_dll_directory(ort_capi)
+        except (OSError, AttributeError):
+            pass
+
     os.environ.setdefault("PADDLE_HOME", os.path.join(user_base, ".paddle"))
 
-    # Prefer bundled models shipped in _internal/.paddleocr (offline-first).
-    # Only fall back to user's AppData if bundled models are absent or incomplete.
+    # Bundled RapidOCR or legacy PaddleOCR models handling
     bundled_paddleocr = os.path.join(base, ".paddleocr")
-    _required_model_trees = ("whl/det", "whl/rec", "whl/cls")
-    has_valid_bundle = False
+    bundled_rapidocr = os.path.join(base, "rapidocr_onnxruntime")
     if os.path.isdir(bundled_paddleocr):
-        _missing = [t for t in _required_model_trees
-                    if not os.path.isdir(os.path.join(bundled_paddleocr, t.replace("/", os.sep)))]
-        if _missing:
-            import sys as _sys
-            print(
-                f"[runtime_hook] WARNING: Bundled .paddleocr is incomplete — "
-                f"missing: {', '.join(_missing)}. CAPTCHA OCR may fail. "
-                "Falling back to user cache if available.",
-                file=_sys.stderr,
-            )
-        else:
-            has_valid_bundle = True
-
-    if has_valid_bundle:
         os.environ["PADDLEOCR_HOME"] = bundled_paddleocr
-    else:
-        if not os.path.isdir(bundled_paddleocr):
-            import sys as _sys
-            print(
-                "[runtime_hook] WARNING: Bundled .paddleocr not found. "
-                "Falling back to user cache. CAPTCHA OCR will fail if models "
-                "are not pre-cached in AppData.",
-                file=_sys.stderr,
-            )
+    elif not os.path.isdir(bundled_rapidocr):
         os.environ.setdefault("PADDLEOCR_HOME", os.path.join(user_base, ".paddleocr"))
     os.environ.setdefault("XDG_CACHE_HOME", os.path.join(user_base, "cache"))
 

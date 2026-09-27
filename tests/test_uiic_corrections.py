@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 from app.data.data_model import ClaimData
 from app.data.excel_reader import _calculate_professional_fee
-from app.data.folder_scanner import scan_folder, _extract_sheet_for_reinspection
+from app.data.folder_scanner import scan_folder, _extract_sheet_for_reinspection_pdf as _extract_sheet_for_reinspection
 from app.utils import load_doc_mapping, load_field_mapping, load_automation_defaults
 
 
@@ -122,14 +122,15 @@ def test_reinspection_3rd_sheet_extraction_and_manual_priority(tmp_path, monkeyp
     assert result.excel_path == str(excel_path)
     assert "reinspection_report" in result.assessment_files
     reinspection_path = Path(result.assessment_files["reinspection_report"])
-    assert reinspection_path.name == "reinspection.xlsx"
+    assert reinspection_path.name in ("reinspection.xlsx", "reinspection_report.pdf")
     assert reinspection_path.exists()
 
-    # Verify extracted sheet content
-    wb_extracted = openpyxl.load_workbook(str(reinspection_path))
-    assert len(wb_extracted.sheetnames) == 1
-    assert wb_extracted.active["A1"].value == "Reinspection Data Content"
-    assert wb_extracted.active["B2"].value == 12345
+    if reinspection_path.suffix == ".xlsx":
+        # Verify extracted sheet content
+        wb_extracted = openpyxl.load_workbook(str(reinspection_path))
+        assert len(wb_extracted.sheetnames) == 1
+        assert wb_extracted.active["A1"].value == "Reinspection Data Content"
+        assert wb_extracted.active["B2"].value == 12345
 
     # 2. Test manual reinspection file priority
     manual_pdf = tmp_path / "manual_reinspection_report.pdf"

@@ -103,8 +103,8 @@ if defined CI_MODE (
     "%BUILD_PYTHON%" -m playwright install chromium
     if errorlevel 1 exit /b 1
 
-    echo [5/7] Preparing bundled PaddleOCR models...
-    "%BUILD_PYTHON%" -c "from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=True, lang='en', show_log=False); print('PaddleOCR models ready.')"
+    echo [5/7] Verifying bundled RapidOCR models...
+    "%BUILD_PYTHON%" -c "from rapidocr_onnxruntime import RapidOCR; RapidOCR(); print('RapidOCR models ready.')"
     if errorlevel 1 exit /b 1
 )
 
@@ -136,15 +136,15 @@ if errorlevel 1 (
     echo         [OK] fonttools present in build Python.
 )
 
-:: paddleocr must be importable (verifies paddle C extensions compiled correctly).
-"%BUILD_PYTHON%" -c "import paddleocr" >nul 2>&1
+:: rapidocr_onnxruntime must be importable (verifies ONNX Runtime C extensions compiled correctly).
+"%BUILD_PYTHON%" -c "import rapidocr_onnxruntime" >nul 2>&1
 if errorlevel 1 (
-    echo [ERROR] paddleocr is not importable in the build Python.
-    echo         Run: "%BUILD_PYTHON%" -m pip install paddlepaddle paddleocr
+    echo [ERROR] rapidocr_onnxruntime is not importable in the build Python.
+    echo         Run: "%BUILD_PYTHON%" -m pip install rapidocr-onnxruntime
     echo         Then re-run build.bat
     exit /b 1
 )
-echo         [OK] paddleocr importable.
+echo         [OK] rapidocr_onnxruntime importable.
 
 :: PyQt6 must be importable (required for the GUI).
 "%BUILD_PYTHON%" -c "import PyQt6" >nul 2>&1

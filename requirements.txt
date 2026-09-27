@@ -15,10 +15,9 @@ pdfplumber>=0.11,<0.12
 pypdfium2>=5,<6
 pandas>=2.2,<3
 
-# OCR engine
-# CRITICAL: paddlepaddle must stay on the 2.x branch for Windows stability.
-paddlepaddle>=2.6.0,<3.0.0
-paddleocr>=2.8.0,<3.0.0
+# OCR engine (Lightweight ONNX Runtime)
+rapidocr-onnxruntime>=1.3.0
+onnxruntime>=1.18.0
 
 # PaddleOCR runtime extras and dynamic imports
 lmdb>=1.6,<3

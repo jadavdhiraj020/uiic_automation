@@ -22,6 +22,7 @@ if getattr(sys, "frozen", False):
 
     for relative_path in (
         "",
+        os.path.join("onnxruntime", "capi"),
         os.path.join("paddle", "libs"),
         "numpy.libs",
         "scipy.libs",

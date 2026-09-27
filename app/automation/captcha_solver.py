@@ -1,65 +1,33 @@
 """
 captcha_solver.py
-Solves the canvas-based CAPTCHA on the UIIC portal.
+Solves the canvas-based CAPTCHA on the UIIC and other insurance portals.
 
 Updated:
-- Removed ALL fallback logic (uppercase/lowercase)
+- Direct in-memory OCR via RapidOCR (zero disk I/O, ~20ms latency)
+- No temporary file creation
 - Always returns ONLY the exact OCR result
 - Cleaner, faster, deterministic behavior
 """
 
-import re
-import os
 import logging
-import tempfile
 import traceback
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# ── PaddleOCR shared engine singleton ────────────────────────────────────────
-from app.automation.ocr_engine import run_shared_ocr
+# ── RapidOCR shared engine in-memory solver ──────────────────────────────────
+from app.automation.ocr_engine import solve_captcha_bytes
 
 
-def _extract_text(img_bytes: bytes) -> str:
-    """
-    Run OCR and return clean alphanumeric text ONLY.
-    """
-    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".png")
-
-    try:
-        with os.fdopen(tmp_fd, "wb") as f:
-            f.write(img_bytes)
-
-        result = run_shared_ocr(tmp_path, cls=False)
-
-        if not result or result[0] is None:
-            logger.warning("PaddleOCR returned no result")
-            return ""
-
-        raw = "".join(box[1][0] for box in result[0])
-        clean = re.sub(r"[^A-Za-z0-9]", "", raw).strip()
-
-        logger.info(f"OCR RESULT → raw='{raw}' | clean='{clean}'")
-
-        return clean
-
-    finally:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-
-
-# ── PUBLIC API (SIMPLIFIED) ────────────────────────────────────────────────
+# ── PUBLIC API ─────────────────────────────────────────────────────────────
 
 def solve_captcha_from_bytes(img_bytes: bytes) -> Optional[str]:
     """
-    Returns ONLY the exact OCR result.
-    No fallback, no retries, no case modification.
+    Returns ONLY the exact OCR result directly from in-memory image bytes.
+    No disk writes, no fallback guesswork, no case modification.
     """
     try:
-        result = _extract_text(img_bytes)
+        result = solve_captcha_bytes(img_bytes)
 
         if not result:
             logger.error("CAPTCHA solve failed: empty result")
@@ -71,3 +39,4 @@ def solve_captcha_from_bytes(img_bytes: bytes) -> Optional[str]:
         logger.error(f"CAPTCHA solve FAILED: {exc}")
         logger.error(traceback.format_exc())
         return None
+
