@@ -83,9 +83,9 @@ def test_vehicle_photographs_single_prefix_maps_to_4_slots(tmp_path):
         assert slot_file.exists()
         assert slot_file.read_bytes() == b"JPEG dummy image data"
 
-    # Verify 4 physical copy files exist
+    # Verify in-memory mapping: all 4 slots map directly without creating physical duplicate files on disk
     for i in range(1, 5):
-        assert (tmp_path / f"vehicle_photo_{i}.jpg").exists()
+        assert not (tmp_path / f"vehicle_photo_{i}.jpg").exists()
 
 
 def test_reinspection_3rd_sheet_extraction_and_manual_priority(tmp_path, monkeypatch):

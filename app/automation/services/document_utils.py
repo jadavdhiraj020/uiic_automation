@@ -6,10 +6,16 @@ from typing import Dict, List, Set
 
 logger = logging.getLogger(__name__)
 
-def _compress_pdf_for_upload(pdf_path: str, output_path: str, target_dpi: int = 96) -> bool:
+def _compress_pdf_for_upload(
+    pdf_path: str,
+    output_path: str,
+    target_dpi: int = 72,
+    quality: int = 70,
+    max_pages: int = 100,
+) -> bool:
     """
-    Re-render every page of a PDF at target_dpi using pypdfium2 + Pillow.
-    Scanned image-PDFs compress dramatically; text PDFs compress moderately.
+    Re-render PDF pages into memory and save directly as a compressed multi-page PDF via Pillow.
+    Avoids slow per-page disk I/O and temporary files.
     Returns True on success, False on failure.
     """
     try:
@@ -17,35 +23,53 @@ def _compress_pdf_for_upload(pdf_path: str, output_path: str, target_dpi: int = 
         from PIL import Image  # type: ignore
 
         src = pdfium.PdfDocument(pdf_path)
-        if len(src) == 0:
+        total_pages = len(src)
+        if total_pages == 0:
             return False
 
-        scale = target_dpi / 72.0  # pypdfium2: scale=1.0 → 72 DPI
-        dest = pdfium.PdfDocument.new()
-        page_tmps: List[str] = []
+        if total_pages > max_pages:
+            logger.warning(
+                "_compress_pdf_for_upload: %s has %d pages (exceeds safety limit of %d); compressing first %d pages",
+                Path(pdf_path).name, total_pages, max_pages, max_pages,
+            )
+
+        render_count = min(total_pages, max_pages)
+        scale = target_dpi / 72.0  # pypdfium2: scale=1.0 -> 72 DPI
+        images: List[Image.Image] = []
 
         try:
-            for i in range(len(src)):
+            for i in range(render_count):
                 page = src[i]
                 bitmap = page.render(scale=scale)
                 pil_img = bitmap.to_pil()
-                if pil_img.mode not in ("RGB",):
+                if pil_img.mode != "RGB":
                     pil_img = pil_img.convert("RGB")
-                # Pillow saves RGB PDFs with DCT (JPEG) compression internally
-                tf = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False, prefix=f"_cmp{i}_")
-                tf.close()
-                pil_img.save(tf.name, "PDF")
-                page_tmps.append(tf.name)
-                dest.import_pages(pdfium.PdfDocument(tf.name))
+                images.append(pil_img)
 
-            dest.save(output_path)
+            if not images:
+                return False
+
+            # Direct in-memory multi-page PDF export via Pillow — zero temp files on disk!
+            images[0].save(
+                output_path,
+                "PDF",
+                save_all=True,
+                append_images=images[1:],
+                resolution=float(target_dpi),
+                quality=quality,
+                optimize=True,
+            )
             return True
         finally:
-            for t in page_tmps:
+            for im in images:
                 try:
-                    os.remove(t)
-                except OSError:
+                    im.close()
+                except Exception:
                     pass
+            try:
+                src.close()
+            except Exception:
+                pass
     except Exception as e:
         logger.warning("_compress_pdf_for_upload failed for %s: %s", Path(pdf_path).name, e)
         return False
@@ -63,6 +87,107 @@ def _compress_image_for_upload(img_path: str, output_path: str, quality: int = 7
     except Exception as e:
         logger.warning("_compress_image_for_upload failed for %s: %s", Path(img_path).name, e)
         return False
+
+
+def compress_uiic_document_if_needed(
+    file_path: str,
+    log=None,
+    max_mb: float = 2.0,
+    target_mb: float = 1.9,
+) -> "tuple[str, bool]":
+    """
+    UIIC document compression profile:
+    If a document exceeds max_mb (2.0 MB), compresses it into a temporary
+    file aiming for <= target_mb (1.9 MB).
+    The original file in the claim folder remains completely untouched.
+    Returns (path_to_upload, was_compressed).
+    """
+    if not file_path or not os.path.isfile(file_path):
+        return file_path, False
+
+    file_size = os.path.getsize(file_path)
+    limit_bytes = int(max_mb * 1024 * 1024)
+    target_bytes = int(target_mb * 1024 * 1024)
+
+    if file_size <= limit_bytes:
+        return file_path, False
+
+    fname = os.path.basename(file_path)
+    ext = Path(file_path).suffix.lower()
+    orig_mb = file_size / (1024 * 1024)
+
+    msg = f"Document {fname} ({orig_mb:.2f}MB > {max_mb}MB limit) — compressing for UIIC (target <= {target_mb}MB)..."
+    if log:
+        if hasattr(log, "warning"):
+            log.warning(msg)
+        elif callable(log):
+            log(f"  ⚠️ {msg}")
+    logger.info(msg)
+
+    # Place in a unique temp directory while preserving the original filename
+    temp_dir = tempfile.mkdtemp(prefix="_uiic_upload_")
+    out_path = os.path.join(temp_dir, fname)
+
+    try:
+        ok = False
+        if ext == ".pdf":
+            # Fast in-memory PDF compression passes targeting <= 1.9 MB
+            for dpi, q in ((72, 70), (50, 50), (36, 40)):
+                ok = _compress_pdf_for_upload(file_path, out_path, target_dpi=dpi, quality=q)
+                if ok and os.path.isfile(out_path) and os.path.getsize(out_path) <= target_bytes:
+                    break
+        elif ext in (".jpg", ".jpeg", ".png", ".gif", ".bmp"):
+            # Multi-pass image compression targeting <= 1.9 MB
+            for q in (75, 50, 30):
+                ok = _compress_image_for_upload(file_path, out_path, quality=q)
+                if ok and os.path.isfile(out_path) and os.path.getsize(out_path) <= target_bytes:
+                    break
+            # If still over limit, resize dimensions
+            if ok and os.path.isfile(out_path) and os.path.getsize(out_path) > target_bytes:
+                try:
+                    from PIL import Image  # type: ignore
+                    with Image.open(file_path) as im:
+                        if im.mode in ("RGBA", "P"):
+                            im = im.convert("RGB")
+                        w, h = im.size
+                        im_resized = im.resize((int(w * 0.7), int(h * 0.7)), Image.Resampling.LANCZOS)
+                        im_resized.save(out_path, "JPEG", quality=40, optimize=True)
+                except Exception:
+                    pass
+
+        if ok and os.path.isfile(out_path):
+            comp_mb = os.path.getsize(out_path) / (1024 * 1024)
+            success_msg = f"Compressed {fname}: {orig_mb:.2f}MB → {comp_mb:.2f}MB"
+            if log:
+                if hasattr(log, "success"):
+                    log.success(success_msg)
+                elif callable(log):
+                    log(f"  ✅ {success_msg}")
+            logger.info(success_msg)
+            return out_path, True
+        else:
+            fail_msg = f"Compression failed for {fname} — using original file"
+            if log:
+                if hasattr(log, "warning"):
+                    log.warning(fail_msg)
+                elif callable(log):
+                    log(f"  ⚠️ {fail_msg}")
+            logger.warning(fail_msg)
+            if os.path.exists(out_path):
+                try:
+                    os.remove(out_path)
+                except OSError:
+                    pass
+            return file_path, False
+
+    except Exception as exc:
+        logger.warning("Compression error for %s (%s) — using original file", fname, exc)
+        if os.path.exists(out_path):
+            try:
+                os.remove(out_path)
+            except OSError:
+                pass
+        return file_path, False
 
 
 def _prepare_files_for_merge(

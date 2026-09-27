@@ -183,11 +183,19 @@ def _build_queue(claim: ClaimData, log) -> List[Tuple[str, Optional[str]]]:
             log.info(f"Queueing: [{doc_type}] → {fname} ({mb:.1f}MB){size_tag}")
         else:
             size_warn = " ⚠️ LARGE" if mb > MAX_FILE_MB else ""
-            log(f"  📎 [{doc_type}]: {fname} ({mb:.1f}MB){size_warn}")
-            
+        upload_path = file_path
+        if getattr(claim, "portal_id", "uiic") == "uiic" and mb > MAX_FILE_MB:
+            from app.automation.services.document_utils import compress_uiic_document_if_needed
+            upload_path, was_compressed = compress_uiic_document_if_needed(file_path, log=log)
+            if was_compressed:
+                if not hasattr(claim, "_temporary_files"):
+                    claim._temporary_files = []
+                claim._temporary_files.append(upload_path)
+                mb = os.path.getsize(upload_path) / (1024 * 1024)
+
         if mb > MAX_FILE_MB:
             logger.info("Large file (%.1fMB): %s — portal alert will be auto-accepted", mb, fname)
-        queue.append((doc_type, file_path))
+        queue.append((doc_type, upload_path))
 
     return queue
 
