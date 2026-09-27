@@ -1,0 +1,21 @@
+2026-09-26T17:53:26.955944+00:00 | OPTIONS received | origin='https://jadav.base44.app' | 204 preflight response sent
+2026-09-26T17:53:26.958948+00:00 | POST received | origin='https://jadav.base44.app' | 200 PING response sent
+2026-09-26T17:53:26.960945+00:00 | POST received | origin='https://unrelated.example' | 403 rejected
+2026-09-26T17:55:33.266677+00:00 | OPTIONS received | origin='https://jadav.base44.app' | 204 preflight response sent
+2026-09-26T17:55:33.284168+00:00 | POST received | origin='https://jadav.base44.app' | 200 PING response sent
+2026-09-26T17:55:33.300373+00:00 | POST received | origin='https://unrelated.example' | 403 rejected
+2026-09-26T17:58:01.512073+00:00 | OPTIONS received | origin='https://jadav.base44.app' | 204 preflight response sent
+2026-09-26T17:58:01.517810+00:00 | POST received | origin='https://jadav.base44.app' | 400 invalid PING; response sent
+2026-09-26T17:58:05.044457+00:00 | OPTIONS received | origin='https://jadav.base44.app' | 204 preflight response sent
+2026-09-26T17:58:05.050537+00:00 | POST received | origin='https://jadav.base44.app' | 400 invalid PING; response sent
+2026-09-26T18:02:41.387502+00:00 | OPTIONS received | origin='https://jadav.base44.app' | 204 preflight response sent
+2026-09-26T18:02:41.389390+00:00 | POST received | origin='https://jadav.base44.app' | 200 PING response sent
+2026-09-26T18:04:45.723604+00:00 | OPTIONS received | origin='https://jadav.base44.app' | 204 preflight response sent
+2026-09-26T18:04:45.723604+00:00 | POST /start-test received | origin='https://jadav.base44.app' | 200 response sent | command=START_TEST | run_id='TEST-001' | portal_id='uiic' | case_ref='TEST-CASE'
+2026-09-26T18:04:45.723604+00:00 | POST /start-test received | origin='https://jadav.base44.app' | 400 portal_id must be uiic; response sent
+2026-09-26T18:04:45.723604+00:00 | POST received | origin='https://jadav.base44.app' | 200 PING response sent
+2026-09-26T18:05:45.620615+00:00 | OPTIONS received | origin='https://jadav.base44.app' | 204 preflight response sent
+2026-09-26T18:05:45.623482+00:00 | POST /start-test received | origin='https://jadav.base44.app' | 200 response sent | command=START_TEST | run_id='TEST-001' | portal_id='uiic' | case_ref='TEST-CASE'
+2026-09-26T18:10:53.299707+00:00 | OPTIONS received | origin='https://jadav.base44.app' | 204 preflight response sent
+2026-09-26T18:10:54.049582+00:00 | POST /start-test received | origin='https://jadav.base44.app' | 200 response sent | run_id='TEST-002' | portal_id='uiic' | test_folder='C:\\Users\\jadav\\AppData\\Local\\Temp\\docwriter-helper-poc-pp5pdax9' | marker=verified
+2026-09-26T18:10:54.067953+00:00 | POST received | origin='https://jadav.base44.app' | 200 PING response sent

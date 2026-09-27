@@ -222,7 +222,11 @@ async def _upload_by_label(page, upload_label: str, file_path: str,
         
     mb = os.path.getsize(file_path) / (1024 * 1024)
     if mb > MAX_FILE_MB:
-        logger.info("Large assessment file (%.1fMB): %s — portal alert will be auto-accepted", mb, fname)
+        from app.automation.services.document_utils import compress_uiic_document_if_needed
+        file_path, was_compressed = compress_uiic_document_if_needed(file_path, log=log)
+        mb = os.path.getsize(file_path) / (1024 * 1024)
+        if mb > MAX_FILE_MB:
+            logger.info("Large assessment file (%.1fMB): %s — portal alert will be auto-accepted", mb, fname)
 
     if isinstance(log, AutomationLogger):
         log.upload_start(upload_label, fname)

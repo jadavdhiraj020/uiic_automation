@@ -153,8 +153,6 @@ class SettingsPage(QWidget):
     def _automation_default_rows(self):
         # ── Printable Excel & PDF settings — shared across all portals ─────
         _printable_rows = [
-            ("printable_output_excel_name", "Output Excel Name",    "Printable Excel — output filename", "text"),
-            ("printable_output_pdf_name",   "Output PDF Name",      "Printable PDF — output filename",   "text"),
             ("printable_print_mode",        "Print Mode",           "scale_percentage or column_range",  "printmode"),
             ("printable_scale_percentage",  "Scale Percentage",     "25–300 % (used when Print Mode = Scale Percentage)", "printspin"),
             ("printable_column_range",      "Column Range",         "e.g. A:L (used when Print Mode = Column Range)", "text"),
@@ -164,7 +162,6 @@ class SettingsPage(QWidget):
             "uiic": [
                 ("remarks_default", "Remarks Default", "Interim Report, Claim Assessment", "text"),
                 ("observation_default", "Observation Default", "Surveyor Observation fallback", "text"),
-                ("reinspection_output_filename", "Reinspection Output Filename", "Excel Sheet 3 extracted filename (default: reinspection.xlsx)", "text"),
             ] + _printable_rows,
             "newindia": [
                 ("remarks_default", "Remarks Default", "Remarks fallback", "text"),
@@ -431,10 +428,6 @@ class SettingsPage(QWidget):
                     inp.setPlaceholderText("Min 10 chars — text filled on Document Upload step")
                 elif key == "printable_column_range":
                     inp.setPlaceholderText("e.g. A:L or A:N")
-                elif key == "printable_output_excel_name":
-                    inp.setPlaceholderText("e.g. Printable_Assessment.xlsx")
-                elif key == "printable_output_pdf_name":
-                    inp.setPlaceholderText("e.g. Printable_Assessment.pdf")
                 else:
                     inp.setPlaceholderText("Enter value...")
                 self.defaults_table.setCellWidget(i, 1, inp)

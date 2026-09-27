@@ -1694,7 +1694,7 @@ class WebQueuePage(QWidget):
             return "Workspace Ready" if has_local else "Queued"
         return {
             "discovered": "Queued", "staging": "Downloading",
-            "stage failed": "Stage Failed", "scanning": "Downloading",
+            "stage failed": "Stage Failed", "scanning": "Preparing Workspace",
             "workspace ready": "Workspace Ready", "automation active": "Automation Active",
             "ready": "Ready", "report pending": "Syncing Result",
             "submitted successfully": "Submitted Successfully",
@@ -1759,11 +1759,13 @@ class WebQueuePage(QWidget):
         return self._status_for(record, automation_running)
 
     def _show_incoming_case(self, record):
-        """Only expose a dispatch after its durable local copy is verified."""
+        """Show a case once staging marked it Ready; local edits are the user's choice."""
         return bool(
             record
-            and record.get("local_status") in ("ready", "workspace ready", "automation active", "needs final resolution")
-            and self._valid_stage(record)
+            and record.get("local_status") in (
+                "ready", "scanning", "workspace ready", "automation active", "needs final resolution",
+            )
+            and record.get("folder")
         )
 
     def _history(self):
@@ -1924,7 +1926,7 @@ class WebQueuePage(QWidget):
         return bool(
             self._workspace_ready_for_selected(selected, current)
             and not self.state_error and not self.state_recovery_blocked
-            and self.client and (not self.busy or self._receipt_in_flight is not None)
+            and (not self.busy or self._receipt_in_flight is not None)
             and not is_worker_busy
         )
 
@@ -2069,9 +2071,9 @@ class WebQueuePage(QWidget):
             # Base44/Drive error behind a permanent "Downloading" state.
             if record and record.get("local_status") in ("stage failed", "stale/replaced"):
                 continue
-            if record and (self._valid_stage(record) or record.get("local_status") in (
-                "ready", "workspace ready", "automation active", "needs final resolution",
-            )):
+            if record and (record.get("local_status") in (
+                "ready", "scanning", "workspace ready", "automation active", "needs final resolution",
+            ) or self._valid_stage(record)):
                 continue
             if case_id not in self.staging_ids:
                 self._stage_case(job, automatic=True)
@@ -2518,19 +2520,9 @@ class WebQueuePage(QWidget):
             if not case_id or not dispatch_id:
                 continue
             receipt_status = record.get("receipt_status") or "received"
-            if receipt_status == "received":
-                try:
-                    validate_staged_case(record.get("folder"), case_id, dispatch_id,
-                                         record.get("latest_excel"), verify_md5=True)
-                except (OSError, ValueError, StagedCaseValidationError) as exc:
-                    self.case_repo.upsert(case_id, receipt_pending=False,
-                                          local_status="needs attention", phase="needs attention",
-                                          receipt_last_error=str(exc), last_error=str(exc))
-                    self.append_log(f"Delivery receipt blocked: local files no longer verify: {exc}",
-                                    phase="Receipt", level="Error", case_id=case_id)
-                    self.refresh()
-                    continue
-            elif receipt_status != "failed":
+            # The received receipt describes the already-verified delivery, not
+            # subsequent operator edits to the local working copy.
+            if receipt_status not in ("received", "failed"):
                 continue
             self._receipt_in_flight = (case_id, dispatch_id, receipt_status)
             client = self.client
@@ -2864,7 +2856,7 @@ class WebQueuePage(QWidget):
             )
             self.refresh()
             return
-        if status not in ("ready", "workspace ready", "automation active", "needs final resolution") or not self._valid_stage(record):
+        if status not in ("ready", "workspace ready", "automation active", "needs final resolution"):
             return
         if self.window._worker or self.window._scan_thread:
             self.result.setText("Finish the current Workspace operation before opening another staged case.")
@@ -2973,21 +2965,8 @@ class WebQueuePage(QWidget):
                 phase="Automation", level="Error", case_id=case_id,
             )
             return False
-        dispatch_id = _dispatch_id(job)
-        if not dispatch_id:
-            self.result.setText("Needs Attention: this case has no automation_dispatch_id. Base44 was not claimed.")
-            return False
-        # Intentional: staging and the received-receipt path already verify MD5.
-        # Start runs on the Qt GUI thread, so check manifest identity, file presence,
-        # and sizes here without hashing every document again. A same-size change
-        # made after staging is not detected at this Start boundary.
-        validation_error = self._stage_validation_error(selected, verify_md5=False)
-        if validation_error:
-            self.case_repo.upsert(case_id, local_status="needs attention", phase="needs attention",
-                                  last_error=validation_error)
-            self.result.setText(f"Needs Attention: local case verification failed: {validation_error}")
-            self.refresh()
-            return False
+        # Staging verified the delivered copy. Start uses the current Workspace
+        # files, including any changes deliberately made by the local operator.
         if any(getattr(self.window, name, None) is not None for name in ("_worker", "_thread", "_scan_thread")):
             self.result.setText("Wait for the previous Workspace operation to stop completely.")
             return False
@@ -3017,6 +2996,7 @@ class WebQueuePage(QWidget):
         return True
 
     def start_automation_for_folder(self, folder):
+        """Start a visible Web Queue case, or defer an unlisted folder to manual Browse."""
         target = Path(folder).resolve()
         current = self.state.current
         if current and Path(current.get("folder", "")).resolve() != target:
@@ -3032,8 +3012,7 @@ class WebQueuePage(QWidget):
                 self.list.setCurrentRow(index)
                 self.refresh()
                 return bool(self.start_automation())
-        self.result.setText("Needs Attention: this Web Sync folder has no staged case state.")
-        return False
+        return None
 
     def workspace_scan_completed(self, folder, success, message=""):
         record = next((item for item in self._records() if item.get("folder") and Path(item["folder"]).resolve() == Path(folder).resolve()), None)
@@ -3053,11 +3032,11 @@ class WebQueuePage(QWidget):
             )
         else:
             self.case_repo.upsert(
-                record["case_id"], local_status="needs attention", phase="needs final resolution",
+                record["case_id"], local_status="ready", phase="workspace scan failed",
                 last_message=message or "Folder scan failed",
             )
             if current:
-                self._active_update(phase="needs final resolution", local_status="needs attention", last_message=message or "Folder scan failed")
+                self._active_update(phase="workspace scan failed", local_status="ready", last_message=message or "Folder scan failed")
             self.result.setText(f"Needs Attention: {message or 'Folder scan failed'}")
             self.append_log(
                 f"Folder scan needs attention: {message or 'Folder scan failed'}",
@@ -3318,20 +3297,7 @@ class WebQueuePage(QWidget):
             or getattr(self.window, "_thread", None)
         ))
         allowed_status = ("ready", "workspace ready", "automation active") if (is_active_current and not is_worker_running) else ("ready", "workspace ready")
-        if status not in allowed_status or not self._valid_stage(record):
-            validation_error = self._stage_validation_error(record, verify_md5=False)
-            if validation_error and case_id:
-                self.case_repo.upsert(
-                    case_id, local_status="needs attention", phase="needs attention",
-                    last_error=validation_error,
-                )
-                self.result.setText(f"Needs Attention: staged case validation failed: {validation_error}")
-                self.append_log(
-                    f"Start Automation blocked before browser launch: {validation_error}",
-                    phase="Automation", level="Error", case_id=case_id,
-                )
-                self.refresh()
-                return
+        if status not in allowed_status:
             self.result.setText("Start Automation is available only when this case is Ready.")
             return
         if self.window._worker or self.window._scan_thread:
@@ -3489,14 +3455,19 @@ class WebQueuePage(QWidget):
     def excel_for(self, folder):
         for record in self._records():
             if record.get("folder") and Path(record["folder"]).resolve() == Path(folder).resolve():
-                return record.get("latest_excel")
+                latest_excel = record.get("latest_excel")
+                # Prefer the delivered corrected workbook while it exists. If
+                # the operator renamed it, let the original folder scanner
+                # discover the current workbook as it does for Browse Folder.
+                if latest_excel and (Path(folder) / latest_excel).is_file():
+                    return latest_excel
         return None
 
     def settings_for(self, folder, portal):
         current = self.state.current
         if not current or Path(current["folder"]).resolve() != Path(folder).resolve():
-            if (Path(folder) / "web_sync_manifest.json").exists():
-                raise ValueError("This web case is not the current active case. Select it through Web Queue.")
+            # Browsing a local folder follows the original manual Workspace flow,
+            # even when it once came from Web Queue and still has a manifest.
             return {}
         if portal != current["portal"]:
             raise ValueError("Web case cannot start with a different portal")
