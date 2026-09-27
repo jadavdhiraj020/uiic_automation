@@ -19,18 +19,6 @@ REQUIRED_JSON = ("settings.json", "field_mapping.json", "doc_mapping.json", "aut
 REQUIRED_PORTALS = ("uiic", "newindia", "oic")
 MIN_QSS_BYTES = 1024
 
-# Specific PaddleOCR model subdirectory names (relative to .paddleocr root).
-# These are the directories that must be present for CAPTCHA OCR to work in
-# the packaged EXE. An empty or partial .paddleocr bundle will fail here.
-_PADDLEOCR_REQUIRED_SUBDIRS = (
-    # Text detection model
-    "whl/det",
-    # Text recognition model
-    "whl/rec",
-    # Text direction classifier model
-    "whl/cls",
-)
-
 _PYWIN32_DLL_PATTERNS = ("pythoncom*.dll", "pywintypes*.dll")
 
 
@@ -113,28 +101,30 @@ def verify(dist_dir: Path) -> list[str]:
         if not has_chromium:
             errors.append(f"missing Playwright Chromium payload under: {browsers}")
 
-    # ── PaddleOCR — structural model check ───────────────────────────────────
-    # Verify .paddleocr exists AND contains the three required model subtrees.
-    # This catches partial bundles (e.g. only det is present but rec is missing)
-    # which would cause silent CAPTCHA failures at runtime.
-    paddleocr_root = root / ".paddleocr"
-    has_paddleocr = paddleocr_root.is_dir()
-    checks.append(("PaddleOCR: root dir", has_paddleocr))
-    if not has_paddleocr:
-        errors.append(f"missing directory: {paddleocr_root}")
+    # ── RapidOCR & ONNX Runtime — model and DLL check ────────────────────────
+    rapidocr_models = root / "rapidocr_onnxruntime" / "models"
+    has_rapidocr = rapidocr_models.is_dir()
+    checks.append(("RapidOCR: models dir", has_rapidocr))
+    if not has_rapidocr:
+        errors.append(f"missing directory: {rapidocr_models}")
     else:
-        for subdir in _PADDLEOCR_REQUIRED_SUBDIRS:
-            # The exact model name inside det/rec/cls varies by version —
-            # we only require that the subdir is non-empty.
-            sub_path = paddleocr_root / Path(subdir)
-            has_sub = sub_path.is_dir() and any(sub_path.iterdir())
-            label = f"PaddleOCR: {subdir}/ (non-empty)"
-            checks.append((label, has_sub))
-            if not has_sub:
-                errors.append(
-                    f"PaddleOCR model directory missing or empty: {sub_path}\n"
-                    f"  (CAPTCHA OCR will fail at runtime without this)"
-                )
+        rec_model = rapidocr_models / "ch_PP-OCRv4_rec_infer.onnx"
+        has_rec = rec_model.is_file()
+        checks.append(("RapidOCR: PP-OCRv4 rec model", has_rec))
+        if not has_rec:
+            errors.append(f"missing RapidOCR model: {rec_model}")
+
+    ort_capi = root / "onnxruntime" / "capi"
+    has_ort_capi = ort_capi.is_dir()
+    checks.append(("ONNX Runtime: capi dir", has_ort_capi))
+    if not has_ort_capi:
+        errors.append(f"missing directory: {ort_capi}")
+    else:
+        ort_dll = ort_capi / "onnxruntime.dll"
+        has_dll = ort_dll.is_file()
+        checks.append(("ONNX Runtime: onnxruntime.dll", has_dll))
+        if not has_dll:
+            errors.append(f"missing ONNX Runtime DLL: {ort_dll}")
 
 
 
@@ -223,7 +213,7 @@ def main() -> int:
     if errors:
         print(f"\nVERIFICATION FAILED — {len(errors)} error(s):\n")
         for error in errors:
-            print(f"  ✗ {error}")
+            print(f"  [FAIL] {error}")
         print()
         return 1
 

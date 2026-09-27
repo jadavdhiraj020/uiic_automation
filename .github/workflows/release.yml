@@ -104,12 +104,10 @@ jobs:
           python -m playwright install chromium
         shell: pwsh
 
-      # ─── 6. Prepare PaddleOCR models ────────────────────────────────────
-      - name: Download PaddleOCR models
+      # ─── 6. Verify RapidOCR models ────────────────────────────────────
+      - name: Verify RapidOCR models
         run: |
-          New-Item -ItemType Directory -Force -Path "build_assets\paddleocr" | Out-Null
-          $env:PADDLEOCR_HOME = "${{ github.workspace }}\build_assets\paddleocr"
-          python -c "from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=True, lang='en', show_log=False); print('PaddleOCR models ready.')"
+          python -c "from rapidocr_onnxruntime import RapidOCR; RapidOCR(); print('RapidOCR models ready.')"
         shell: pwsh
 
       # ─── 7. Extract version from pyproject.toml ─────────────────────────
@@ -188,7 +186,6 @@ jobs:
       - name: Build Windows EXE
         run: |
           $env:PLAYWRIGHT_BROWSERS_PATH = "${{ github.workspace }}\build_assets\ms-playwright"
-          $env:PADDLEOCR_HOME            = "${{ github.workspace }}\build_assets\paddleocr"
           $env:PYTHONWARNINGS             = "ignore:The numpy.array_api submodule is still experimental.:UserWarning,ignore:invalid escape sequence.*:SyntaxWarning"
 
           Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
