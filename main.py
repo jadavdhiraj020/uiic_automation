@@ -90,22 +90,21 @@ def _preflight_check() -> list:
                 "Re-run build.bat to rebuild with a valid Chromium bundle."
             )
 
-    # ── PaddleOCR model trees (CAPTCHA solving requires all three) ──────────
-    paddle_home = resource_path(".paddleocr")
-    if not os.path.isdir(paddle_home):
+    # ── RapidOCR models (CAPTCHA solving and document OCR) ──────────────────
+    rapidocr_home = resource_path("rapidocr_onnxruntime", "models")
+    if not os.path.isdir(rapidocr_home):
         errors.append(
-            "PaddleOCR models not bundled (.paddleocr/ missing).\n"
+            "RapidOCR models not bundled (rapidocr_onnxruntime/models/ missing).\n"
             "CAPTCHA solving and document OCR will be unavailable.\n"
             "Re-run build.bat to rebuild the EXE with OCR models included."
         )
     else:
-        for _model_subdir in ("whl/det", "whl/rec", "whl/cls"):
-            _mp = os.path.join(paddle_home, *_model_subdir.split("/"))
-            if not os.path.isdir(_mp) or not os.listdir(_mp):
-                errors.append(
-                    f"PaddleOCR model missing or empty: .paddleocr/{_model_subdir}/\n"
-                    "CAPTCHA solving will fail. Re-run build.bat to fix."
-                )
+        rec_model = os.path.join(rapidocr_home, "ch_PP-OCRv4_rec_infer.onnx")
+        if not os.path.isfile(rec_model) or os.path.getsize(rec_model) == 0:
+            errors.append(
+                "RapidOCR recognition model missing: ch_PP-OCRv4_rec_infer.onnx\n"
+                "CAPTCHA solving will fail. Re-run build.bat to fix."
+            )
 
     return errors
 

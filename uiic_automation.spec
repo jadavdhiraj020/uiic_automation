@@ -59,16 +59,19 @@ def add_package(name: str, datas: list, binaries: list, hiddenimports: list) -> 
         print(f"[spec] collect_all skipped for {name}: {exc}")
 
 
-def add_directory(datas: list, source: Path, destination: str) -> None:
-    """Bundle a directory recursively, silently skipping __pycache__ sub-folders."""
+def add_directory(datas: list, source: Path, destination: str, exclude_prefixes: tuple = ()) -> None:
+    """Bundle a directory recursively, silently skipping __pycache__ and excluded sub-folders."""
     if not source.exists():
         return
     if source.is_file():
         datas.append((str(source), destination))
         return
     for root, dirs, files in os.walk(source):
-        # Filter out __pycache__ directories in-place to prevent os.walk from entering them
-        dirs[:] = [d for d in dirs if d != "__pycache__"]
+        # Filter out __pycache__ and excluded directories in-place to prevent os.walk from entering them
+        dirs[:] = [
+            d for d in dirs
+            if d != "__pycache__" and not any(d.lower().startswith(prefix) for prefix in exclude_prefixes)
+        ]
         rel_path = os.path.relpath(root, source)
         if rel_path == ".":
             dest_dir = destination
@@ -180,7 +183,7 @@ if playwright_cache:
             "Run:  build.bat  (step 4 — Playwright download) to populate the cache,\n"
             "then re-run build.bat to rebuild the EXE."
         )
-    add_directory(datas, playwright_cache, "playwright_browsers")
+    add_directory(datas, playwright_cache, "playwright_browsers", exclude_prefixes=("chromium_headless_shell", "privacysandboxattestationspreloaded"))
 else:
     raise FileNotFoundError(
         "[spec] Playwright browser cache not found.\n"
@@ -222,12 +225,7 @@ for package_name in (
     "Cython",
     "numpy",
     "PIL",
-    "lmdb",
-    "scipy",
-    "scipy.io",
-    "skimage",
     "pyclipper",
-    "imgaug",
     "cv2",
     "shapely",
     "playwright",
@@ -238,9 +236,7 @@ for package_name in (
     "xlrd",             # .xls file support — dynamic import not visible to static analysis
     "docx",
     "win32com",
-    "albumentations",   # PaddleOCR augmentation dependency — not pulled in transitively
-    "albucore",         # albumentations core — required by albumentations >=2.x
-    "rapidfuzz",        # string-matching used by PaddleOCR postprocessing
+    "rapidfuzz",
     "fonttools",        # pdfminer font subsetting — needed for some PDF types
 ):
     add_package(package_name, datas, binaries, hiddenimports)
@@ -281,12 +277,6 @@ hiddenimports.extend(
         "onnxruntime",
         "onnxruntime.capi",
         "onnxruntime.capi._pybind_state",
-        "lmdb",
-        "scipy",
-        "scipy.io",
-        "skimage",
-        "skimage.morphology",
-        "imgaug",
         "pyclipper",
         "shapely",
         "requests",
@@ -409,6 +399,14 @@ a = Analysis(
         "pytest",
         "sphinx",
         "tkinter",
+        "paddle",
+        "paddleocr",
+        "scipy",
+        "skimage",
+        "albumentations",
+        "albucore",
+        "imgaug",
+        "lmdb",
     ],
     noarchive=False,
 )

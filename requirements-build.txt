@@ -23,17 +23,11 @@ pywin32==306 ; sys_platform == "win32"
 rapidocr-onnxruntime==1.4.4
 onnxruntime==1.23.2
 
-# PaddleOCR dynamic/runtime dependencies
-lmdb==2.2.0
-scipy==1.15.3
-scikit-image==0.25.2
-imgaug==0.4.0
+# PaddleOCR legacy dynamic dependencies (retaining only pyclipper & shapely needed by RapidOCR)
 pyclipper==1.4.0
 shapely==2.1.2
 opencv-python==4.11.0.86
 opencv-contrib-python==4.11.0.86
-albumentations==2.0.8
-albucore==0.0.24
 rapidfuzz==3.14.5
 PyYAML==6.0.3
 python-docx==1.2.0

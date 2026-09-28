@@ -211,14 +211,24 @@ def run_headless_reinspection_com(full_path: str, pdf_path: str, sheet_index: in
             except Exception as cache_exc:
                 logger.warning("gencache setup failed in headless reinspection: %s", cache_exc)
 
-        pythoncom.CoInitialize()
-
         excel = None
         wb = None
         ws = None
         temp_wb = None
+        excel_pid = None
+        com_initialized = False
         try:
+            try:
+                pythoncom.CoInitialize()
+                com_initialized = True
+            except Exception:
+                pass
             excel = win32com.client.DispatchEx("Excel.Application")
+            try:
+                from app.data.printable_excel_service import _get_excel_pid
+                excel_pid = _get_excel_pid(excel)
+            except Exception:
+                excel_pid = None
             excel.Visible = False
             excel.DisplayAlerts = False
 
@@ -230,7 +240,7 @@ def run_headless_reinspection_com(full_path: str, pdf_path: str, sheet_index: in
                 try:
                     logger.info("Reinspection PDF strategy 1: worksheet export started")
                     ws.Select()
-                    ws.ExportAsFixedFormat(0, os.path.abspath(pdf_path))
+                    ws.ExportAsFixedFormat(0, os.path.abspath(pdf_path), 0, True, False, OpenAfterPublish=False)
                     logger.info(f"✅ Generated {pdf_path} via win32com worksheet export")
                     return True
                 except Exception as e:
@@ -243,7 +253,7 @@ def run_headless_reinspection_com(full_path: str, pdf_path: str, sheet_index: in
                     for i in range(1, wb.Worksheets.Count + 1):
                         wb.Worksheets(i).Visible = i == (sheet_index + 1)
                     wb.Worksheets(sheet_index + 1).Select()
-                    wb.ExportAsFixedFormat(0, os.path.abspath(pdf_path))
+                    wb.ExportAsFixedFormat(0, os.path.abspath(pdf_path), 0, True, False, OpenAfterPublish=False)
                     logger.info(f"✅ Generated {pdf_path} via win32com workbook export")
                     return True
                 except Exception as e:
@@ -256,7 +266,7 @@ def run_headless_reinspection_com(full_path: str, pdf_path: str, sheet_index: in
                     ws.Copy()
                     temp_wb = excel.ActiveWorkbook
                     try:
-                        temp_wb.ExportAsFixedFormat(0, os.path.abspath(pdf_path))
+                        temp_wb.ExportAsFixedFormat(0, os.path.abspath(pdf_path), 0, True, False, OpenAfterPublish=False)
                         logger.info(f"✅ Generated {pdf_path} via win32com temp workbook export")
                         return True
                     finally:
@@ -265,6 +275,7 @@ def run_headless_reinspection_com(full_path: str, pdf_path: str, sheet_index: in
                                 temp_wb.Close(SaveChanges=False)
                             except Exception:
                                 pass
+                            del temp_wb
                             temp_wb = None
                 except Exception as e:
                     logger.warning(f"PDF strategy 3 failed (temp workbook export): {e}")
@@ -275,28 +286,58 @@ def run_headless_reinspection_com(full_path: str, pdf_path: str, sheet_index: in
                 )
                 attempt_failures.append(f"Workbook has only {wb.Worksheets.Count} sheets")
         finally:
-            if temp_wb:
+            if ws is not None:
+                del ws
+                ws = None
+            if temp_wb is not None:
                 try:
                     temp_wb.Close(SaveChanges=False)
                 except Exception:
                     pass
+                del temp_wb
                 temp_wb = None
-            if wb:
+            if wb is not None:
+                try:
+                    wb.Saved = True
+                except Exception:
+                    pass
                 try:
                     wb.Close(SaveChanges=False)
                 except Exception:
                     pass
+                del wb
                 wb = None
-            ws = None
-            if excel:
+            if excel is not None:
                 try:
                     excel.Quit()
                 except Exception:
                     pass
+                del excel
                 excel = None
-            import gc
-            gc.collect()
-            pythoncom.CoUninitialize()
+
+            try:
+                import gc
+                gc.collect()
+            except Exception:
+                pass
+
+            if com_initialized:
+                try:
+                    pythoncom.CoUninitialize()
+                except Exception as uninit_exc:
+                    logger.debug("CoUninitialize note (non-fatal): %s", uninit_exc)
+
+            # Ensure Excel process has exited; if still running after COM release, kill it
+            if excel_pid:
+                try:
+                    from app.data.printable_excel_service import _is_process_running, _kill_excel_process
+                    if _is_process_running(excel_pid):
+                        import time
+                        time.sleep(0.2)
+                        if _is_process_running(excel_pid):
+                            _kill_excel_process(excel_pid)
+                except Exception as term_exc:
+                    logger.debug("Excel termination check note: %s", term_exc)
     except Exception as e:
         logger.warning(f"win32com PDF export failed (fallback to Excel): {e}")
         attempt_failures.append(f"win32com setup/runtime error: {e}")
@@ -753,30 +794,42 @@ def scan_folder(
                 logger.info("Excel found (main): %s", fname)
 
                 # ── Auto-extract Sheet 3 for Re-Inspection Report (PDF) ─────────────
-                if _cancel_checkpoint("before_reinspection_generation"):
-                    return result
-                spot_path = _extract_sheet_for_reinspection_pdf(
-                    full_path,
-                    folder_path,
-                    sheet_index=2,
-                    output_filename="reinspection_report.pdf",
-                )
-                if spot_path and os.path.isfile(spot_path):
-                    _mark_generated(spot_path)
-                    if "reinspection_report" in upload_map:
-                        result.upload_doc_files["reinspection_report"] = spot_path
-                        logger.info(
-                            "Upload doc file [reinspection_report]: %s", spot_path
-                        )
-                    else:
-                        result.assessment_files["reinspection_report"] = spot_path
-                        logger.info(
-                            "Assessment file [reinspection_report]: %s", spot_path
-                        )
-                else:
+                if (
+                    "reinspection_report" in result.assessment_files
+                    or "reinspection_report" in result.upload_doc_files
+                ):
+                    existing_path = result.assessment_files.get(
+                        "reinspection_report"
+                    ) or result.upload_doc_files.get("reinspection_report")
                     logger.info(
-                        "No re-inspection PDF generated (Sheet 3 absent or extraction skipped)."
+                        "Reinspection report already available (%s); skipping extraction from Excel.",
+                        Path(existing_path).name,
                     )
+                else:
+                    if _cancel_checkpoint("before_reinspection_generation"):
+                        return result
+                    spot_path = _extract_sheet_for_reinspection_pdf(
+                        full_path,
+                        folder_path,
+                        sheet_index=2,
+                        output_filename="reinspection_report.pdf",
+                    )
+                    if spot_path and os.path.isfile(spot_path):
+                        _mark_generated(spot_path)
+                        if "reinspection_report" in upload_map:
+                            result.upload_doc_files["reinspection_report"] = spot_path
+                            logger.info(
+                                "Upload doc file [reinspection_report]: %s", spot_path
+                            )
+                        else:
+                            result.assessment_files["reinspection_report"] = spot_path
+                            logger.info(
+                                "Assessment file [reinspection_report]: %s", spot_path
+                            )
+                    else:
+                        logger.info(
+                            "No re-inspection PDF generated (Sheet 3 absent or extraction skipped)."
+                        )
             else:
                 logger.info("Skipped secondary Excel file: %s", fname)
                 result.skipped_files.append(
