@@ -150,10 +150,15 @@ def extract_token_string(raw_text: str) -> str:
       - JSON .lic file contents
       - Raw pasted WhatsApp text (including wrapped lines / surrounding text)
     """
-    if not isinstance(raw_text, str) or not raw_text.strip():
+    if not isinstance(raw_text, str):
         raise LicenseCodecError("License input is empty.")
 
-    stripped = raw_text.strip()
+    # Strip BOM and invisible zero-width formatting characters sometimes injected by WhatsApp/editors
+    sanitized = re.sub(r"[\u200b-\u200d\ufeff\u00ad]+", "", raw_text)
+    if not sanitized.strip():
+        raise LicenseCodecError("License input is empty.")
+
+    stripped = sanitized.strip()
     # 1. Try JSON .lic file wrapper
     if stripped.startswith("{"):
         try:

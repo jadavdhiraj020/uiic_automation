@@ -386,22 +386,26 @@ class TestCodec:
         assert verified.issued_date == "2026-11-09"
         assert verified.flags == 0
 
-        # WhatsApp line wrapping + surrounding greeting text
+        # WhatsApp line wrapping + surrounding greeting text + zero-width/BOM artifacts
         wrapped = (
             "Hello friend! Here is your key:\n\n"
-            + signed.token[:35]
+            + signed.token[:25]
+            + "\u200b"
+            + signed.token[25:55]
             + "\n"
-            + signed.token[35:75]
-            + "\r\n"
-            + signed.token[75:]
+            + signed.token[55:85]
+            + "\ufeff\r\n"
+            + signed.token[85:]
+            + "\u00ad"
             + "\n\nPaste and activate!"
         )
         assert extract_token_string(wrapped) == signed.token
         assert parse_and_verify_token(wrapped, public_key_b64=pub_b64).license_id == "LIC-ABCDEF12"
 
-        # .lic JSON format round-trip
+        # .lic JSON format round-trip (including UTF-8 BOM prefix)
         lic_json = format_lic_file_content(signed)
         assert parse_and_verify_token(lic_json, public_key_b64=pub_b64).token == signed.token
+        assert parse_and_verify_token("\ufeff" + lic_json, public_key_b64=pub_b64).token == signed.token
 
     def test_tampering_wrong_key_and_flag_rejections(self, keypair):
         import base64
@@ -523,6 +527,13 @@ class TestVerifierAndSecurity:
         )
         assert res.valid is True
         assert lic_dest.is_file()
+
+        # UTF-8 BOM prefixed .lic file also activates cleanly
+        bom_file = tmp_path / "friend_bom.lic"
+        bom_file.write_bytes(b"\xef\xbb\xbf" + src_file.read_bytes())
+        assert activate_from_file(
+            bom_file, license_path=lic_dest, public_key_b64=pub_b64, current_fp=fp_a
+        ).valid is True
 
         # Corrupt stored file fails cleanly
         lic_dest.write_text("{broken json", encoding="utf-8")
@@ -1011,6 +1022,15 @@ class TestOwnerVault:
         with pytest.raises(ValueError, match="not a valid"):
             decrypt_owner_bundle(corrupt, "8842")
 
+        # UTF-8 BOM saved by Windows Notepad/PowerShell still decrypts cleanly
+        bom_uikey = tmp_path / "bom.uikey"
+        bom_uikey.write_bytes(b"\xef\xbb\xbf" + uikey_path.read_bytes())
+        bom_priv, bom_pub = decrypt_owner_bundle(
+            bom_uikey, "8842", expected_public_key_b64=pub_b64
+        )
+        assert bom_pub == pub_b64
+        assert bom_priv.public_key().public_bytes_raw() == priv.public_key().public_bytes_raw()
+
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows DPAPI test")
     def test_owner_vault_dpapi_and_pin_lifecycle(self, tmp_path, keypair):
         from tools.owner_vault import OwnerVault, export_owner_bundle
@@ -1085,6 +1105,20 @@ class TestOwnerVault:
         with pytest.raises(ValueError, match="Could not unlock automatically"):
             vault.auto_unlock()
 
+        # Key rotation mismatch cleanly flags old DPAPI vault
+        vault.import_uikey_and_save(uikey_path, "setup-77", unlock_mode="dpapi")
+        _, rotated_pub = generate_keypair("RotatedKey#2026")
+        mismatched_vault = OwnerVault(
+            data_dir=vault.data_dir, expected_public_key_b64=rotated_pub
+        )
+        with pytest.raises(ValueError, match="does not match this version"):
+            mismatched_vault.auto_unlock()
+
+        # Corrupt JSON vault shows plain-English message instead of JSONDecodeError traceback
+        vault.vault_path.write_text("{broken json", encoding="utf-8")
+        with pytest.raises(ValueError, match="Saved license key data is invalid or damaged"):
+            vault.auto_unlock()
+
         # Reset removes vault JSON but leaves history intact
         vault.reset_vault()
         assert vault.has_vault() is False
@@ -1132,6 +1166,14 @@ class TestOwnerVault:
             vault.unlock_with_pin(" ")
         unlocked = vault.unlock_with_pin("5566")
         assert unlocked.public_key().public_bytes_raw() == priv.public_key().public_bytes_raw()
+
+        # Key rotation mismatch cleanly flags old PIN vault too
+        _, other_pub = generate_keypair("AnotherRotated#26")
+        pin_mismatch_vault = OwnerVault(
+            data_dir=vault.data_dir, expected_public_key_b64=other_pub
+        )
+        with pytest.raises(ValueError, match="does not match this version"):
+            pin_mismatch_vault.unlock_with_pin("5566")
 
 
 class TestOwnerGeneratorUI:

@@ -201,7 +201,7 @@ def decrypt_owner_bundle(
         raise ValueError("Please enter the Setup Code sent by your developer.")
 
     try:
-        obj = json.loads(path.read_text(encoding="utf-8"))
+        obj = json.loads(path.read_text(encoding="utf-8-sig"))
     except Exception as exc:
         raise ValueError("The selected file is not a valid Setup Key file (.uikey).") from exc
 
@@ -265,10 +265,29 @@ class OwnerVault:
         return self.vault_path.is_file()
 
     def _read_vault_obj(self) -> Dict[str, str]:
-        obj = json.loads(self.vault_path.read_text(encoding="utf-8"))
+        try:
+            obj = json.loads(self.vault_path.read_text(encoding="utf-8-sig"))
+        except Exception as exc:
+            raise ValueError(
+                "Saved license key data is invalid or damaged. Please re-import OwnerKey.uikey."
+            ) from exc
         if not isinstance(obj, dict) or obj.get("format") != OWNER_VAULT_FORMAT:
-            raise ValueError("Saved license key data is invalid or damaged.")
+            raise ValueError(
+                "Saved license key data is invalid or damaged. Please re-import OwnerKey.uikey."
+            )
         return obj
+
+    def _check_expected_public_key(self, private_key: Ed25519PrivateKey) -> None:
+        expected = (
+            PUBLIC_KEY_B64 if self.expected_public_key_b64 is None else self.expected_public_key_b64
+        )
+        if is_public_key_configured(expected):
+            pub_b64 = derive_public_key_b64(private_key)
+            if expected.strip() != pub_b64:
+                raise ValueError(
+                    "Your saved key does not match this version of the app. "
+                    "Please re-import the matching OwnerKey.uikey file."
+                )
 
     def unlock_mode(self) -> Optional[str]:
         if not self.has_vault():
@@ -285,8 +304,12 @@ class OwnerVault:
         dirs: List[Path] = list(search_dirs) if search_dirs is not None else []
         if not dirs:
             if getattr(sys, "frozen", False):
-                dirs.append(Path(sys.executable).resolve().parent)
-            dirs.append(Path.cwd())
+                exe_dir = Path(sys.executable).resolve().parent
+                dirs.append(exe_dir)
+                dirs.append(Path.cwd())
+                dirs.append(exe_dir.parent)
+            else:
+                dirs.append(Path.cwd())
 
         for directory in dirs:
             if not directory or not directory.is_dir():
@@ -377,12 +400,14 @@ class OwnerVault:
             raw32 = dpapi_unprotect(protected)
             if len(raw32) != 32:
                 raise ValueError("Invalid key length.")
-            return Ed25519PrivateKey.from_private_bytes(raw32)
+            priv = Ed25519PrivateKey.from_private_bytes(raw32)
         except Exception as exc:
             raise ValueError(
                 "Could not unlock automatically on this Windows user account. "
                 "Please re-import your OwnerKey.uikey file."
             ) from exc
+        self._check_expected_public_key(priv)
+        return priv
 
     def unlock_with_pin(self, pin: str) -> Ed25519PrivateKey:
         clean_pin = (pin or "").strip()
@@ -398,11 +423,13 @@ class OwnerVault:
             raw32 = AESGCM(_derive_key(clean_pin, salt)).decrypt(
                 nonce, ciphertext, _PIN_VAULT_AAD
             )
-            return Ed25519PrivateKey.from_private_bytes(raw32)
+            priv = Ed25519PrivateKey.from_private_bytes(raw32)
         except InvalidTag as exc:
             raise ValueError("Wrong PIN. Please try again.") from exc
         except Exception as exc:
             raise ValueError("Could not read saved key with that PIN.") from exc
+        self._check_expected_public_key(priv)
+        return priv
 
     def change_unlock_mode(
         self,
@@ -454,7 +481,7 @@ class OwnerVault:
         if not self.history_path.is_file():
             return []
         rows: List[Dict[str, str]] = []
-        for line in self.history_path.read_text(encoding="utf-8").splitlines():
+        for line in self.history_path.read_text(encoding="utf-8-sig").splitlines():
             line = line.strip()
             if not line:
                 continue

@@ -187,7 +187,7 @@ class IssuerStore:
         if not self.history_path.is_file():
             return []
         rows: List[Dict[str, str]] = []
-        for line in self.history_path.read_text(encoding="utf-8").splitlines():
+        for line in self.history_path.read_text(encoding="utf-8-sig").splitlines():
             line = line.strip()
             if not line:
                 continue

@@ -149,7 +149,7 @@ def verify_stored_license(
             message="No license found on this PC. Please activate using your license key.",
         )
     try:
-        raw_text = path.read_text(encoding="utf-8")
+        raw_text = path.read_text(encoding="utf-8-sig")
     except OSError as exc:
         return LicenseStatus(
             valid=False,
@@ -207,7 +207,7 @@ def activate_from_file(
             valid=False, reason="file_not_found", message=f"File not found: {src}"
         )
     try:
-        raw_text = src.read_text(encoding="utf-8")
+        raw_text = src.read_text(encoding="utf-8-sig")
     except OSError as exc:
         return LicenseStatus(
             valid=False, reason="unreadable", message=f"Cannot read selected file: {exc}"
