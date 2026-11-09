@@ -886,7 +886,8 @@ class TestLicenseGenerator:
         win.txt_setup_confirm.setText("Mismatch#1")
         win._on_create_keypair()
         assert win.stack.currentWidget() is win.page_setup
-        assert win.lbl_setup_err.isVisible()
+        assert not win.lbl_setup_err.isHidden()
+        assert "do not match" in win.lbl_setup_err.text()
 
         # Valid setup enters main page and syncs public key
         win.txt_setup_confirm.setText("MasterPass#1")
@@ -1176,7 +1177,8 @@ class TestOwnerGeneratorUI:
         win.txt_setup_code.setText("wrong")
         win._on_complete_setup()
         assert win.stack.currentWidget() is win.page_setup
-        assert win.lbl_setup_err.isVisible()
+        assert not win.lbl_setup_err.isHidden()
+        assert "Wrong Setup Code" in win.lbl_setup_err.text()
 
         # Correct Setup Code completes setup (auto-unlock DPAPI on Windows, PIN elsewhere)
         win.txt_setup_code.setText("9012")
@@ -1223,7 +1225,8 @@ class TestOwnerGeneratorUI:
         win2.txt_unlock_pin.setText("0000")
         win2._on_unlock_pin()
         assert win2.stack.currentWidget() is win2.page_pin
-        assert win2.lbl_pin_err.isVisible()
+        assert not win2.lbl_pin_err.isHidden()
+        assert "Wrong PIN" in win2.lbl_pin_err.text()
         win2.txt_unlock_pin.setText("7890")
         win2._on_unlock_pin()
         assert win2.stack.currentWidget() is win2.page_main
