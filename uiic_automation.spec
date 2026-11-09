@@ -419,6 +419,7 @@ a = Analysis(
         "albucore",
         "imgaug",
         "lmdb",
+        "tools",
     ],
     noarchive=False,
 )

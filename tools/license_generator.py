@@ -2,8 +2,9 @@
 Standalone Developer License Generator for UIIC Surveyor Automation.
 
 Runs ONLY on the developer's PC (excluded from the packaged EXE):
-  python tools/license_generator.py          # PyQt6 GUI (falls back to CLI if GUI blocked)
-  python tools/license_generator.py --cli    # Force interactive terminal mode
+  python tools/license_generator.py          # Owner Desktop GUI
+  python tools/license_generator.py --dev    # Developer GUI (or CLI fallback)
+  python tools/license_generator.py --cli    # Developer interactive terminal mode
 
 Stores your password-encrypted Ed25519 private key and issued-license log OUTSIDE Git in:
   %LOCALAPPDATA%\\UIIC_License_Issuer\\
@@ -40,6 +41,7 @@ from app.licensing.codec import (
 )
 from app.licensing.fingerprint import FingerprintError, decode_request_code, get_request_code
 from app.licensing.public_key import update_public_key_file
+from tools.owner_vault import export_owner_bundle
 
 _PUB_ASSIGN_RE = re.compile(r'^PUBLIC_KEY_B64\s*=\s*["\']([^"\']*)["\']\s*$', re.MULTILINE)
 
@@ -982,9 +984,10 @@ def run_cli(
             "  2) Sync PUBLIC_KEY_B64 to app\n"
             "  3) Show issued licenses history\n"
             "  4) Backup encrypted private key (.pem)\n"
+            "  5) Export Owner Setup File (OwnerKey.uikey) for your client\n"
             "  0) Exit"
         )
-        choice = input_fn("Select [1/2/3/4/0]: ").strip()
+        choice = input_fn("Select [1/2/3/4/5/0]: ").strip()
         if choice == "0":
             return 0
         elif choice == "1":
@@ -1034,13 +1037,38 @@ def run_cli(
                     output_fn(f"Backup saved to: {saved}")
                 except Exception as exc:
                     output_fn(f"Backup failed: {exc}")
+        elif choice == "5":
+            default_uikey = REPO_ROOT.parent / "OwnerKey.uikey"
+            dest_raw = input_fn(
+                f"Output .uikey path (press Enter for {default_uikey}): "
+            ).strip()
+            dest_path = Path(dest_raw) if dest_raw else default_uikey
+            c1 = secret_fn("Create a simple Setup Code for the Owner (min 4 chars/digits): ").strip()
+            if len(c1) < 4:
+                output_fn("Error: Setup Code must be at least 4 characters or digits.")
+                continue
+            c2 = secret_fn("Confirm Setup Code: ").strip()
+            if c1 != c2:
+                output_fn("Error: Setup Codes do not match.")
+                continue
+            try:
+                saved = export_owner_bundle(priv_key, c1, dest_path)
+                output_fn(
+                    f"\nSaved Owner Setup File: {saved}\n"
+                    "Next steps:\n"
+                    "  1. Put OwnerKey.uikey next to UIIC_License_Generator.exe and send to Owner.\n"
+                    "  2. Send the Setup Code to Owner privately (they enter it once).\n"
+                    "  3. Never commit OwnerKey.uikey to Git."
+                )
+            except Exception as exc:
+                output_fn(f"Export failed: {exc}")
         else:
             output_fn("Invalid choice.")
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Standalone Developer License Generator for UIIC Surveyor Automation"
+        description="UIIC Surveyor Automation — Owner & Developer License Generator"
     )
     parser.add_argument(
         "--data-dir",
@@ -1057,9 +1085,22 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--cli",
         action="store_true",
-        help="Use interactive terminal mode instead of PyQt6 GUI",
+        help="Use interactive terminal mode",
+    )
+    parser.add_argument(
+        "--dev",
+        action="store_true",
+        help="Developer mode: manage keypair, export OwnerKey.uikey, sync public key",
     )
     args = parser.parse_args(argv)
+
+    if not args.dev and not args.cli:
+        from tools.owner_generator_app import main as owner_main
+
+        owner_argv: List[str] = []
+        if args.data_dir is not None:
+            owner_argv.extend(["--data-dir", str(args.data_dir)])
+        return owner_main(owner_argv)
 
     store = IssuerStore(data_dir=args.data_dir, public_key_file=args.public_key_file)
 
@@ -1075,7 +1116,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return run_cli(store)
 
     app = QApplication.instance() or QApplication(sys.argv[:1])
-    app.setApplicationName("UIIC License Generator")
+    app.setApplicationName("UIIC License Generator (Dev)")
     win = window_cls(store)
     win.show()
     return app.exec()

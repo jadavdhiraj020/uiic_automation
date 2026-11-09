@@ -9,6 +9,7 @@ dist/
 build/
 *.spec
 !uiic_automation.spec
+!license_generator.spec
 build_assets/
 
 # Virtual environment
@@ -73,6 +74,8 @@ scratch/
 # Offline licensing private keys & local license files (defense-in-depth)
 *.pem
 *.lic
+*.uikey
+owner_vault.json
 issued_licenses.jsonl
 
 

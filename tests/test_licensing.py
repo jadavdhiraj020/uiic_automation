@@ -782,10 +782,24 @@ class TestLicenseGenerator:
 
         exported_lic = tmp_path / "friend_cli.lic"
         backup_pem = tmp_path / "backup_cli.pem"
+        exported_uikey = tmp_path / "OwnerKey.uikey"
         code_a = get_request_code(PC_A_ANCHORS)
 
-        # First-time setup (rejects short & mismatch before Y prompt) + issue + export + backup + exit
-        secrets_1 = iter(["short", "Mismatch1", "Mismatch2", "CliPass#2026", "CliPass#2026"])
+        # First-time setup (rejects short & mismatch) + issue + export .uikey + backup + exit
+        secrets_1 = iter(
+            [
+                "short",
+                "Mismatch1",
+                "Mismatch2",
+                "CliPass#2026",
+                "CliPass#2026",
+                "12",        # reject <4 char Setup Code on Option 5 attempt 1
+                "8842",      # reject mismatched confirm on Option 5 attempt 2
+                "9999",
+                "447711",    # valid Setup Code + confirm on Option 5 attempt 3
+                "447711",
+            ]
+        )
         inputs_1 = iter(
             [
                 "Y",  # sync public key
@@ -796,6 +810,12 @@ class TestLicenseGenerator:
                 "3",  # view history
                 "4",  # backup key
                 str(backup_pem),
+                "5",  # attempt 1 (short Setup Code -> returns to menu)
+                str(exported_uikey),
+                "5",  # attempt 2 (mismatch Setup Code -> returns to menu)
+                str(exported_uikey),
+                "5",  # attempt 3 (succeeds)
+                str(exported_uikey),
                 "0",  # exit
             ]
         )
@@ -810,10 +830,17 @@ class TestLicenseGenerator:
         assert store.has_private_key()
         assert exported_lic.is_file()
         assert backup_pem.is_file()
+        assert exported_uikey.is_file()
         assert any("Friend CLI" in line for line in out_1)
 
-        # Verify generated .lic activates cleanly on PC_A
+        from tools.owner_vault import decrypt_owner_bundle
+
         embedded_pub = store.read_embedded_public_key_b64()
+        uikey_priv, uikey_pub = decrypt_owner_bundle(
+            exported_uikey, "447711", expected_public_key_b64=embedded_pub
+        )
+        assert uikey_pub == embedded_pub
+        assert uikey_priv is not None
         dest_lic = tmp_path / "pc_a.lic"
         act = activate_from_file(
             exported_lic,
@@ -912,7 +939,298 @@ class TestLicenseGenerator:
         assert win2.tbl_history.rowCount() == 1
 
 
-# ── 7. Runtime Integration & Packaging Hygiene ───────────────────────────────
+# ── 7. Owner Vault (.uikey, Windows DPAPI auto-unlock & PIN) & Owner GUI ────
+
+
+class TestOwnerVault:
+    def test_uikey_bundle_export_decrypt_and_rejections(self, tmp_path, keypair):
+        from tools.owner_vault import (
+            UIKEY_FORMAT,
+            decrypt_owner_bundle,
+            export_owner_bundle,
+        )
+
+        _, priv, pub_b64 = keypair
+        uikey_path = tmp_path / "OwnerKey.uikey"
+
+        with pytest.raises(ValueError, match="at least 4"):
+            export_owner_bundle(priv, "12", uikey_path)
+
+        export_owner_bundle(priv, "8842", uikey_path)
+        assert uikey_path.is_file()
+        assert not uikey_path.with_suffix(".uikey.tmp").exists()
+
+        # Right setup code + matching expected_public_key_b64 succeeds
+        loaded_priv, loaded_pub = decrypt_owner_bundle(
+            uikey_path, "8842", expected_public_key_b64=pub_b64
+        )
+        assert loaded_pub == pub_b64
+        assert loaded_priv.public_key().public_bytes_raw() == priv.public_key().public_bytes_raw()
+
+        # Missing file / blank / wrong Setup Code
+        with pytest.raises(FileNotFoundError):
+            decrypt_owner_bundle(tmp_path / "missing.uikey", "8842")
+        with pytest.raises(ValueError, match="Setup Code"):
+            decrypt_owner_bundle(uikey_path, "  ")
+        with pytest.raises(ValueError, match="Wrong Setup Code"):
+            decrypt_owner_bundle(uikey_path, "9999", expected_public_key_b64=pub_b64)
+
+        # Mismatched expected app public key
+        _, other_pub = generate_keypair("AnotherStrongKey#99")
+        with pytest.raises(ValueError, match="does not match"):
+            decrypt_owner_bundle(uikey_path, "8842", expected_public_key_b64=other_pub)
+
+        # Consistency check if public_key_b64 field is swapped
+        obj = json.loads(uikey_path.read_text(encoding="utf-8"))
+        tampered_pub = tmp_path / "tampered_pub.uikey"
+        obj_bad_pub = {**obj, "public_key_b64": other_pub}
+        tampered_pub.write_text(json.dumps(obj_bad_pub), encoding="utf-8")
+        with pytest.raises(ValueError, match="consistency"):
+            decrypt_owner_bundle(tampered_pub, "8842", expected_public_key_b64="")
+
+        # Tampered ciphertext fails AES-GCM tag
+        import base64
+
+        raw_ct = bytearray(base64.b64decode(obj["ciphertext_b64"]))
+        raw_ct[0] ^= 0xFF
+        obj_bad_ct = {**obj, "ciphertext_b64": base64.b64encode(bytes(raw_ct)).decode("ascii")}
+        tampered_ct = tmp_path / "tampered_ct.uikey"
+        tampered_ct.write_text(json.dumps(obj_bad_ct), encoding="utf-8")
+        with pytest.raises(ValueError, match="Wrong Setup Code"):
+            decrypt_owner_bundle(tampered_ct, "8842", expected_public_key_b64=pub_b64)
+
+        # Unsupported format / corrupt JSON
+        bad_fmt = tmp_path / "bad_fmt.uikey"
+        bad_fmt.write_text(json.dumps({"format": f"{UIKEY_FORMAT}-x"}), encoding="utf-8")
+        with pytest.raises(ValueError, match="Unsupported"):
+            decrypt_owner_bundle(bad_fmt, "8842")
+
+        corrupt = tmp_path / "corrupt.uikey"
+        corrupt.write_text("{not json", encoding="utf-8")
+        with pytest.raises(ValueError, match="not a valid"):
+            decrypt_owner_bundle(corrupt, "8842")
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows DPAPI test")
+    def test_owner_vault_dpapi_and_pin_lifecycle(self, tmp_path, keypair):
+        from tools.owner_vault import OwnerVault, export_owner_bundle
+
+        _, priv, pub_b64 = keypair
+        uikey_path = tmp_path / "OwnerKey.uikey"
+        export_owner_bundle(priv, "setup-77", uikey_path)
+
+        # 1. Windows DPAPI auto-unlock flow
+        vault = OwnerVault(data_dir=tmp_path / "owner_data", expected_public_key_b64=pub_b64)
+        assert vault.has_vault() is False
+        assert vault.auto_unlock() is None
+
+        imported = vault.import_uikey_and_save(uikey_path, "setup-77", unlock_mode="dpapi")
+        assert vault.has_vault() is True
+        assert vault.unlock_mode() == "dpapi"
+        assert imported.public_key().public_bytes_raw() == priv.public_key().public_bytes_raw()
+
+        vault_json_text = vault.vault_path.read_text(encoding="utf-8")
+        assert "dpapi_b64" in vault_json_text
+        assert "BEGIN PRIVATE KEY" not in vault_json_text
+        assert "setup-77" not in vault_json_text
+
+        auto_priv = vault.auto_unlock()
+        assert auto_priv is not None
+        assert auto_priv.public_key().public_bytes_raw() == priv.public_key().public_bytes_raw()
+
+        # Issue and verify offline for PC_A, ensure PC_B fails
+        with pytest.raises(ValueError, match="name"):
+            vault.issue_license(auto_priv, "   ", get_request_code(PC_A_ANCHORS))
+        signed = vault.issue_license(auto_priv, "Rajesh Office", get_request_code(PC_A_ANCHORS))
+        assert (
+            verify_license_token(
+                signed.token,
+                public_key_b64=pub_b64,
+                current_fp=build_fingerprint_bytes(PC_A_ANCHORS),
+            ).valid
+            is True
+        )
+        assert (
+            verify_license_token(
+                signed.token,
+                public_key_b64=pub_b64,
+                current_fp=build_fingerprint_bytes(PC_B_ANCHORS),
+            ).valid
+            is False
+        )
+        history = vault.load_history()
+        assert len(history) == 1
+        assert history[0]["friend_name"] == "Rajesh Office"
+
+        # Switching DPAPI -> PIN and back
+        with pytest.raises(ValueError, match="do not match"):
+            vault.change_unlock_mode(auto_priv, "pin", pin="1234", confirm_pin="9999")
+        vault.change_unlock_mode(auto_priv, "pin", pin="2468", confirm_pin="2468")
+        assert vault.unlock_mode() == "pin"
+        assert vault.auto_unlock() is None
+        with pytest.raises(ValueError, match="Wrong PIN"):
+            vault.unlock_with_pin("0000")
+        pin_priv = vault.unlock_with_pin("2468")
+        assert pin_priv.public_key().public_bytes_raw() == priv.public_key().public_bytes_raw()
+
+        # Switching PIN -> DPAPI
+        vault.change_unlock_mode(pin_priv, "dpapi")
+        assert vault.unlock_mode() == "dpapi"
+        assert vault.auto_unlock() is not None
+
+        # Tampered DPAPI payload fails gracefully rather than crashing
+        v_obj = json.loads(vault.vault_path.read_text(encoding="utf-8"))
+        v_obj["dpapi_b64"] = "AAAA"
+        vault.vault_path.write_text(json.dumps(v_obj), encoding="utf-8")
+        with pytest.raises(ValueError, match="Could not unlock automatically"):
+            vault.auto_unlock()
+
+        # Reset removes vault JSON but leaves history intact
+        vault.reset_vault()
+        assert vault.has_vault() is False
+        assert len(vault.load_history()) == 1
+
+    def test_find_nearby_uikey_discovery_and_pin_setup_validation(self, tmp_path, keypair):
+        from tools.owner_vault import OwnerVault, export_owner_bundle
+
+        _, priv, pub_b64 = keypair
+        d_empty = tmp_path / "empty"
+        d_empty.mkdir()
+        assert OwnerVault.find_nearby_uikey([d_empty]) is None
+
+        # Single custom-named .uikey is found
+        d_single = tmp_path / "single"
+        custom_key = d_single / "RajeshSetup.uikey"
+        export_owner_bundle(priv, "4321", custom_key)
+        assert OwnerVault.find_nearby_uikey([d_single]) == custom_key
+
+        # Multiple files with OwnerKey.uikey prefers OwnerKey.uikey
+        preferred = d_single / "OwnerKey.uikey"
+        export_owner_bundle(priv, "4321", preferred)
+        assert OwnerVault.find_nearby_uikey([d_single]) == preferred
+
+        # Ambiguous multiple files without OwnerKey.uikey returns None
+        preferred.unlink()
+        export_owner_bundle(priv, "4321", d_single / "Second.uikey")
+        assert OwnerVault.find_nearby_uikey([d_single]) is None
+
+        # PIN import validations (short / mismatch / wrong unlock call in dpapi vs pin)
+        vault = OwnerVault(data_dir=tmp_path / "pin_only", expected_public_key_b64=pub_b64)
+        with pytest.raises(ValueError, match="at least 4"):
+            vault.import_uikey_and_save(
+                custom_key, "4321", unlock_mode="pin", pin="12", confirm_pin="12"
+            )
+        with pytest.raises(ValueError, match="do not match"):
+            vault.import_uikey_and_save(
+                custom_key, "4321", unlock_mode="pin", pin="1234", confirm_pin="5678"
+            )
+        vault.import_uikey_and_save(
+            custom_key, "4321", unlock_mode="pin", pin="5566", confirm_pin="5566"
+        )
+        assert vault.auto_unlock() is None
+        with pytest.raises(ValueError, match="enter your PIN"):
+            vault.unlock_with_pin(" ")
+        unlocked = vault.unlock_with_pin("5566")
+        assert unlocked.public_key().public_bytes_raw() == priv.public_key().public_bytes_raw()
+
+
+class TestOwnerGeneratorUI:
+    def test_owner_ui_has_zero_developer_jargon(self):
+        # Owner UI source must stay plain-English (never expose dev terms to the owner)
+        src = (REPO_ROOT / "tools" / "owner_generator_app.py").read_text(encoding="utf-8")
+        # Strip module docstring before scanning so internal header comment doesn't trip check
+        body = src.split('"""', 2)[-1]
+        for forbidden in ("Master Passphrase", "public_key.py", "Git", "Ed25519", "anchors", "--dev"):
+            # Allow "--dev" ONLY inside stderr CLI fallback message in main()
+            if forbidden == "--dev":
+                ui_part = body.split("def main(")[0]
+                assert forbidden not in ui_part
+            elif forbidden == "Ed25519":
+                # Type annotation Ed25519PrivateKey uses identifier, check plain prose only
+                assert "Ed25519 " not in body
+            else:
+                assert forbidden not in body, f"Developer jargon leaked into Owner UI: {forbidden}"
+
+    def test_owner_gui_setup_dpapi_issue_and_pin_flow(self, qapp, tmp_path, monkeypatch, keypair):
+        from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox
+        from tools.owner_generator_app import get_owner_window_class
+        from tools.owner_vault import OwnerVault, export_owner_bundle
+
+        OwnerGeneratorWindow = get_owner_window_class()
+        _, priv, pub_b64 = keypair
+        uikey_path = tmp_path / "OwnerKey.uikey"
+        export_owner_bundle(priv, "9012", uikey_path)
+
+        monkeypatch.setattr(QMessageBox, "information", lambda *a, **kw: QMessageBox.StandardButton.Ok)
+        monkeypatch.setattr(QMessageBox, "warning", lambda *a, **kw: QMessageBox.StandardButton.Ok)
+        monkeypatch.setattr(QMessageBox, "critical", lambda *a, **kw: QMessageBox.StandardButton.Ok)
+        monkeypatch.setattr(OwnerVault, "find_nearby_uikey", staticmethod(lambda dirs=None: uikey_path))
+
+        data_dir = tmp_path / "owner_ui_data"
+        vault = OwnerVault(data_dir=data_dir, expected_public_key_b64=pub_b64)
+        win = OwnerGeneratorWindow(vault)
+        assert win.stack.currentWidget() is win.page_setup
+        assert win.txt_uikey_path.text() == str(uikey_path)
+        assert "Found setup file" in win.lbl_setup_info.text()
+
+        # Wrong Setup Code keeps window on Setup page with clear error
+        win.txt_setup_code.setText("wrong")
+        win._on_complete_setup()
+        assert win.stack.currentWidget() is win.page_setup
+        assert win.lbl_setup_err.isVisible()
+
+        # Correct Setup Code completes setup (auto-unlock DPAPI on Windows, PIN elsewhere)
+        win.txt_setup_code.setText("9012")
+        if not win.rb_setup_auto.isEnabled():
+            win.txt_setup_pin.setText("4455")
+            win.txt_setup_pin_confirm.setText("4455")
+        win._on_complete_setup()
+        assert win.stack.currentWidget() is win.page_main
+        assert win.txt_setup_code.text() == ""
+
+        # Issue key for PC_A + copy WhatsApp + export .lic + activate offline
+        code_a = get_request_code(PC_A_ANCHORS)
+        win.txt_friend_name.setText("Friend 1")
+        win.txt_request_code.setText(code_a.lower())
+        assert "Code looks good" in win.lbl_code_check.text()
+        win._on_generate_license()
+        tok = win.txt_output_token.toPlainText()
+        assert tok.startswith(TOKEN_PREFIX)
+        assert win.tbl_history.rowCount() == 1
+
+        win._on_copy_whatsapp()
+        wa_text = QApplication.clipboard().text()
+        assert "Friend 1" in wa_text and tok in wa_text
+
+        win._on_copy_token()
+        assert QApplication.clipboard().text() == tok
+
+        saved_lic = tmp_path / "Friend_1_License.lic"
+        monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **kw: (str(saved_lic), ""))
+        win._on_save_lic()
+        assert saved_lic.is_file()
+        act = activate_from_file(
+            saved_lic,
+            license_path=tmp_path / "installed.lic",
+            public_key_b64=pub_b64,
+            current_fp=build_fingerprint_bytes(PC_A_ANCHORS),
+        )
+        assert act.valid is True
+
+        # Switch vault to PIN mode and verify relaunch lands on PIN screen
+        win.vault.change_unlock_mode(priv, "pin", pin="7890", confirm_pin="7890")
+        win2 = OwnerGeneratorWindow(OwnerVault(data_dir=data_dir, expected_public_key_b64=pub_b64))
+        assert win2.stack.currentWidget() is win2.page_pin
+        win2.txt_unlock_pin.setText("0000")
+        win2._on_unlock_pin()
+        assert win2.stack.currentWidget() is win2.page_pin
+        assert win2.lbl_pin_err.isVisible()
+        win2.txt_unlock_pin.setText("7890")
+        win2._on_unlock_pin()
+        assert win2.stack.currentWidget() is win2.page_main
+        assert win2.tbl_history.rowCount() == 1
+
+
+# ── 8. Runtime Integration & Packaging Hygiene ───────────────────────────────
 
 
 class TestRuntimeIntegration:
@@ -987,13 +1305,57 @@ class TestRuntimeIntegration:
             REPO_ROOT / "main.py",
             REPO_ROOT / "app" / "automation" / "engine.py",
             REPO_ROOT / "tools" / "license_generator.py",
+            REPO_ROOT / "tools" / "owner_vault.py",
+            REPO_ROOT / "tools" / "owner_generator_app.py",
+            REPO_ROOT / "uiic_automation.spec",
+            REPO_ROOT / "license_generator.spec",
         ]:
             ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
-        # 4. PyInstaller spec and dependency manifests include cryptography & app.licensing
+        # 4. Neither owner tool imports heavy automation / dev CLI modules
+        for owner_file in (
+            REPO_ROOT / "tools" / "owner_vault.py",
+            REPO_ROOT / "tools" / "owner_generator_app.py",
+        ):
+            otxt = owner_file.read_text(encoding="utf-8")
+            assert not re.search(
+                r"^\s*(?:from|import)\s+(?:playwright|rapidocr_onnxruntime|app\.portals|tools\.license_generator)\b",
+                otxt,
+                re.MULTILINE,
+            ), f"Owner tool imports excluded module: {owner_file}"
+            assert "BEGIN ENCRYPTED PRIVATE KEY" not in otxt
+            assert "BEGIN PRIVATE KEY" not in otxt
+
+        # 5. PyInstaller specs enforce strict separation between client app & owner generator
         spec_text = (REPO_ROOT / "uiic_automation.spec").read_text(encoding="utf-8")
         assert '"cryptography"' in spec_text
         assert '"app.licensing"' in spec_text
+        assert '"tools"' in spec_text
+        assert "owner_vault" not in spec_text
+        assert "owner_generator_app" not in spec_text
+
+        owner_spec = (REPO_ROOT / "license_generator.spec").read_text(encoding="utf-8")
+        assert 'APP_NAME = "UIIC_License_Generator"' in owner_spec
+        assert '"owner_generator_app.py"' in owner_spec
+        assert "console=False" in owner_spec
+        assert '"cryptography"' in owner_spec
+        assert '"tools.owner_generator_app"' in owner_spec
+        for excluded_pkg in ('"playwright"', '"rapidocr_onnxruntime"', '"onnxruntime"', '"tools.license_generator"'):
+            assert excluded_pkg in owner_spec
+
+        # 6. .gitignore tracks specs while ignoring secrets/vault/license files
+        gi_text = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
+        for line in ("!uiic_automation.spec", "!license_generator.spec", "*.pem", "*.lic", "*.uikey", "owner_vault.json", "issued_licenses.jsonl"):
+            assert line in gi_text
+
+        # 7. CI workflow builds Owner EXE only as private workflow artifact, never attached to Release
+        wf_text = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        assert "license_generator.spec" in wf_text
+        assert "OWNER_ZIP_NAME" in wf_text
+        release_section = wf_text.split("Create GitHub Release", 1)[1]
+        assert "files: ${{ steps.version.outputs.ZIP_NAME }}.zip" in release_section
+        assert "OWNER_ZIP_NAME" not in release_section
+
         req_text = (REPO_ROOT / "requirements.txt").read_text(encoding="utf-8")
         assert "cryptography" in req_text
         req_build_text = (REPO_ROOT / "requirements-build.txt").read_text(encoding="utf-8")

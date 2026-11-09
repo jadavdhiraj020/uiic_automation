@@ -39,6 +39,7 @@ permissions:
 
 env:
   APP_NAME: UIIC_Surveyor_Automation
+  OWNER_TOOL_NAME: UIIC_License_Generator
   PYTHON_VERSION: "3.10"
 
 jobs:
@@ -120,16 +121,19 @@ jobs:
           $short_sha = "${{ github.sha }}".Substring(0,7)
           $tag = "v${version}-build.${timestamp}"
           $zip_name = "${{ env.APP_NAME }}_v${version}_${short_sha}"
+          $owner_zip_name = "${{ env.OWNER_TOOL_NAME }}_OWNER_v${version}_${short_sha}"
 
           echo "VERSION=$version"       >> $env:GITHUB_OUTPUT
           echo "TAG=$tag"               >> $env:GITHUB_OUTPUT
-          echo "ZIP_NAME=$zip_name"     >> $env:GITHUB_OUTPUT
+          echo "ZIP_NAME=$zip_name"           >> $env:GITHUB_OUTPUT
+          echo "OWNER_ZIP_NAME=$owner_zip_name" >> $env:GITHUB_OUTPUT
           echo "SHORT_SHA=$short_sha"   >> $env:GITHUB_OUTPUT
           echo "TIMESTAMP=$timestamp"   >> $env:GITHUB_OUTPUT
 
           Write-Host "Version: $version"
           Write-Host "Tag:     $tag"
-          Write-Host "ZIP:     $zip_name"
+          Write-Host "ZIP:       $zip_name"
+          Write-Host "Owner ZIP: $owner_zip_name"
         shell: pwsh
 
       # ─── 8. Verify OIC module imports (EXE vs local parity check) ───────
@@ -180,6 +184,12 @@ jobs:
             exit 1
           }
           Write-Host "OIC parity check PASSED — all $($modules.Count) modules importable." -ForegroundColor Green
+        shell: pwsh
+
+      # ─── 8b. Run offline licensing & security tests ──────────────────────
+      - name: Run offline licensing unit tests
+        run: |
+          python -m pytest tests/test_licensing.py -v
         shell: pwsh
 
       # ─── 9. Build EXE with PyInstaller ──────────────────────────────────
@@ -261,6 +271,81 @@ jobs:
         with:
           name: ${{ steps.version.outputs.ZIP_NAME }}
           path: ${{ steps.version.outputs.ZIP_NAME }}.zip
+          retention-days: 14
+
+      # ─── 12.6. Build standalone Owner License Generator EXE ──────────────
+      - name: Build Owner License Generator EXE
+        run: |
+          python -m PyInstaller --noconfirm --clean --workpath build_owner license_generator.spec
+        shell: pwsh
+
+      # ─── 12.7. Verify Owner EXE & licensing security boundaries ──────────
+      - name: Verify Owner EXE & security boundaries
+        run: |
+          $ownerExe = "dist\${{ env.OWNER_TOOL_NAME }}\${{ env.OWNER_TOOL_NAME }}.exe"
+          if (-Not (Test-Path $ownerExe)) {
+            Write-Error "Build FAILED — Owner EXE not found at $ownerExe"
+            exit 1
+          }
+          $ownerSize = (Get-Item $ownerExe).Length / 1MB
+          Write-Host "Owner EXE verified: $ownerExe ($([math]::Round($ownerSize,1)) MB)"
+
+          # Security boundary 1: Ensure no private keys, setup bundles, or vault files leaked into either dist folder
+          foreach ($dir in @("dist\${{ env.APP_NAME }}", "dist\${{ env.OWNER_TOOL_NAME }}")) {
+            $leaks = Get-ChildItem -Path $dir -Recurse -File -Include *private_key*.pem,*.uikey,license.lic,*owner_vault*,*issued_licenses*
+            if ($leaks) {
+              Write-Error "SECURITY FAILURE: Secret/license artifacts found in $dir : $($leaks.FullName -join ', ')"
+              exit 1
+            }
+          }
+
+          # Security boundary 2: Ensure owner-tool files are NOT bundled inside end-user app dist
+          $toolLeaks = Get-ChildItem -Path "dist\${{ env.APP_NAME }}" -Recurse -File | Where-Object {
+            $_.Name -match "license_generator|owner_generator|owner_vault"
+          }
+          if ($toolLeaks) {
+            Write-Error "SECURITY FAILURE: Generator modules leaked into client EXE: $($toolLeaks.FullName -join ', ')"
+            exit 1
+          }
+
+          Write-Host "All licensing build security checks PASSED." -ForegroundColor Green
+        shell: pwsh
+
+      # ─── 12.8. Smoke-test Owner EXE (launch + exit) ──────────────────────
+      - name: Smoke-test Owner EXE (launch + exit)
+        run: |
+          Write-Host "Attempting smoke-test of Owner Generator EXE..."
+          $ownerExe = "dist\${{ env.OWNER_TOOL_NAME }}\${{ env.OWNER_TOOL_NAME }}.exe"
+          $proc = Start-Process -FilePath $ownerExe -PassThru -WindowStyle Hidden
+          Start-Sleep -Seconds 6
+          if ($proc.HasExited) {
+            if ($proc.ExitCode -ne 0) {
+              Write-Error "Owner EXE crashed on launch with exit code $($proc.ExitCode)"
+              exit 1
+            }
+            Write-Host "Owner EXE exited cleanly (exit code 0)."
+          } else {
+            Write-Host "Owner EXE is running cleanly after 6 seconds."
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          }
+        shell: pwsh
+        continue-on-error: true
+
+      # ─── 12.9. Package & upload Owner EXE ONLY as private workflow artifact ─
+      - name: Package Owner Generator ZIP
+        run: |
+          $source = "dist\${{ env.OWNER_TOOL_NAME }}"
+          $ownerZip = "${{ steps.version.outputs.OWNER_ZIP_NAME }}.zip"
+          Compress-Archive -Path "$source\*" -DestinationPath $ownerZip -CompressionLevel Optimal -Force
+          $sizeMB = [math]::Round((Get-Item $ownerZip).Length / 1MB, 1)
+          Write-Host "Owner ZIP created: $ownerZip ($sizeMB MB)"
+        shell: pwsh
+
+      - name: Upload Owner Generator Artifact (Private Workflow Only)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.OWNER_ZIP_NAME }}
+          path: ${{ steps.version.outputs.OWNER_ZIP_NAME }}.zip
           retention-days: 14
 
       # ─── 13. Create GitHub Release (Only for Main Branch Push) ──────────
