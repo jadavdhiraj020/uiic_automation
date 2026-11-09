@@ -140,6 +140,17 @@ def main() -> None:
             except Exception:
                 pass
 
+        try:
+            from app.licensing.verifier import LicenseRequiredError, require_valid_license
+
+            require_valid_license()
+        except LicenseRequiredError as exc:
+            _safe_stderr(f"ERROR: License check failed: {exc}")
+            sys.exit(1)
+        except Exception as exc:
+            _safe_stderr(f"ERROR: License verification error: {exc}")
+            sys.exit(1)
+
         if cmd == "--headless-pdf-render":
             if len(sys.argv) < 4:
                 _safe_stderr("ERROR: Missing arguments for PDF render")
@@ -232,6 +243,11 @@ def main() -> None:
     icon_path = resource_path("assets", "icon.ico")
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
+
+    from app.licensing.ui import ensure_activated_or_exit
+
+    license_status = ensure_activated_or_exit(app)
+    logger.info("License verified (%s, id=%s)", license_status.reason, license_status.license_id)
 
     from app.ui.main_window import MainWindow
 

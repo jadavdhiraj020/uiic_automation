@@ -171,6 +171,8 @@ def verify(dist_dir: Path) -> list[str]:
          "app.data package marker (OIC Excel extractor + assessment generator)"),
         ("app/automation/services/__init__.py",
          "app.automation.services package marker"),
+        ("app/licensing/__init__.py",
+         "app.licensing package marker (offline Ed25519 PC-lock licensing)"),
     ]
     # The source tree is the CWD when this script runs in CI (repo root).
     import pathlib as _pathlib

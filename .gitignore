@@ -70,5 +70,10 @@ scratch/
 
 # .scratch/*
 
+# Offline licensing private keys & local license files (defense-in-depth)
+*.pem
+*.lic
+issued_licenses.jsonl
+
 
 

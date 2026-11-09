@@ -238,6 +238,7 @@ for package_name in (
     "win32com",
     "rapidfuzz",
     "fonttools",        # pdfminer font subsetting — needed for some PDF types
+    "cryptography",     # Offline Ed25519 license verification
 ):
     add_package(package_name, datas, binaries, hiddenimports)
 
@@ -367,6 +368,17 @@ hiddenimports.extend(
         # ── Automation service layer (if it contains dynamically loaded code)
         "app.automation.services",
         "app.automation.services.cheque_ocr_adapter",
+        # ── Offline PC-Lock Licensing ─────────────────────────────────────────
+        "cryptography",
+        "cryptography.hazmat.primitives.asymmetric.ed25519",
+        "cryptography.hazmat.primitives.serialization",
+        "cryptography.exceptions",
+        "app.licensing",
+        "app.licensing.public_key",
+        "app.licensing.fingerprint",
+        "app.licensing.codec",
+        "app.licensing.verifier",
+        "app.licensing.ui",
     ]
 )
 

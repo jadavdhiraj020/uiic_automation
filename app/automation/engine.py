@@ -582,6 +582,13 @@ class AutomationEngine:
         self, claim: ClaimData, settings: Optional[dict] = None
     ) -> AutomationRunResult:
         """Main entry point for claim automation."""
+        try:
+            from app.licensing.verifier import LicenseRequiredError, require_valid_license
+
+            require_valid_license()
+        except LicenseRequiredError as exc:
+            self.log_cb(f"License check failed: {exc}")
+            return AutomationRunResult(False, f"License check failed: {exc}")
         if settings is None:
             settings = {}
         if self._check_stop():
