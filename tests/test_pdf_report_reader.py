@@ -60,3 +60,33 @@ def test_uiic_excel_keeps_legacy_missing_time_fallback():
     assert claim.time_mm == "00"
     assert claim.time_of_survey == "11:00"
 
+def test_uiic_pdf_missing_manual_fields_are_warnings_not_errors():
+    from app.data.data_model import ClaimData
+
+    claim = ClaimData(
+        portal_id="uiic",
+        source_report_path=r"C:\\test\\survey_report.pdf",
+    )
+    errors, warnings = claim.validate()
+
+    assert errors == []
+    assert any("Date of Survey" in w for w in warnings)
+    assert any("Place of Survey" in w for w in warnings)
+    assert any("Initial Loss Amount" in w for w in warnings)
+    assert any("Final Report No" in w for w in warnings)
+
+
+def test_uiic_excel_missing_required_fields_remain_blocking():
+    from app.data.data_model import ClaimData
+
+    claim = ClaimData(
+        portal_id="uiic",
+        source_excel_path=r"C:\\test\\survey_report.xlsx",
+    )
+    errors, warnings = claim.validate()
+
+    assert "Date of Survey is missing" in errors
+    assert "Place of Survey is missing" in errors
+    assert "Initial Loss Amount is missing" in errors
+    assert "Final Report No is missing" in errors
+
