@@ -607,8 +607,21 @@ def read_pdf_report(pdf_path: str, portal_id: str = "uiic") -> ClaimData:
     }
 
     found = 0
+    uiic_structured_only = {
+        "parts_age_dep_excl_gst",
+        "parts_50_dep_excl_gst",
+        "parts_nil_dep_excl_gst",
+        "parts_gst18_amount",
+        "labour_gst18_amount",
+    }
     for field_name, cfg in mapping.items():
         if field_name.startswith("_") or not isinstance(cfg, dict):
+            continue
+
+        # These UIIC values come from structured assessment/GST tables. Generic
+        # label matching can silently select the wrong SUB TOTAL or GST-inclusive
+        # grand total, so only the UIIC structured parser may populate them.
+        if portal_id == "uiic" and field_name in uiic_structured_only:
             continue
 
         if field_name == "surveyor_observation":
@@ -664,6 +677,9 @@ def read_pdf_report(pdf_path: str, portal_id: str = "uiic") -> ClaimData:
             claim.time_hh, claim.time_mm = hh, mm
             claim.time_of_survey = f"{hh}:{mm}"
             claim._excel_coords["time_of_survey"] = src or "PDF"
+
+    if portal_id == "uiic":
+        _apply_uiic_structured_fields(lines, claim)
 
     derive_fee = (
         portal_id == "uiic" or ("survey_fee" in mapping or "reinspection_fee" in mapping)
