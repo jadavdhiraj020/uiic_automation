@@ -530,6 +530,95 @@ def _uiic_classic_parts_18_taxable(lines: List[PdfLine]) -> Tuple[Optional[str],
     return (clean_amount(total), first_source) if found else (None, None)
 
 
+def _cluster_positioned_rows(words: List[dict], tolerance: float = 4.0) -> List[Tuple[float, str]]:
+    rows: List[Tuple[float, List[dict]]] = []
+    for word in sorted(words or [], key=lambda w: (float(w.get("top", 0)), float(w.get("x0", 0)))):
+        top = float(word.get("top", 0))
+        if rows and abs(rows[-1][0] - top) <= tolerance:
+            rows[-1][1].append(word)
+        else:
+            rows.append((top, [word]))
+    out: List[Tuple[float, str]] = []
+    for top, row_words in rows:
+        text = " ".join(str(w.get("text", "")) for w in sorted(row_words, key=lambda w: float(w.get("x0", 0))))
+        text = norm(text)
+        if text:
+            out.append((top, text))
+    return out
+
+
+def _uiic_overflow_value(
+    pdf_path: str,
+    labels: Tuple[str, ...],
+    kind: str,
+    required_terms: Tuple[str, ...] = (),
+) -> Tuple[Optional[str], Optional[str]]:
+    """Recover a value from horizontally split Excel-to-PDF output.
+
+    Some App-3 printable PDFs contain the left table on pages 1..N and the
+    overflow/right columns on pages N+1..2N.  This pairs rows by vertical
+    position instead of guessing from adjacent text lines.
+    """
+    try:
+        import pdfplumber
+        with pdfplumber.open(pdf_path) as pdf:
+            count = len(pdf.pages)
+            if count < 4 or count % 2:
+                return None, None
+            half = count // 2
+            for left_index in range(half):
+                right_index = left_index + half
+                left_rows = _cluster_positioned_rows(pdf.pages[left_index].extract_words())
+                right_rows = _cluster_positioned_rows(pdf.pages[right_index].extract_words())
+                if not left_rows or not right_rows:
+                    continue
+
+                for left_top, left_text in left_rows:
+                    low = left_text.lower()
+                    if not any(label.lower() in low for label in labels):
+                        continue
+                    if required_terms and not all(term.lower() in low for term in required_terms):
+                        continue
+
+                    candidates = sorted(
+                        right_rows,
+                        key=lambda row: abs(float(row[0]) - float(left_top)),
+                    )
+                    for right_top, right_text in candidates[:3]:
+                        if abs(float(right_top) - float(left_top)) > 10.0:
+                            continue
+                        value = parse_value(right_text, kind)
+                        if value:
+                            return value, f"PDF overflow p{left_index + 1}->p{right_index + 1}"
+    except Exception as exc:
+        logger.debug("UIIC overflow extraction unavailable for %s: %s", pdf_path, exc)
+    return None, None
+
+
+def _apply_uiic_overflow_fields(pdf_path: str, claim: ClaimData) -> None:
+    specs = (
+        ("compulsory_excess", ("less excess clause", "so, excess clause"), "amount", ()),
+        ("imposed_excess", ("less other clause", "imposed excess"), "amount", ()),
+        ("salvage_value", ("salavage value", "salvage value"), "amount", ()),
+        ("workshop_invoice_date", ("workshop invoice no.",), "date", ("dated",)),
+    )
+    for name, labels, kind, required in specs:
+        if str(claim._excel_coords.get(name, "") or "").strip():
+            continue
+        value, src = _uiic_overflow_value(pdf_path, labels, kind, required)
+        if value is not None:
+            _set_pdf_field(claim, name, value, src, "paired horizontal-overflow row")
+
+    # Report header date: require Ref + Date on the same left-page row to avoid
+    # confusing it with policy/accident/survey dates.
+    if not str(claim._excel_coords.get("final_report_date", "") or "").strip():
+        value, src = _uiic_overflow_value(pdf_path, ("date",), "date", ("ref", "date"))
+        if value is not None:
+            _set_pdf_field(claim, "final_report_date", value, src, "paired report-header overflow date")
+            if not str(claim._excel_coords.get("invoice_date", "") or "").strip():
+                _set_pdf_field(claim, "invoice_date", value, src, "UIIC report/invoice date parity")
+
+
 def _uiic_nil_depreciation_from_text(lines: List[PdfLine]) -> Tuple[Optional[str], Optional[str]]:
     """Infer Yes only from explicit NIL DEPRECIATION policy/cover wording."""
     for item in lines:
@@ -712,6 +801,7 @@ def supplement_uiic_claim_from_folder(folder: str, claim: ClaimData, main_report
             continue
 
         _apply_uiic_structured_fields(lines, claim, fill_only_missing=True)
+        _apply_uiic_overflow_fields(path, claim)
 
     # UIIC portal has one Professional Fee field which equals survey fee plus
     # re-inspection fee. Recompute after folder supplements so Total Claimed
@@ -835,6 +925,7 @@ def read_pdf_report(pdf_path: str, portal_id: str = "uiic") -> ClaimData:
 
     if portal_id == "uiic":
         _apply_uiic_structured_fields(lines, claim)
+        _apply_uiic_overflow_fields(pdf_path, claim)
 
     derive_fee = (
         portal_id == "uiic" or ("survey_fee" in mapping or "reinspection_fee" in mapping)
