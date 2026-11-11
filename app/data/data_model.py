@@ -801,33 +801,45 @@ class ClaimData:
 
 
     def _validate_uiic(self) -> Tuple[List[str], List[str]]:
-        """Original UIIC validation — completely unchanged."""
-        errors, warnings = [], []
+        """UIIC validation.
 
-        # ── Critical from Excel (automation cannot proceed without these) ──────
-        if not self.date_of_survey:
-            errors.append("Date of Survey is missing")
-        if not self.place_of_survey:
-            errors.append("Place of Survey is missing")
-        # L3 FIX: "0" is a valid amount (e.g. Total Loss cases). Only block if truly absent.
-        if not self.initial_loss_amount or self.initial_loss_amount.strip() == "":
-            errors.append("Initial Loss Amount is missing")
-        if not self.final_report_no:
-            errors.append("Final Report No is missing")
-        if not self.total_claimed_amount or self.total_claimed_amount.strip() == "":
-            errors.append("Total Claimed Amount is missing")
+        Existing Excel behavior remains strict.  For a PDF survey report, fields
+        that the UIIC automation already skips safely are downgraded to warnings
+        so the visible-browser workflow can continue and the surveyor can fill
+        the occasional missing value manually before Final Submit.
+        """
+        errors, warnings = [], []
+        is_pdf_report = str(getattr(self, "source_report_path", "") or "").lower().endswith(".pdf")
+        source_name = "PDF report" if is_pdf_report else "Excel"
+
+        def _missing(field_label: str, value: str) -> None:
+            if value is not None and str(value).strip() != "":
+                return
+            if is_pdf_report:
+                warnings.append(f"{field_label} not found in PDF report — leave blank and review/fill manually on portal")
+            else:
+                errors.append(f"{field_label} is missing")
+
+        # Existing Excel cases keep the same hard-blocking validation. PDF cases
+        # may proceed with blanks because the UIIC fill helpers skip missing
+        # values and Final Submit remains a human action.
+        _missing("Date of Survey", self.date_of_survey)
+        _missing("Place of Survey", self.place_of_survey)
+        _missing("Initial Loss Amount", self.initial_loss_amount)
+        _missing("Final Report No", self.final_report_no)
+        _missing("Total Claimed Amount", self.total_claimed_amount)
 
         # ── Warnings (non-blocking — skipped or handled gracefully) ───────────
         if not self.claim_no:
-            warnings.append("Claim No not in Excel — enter in the Claim Number field above")
+            warnings.append(f"Claim No not found in {source_name} — enter it manually if required")
         if not self.type_of_settlement:
             warnings.append("Type of Settlement missing — will use 'Partial Loss' default")
         if not self.time_hh:
-            warnings.append("Survey Time (HH) not set — field will be skipped")
+            warnings.append("Survey Time not found — field will be skipped for manual review")
         if not self.workshop_invoice_no:
-            warnings.append("Workshop Invoice No not found in Excel")
+            warnings.append(f"Workshop Invoice No not found in {source_name}")
         if not self.workshop_invoice_date:
-            warnings.append("Workshop Invoice Date not found in Excel")
+            warnings.append(f"Workshop Invoice Date not found in {source_name}")
         if not self.surveyor_observation:
             warnings.append("Surveyor Observation is empty")
         if not self.assessment_files:
