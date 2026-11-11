@@ -459,6 +459,77 @@ def _uiic_summary_amount(lines: List[PdfLine], labels: Tuple[str, ...]) -> Tuple
     return None, None
 
 
+def _sum_amount_strings(values: List[str]) -> Optional[str]:
+    if not values:
+        return None
+    try:
+        total = sum(float(v) for v in values)
+    except (TypeError, ValueError):
+        return None
+    return clean_amount(total)
+
+
+def _uiic_classic_labour_before_gst(lines: List[PdfLine]) -> Tuple[Optional[str], Optional[str]]:
+    """Fallback for classic reports that show labour columns but no GST summary."""
+    in_labour = False
+    for item in lines:
+        low = item.text.lower()
+        if "labour charges" in low or "labour detail" in low:
+            in_labour = True
+            continue
+        if in_labour and ("spare parts" in low or "parts detail" in low):
+            break
+        if not in_labour:
+            continue
+        if "total after discount" in low or "sub total before gst" in low:
+            vals = _amounts(item.text)
+            value = _sum_amount_strings(vals)
+            if value is not None:
+                return value, item.source
+    return None, None
+
+
+def _uiic_classic_parts_18_taxable(lines: List[PdfLine]) -> Tuple[Optional[str], Optional[str]]:
+    """Fallback: sum assessed classic spare-part rows carrying 18% GST.
+
+    Only used when there is no explicit GST SUMMARY – SPARES table.
+    """
+    in_parts = False
+    total = 0.0
+    first_source = None
+    found = False
+    for item in lines:
+        low = item.text.lower()
+        if "spare parts" in low:
+            in_parts = True
+            continue
+        if in_parts and ("summary of assessment" in low or "labour detail" in low):
+            break
+        if not in_parts:
+            continue
+        if not re.match(r"^\s*\d+[.)]?\s+", item.text):
+            continue
+        vals = _amounts(item.text)
+        # serial, estimated, [one or more assessed bucket amounts], GST rate
+        if len(vals) < 4:
+            continue
+        try:
+            rate = float(vals[-1])
+        except ValueError:
+            continue
+        if abs(rate - 18.0) >= 0.01:
+            continue
+        try:
+            assessed = sum(float(v) for v in vals[2:-1])
+        except ValueError:
+            continue
+        if assessed > 0:
+            total += assessed
+            found = True
+            first_source = first_source or item.source
+    return (clean_amount(total), first_source) if found else (None, None)
+
+
 def _uiic_header_date(lines: List[PdfLine]) -> Tuple[Optional[str], Optional[str]]:
     """Prefer the report header date on page 1, not a policy/invoice date."""
     first_page = [x for x in lines if x.page == 1][:35]
@@ -498,12 +569,20 @@ def _apply_uiic_structured_fields(lines: List[PdfLine], claim: ClaimData, *, fil
             _set_pdf_field(claim, name, value, parts_src, "structured parts subtotal")
 
     parts18, parts18_src = _uiic_gst_taxable(lines, "spares")
+    parts18_reason = "GST SUMMARY – SPARES 18% taxable amount"
+    if parts18 is None:
+        parts18, parts18_src = _uiic_classic_parts_18_taxable(lines)
+        parts18_reason = "classic spare-parts rows assessed at 18% GST"
     if can_set("parts_gst18_amount"):
-        _set_pdf_field(claim, "parts_gst18_amount", parts18, parts18_src, "GST SUMMARY – SPARES 18% taxable amount")
+        _set_pdf_field(claim, "parts_gst18_amount", parts18, parts18_src, parts18_reason)
 
     labour18, labour18_src = _uiic_gst_taxable(lines, "labour")
+    labour_reason = "GST SUMMARY – LABOUR 18% taxable amount"
+    if labour18 is None:
+        labour18, labour18_src = _uiic_classic_labour_before_gst(lines)
+        labour_reason = "classic labour total before GST"
     if can_set("labour_gst18_amount"):
-        _set_pdf_field(claim, "labour_gst18_amount", labour18, labour18_src, "GST SUMMARY – LABOUR 18% taxable amount")
+        _set_pdf_field(claim, "labour_gst18_amount", labour18, labour18_src, labour_reason)
 
     # Strong summary labels.
     summary_specs = (
