@@ -290,7 +290,7 @@ def ocr_lines(pdf_path: str, max_pages: int = 6) -> List[PdfLine]:
 def find_value(lines: List[PdfLine], field_name: str, cfg: dict, all_labels: List[str]):
     kind = field_type(field_name, cfg)
     for label in labels_for(field_name, cfg):
-        for i, item in enumerate(lines):
+        for item in lines:
             remainder = after_label(item.text, label)
             if remainder is None:
                 continue
@@ -298,10 +298,13 @@ def find_value(lines: List[PdfLine], field_name: str, cfg: dict, all_labels: Lis
             value = parse_value(remainder, kind)
             if value:
                 return value, item.source, label
-            if i + 1 < len(lines) and lines[i + 1].page == item.page:
-                value = parse_value(lines[i + 1].text, kind)
-                if value:
-                    return value, lines[i + 1].source, label
+
+            # Conservative V1 rule: if the matching label has no value on the
+            # same extracted PDF line, leave the field blank.  Do NOT consume
+            # the next line automatically; it may be a different label, a page
+            # footer, or another section.  A missing value is safer than a
+            # confidently wrong portal value, and the visible-browser workflow
+            # lets the surveyor fill the occasional blank manually.
     return None, None, None
 
 
