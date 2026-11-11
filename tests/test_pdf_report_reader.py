@@ -198,3 +198,60 @@ def test_uiic_header_date_used_for_report_and_invoice_date():
     assert claim.final_report_date == "18/07/2023"
     assert claim.invoice_date == "18/07/2023"
 
+def test_uiic_folder_supplement_rejects_different_claim(tmp_path, monkeypatch):
+    import app.data.pdf_report_reader as reader
+    from app.data.data_model import ClaimData
+    from app.data.pdf_report_reader import PdfLine
+
+    other = tmp_path / "other_survey.pdf"
+    other.write_bytes(b"placeholder")
+    fake_lines = [
+        PdfLine(1, 1, "MOTOR FINAL SURVEY REPORT"),
+        PdfLine(1, 2, "Claim No. : OTHER123"),
+        PdfLine(2, 1, "FINAL SURVEY BILL"),
+        PdfLine(2, 2, "Professional Fees Rs. : 6,544.00"),
+    ]
+    monkeypatch.setattr(reader, "read_lines", lambda _path, max_pages=None: fake_lines)
+
+    claim = ClaimData(
+        portal_id="uiic",
+        claim_no="ACTIVE123",
+        source_report_path=str(tmp_path / "survey_report.pdf"),
+    )
+    reader.supplement_uiic_claim_from_folder(str(tmp_path), claim, claim.source_report_path)
+
+    assert claim.survey_fee == "0"
+    assert claim.professional_fee == "0"
+
+
+def test_uiic_folder_supplement_same_claim_recalculates_professional_fee(tmp_path, monkeypatch):
+    import app.data.pdf_report_reader as reader
+    from app.data.data_model import ClaimData
+    from app.data.pdf_report_reader import PdfLine
+
+    fee_pdf = tmp_path / "fee_bill.pdf"
+    fee_pdf.write_bytes(b"placeholder")
+    fake_lines = [
+        PdfLine(1, 1, "MOTOR FINAL SURVEY REPORT"),
+        PdfLine(1, 2, "Claim No. : ACTIVE123"),
+        PdfLine(2, 1, "FINAL SURVEY BILL"),
+        PdfLine(2, 2, "Professional Fees Rs. : 6,544.00"),
+        PdfLine(2, 3, "re-inspection fee Rs. : 1,000.00"),
+        PdfLine(2, 4, "Conveyance Rs. : 1,000.00"),
+        PdfLine(2, 5, "Photograph Rs. : 200.00"),
+    ]
+    monkeypatch.setattr(reader, "read_lines", lambda _path, max_pages=None: fake_lines)
+
+    claim = ClaimData(
+        portal_id="uiic",
+        claim_no="ACTIVE123",
+        source_report_path=str(tmp_path / "survey_report.pdf"),
+    )
+    reader.supplement_uiic_claim_from_folder(str(tmp_path), claim, claim.source_report_path)
+
+    assert claim.survey_fee == "6544"
+    assert claim.reinspection_fee == "1000"
+    assert claim.professional_fee == "7544"
+    assert claim.traveling_expenses == "1000"
+    assert claim.photo_charges == "200"
+
