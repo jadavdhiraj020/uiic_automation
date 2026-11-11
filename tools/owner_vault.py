@@ -310,6 +310,8 @@ class OwnerVault:
                 dirs.append(exe_dir.parent)
             else:
                 dirs.append(Path.cwd())
+                dirs.append(Path.cwd().parent)
+                dirs.append(Path(__file__).resolve().parent.parent)
 
         for directory in dirs:
             if not directory or not directory.is_dir():

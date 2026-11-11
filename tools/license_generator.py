@@ -267,6 +267,20 @@ def get_generator_window_class():
                     font-family: "Segoe UI", Arial, sans-serif;
                     color: #0F172A;
                 }
+                QLabel {
+                    color: #0F172A;
+                    font-size: 9.5pt;
+                }
+                QRadioButton {
+                    color: #0F172A;
+                    font-size: 9.5pt;
+                    spacing: 8px;
+                }
+                QCheckBox {
+                    color: #0F172A;
+                    font-size: 9.5pt;
+                    spacing: 6px;
+                }
                 #headerBar {
                     background-color: #0F172A;
                     border-radius: 10px;
