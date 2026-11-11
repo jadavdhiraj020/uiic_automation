@@ -381,8 +381,11 @@ class ClaimFolderService:
     def process_folder(
         self, folder: str, stop_cb: Optional[callable] = None, sync_generation: Optional[bool] = None
     ) -> ClaimFolderProcessResult:
-        from app.data.excel_reader import extract_claim_data
         from app.data.folder_scanner import scan_folder
+        from app.data.report_reader import (
+            extract_claim_data_from_report,
+            find_main_report_source,
+        )
 
         logs: List[str] = [f"Scanning folder: {folder}"]
         try:
@@ -601,10 +604,15 @@ class ClaimFolderService:
                     getattr(scan_result, "policy_events", []) or []
                 )
 
-            if not scan_result.excel_path:
-                logs.append("Warning: No Excel file found in folder!")
+            report_source = find_main_report_source(folder, scan_result)
+            if not report_source:
+                logs.append("Warning: No supported survey report found (Excel or PDF)!")
                 return ClaimFolderProcessResult(
-                    False, scan_result, None, logs, error="No Excel file found"
+                    False,
+                    scan_result,
+                    None,
+                    logs,
+                    error="No supported survey report found (Excel or PDF)",
                 )
 
             if stop_cb and stop_cb():
@@ -612,8 +620,16 @@ class ClaimFolderService:
                     False, scan_result, None, ["Warning: Scan cancelled."], "Cancelled"
                 )
 
-            logs.append(f"Excel: {Path(scan_result.excel_path).name}")
-            claim = extract_claim_data(scan_result.excel_path, portal_id=self.portal_id)
+            source_ext = Path(report_source).suffix.lower()
+            if scan_result.excel_path:
+                logs.append(f"Excel: {Path(report_source).name}")
+            else:
+                logs.append(f"Survey Report PDF: {Path(report_source).name}")
+                scan_result.report_pdf_path = report_source
+
+            claim = extract_claim_data_from_report(
+                report_source, portal_id=self.portal_id
+            )
             claim.portal_id = self.portal_id
             claim._scan_context = scan_context
             claim.claim_doc_files = scan_result.claim_doc_files
@@ -621,6 +637,7 @@ class ClaimFolderService:
             claim.upload_doc_files = scan_result.upload_doc_files
             claim._scan_result = scan_result
             claim.source_excel_path = scan_result.excel_path or ""
+            claim.source_report_path = report_source
             claim._background_generation_stop_event = threading.Event()
 
             # F6 FIX: import once here, used by printable block, OIC block,
@@ -681,7 +698,7 @@ class ClaimFolderService:
                 )
                 claim._background_generation_thread = bg_thread
                 bg_thread.start()
-                logs.append("Info: Excel PDF assessment generation started in background.")
+                logs.append("Info: Excel PDF assessment generation started in background.") if scan_result.excel_path else logs.append("Info: PDF report selected; Excel-only assessment generation skipped.")
 
             # Issue 4: Reuse _portal_defaults loaded above — no second disk read.
             defaults = _portal_defaults
@@ -706,7 +723,7 @@ class ClaimFolderService:
             invoice_pdf = scan_result.assessment_files.get("invoice")
             if invoice_pdf and os.path.exists(invoice_pdf):
                 logs.append(
-                    f"Workshop Invoice PDF found: {Path(invoice_pdf).name} (Invoice PDF/OCR extraction disabled; using Excel values)."
+                    f"Workshop Invoice PDF found: {Path(invoice_pdf).name} (separate invoice OCR disabled; using extracted report values)."
                 )
             claim._pending_invoice_ocr = False
 
@@ -812,7 +829,7 @@ class ClaimFolderService:
                         claim._pending_cheque_path = cheque_path
 
             if hasattr(claim, "_excel_logs") and claim._excel_logs:
-                logs.append("Excel Data Sources Map:")
+                logs.append("Report Data Sources Map:")
                 logs.extend(claim._excel_logs)
 
             # Logging block moved and initialized earlier before background thread launch
