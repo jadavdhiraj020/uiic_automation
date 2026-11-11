@@ -530,6 +530,22 @@ def _uiic_classic_parts_18_taxable(lines: List[PdfLine]) -> Tuple[Optional[str],
     return (clean_amount(total), first_source) if found else (None, None)
 
 
+def _uiic_nil_depreciation_from_text(lines: List[PdfLine]) -> Tuple[Optional[str], Optional[str]]:
+    """Infer Yes only from explicit NIL DEPRECIATION policy/cover wording."""
+    for item in lines:
+        low = item.text.lower()
+        if "nil depreciation" not in low:
+            continue
+        if (
+            "nil depreciation policy" in low
+            or "nil depreciation cover" in low
+            or "not deducted being nil depreciation" in low
+            or "nil depreciation add on" in low
+        ):
+            return "Yes", item.source
+    return None, None
+
+
 def _uiic_header_date(lines: List[PdfLine]) -> Tuple[Optional[str], Optional[str]]:
     """Prefer the report header date on page 1, not a policy/invoice date."""
     first_page = [x for x in lines if x.page == 1][:35]
@@ -595,6 +611,10 @@ def _apply_uiic_structured_fields(lines: List[PdfLine], claim: ClaimData, *, fil
         if can_set(name):
             value, src = _uiic_summary_amount(lines, labels)
             _set_pdf_field(claim, name, value, src, "UIIC assessment summary")
+
+    if can_set("nil_depreciation"):
+        nil_dep, nil_dep_src = _uiic_nil_depreciation_from_text(lines)
+        _set_pdf_field(claim, "nil_depreciation", nil_dep, nil_dep_src, "explicit NIL DEPRECIATION policy wording")
 
     header_date, header_src = _uiic_header_date(lines)
     if can_set("final_report_date"):
