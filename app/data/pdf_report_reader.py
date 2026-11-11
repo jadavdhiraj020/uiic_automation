@@ -544,6 +544,11 @@ def supplement_uiic_claim_from_folder(folder: str, claim: ClaimData, main_report
     This does not read arbitrary invoices/estimates into ClaimData.  A PDF must
     contain strong UIIC survey markers before it can contribute values.
     """
+    def _claim_number_in(lines_: List[PdfLine]) -> str:
+        cfg = {"search_labels": PDF_ALIASES["claim_no"]}
+        value, _src, _label = find_value(lines_, "claim_no", cfg, PDF_ALIASES["claim_no"])
+        return str(value or "").strip()
+
     if getattr(claim, "portal_id", "") != "uiic" or not folder or not os.path.isdir(folder):
         return
 
@@ -570,6 +575,21 @@ def supplement_uiic_claim_from_folder(folder: str, claim: ClaimData, main_report
         ))
         if not strong:
             continue
+
+        # If both documents expose a Claim No., they must agree. This prevents
+        # a stray survey PDF from another claim in the same folder from
+        # supplementing the active UIIC case.
+        secondary_claim_no = _claim_number_in(lines)
+        active_claim_no = str(getattr(claim, "claim_no", "") or "").strip()
+        if active_claim_no and secondary_claim_no and secondary_claim_no != active_claim_no:
+            logger.warning(
+                "Skipping UIIC PDF supplement %s: claim number %s does not match active claim %s",
+                name,
+                secondary_claim_no,
+                active_claim_no,
+            )
+            continue
+
         _apply_uiic_structured_fields(lines, claim, fill_only_missing=True)
 
     # UIIC portal has one Professional Fee field which equals survey fee plus
