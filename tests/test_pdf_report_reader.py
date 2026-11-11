@@ -372,3 +372,52 @@ def test_uiic_folder_supplement_allows_same_claim_and_vehicle(tmp_path, monkeypa
     assert claim.survey_fee == "6544"
     assert claim.professional_fee == "6544"
 
+def test_uiic_horizontal_overflow_pairs_rows_by_position(monkeypatch):
+    import pdfplumber
+    from app.data.data_model import ClaimData
+    from app.data.pdf_report_reader import _apply_uiic_overflow_fields
+
+    def words_for_rows(rows):
+        out = []
+        for top, text in rows:
+            x = 10.0
+            for token in text.split():
+                out.append({"text": token, "top": top, "x0": x})
+                x += max(20.0, len(token) * 6.0)
+        return out
+
+    class FakePage:
+        def __init__(self, rows):
+            self._words = words_for_rows(rows)
+        def extract_words(self):
+            return list(self._words)
+
+    class FakePdf:
+        def __init__(self):
+            self.pages = [
+                FakePage([(100.0, "Ref: A/2026/002 MOTOR OD FINAL SURVEY REPORT Date:")]),
+                FakePage([
+                    (200.0, "LESS EXCESS CLAUSE"),
+                    (300.0, "Workshop Invoice No. PAC26-27-100745 Dated"),
+                ]),
+                FakePage([(101.0, "05/11/2026")]),
+                FakePage([
+                    (201.0, "2,000.00"),
+                    (301.0, "27/10/2026"),
+                ]),
+            ]
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(pdfplumber, "open", lambda _path: FakePdf())
+
+    claim = ClaimData(portal_id="uiic", source_report_path=r"C:\\test\\split.pdf")
+    _apply_uiic_overflow_fields(claim.source_report_path, claim)
+
+    assert claim.compulsory_excess == "2000"
+    assert claim.workshop_invoice_date == "27/10/2026"
+    assert claim.final_report_date == "05/11/2026"
+    assert claim.invoice_date == "05/11/2026"
+
