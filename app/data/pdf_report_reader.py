@@ -81,7 +81,7 @@ PDF_ALIASES = {
     "surveyor_license_expiry_date": ["Date of Expiry", "License Expiry Date"],
 }
 
-DATE_RX = re.compile(r"(?<!\\d)(\\d{1,2}[\\-/\\.]\\d{1,2}[\\-/\\.]\\d{2,4})(?=\\D|$|\\d{1,2}[:.]\\d{2})")
+DATE_RX = re.compile(r"(?<!\d)(\d{1,2}[\-/\.]\d{1,2}[\-/\.]\d{2,4})(?=\D|$|\d{1,2}[:.]\d{2})")
 TIME12_RX = re.compile(r"\b(\d{1,2})[.:](\d{2})\s*([APap]\.?[Mm]\.?)\b")
 TIME24_RX = re.compile(r"\b([01]?\d|2[0-3])[:.]([0-5]\d)\b")
 EMAIL_RX = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
