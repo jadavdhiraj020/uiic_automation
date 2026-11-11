@@ -572,6 +572,20 @@ def supplement_uiic_claim_from_folder(folder: str, claim: ClaimData, main_report
             continue
         _apply_uiic_structured_fields(lines, claim, fill_only_missing=True)
 
+    # UIIC portal has one Professional Fee field which equals survey fee plus
+    # re-inspection fee. Recompute after folder supplements so Total Claimed
+    # Amount is correct when the fee bill lives in a separate PDF.
+    claim.professional_fee = _calculate_professional_fee(
+        getattr(claim, "survey_fee", "0"),
+        getattr(claim, "reinspection_fee", "0"),
+    )
+    claim._excel_coords["professional_fee"] = "PDF fee bill calculation"
+    claim._excel_logs.append(
+        f"  [PDF UIIC] professional_fee: '{claim.professional_fee}' "
+        f"(Survey Fee '{getattr(claim, 'survey_fee', '0')}' + "
+        f"Re-inspection Fee '{getattr(claim, 'reinspection_fee', '0')}')"
+    )
+
 def read_pdf_report(pdf_path: str, portal_id: str = "uiic") -> ClaimData:
     mapping = load_field_mapping(portal_id=portal_id)
     defaults = load_automation_defaults(portal_id=portal_id)
