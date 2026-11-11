@@ -277,3 +277,19 @@ def test_uiic_classic_pdf_fallbacks_for_labour_and_18pct_parts():
     assert claim.labour_gst18_amount == "30500"
     assert claim.parts_gst18_amount == "18524"
 
+def test_uiic_explicit_nil_depreciation_policy_sets_yes_without_guessing_time():
+    from app.data.data_model import ClaimData
+    from app.data.pdf_report_reader import PdfLine, _apply_uiic_structured_fields
+
+    lines = [
+        PdfLine(2, 1, "Date & Time of Survey :"),
+        PdfLine(2, 2, "Depreciation is not deducted being NIL DEPRECIATION policy."),
+    ]
+    claim = ClaimData(portal_id="uiic", source_report_path=r"C:\\test\\alternate.pdf")
+    _apply_uiic_structured_fields(lines, claim)
+
+    assert claim.nil_depreciation == "Yes"
+    assert claim.date_of_survey == ""
+    assert claim.time_hh == ""
+    assert claim.time_mm == ""
+
