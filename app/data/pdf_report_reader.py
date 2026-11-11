@@ -93,7 +93,7 @@ DATE_RX = re.compile(r"(?<!\d)(\d{1,2}[\-/\.]\d{1,2}[\-/\.]\d{2,4})(?=\D|$|\d{1,
 TIME12_RX = re.compile(r"\b(\d{1,2})[.:](\d{2})\s*([APap]\.?[Mm]\.?)\b")
 TIME24_RX = re.compile(r"\b([01]?\d|2[0-3])[:.]([0-5]\d)\b")
 EMAIL_RX = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
-MOBILE_RX = re.compile(r"(?<!\d)(?:\+?91[\s\-]?)?([5-9]\d{9})(?!\d)")
+MOBILE_RX = re.compile(r"(?<!\d)(?:\+?91[\s\-]?)?([5-9](?:[\s\-]?\d){9})(?!\d)")
 AMOUNT_RX = re.compile(r"(?<![A-Za-z0-9])(?:Rs\.?\s*[:\-]?\s*|INR\s*[:\-]?\s*|₹\s*)?(-?\d[\d,]*(?:\.\d+)?)", re.I)
 ID_RX = re.compile(r"([A-Za-z0-9][A-Za-z0-9/_.\-]{1,80})")
 UNSAFE_LABELS = {"address", "date", "time", "make", "email", "mobile"}
@@ -210,7 +210,7 @@ def parse_value(text: str, kind: str) -> Optional[str]:
         return m.group(0) if m else None
     if kind == "mobile":
         m = MOBILE_RX.search(text)
-        return m.group(1) if m else None
+        return re.sub(r"\D", "", m.group(1)) if m else None
     if kind == "amount":
         matches = list(AMOUNT_RX.finditer(text))
         return clean_amount(matches[-1].group(1)) if matches else None
@@ -351,9 +351,20 @@ def driver_dob(lines: List[PdfLine]):
 def payment_to(lines: List[PdfLine]):
     for item in lines:
         low = item.text.lower()
-        if "cashless" in low or "payment to repairer" in low or "favour of repairer" in low:
+        if (
+            "cashless" in low
+            or "payment to repairer" in low
+            or "payment to be made to repairer" in low
+            or "favour of repairer" in low
+            or "payable to repairer" in low
+        ):
             return "REPAIRER", item.source
-        if "reimbursement" in low or "payment to insured" in low:
+        if (
+            "reimbursement" in low
+            or "payment to insured" in low
+            or "payment to be made to insured" in low
+            or "payable to insured" in low
+        ):
             return "INSURED", item.source
     return "", None
 
@@ -635,15 +646,209 @@ def _uiic_nil_depreciation_from_text(lines: List[PdfLine]) -> Tuple[Optional[str
     return None, None
 
 
+def _uiic_report_reference(lines: List[PdfLine]) -> Tuple[Optional[str], Optional[str]]:
+    """Read the full report reference from page 1; suffix cleanup happens later."""
+    for item in lines:
+        if item.page != 1:
+            break
+        for label in ("Ref No.", "Ref No", "Ref. No.", "Ref. No", "Reference No.", "Reference No", "Report No.", "Report No"):
+            remainder = after_label(item.text, label)
+            if remainder:
+                value = remainder.strip(" :;-–—")
+                if value:
+                    return value, item.source
+    return None, None
+
+
+def _uiic_fee_bill_pages(lines: List[PdfLine]) -> set:
+    """Pages that clearly contain the surveyor fee/tax invoice section."""
+    by_page = {}
+    for item in lines:
+        by_page.setdefault(item.page, []).append(item.text.lower())
+    pages = set()
+    for page, page_lines in by_page.items():
+        text = "\n".join(page_lines)
+        if "professional fee" not in text:
+            continue
+        if (
+            "description of services" in text
+            or "insurance claims adjustment services" in text
+            or ("invoice no" in text and "total amount" in text)
+            or "final survey bill" in text
+            or "survey fee bill" in text
+        ):
+            pages.add(page)
+    return pages
+
+
+def _uiic_fee_bill_amount(lines: List[PdfLine], labels: Tuple[str, ...]) -> Tuple[Optional[str], Optional[str]]:
+    pages = _uiic_fee_bill_pages(lines)
+    if not pages:
+        return None, None
+    for item in lines:
+        if item.page not in pages:
+            continue
+        low = item.text.lower()
+        if any(label.lower() in low for label in labels):
+            vals = _amounts(item.text)
+            if vals:
+                return vals[-1], item.source
+    return None, None
+
+
+def _uiic_fee_bill_invoice(lines: List[PdfLine]) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    pages = _uiic_fee_bill_pages(lines)
+    if not pages:
+        return None, None, None
+    for item in lines:
+        if item.page not in pages:
+            continue
+        remainder = after_label(item.text, "INVOICE NO.")
+        if remainder is None:
+            remainder = after_label(item.text, "INVOICE NO")
+        if remainder is None:
+            continue
+        invoice_no = parse_value(remainder, "id")
+        m = DATE_RX.search(remainder)
+        invoice_date = _format_date(m.group(1)) if m else None
+        if invoice_no:
+            return invoice_no, invoice_date, item.source
+    return None, None, None
+
+
+def _uiic_strong_workshop_invoice(lines: List[PdfLine]) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """Workshop invoice must be explicitly labelled as workshop/repairer/garage."""
+    no_labels = (
+        "Workshop Invoice No", "Workshop Invoice Number", "WS Invoice No",
+        "Work shop invoice", "Repairer Invoice No", "Garage Invoice No",
+        "Workshop Bill No",
+    )
+    date_labels = (
+        "Workshop Invoice Date", "WS Invoice Date", "Work shop invoice date",
+        "Repairer Invoice Date", "Garage Invoice Date", "Workshop Bill Date",
+    )
+    invoice_no = invoice_date = source = None
+    for item in lines:
+        if invoice_no is None:
+            for label in no_labels:
+                rem = after_label(item.text, label)
+                if rem is not None:
+                    invoice_no = parse_value(rem, "id")
+                    if invoice_no:
+                        source = item.source
+                        # Some layouts keep "Dated 27/10/2026" on same line.
+                        m = DATE_RX.search(rem)
+                        if m:
+                            invoice_date = _format_date(m.group(1))
+                        break
+        if invoice_date is None:
+            for label in date_labels:
+                rem = after_label(item.text, label)
+                if rem is not None:
+                    invoice_date = parse_value(rem, "date")
+                    if invoice_date:
+                        source = source or item.source
+                        break
+    return invoice_no, invoice_date, source
+
+
+def _uiic_gst_summary_for_rows(lines: List[PdfLine]) -> dict:
+    """Parse classic 'GST SUMMARY FOR <vehicle>' rows into taxable/net amounts."""
+    gst_pages = {item.page for item in lines if "gst summary for" in item.text.lower()}
+    if not gst_pages:
+        return {}
+
+    totals = {
+        "labour_18": 0.0,
+        "parts_18": 0.0,
+        "metal": 0.0,
+        "plastic": 0.0,
+        "glass": 0.0,
+    }
+    seen = {k: False for k in totals}
+
+    def parse_category(item: PdfLine, label: str) -> Tuple[Optional[float], Optional[float]]:
+        rem = after_label(item.text, label)
+        if rem is None:
+            return None, None
+        vals = _amounts(rem)
+        if not vals:
+            return None, None
+        # Normal row: NETT AMOUNT, GST %, GST AMOUNT.
+        if len(vals) >= 3:
+            try:
+                return float(vals[0]), float(vals[1])
+            except ValueError:
+                return None, None
+        # Zero-net row may extract only "18 0.00" or "28 0.00".
+        if len(vals) == 2:
+            try:
+                first = float(vals[0])
+                if first in (0.0, 5.0, 12.0, 18.0, 28.0):
+                    return 0.0, first
+            except ValueError:
+                pass
+        return None, None
+
+    for item in lines:
+        if item.page not in gst_pages:
+            continue
+        low = item.text.lower()
+
+        if "labour" in low:
+            net, rate = parse_category(item, "LABOUR")
+            if net is not None:
+                if rate == 18:
+                    totals["labour_18"] += net
+                    seen["labour_18"] = True
+            continue
+
+        category = None
+        label = None
+        if "parts plastic/rubber" in low:
+            category, label = "plastic", "PARTS PLASTIC/RUBBER"
+        elif "parts non-metallic" in low:
+            category, label = "plastic", "PARTS NON-METALLIC"
+        elif "parts metallic" in low:
+            category, label = "metal", "PARTS METALLIC"
+        elif "glass parts" in low:
+            category, label = "glass", "GLASS PARTS"
+
+        if not category:
+            continue
+        net, rate = parse_category(item, label)
+        if net is None:
+            continue
+        totals[category] += net
+        seen[category] = True
+        if rate == 18:
+            totals["parts_18"] += net
+            seen["parts_18"] = True
+
+    return {
+        key: clean_amount(value) if seen[key] else None
+        for key, value in totals.items()
+    }
+
+
 def _uiic_header_date(lines: List[PdfLine]) -> Tuple[Optional[str], Optional[str]]:
-    """Prefer the report header date on page 1, not a policy/invoice date."""
+    """Prefer the report header date on page 1, not policy/accident dates."""
     first_page = [x for x in lines if x.page == 1][:35]
     for item in first_page:
         low = item.text.lower()
-        if ("ref" in low or "report no" in low) and "date" in low:
+        if ("ref" in low or "report no" in low) and ("date" in low or "dated" in low):
             m = DATE_RX.search(item.text)
             if m:
                 return _format_date(m.group(1)), item.source
+
+    # Surveyor letterheads commonly print only "Dated 28-10-2026" near the top.
+    for item in first_page[:15]:
+        low = item.text.lower()
+        if "dated" in low and "policy" not in low and "cover note" not in low:
+            m = DATE_RX.search(item.text)
+            if m:
+                return _format_date(m.group(1)), item.source
+
     for item in first_page:
         if re.search(r"\bdate\s*[:\-]", item.text, re.I):
             m = DATE_RX.search(item.text)
