@@ -90,3 +90,40 @@ def test_uiic_excel_missing_required_fields_remain_blocking():
     assert "Initial Loss Amount is missing" in errors
     assert "Final Report No is missing" in errors
 
+def test_blank_claim_label_does_not_steal_next_line_value():
+    from app.data.pdf_report_reader import PdfLine, find_value
+
+    lines = [
+        PdfLine(1, 1, "Claim No. :"),
+        PdfLine(1, 2, "Vehicle No. : CH01CN0405"),
+    ]
+    value, source, label = find_value(
+        lines,
+        "claim_no",
+        {"search_labels": ["Claim No."]},
+        ["Claim No.", "Vehicle No."],
+    )
+
+    assert value is None
+    assert source is None
+    assert label is None
+
+
+def test_blank_amount_label_does_not_steal_page_footer_number():
+    from app.data.pdf_report_reader import PdfLine, find_value
+
+    lines = [
+        PdfLine(4, 1, "PHOTOGRAPHS :"),
+        PdfLine(4, 2, "Page 4 of 4"),
+    ]
+    value, source, label = find_value(
+        lines,
+        "photo_charges",
+        {"search_labels": ["PHOTOGRAPHS"]},
+        ["PHOTOGRAPHS"],
+    )
+
+    assert value is None
+    assert source is None
+    assert label is None
+
