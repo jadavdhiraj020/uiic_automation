@@ -255,6 +255,9 @@ def test_uiic_folder_supplement_same_claim_recalculates_professional_fee(tmp_pat
     assert claim.traveling_expenses == "1000"
     assert claim.photo_charges == "200"
 
+    claim.calculate_derived_fields()
+    assert claim.total_claimed_amount == "8744"
+
 def test_uiic_classic_pdf_fallbacks_for_labour_and_18pct_parts():
     from app.data.data_model import ClaimData
     from app.data.pdf_report_reader import PdfLine, _apply_uiic_structured_fields
