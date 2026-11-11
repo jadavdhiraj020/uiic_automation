@@ -17,6 +17,38 @@ logger = logging.getLogger(__name__)
 
 MAX_FILE_MB = 2.0
 
+
+def _is_pdf_claim(claim: ClaimData) -> bool:
+    return str(getattr(claim, "source_report_path", "") or "").lower().endswith(".pdf")
+
+
+def _is_unsourced_pdf_zero(claim: ClaimData, key: str, value, source: str = "") -> bool:
+    """True only for PDF defaults that were never extracted from any PDF.
+
+    A sourced zero is legitimate and must still be filled.
+    """
+    if not _is_pdf_claim(claim):
+        return False
+    src = str(source or claim._excel_coords.get(key, "") or "").strip()
+    if src:
+        return False
+    raw = str(value if value is not None else "").strip().replace(",", "")
+    return raw in {"", "0", "0.0", "0.00", "0.000"}
+
+
+async def _safe_fill_claim_amount(page, selector: str, value, label: str,
+                                  claim: ClaimData, key: str, log,
+                                  source: str = "") -> bool:
+    src = source or claim._excel_coords.get(key, "")
+    if _is_unsourced_pdf_zero(claim, key, value, src):
+        if isinstance(log, AutomationLogger):
+            log.field_skipped(label, "PDF value not found — leaving blank for manual review")
+        else:
+            log(f"  ⏭️  {label}: PDF value not found — left blank")
+        return False
+    return await safe_fill_amount(page, selector, value, label, log, source=src)
+
+
 # Portal upload section label → assessment_files dict key
 ASSESSMENT_UPLOAD_LABELS = {
     "assessment_report":   "Upload Assessment Report",
@@ -494,24 +526,37 @@ async def _fill_parts(page, claim: ClaimData, log, _src) -> None:
                 log("  📊 Nil OFF/Blank: Using all Excel values as-is without modification")
 
         _log_extraction(claim, log, "Age Dep (Metal)", val_age, "parts_age_dep_excl_gst")
-        await safe_fill_amount(page, ASSESSMENT["age_dep"],
-                               val_age, "Age Dep (Metal)", log,
-                               source=_src("parts_age_dep_excl_gst"))
+        await _safe_fill_claim_amount(page, ASSESSMENT["age_dep"],
+                                      val_age, "Age Dep (Metal)", claim,
+                                      "parts_age_dep_excl_gst", log,
+                                      source=_src("parts_age_dep_excl_gst"))
         
         _log_extraction(claim, log, "50% Dep (Plastic)", val_50, "parts_50_dep_excl_gst")
-        await safe_fill_amount(page, ASSESSMENT["dep_50"],
-                               val_50, "50% Dep (Plastic)", log,
-                               source=_src("parts_50_dep_excl_gst"))
+        await _safe_fill_claim_amount(page, ASSESSMENT["dep_50"],
+                                      val_50, "50% Dep (Plastic)", claim,
+                                      "parts_50_dep_excl_gst", log,
+                                      source=_src("parts_50_dep_excl_gst"))
         
         _log_extraction(claim, log, "Nil Dep", val_nil, "parts_nil_dep_excl_gst")
-        await safe_fill_amount(page, ASSESSMENT["nil_dep"],
-                               val_nil, "Nil Dep", log,
-                               source=_src("parts_nil_dep_excl_gst"))
+        await _safe_fill_claim_amount(page, ASSESSMENT["nil_dep"],
+                                      val_nil, "Nil Dep", claim,
+                                      "parts_nil_dep_excl_gst", log,
+                                      source=_src("parts_nil_dep_excl_gst"))
         
         _log_extraction(claim, log, "Parts GST 18%", val_target, "parts_gst18_amount")
-        await safe_fill_amount(page, ASSESSMENT["gst_18_parts"],
-                               val_target, "Parts GST 18%", log,
-                               source=_src("parts_gst18_amount") if not should_check else "Calculated")
+        parts_target_source = _src("parts_gst18_amount")
+        if should_check and not parts_target_source:
+            part_sources = [
+                _src("parts_age_dep_excl_gst"),
+                _src("parts_50_dep_excl_gst"),
+                _src("parts_nil_dep_excl_gst"),
+            ]
+            if any(str(s or "").strip() for s in part_sources):
+                parts_target_source = "Calculated from extracted PDF parts"
+        await _safe_fill_claim_amount(page, ASSESSMENT["gst_18_parts"],
+                                      val_target, "Parts GST 18%", claim,
+                                      "parts_gst18_amount", log,
+                                      source=parts_target_source)
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Parts section error: {e}")
@@ -532,14 +577,16 @@ async def _fill_labour(page, claim: ClaimData, log, _src) -> None:
         labour_val = claim.labour_gst18_amount or claim.labour_excl_gst
         src_val = _src("labour_gst18_amount") or _src("labour_excl_gst")
         _log_extraction(claim, log, "Labour (Excl GST)", labour_val, "labour_gst18_amount")
-        await safe_fill_amount(page, ASSESSMENT["labour"],
-                               labour_val, "Labour (Excl GST)", log,
-                               source=src_val)
+        await _safe_fill_claim_amount(page, ASSESSMENT["labour"],
+                                      labour_val, "Labour (Excl GST)", claim,
+                                      "labour_gst18_amount", log,
+                                      source=src_val)
         
         _log_extraction(claim, log, "Labour GST 18%", labour_val, "labour_gst18_amount")
-        await safe_fill_amount(page, ASSESSMENT["gst_18_labour"],
-                               labour_val, "Labour GST 18%", log,
-                               source=src_val)
+        await _safe_fill_claim_amount(page, ASSESSMENT["gst_18_labour"],
+                                      labour_val, "Labour GST 18%", claim,
+                                      "labour_gst18_amount", log,
+                                      source=src_val)
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Labour section error: {e}")
@@ -587,34 +634,40 @@ async def _fill_other_charges(page, claim: ClaimData, log, _src) -> None:
         
     try:
         _log_extraction(claim, log, "Towing Charges", claim.towing_charges, "towing_charges")
-        await safe_fill_amount(page, ASSESSMENT["towing"],
-                               claim.towing_charges, "Towing Charges", log,
-                               source=_src("towing_charges"))
+        await _safe_fill_claim_amount(page, ASSESSMENT["towing"],
+                                      claim.towing_charges, "Towing Charges", claim,
+                                      "towing_charges", log,
+                                      source=_src("towing_charges"))
         
         _log_extraction(claim, log, "Spot Repairs", claim.spot_repairs, "spot_repairs")
-        await safe_fill_amount(page, ASSESSMENT["spot_repairs"],
-                               claim.spot_repairs, "Spot Repairs", log,
-                               source=_src("spot_repairs"))
+        await _safe_fill_claim_amount(page, ASSESSMENT["spot_repairs"],
+                                      claim.spot_repairs, "Spot Repairs", claim,
+                                      "spot_repairs", log,
+                                      source=_src("spot_repairs"))
         
         _log_extraction(claim, log, "Voluntary Excess", claim.voluntary_excess, "voluntary_excess")
-        await safe_fill_amount(page, ASSESSMENT["vol_excess"],
-                               claim.voluntary_excess, "Voluntary Excess", log,
-                               source=_src("voluntary_excess"))
+        await _safe_fill_claim_amount(page, ASSESSMENT["vol_excess"],
+                                      claim.voluntary_excess, "Voluntary Excess", claim,
+                                      "voluntary_excess", log,
+                                      source=_src("voluntary_excess"))
         
         _log_extraction(claim, log, "Compulsory Excess", claim.compulsory_excess, "compulsory_excess")
-        await safe_fill_amount(page, ASSESSMENT["comp_excess"],
-                               claim.compulsory_excess, "Compulsory Excess", log,
-                               source=_src("compulsory_excess"))
+        await _safe_fill_claim_amount(page, ASSESSMENT["comp_excess"],
+                                      claim.compulsory_excess, "Compulsory Excess", claim,
+                                      "compulsory_excess", log,
+                                      source=_src("compulsory_excess"))
         
         _log_extraction(claim, log, "Imposed Excess", claim.imposed_excess, "imposed_excess")
-        await safe_fill_amount(page, ASSESSMENT["imp_excess"],
-                               claim.imposed_excess, "Imposed Excess", log,
-                               source=_src("imposed_excess"))
+        await _safe_fill_claim_amount(page, ASSESSMENT["imp_excess"],
+                                      claim.imposed_excess, "Imposed Excess", claim,
+                                      "imposed_excess", log,
+                                      source=_src("imposed_excess"))
         
         _log_extraction(claim, log, "Salvage Value", claim.salvage_value, "salvage_value")
-        await safe_fill_amount(page, ASSESSMENT["salvage"],
-                               claim.salvage_value, "Salvage Value", log,
-                               source=_src("salvage_value"))
+        await _safe_fill_claim_amount(page, ASSESSMENT["salvage"],
+                                      claim.salvage_value, "Salvage Value", claim,
+                                      "salvage_value", log,
+                                      source=_src("salvage_value"))
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Other charges error: {e}")
@@ -701,32 +754,46 @@ async def _fill_surveyor_charges(page, claim: ClaimData, log, _src) -> None:
         
     try:
         _log_extraction(claim, log, "Travel Expenses", claim.traveling_expenses, "traveling_expenses")
-        await safe_fill_amount(page, ASSESSMENT["travel"],
-                               claim.traveling_expenses, "Travel Expenses", log,
-                               source=_src("traveling_expenses"))
+        await _safe_fill_claim_amount(page, ASSESSMENT["travel"],
+                                      claim.traveling_expenses, "Travel Expenses", claim,
+                                      "traveling_expenses", log,
+                                      source=_src("traveling_expenses"))
         
         _log_extraction(claim, log, "Professional Fee", claim.professional_fee, "professional_fee")
-        await safe_fill_amount(page, ASSESSMENT["prof_fee"],
-                               claim.professional_fee, "Professional Fee", log,
-                               source=_src("professional_fee"))
+        await _safe_fill_claim_amount(page, ASSESSMENT["prof_fee"],
+                                      claim.professional_fee, "Professional Fee", claim,
+                                      "professional_fee", log,
+                                      source=_src("professional_fee"))
         
         _log_extraction(claim, log, "Daily Allowance", claim.daily_allowance, "daily_allowance")
-        await safe_fill_amount(page, ASSESSMENT["daily_allowance"],
-                               claim.daily_allowance, "Daily Allowance", log,
-                               source=_src("daily_allowance"))
+        await _safe_fill_claim_amount(page, ASSESSMENT["daily_allowance"],
+                                      claim.daily_allowance, "Daily Allowance", claim,
+                                      "daily_allowance", log,
+                                      source=_src("daily_allowance"))
         
         _log_extraction(claim, log, "Photo Charges", claim.photo_charges, "photo_charges")
-        await safe_fill_amount(page, ASSESSMENT["photo"],
-                               claim.photo_charges, "Photo Charges", log,
-                               source=_src("photo_charges"))
+        await _safe_fill_claim_amount(page, ASSESSMENT["photo"],
+                                      claim.photo_charges, "Photo Charges", claim,
+                                      "photo_charges", log,
+                                      source=_src("photo_charges"))
         
         try:
             total_el = page.locator(ASSESSMENT["total"]).first
             if await total_el.is_visible(timeout=2000) and await total_el.is_editable():
                 _log_extraction(claim, log, "Total Claimed Amount", str(claim.total_claimed_amount or 0), "total_claimed_amount")
-                await safe_fill_amount(page, ASSESSMENT["total"],
-                                       str(claim.total_claimed_amount or 0), "Total Claimed Amount", log,
-                                       source="Calculated")
+                charge_source_found = any(
+                    str(_src(k) or "").strip()
+                    for k in ("traveling_expenses", "professional_fee", "daily_allowance", "photo_charges", "sfb_others")
+                )
+                if _is_pdf_claim(claim) and not charge_source_found:
+                    if isinstance(log, AutomationLogger):
+                        log.field_skipped("Total Claimed Amount", "No surveyor-charge value was sourced from PDF")
+                    else:
+                        log("  ⏭️  Total Claimed Amount: no sourced PDF charge values — left blank")
+                else:
+                    await safe_fill_amount(page, ASSESSMENT["total"],
+                                           str(claim.total_claimed_amount or 0), "Total Claimed Amount", log,
+                                           source="Calculated")
             else:
                 if isinstance(log, AutomationLogger):
                     log.info("Total Claimed Amount is read-only, disabled, or not visible on this page. Skipping.")
