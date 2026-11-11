@@ -460,3 +460,74 @@ def test_uiic_pdf_missing_fee_does_not_create_fake_professional_fee_source():
     assert claim.professional_fee == "0"
     assert "professional_fee" not in claim._excel_coords
 
+def test_uiic_ajay_sharma_single_pdf_format_end_to_end(monkeypatch):
+    import app.data.pdf_report_reader as reader
+    from app.data.pdf_report_reader import PdfLine
+
+    lines = [
+        PdfLine(1, 1, "Mobile no. : 94171 70139 Dated 28-10-2026"),
+        PdfLine(1, 2, "E-mail ID : ajaysharma05@rediffmail.com"),
+        PdfLine(1, 3, "Ref No. : AS / OIC / 26-27 / BO-JODHPUR / 2740"),
+        PdfLine(1, 4, "claim no. 2012023126C050194001"),
+        PdfLine(1, 5, "MOTOR FINAL SURVEY REPORT"),
+        PdfLine(2, 1, "c) Place of survey : M/S Emm Pee Motors,I.A-I, Chandigarh"),
+        PdfLine(2, 2, "e) Date and time of survey : 20-10-2026 & subsequent visits."),
+        PdfLine(4, 1, "Less Excess Clause 2000.00"),
+        PdfLine(4, 2, "Less Salvage Value 0.00"),
+        PdfLine(4, 3, "8. Payment to be made to REPAIRER."),
+        PdfLine(5, 1, "GST SUMMARY FOR DL3C DA-4086"),
+        PdfLine(5, 2, "1 LABOUR 6469.00 18 1164.42"),
+        PdfLine(5, 3, "2 PARTS METALLIC 28 0.00"),
+        PdfLine(5, 4, "3 PARTS METALLIC 0.00 18 0.00"),
+        PdfLine(5, 5, "4 PARTS NON-METALLIC 28 0.00"),
+        PdfLine(5, 6, "5 PARTS PLASTIC/RUBBER 8192.00 18 1474.56"),
+        PdfLine(5, 7, "6 GLASS PARTS 0.00 18 0.00"),
+        PdfLine(6, 1, "Mobile no. : 94171 70139 Email ID : ajaysharma05@rediffmail.com"),
+        PdfLine(6, 2, "Ref No. : AS / OIC / 26-27 / BO-JODHPUR / 2740"),
+        PdfLine(6, 3, "INVOICE NO. 26N065 Dated 28-10-2026"),
+        PdfLine(6, 4, "RE. : Professional fee in respect of vehicle no. : DL3C DA-4086"),
+        PdfLine(6, 5, "Description of Services : Insurance Claims Adjustment Services"),
+        PdfLine(6, 6, "Professional Fee : Final 2800.00"),
+        PdfLine(6, 7, "Re-inspection"),
+        PdfLine(6, 8, "Conveyance : Local 500.00"),
+        PdfLine(6, 9, "Photographs : Final 20 Nos. 0.00"),
+        PdfLine(6, 10, "Total Amount 3300.00"),
+    ]
+
+    monkeypatch.setattr(reader, "read_lines", lambda _path, max_pages=None: list(lines))
+    monkeypatch.setattr(reader, "ocr_lines", lambda _path, max_pages=6: [])
+
+    claim = reader.read_pdf_report(r"C:\\test\\with claim no.pdf", portal_id="uiic")
+
+    assert claim.claim_no == "2012023126C050194001"
+    assert claim.date_of_survey == "20/10/2026"
+    assert claim.time_hh == ""
+    assert claim.place_of_survey == "M/S Emm Pee Motors,I.A-I, Chandigarh"
+    assert claim.mobile_no == "9417170139"
+    assert claim.email_id == "ajaysharma05@rediffmail.com"
+    assert claim.compulsory_excess == "2000"
+    assert claim.salvage_value == "0"
+
+    assert claim.parts_age_dep_excl_gst == "0"
+    assert claim.parts_50_dep_excl_gst == "8192"
+    assert claim.parts_nil_dep_excl_gst == "0"
+    assert claim.parts_gst18_amount == "8192"
+    assert claim.labour_gst18_amount == "6469"
+
+    assert claim.workshop_invoice_no == ""
+    assert claim.workshop_invoice_date == ""
+    assert claim.invoice_no == "26N065"
+    assert claim.invoice_date == "28/10/2026"
+    assert claim.final_report_no == "2740"
+    assert claim.final_report_date == "28/10/2026"
+
+    assert claim.survey_fee == "2800"
+    assert claim.reinspection_fee == "0"
+    assert claim.professional_fee == "2800"
+    assert claim.traveling_expenses == "500"
+    assert claim.photo_charges == "0"
+    assert claim.total_claimed_amount == "3300"
+
+    assert claim.payment_to == "REPAIRER"
+    assert claim.bank_payment_to == "Dealer"
+
