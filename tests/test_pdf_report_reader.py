@@ -317,3 +317,58 @@ def test_uiic_pdf_supplement_preserves_sourced_zero_value():
     assert claim.parts_nil_dep_excl_gst == "0"
     assert claim._excel_coords["parts_nil_dep_excl_gst"] == "PDF p5 line 3"
 
+def test_uiic_folder_supplement_rejects_same_claim_but_different_vehicle(tmp_path, monkeypatch):
+    import app.data.pdf_report_reader as reader
+    from app.data.data_model import ClaimData
+    from app.data.pdf_report_reader import PdfLine
+
+    other = tmp_path / "old_or_sample_report.pdf"
+    other.write_bytes(b"placeholder")
+    fake_lines = [
+        PdfLine(1, 1, "MOTOR FINAL SURVEY REPORT"),
+        PdfLine(1, 2, "Claim No. : ACTIVE123"),
+        PdfLine(1, 3, "Registration No. : CH01CN0405"),
+        PdfLine(2, 1, "FINAL SURVEY BILL"),
+        PdfLine(2, 2, "Professional Fees Rs. : 6,544.00"),
+    ]
+    monkeypatch.setattr(reader, "read_lines", lambda _path, max_pages=None: fake_lines)
+
+    claim = ClaimData(
+        portal_id="uiic",
+        claim_no="ACTIVE123",
+        vehicle_registration_number="CH01BT4945",
+        source_report_path=str(tmp_path / "survey_report.pdf"),
+    )
+    reader.supplement_uiic_claim_from_folder(str(tmp_path), claim, claim.source_report_path)
+
+    assert claim.survey_fee == "0"
+    assert claim.professional_fee == "0"
+
+
+def test_uiic_folder_supplement_allows_same_claim_and_vehicle(tmp_path, monkeypatch):
+    import app.data.pdf_report_reader as reader
+    from app.data.data_model import ClaimData
+    from app.data.pdf_report_reader import PdfLine
+
+    fee_pdf = tmp_path / "same_case_fee.pdf"
+    fee_pdf.write_bytes(b"placeholder")
+    fake_lines = [
+        PdfLine(1, 1, "MOTOR FINAL SURVEY REPORT"),
+        PdfLine(1, 2, "Claim No. : ACTIVE123"),
+        PdfLine(1, 3, "Registration No. : CH01 BT 4945"),
+        PdfLine(2, 1, "FINAL SURVEY BILL"),
+        PdfLine(2, 2, "Professional Fees Rs. : 6,544.00"),
+    ]
+    monkeypatch.setattr(reader, "read_lines", lambda _path, max_pages=None: fake_lines)
+
+    claim = ClaimData(
+        portal_id="uiic",
+        claim_no="ACTIVE123",
+        vehicle_registration_number="CH01BT4945",
+        source_report_path=str(tmp_path / "survey_report.pdf"),
+    )
+    reader.supplement_uiic_claim_from_folder(str(tmp_path), claim, claim.source_report_path)
+
+    assert claim.survey_fee == "6544"
+    assert claim.professional_fee == "6544"
+
