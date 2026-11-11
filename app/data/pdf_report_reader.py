@@ -572,6 +572,10 @@ def _apply_uiic_structured_fields(lines: List[PdfLine], claim: ClaimData, *, fil
     def can_set(name: str) -> bool:
         if not fill_only_missing:
             return True
+        # A sourced zero is a real extracted value, not "missing". Only default
+        # zero/blank values with no PDF source may be supplemented.
+        if str(claim._excel_coords.get(name, "") or "").strip():
+            return False
         val = getattr(claim, name, "")
         return val in (None, "", "0", "0.0", "0.00")
 
