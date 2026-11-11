@@ -690,6 +690,10 @@ def _uiic_fee_bill_amount(lines: List[PdfLine], labels: Tuple[str, ...]) -> Tupl
             continue
         low = item.text.lower()
         if any(label.lower() in low for label in labels):
+            # Narrative headings such as "Professional fee in respect of
+            # vehicle no. DL3C DA-4086" contain vehicle digits, not a fee.
+            if "in respect of vehicle" in low or "vehicle no" in low and "professional fee" in low:
+                continue
             vals = _amounts(item.text)
             if vals:
                 return vals[-1], item.source
