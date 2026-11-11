@@ -54,9 +54,9 @@ PDF_ALIASES = {
     "driver_license_issue_date": ["Date of Issue", "DL Issue Date", "License Issue Date"],
     "driver_license_expiry_date": ["Valid up to (NTV)", "Valid Till", "License Valid Till", "DL Expiry Date"],
     "cause_nature_of_accident": ["CAUSE & NATURE OF ACCIDENT", "CAUSE AND NATURE OF ACCIDENT", "Nature of Accident"],
-    "mobile_no": ["Mobile", "Mob", "Contact No", "Contact Number"],
-    "email_id": ["E-mail", "Email", "E mail"],
-    "initial_loss_amount": ["Initial Loss Assessment", "Initial Loss"],
+    "mobile_no": ["Mobile No.", "Mobile No", "Mobile Number", "Mobile", "Mob", "Contact No", "Contact Number"],
+    "email_id": ["Email ID", "Email Id", "Email Address", "E-mail ID", "E-mail", "Email", "E mail"],
+    "initial_loss_amount": ["Initial Loss Assessment", "Initial Loss", "intial loss assessment", "intial loss", "Total Loss Assessment", "TOTAL LOSS ASSESSMENT"],
     "towing_charges": ["Add Towing Charges", "Towing Charges", "Towing Charge"],
     "voluntary_excess": ["Voluntary Excess", "Voluntry Excess"],
     "compulsory_excess": ["Less Compulsory Excess", "Compulsory Excess", "(-) Excess", "Less Excess"],
@@ -76,7 +76,7 @@ PDF_ALIASES = {
     ],
     "workshop_invoice_no": ["Workshop Invoice No", "Repairer Invoice No", "Tax Invoice No", "Invoice No"],
     "workshop_invoice_date": ["Workshop Invoice Date", "Repairer Invoice Date", "Tax Invoice Date", "Invoice Date"],
-    "final_report_no": ["Ref. No.", "Ref No", "Reference No", "Report No"],
+    "final_report_no": ["Ref. No.", "Ref No", "Reference No", "Report No", "Report No.", "Report #", "Survey Report No", "Ref #"],
     "final_report_date": ["Report Date", "Final Report Date"],
     "traveling_expenses": ["Travelling Expenses", "Traveling Expenses", "Conveyance", "Conveyance Charges"],
     "professional_fee": ["Professional Fees", "Professional Fee", "Survey Fee", "Survey Fees"],
@@ -114,7 +114,9 @@ def labels_for(field_name: str, cfg: dict) -> List[str]:
     seen = {}
     for label in labels:
         key = norm_label(str(label))
-        if key and key not in UNSAFE_LABELS:
+        if key:
+            if key in UNSAFE_LABELS and field_name not in ("email_id", "surveyor_email", "mobile_no", "surveyor_mobile"):
+                continue
             seen.setdefault(key, str(label))
     return sorted(seen.values(), key=lambda x: len(norm_label(x)), reverse=True)
 
