@@ -30,3 +30,33 @@ def test_cut_before_second_label():
 
 def test_amount_prefers_rightmost_number():
     assert parse_value("S-1 35.00", "amount") == "35"
+
+def test_uiic_pdf_missing_time_stays_blank_for_manual_review():
+    from app.data.data_model import ClaimData
+
+    claim = ClaimData(
+        portal_id="uiic",
+        date_of_survey="15/10/2026",
+        source_report_path=r"C:\\test\\survey_report.pdf",
+    )
+    claim.calculate_derived_fields()
+
+    assert claim.time_hh == ""
+    assert claim.time_mm == ""
+    assert claim.time_of_survey == ""
+
+
+def test_uiic_excel_keeps_legacy_missing_time_fallback():
+    from app.data.data_model import ClaimData
+
+    claim = ClaimData(
+        portal_id="uiic",
+        date_of_survey="15/10/2026",
+        source_excel_path=r"C:\\test\\survey_report.xlsx",
+    )
+    claim.calculate_derived_fields()
+
+    assert claim.time_hh == "11"
+    assert claim.time_mm == "00"
+    assert claim.time_of_survey == "11:00"
+
