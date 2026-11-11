@@ -819,18 +819,24 @@ def supplement_uiic_claim_from_folder(folder: str, claim: ClaimData, main_report
         _apply_uiic_overflow_fields(path, claim)
 
     # UIIC portal has one Professional Fee field which equals survey fee plus
-    # re-inspection fee. Recompute after folder supplements so Total Claimed
-    # Amount is correct when the fee bill lives in a separate PDF.
-    claim.professional_fee = _calculate_professional_fee(
-        getattr(claim, "survey_fee", "0"),
-        getattr(claim, "reinspection_fee", "0"),
+    # re-inspection fee. Only derive it when at least one fee component was
+    # actually sourced from a PDF. Otherwise leave the default zero UNSOURCED
+    # so the UIIC filler can skip it instead of inventing a monetary value.
+    fee_source_found = bool(
+        str(claim._excel_coords.get("survey_fee", "") or "").strip()
+        or str(claim._excel_coords.get("reinspection_fee", "") or "").strip()
     )
-    claim._excel_coords["professional_fee"] = "PDF fee bill calculation"
-    claim._excel_logs.append(
-        f"  [PDF UIIC] professional_fee: '{claim.professional_fee}' "
-        f"(Survey Fee '{getattr(claim, 'survey_fee', '0')}' + "
-        f"Re-inspection Fee '{getattr(claim, 'reinspection_fee', '0')}')"
-    )
+    if fee_source_found:
+        claim.professional_fee = _calculate_professional_fee(
+            getattr(claim, "survey_fee", "0"),
+            getattr(claim, "reinspection_fee", "0"),
+        )
+        claim._excel_coords["professional_fee"] = "PDF fee bill calculation"
+        claim._excel_logs.append(
+            f"  [PDF UIIC] professional_fee: '{claim.professional_fee}' "
+            f"(Survey Fee '{getattr(claim, 'survey_fee', '0')}' + "
+            f"Re-inspection Fee '{getattr(claim, 'reinspection_fee', '0')}')"
+        )
 
 def read_pdf_report(pdf_path: str, portal_id: str = "uiic") -> ClaimData:
     mapping = load_field_mapping(portal_id=portal_id)
@@ -946,9 +952,16 @@ def read_pdf_report(pdf_path: str, portal_id: str = "uiic") -> ClaimData:
         portal_id == "uiic" or ("survey_fee" in mapping or "reinspection_fee" in mapping)
     ) and ("professional_fee" not in mapping or portal_id == "uiic")
     if derive_fee:
-        claim.professional_fee = _calculate_professional_fee(
-            getattr(claim, "survey_fee", "0"), getattr(claim, "reinspection_fee", "0")
+        fee_source_found = bool(
+            str(claim._excel_coords.get("survey_fee", "") or "").strip()
+            or str(claim._excel_coords.get("reinspection_fee", "") or "").strip()
         )
+        if portal_id != "uiic" or fee_source_found:
+            claim.professional_fee = _calculate_professional_fee(
+                getattr(claim, "survey_fee", "0"), getattr(claim, "reinspection_fee", "0")
+            )
+            if portal_id == "uiic":
+                claim._excel_coords["professional_fee"] = "PDF fee bill calculation"
 
     if portal_id == "newindia":
         claim.photo_charges = str(defaults.get("photo_charges_default", "200") or "200")
