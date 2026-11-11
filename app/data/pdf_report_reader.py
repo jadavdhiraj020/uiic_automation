@@ -358,6 +358,220 @@ def payment_to(lines: List[PdfLine]):
     return "", None
 
 
+def _amounts(text: str) -> List[str]:
+    """Return normalized numeric amounts from a PDF line, left-to-right."""
+    out: List[str] = []
+    for m in AMOUNT_RX.finditer(norm(text)):
+        value = clean_amount(m.group(1))
+        if value is not None:
+            out.append(value)
+    return out
+
+
+def _set_pdf_field(claim: ClaimData, field_name: str, value: Optional[str], source: Optional[str], reason: str) -> bool:
+    if value in (None, ""):
+        return False
+    setattr(claim, field_name, str(value))
+    claim._excel_coords[field_name] = source or "PDF"
+    claim._excel_logs.append(
+        f"  [PDF UIIC] {field_name}: '{value}' (Source: {source or 'PDF'}; {reason})"
+    )
+    return True
+
+
+def _uiic_gst_taxable(lines: List[PdfLine], section_name: str) -> Tuple[Optional[str], Optional[str]]:
+    """Read the 18% taxable amount from UIIC GST SUMMARY – SPARES/LABOUR."""
+    want = section_name.lower()
+    for i, item in enumerate(lines):
+        low = item.text.lower().replace("–", "-")
+        if "gst summary" not in low or want not in low:
+            continue
+        for nxt in lines[i + 1:i + 12]:
+            if nxt.page != item.page:
+                break
+            vals = _amounts(nxt.text)
+            if len(vals) < 2:
+                continue
+            try:
+                rate = float(vals[0])
+            except ValueError:
+                continue
+            if abs(rate - 18.0) < 0.01:
+                return vals[1], nxt.source
+    return None, None
+
+
+def _uiic_parts_buckets(lines: List[PdfLine]) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
+    """Read UIIC parts buckets from known survey-report table layouts.
+
+    Returns (age_dep/metal, 50%/plastic, nil/glass, source).
+    """
+    in_parts = False
+    layout = ""
+    for item in lines:
+        low = item.text.lower()
+
+        if "parts detail" in low or "spare parts" in low:
+            in_parts = True
+        if in_parts and ("labour detail" in low or "labour charges" in low and "total" not in low):
+            # Some reports print labour before parts; don't terminate unless we
+            # already identified a parts header/layout.
+            if layout:
+                in_parts = False
+
+        if not in_parts:
+            continue
+
+        # App-3/DocWriter generated report layout:
+        # Estimated | M-Age | P-50% | G-0% | Extra Bill | ... | GST
+        if ("m-age" in low and ("p-50" in low or "p-50%" in low)) or (
+            "estimated" in low and "g-0" in low and "gst" in low
+        ):
+            layout = "docwriter"
+
+        # Common surveyor layout:
+        # Estimated | Glass/Nil | Metal | Fiber | Rubber/Plastic 50%
+        if "glass parts" in low or ("metal parts" in low and "rubber" in low):
+            layout = "classic"
+
+        if layout == "docwriter" and re.search(r"\bsub\s*total\b", low):
+            vals = _amounts(item.text)
+            # First number is Estimated; next three are M-Age, P-50, G-0.
+            if len(vals) >= 4:
+                return vals[1], vals[2], vals[3], item.source
+
+        if layout == "classic" and "total before gst" in low:
+            vals = _amounts(item.text)
+            # Estimated, Glass/Nil, Metal, Fiber, Rubber/Plastic-50%.
+            if len(vals) >= 5:
+                return vals[2], vals[4], vals[1], item.source
+
+    return None, None, None, None
+
+
+def _uiic_summary_amount(lines: List[PdfLine], labels: Tuple[str, ...]) -> Tuple[Optional[str], Optional[str]]:
+    for item in lines:
+        low = item.text.lower()
+        if any(label.lower() in low for label in labels):
+            vals = _amounts(item.text)
+            if vals:
+                return vals[-1], item.source
+    return None, None
+
+
+def _uiic_header_date(lines: List[PdfLine]) -> Tuple[Optional[str], Optional[str]]:
+    """Prefer the report header date on page 1, not a policy/invoice date."""
+    first_page = [x for x in lines if x.page == 1][:35]
+    for item in first_page:
+        low = item.text.lower()
+        if ("ref" in low or "report no" in low) and "date" in low:
+            m = DATE_RX.search(item.text)
+            if m:
+                return _format_date(m.group(1)), item.source
+    for item in first_page:
+        if re.search(r"\bdate\s*[:\-]", item.text, re.I):
+            m = DATE_RX.search(item.text)
+            if m:
+                return _format_date(m.group(1)), item.source
+    return None, None
+
+
+def _apply_uiic_structured_fields(lines: List[PdfLine], claim: ClaimData, *, fill_only_missing: bool = False) -> None:
+    """UIIC-specific deterministic extraction for assessment/fee values.
+
+    These values are table/section dependent and must not use the generic
+    first-label/rightmost-number rule.
+    """
+    def can_set(name: str) -> bool:
+        if not fill_only_missing:
+            return True
+        val = getattr(claim, name, "")
+        return val in (None, "", "0", "0.0", "0.00")
+
+    age, dep50, nil, parts_src = _uiic_parts_buckets(lines)
+    for name, value in (
+        ("parts_age_dep_excl_gst", age),
+        ("parts_50_dep_excl_gst", dep50),
+        ("parts_nil_dep_excl_gst", nil),
+    ):
+        if can_set(name):
+            _set_pdf_field(claim, name, value, parts_src, "structured parts subtotal")
+
+    parts18, parts18_src = _uiic_gst_taxable(lines, "spares")
+    if can_set("parts_gst18_amount"):
+        _set_pdf_field(claim, "parts_gst18_amount", parts18, parts18_src, "GST SUMMARY – SPARES 18% taxable amount")
+
+    labour18, labour18_src = _uiic_gst_taxable(lines, "labour")
+    if can_set("labour_gst18_amount"):
+        _set_pdf_field(claim, "labour_gst18_amount", labour18, labour18_src, "GST SUMMARY – LABOUR 18% taxable amount")
+
+    # Strong summary labels.
+    summary_specs = (
+        ("towing_charges", ("towing charges", "add towing charges")),
+        ("compulsory_excess", ("less excess clause", "less compulsory excess", "(-) excess", "less excess")),
+        ("imposed_excess", ("less imposed excess", "(-) impose excess")),
+        ("salvage_value", ("less salvage value", "(-) salvage", "less salvage")),
+    )
+    for name, labels in summary_specs:
+        if can_set(name):
+            value, src = _uiic_summary_amount(lines, labels)
+            _set_pdf_field(claim, name, value, src, "UIIC assessment summary")
+
+    header_date, header_src = _uiic_header_date(lines)
+    if can_set("final_report_date"):
+        _set_pdf_field(claim, "final_report_date", header_date, header_src, "report header date")
+    if can_set("invoice_date"):
+        _set_pdf_field(claim, "invoice_date", header_date, header_src, "UIIC report/invoice date fallback")
+
+    # Survey fee bill values. These only match when the line itself carries a
+    # clear bill label, so they are safe to use across UIIC PDF layouts.
+    fee_specs = (
+        ("survey_fee", ("professional fees", "professional fee", "survey fee", "survey fees")),
+        ("reinspection_fee", ("re-inspection fee", "reinspection fee")),
+        ("traveling_expenses", ("conveyance", "travelling expenses", "traveling expenses")),
+        ("photo_charges", ("photograph", "photographs", "photo charges")),
+        ("daily_allowance", ("daily allowance",)),
+    )
+    for name, labels in fee_specs:
+        if can_set(name):
+            value, src = _uiic_summary_amount(lines, labels)
+            _set_pdf_field(claim, name, value, src, "UIIC survey fee bill")
+
+
+def supplement_uiic_claim_from_folder(folder: str, claim: ClaimData, main_report_path: str = "") -> None:
+    """Supplement a UIIC PDF case from other strong survey/assessment/fee PDFs.
+
+    This does not read arbitrary invoices/estimates into ClaimData.  A PDF must
+    contain strong UIIC survey markers before it can contribute values.
+    """
+    if getattr(claim, "portal_id", "") != "uiic" or not folder or not os.path.isdir(folder):
+        return
+
+    main_norm = os.path.normcase(os.path.abspath(main_report_path)) if main_report_path else ""
+    for name in sorted(os.listdir(folder)):
+        path = os.path.join(folder, name)
+        if not os.path.isfile(path) or Path(name).suffix.lower() != ".pdf":
+            continue
+        if main_norm and os.path.normcase(os.path.abspath(path)) == main_norm:
+            continue
+        try:
+            lines = read_lines(path)
+        except Exception:
+            continue
+        if not lines:
+            continue
+        sample = "\n".join(x.text.lower() for x in lines[:220])
+        strong = any(marker in sample for marker in (
+            "final survey bill",
+            "survey fee bill",
+            "summary of assessment",
+            "gst summary",
+            "motor final survey report",
+        ))
+        if not strong:
+            continue
+        _apply_uiic_structured_fields(lines, claim, fill_only_missing=True)
+
 def read_pdf_report(pdf_path: str, portal_id: str = "uiic") -> ClaimData:
     mapping = load_field_mapping(portal_id=portal_id)
     defaults = load_automation_defaults(portal_id=portal_id)
