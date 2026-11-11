@@ -255,3 +255,25 @@ def test_uiic_folder_supplement_same_claim_recalculates_professional_fee(tmp_pat
     assert claim.traveling_expenses == "1000"
     assert claim.photo_charges == "200"
 
+def test_uiic_classic_pdf_fallbacks_for_labour_and_18pct_parts():
+    from app.data.data_model import ClaimData
+    from app.data.pdf_report_reader import PdfLine, _apply_uiic_structured_fields
+
+    lines = [
+        PdfLine(2, 1, "LABOUR CHARGES"),
+        PdfLine(3, 1, "Total After Discount 20,000.00 0.00 0.00 10,500.00"),
+        PdfLine(3, 2, "GST 3,600.00 0.00 0.00 1,890.00"),
+        PdfLine(3, 3, "SPARE PARTS"),
+        PdfLine(3, 4, "Glass Parts Metal Parts Fibber 30% Rubber/Plastic 50% Dep. GST %"),
+        PdfLine(3, 5, "1 COOLANT RADIATOR 52,368.00 52,368.00 28.00"),
+        PdfLine(3, 6, "10 DISTANCE SENSOR 18,524.00 18,524.00 18.00"),
+        PdfLine(3, 7, "11 DECOUPLING RING 712.00 18.00"),
+        PdfLine(4, 1, "Total Before GST 515,928.00 0.00 156,621.00 0.00 274,419.00"),
+        PdfLine(4, 2, "SUMMARY OF ASSESSMENT"),
+    ]
+    claim = ClaimData(portal_id="uiic", source_report_path=r"C:\\test\\classic.pdf")
+    _apply_uiic_structured_fields(lines, claim)
+
+    assert claim.labour_gst18_amount == "30500"
+    assert claim.parts_gst18_amount == "18524"
+
