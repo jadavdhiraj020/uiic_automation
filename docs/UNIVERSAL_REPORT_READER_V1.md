@@ -18,6 +18,10 @@ The existing portal automation remains the consumer of the same `ClaimData` obje
 - UIIC, OIC, New India, PC-lock/licensing, Web Sync, and portal selectors are not replaced.
 - PDF-only cases skip Excel-only background assessment/report generation.
 - Missing or uncertain PDF values are left blank unless an existing configured portal fallback applies.
+- For UIIC PDF input, missing survey time stays blank; it is not replaced by the legacy Excel-only 11:00 fallback.
+- For UIIC PDF input, ordinary missing/manual-review fields are warnings so the visible portal run can continue. Existing Excel hard-validation behavior is unchanged.
+- OIC/New India mandatory-field validation is intentionally unchanged in V1.
+- A blank PDF label never consumes the following line automatically; V1 prefers a safe blank over a wrong portal value.
 - Human final review/submission remains unchanged.
 
 ## Important V1 limitation
@@ -73,4 +77,5 @@ The V1 parser was designed around:
 1. current Excel regression passes
 2. PDF-only preview values are checked manually
 3. visible portal fill is checked without Final Submit
-4. UIIC/OIC/New India regressions are run for the workflows intended to use PDF input
+4. UIIC visible-portal PDF fill is checked with no Final Submit
+5. OIC/New India regressions are run with reports that satisfy their existing mandatory-field rules
