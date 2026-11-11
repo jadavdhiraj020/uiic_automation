@@ -127,3 +127,74 @@ def test_blank_amount_label_does_not_steal_page_footer_number():
     assert source is None
     assert label is None
 
+def test_uiic_structured_docwriter_parts_and_gst_summary():
+    from app.data.data_model import ClaimData
+    from app.data.pdf_report_reader import PdfLine, _apply_uiic_structured_fields
+
+    lines = [
+        PdfLine(5, 1, "PARTS DETAILS:"),
+        PdfLine(5, 2, "S.N. Parts Name Estimated M-Age P-50% G-0% Extra Bill Sr. No. GST"),
+        PdfLine(5, 3, "SUB TOTAL 100000.00 6779.00 17008.75 0.00 0.00 0.00 18"),
+        PdfLine(7, 1, "GST SUMMARY – SPARES"),
+        PdfLine(7, 2, "Tax Percentage Taxable Amount CGST SGST IGST Total Amount"),
+        PdfLine(7, 3, "18 12571.77 1131.46 1131.46 0 14834.69"),
+        PdfLine(7, 5, "GST SUMMARY – LABOUR"),
+        PdfLine(7, 6, "Tax Percentage Taxable Amount CGST SGST IGST Total Amount"),
+        PdfLine(7, 7, "18 24887.50 2239.88 2239.87 0 29367.25"),
+        PdfLine(6, 2, "TOTAL AMOUNT OF LABOUR ASSESSED 29367.25"),
+    ]
+    claim = ClaimData(portal_id="uiic", source_report_path=r"C:\\test\\survey_report.pdf")
+    _apply_uiic_structured_fields(lines, claim)
+
+    assert claim.parts_age_dep_excl_gst == "6779"
+    assert claim.parts_50_dep_excl_gst == "17008.75"
+    assert claim.parts_nil_dep_excl_gst == "0"
+    assert claim.parts_gst18_amount == "12571.77"
+    assert claim.labour_gst18_amount == "24887.5"
+
+
+def test_uiic_structured_classic_parts_summary_and_fee_bill():
+    from app.data.data_model import ClaimData
+    from app.data.pdf_report_reader import PdfLine, _apply_uiic_structured_fields
+
+    lines = [
+        PdfLine(3, 1, "SPARE PARTS"),
+        PdfLine(3, 2, "Glass Parts Metal Parts Fibber 30% Rubber/Plastic 50% Dep. GST %"),
+        PdfLine(4, 1, "Total Before GST 515,928.00 0.00 156,621.00 0.00 274,419.00"),
+        PdfLine(4, 10, "SUMMARY OF ASSESSMENT"),
+        PdfLine(4, 11, "Less Excess Rs. 2,000.00"),
+        PdfLine(4, 12, "Less Salvage Value Rs. 10,000.00"),
+        PdfLine(6, 1, "FINAL SURVEY BILL"),
+        PdfLine(6, 2, "Professional Fees Rs. : 6,544.00"),
+        PdfLine(6, 3, "Photograph (@ Rs. 10.00 x 20 Copy) Rs. : 200.00"),
+        PdfLine(6, 4, "Conveyance () Rs. : 1,000.00"),
+        PdfLine(6, 5, "re-inspection fee Rs. : 1,000.00"),
+    ]
+    claim = ClaimData(portal_id="uiic", source_report_path=r"C:\\test\\main.pdf")
+    _apply_uiic_structured_fields(lines, claim)
+
+    assert claim.parts_age_dep_excl_gst == "156621"
+    assert claim.parts_50_dep_excl_gst == "274419"
+    assert claim.parts_nil_dep_excl_gst == "0"
+    assert claim.compulsory_excess == "2000"
+    assert claim.salvage_value == "10000"
+    assert claim.survey_fee == "6544"
+    assert claim.photo_charges == "200"
+    assert claim.traveling_expenses == "1000"
+    assert claim.reinspection_fee == "1000"
+
+
+def test_uiic_header_date_used_for_report_and_invoice_date():
+    from app.data.data_model import ClaimData
+    from app.data.pdf_report_reader import PdfLine, _apply_uiic_structured_fields
+
+    lines = [
+        PdfLine(1, 1, "MOTOR FINAL SURVEY REPORT"),
+        PdfLine(1, 2, "Ref. No. : JDB/1165 Date : 18/07/2023"),
+    ]
+    claim = ClaimData(portal_id="uiic", source_report_path=r"C:\\test\\main.pdf")
+    _apply_uiic_structured_fields(lines, claim)
+
+    assert claim.final_report_date == "18/07/2023"
+    assert claim.invoice_date == "18/07/2023"
+
