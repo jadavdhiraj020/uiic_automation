@@ -128,6 +128,7 @@ def _match_keyword(filename_lower: str, mapping: Dict[str, List[str]]) -> Option
 class FolderScanResult:
     def __init__(self):
         self.excel_path: Optional[str] = None
+        self.report_pdf_path: Optional[str] = None
         self.claim_doc_files: Dict[str, str] = {}
         self.assessment_files: Dict[str, str] = {}
         self.upload_doc_files: Dict[
@@ -159,6 +160,8 @@ class FolderScanResult:
         lines = []
         if self.excel_path:
             lines.append(f"Excel: {Path(self.excel_path).name}")
+        elif self.report_pdf_path:
+            lines.append(f"Survey Report PDF: {Path(self.report_pdf_path).name}")
         for key, value in self.claim_doc_files.items():
             lines.append(f"[{key}] -> {Path(value).name}")
         for key, value in self.assessment_files.items():
