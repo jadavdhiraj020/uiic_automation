@@ -647,10 +647,14 @@ def supplement_uiic_claim_from_folder(folder: str, claim: ClaimData, main_report
     This does not read arbitrary invoices/estimates into ClaimData.  A PDF must
     contain strong UIIC survey markers before it can contribute values.
     """
-    def _claim_number_in(lines_: List[PdfLine]) -> str:
-        cfg = {"search_labels": PDF_ALIASES["claim_no"]}
-        value, _src, _label = find_value(lines_, "claim_no", cfg, PDF_ALIASES["claim_no"])
+    def _identity_value(lines_: List[PdfLine], field_name: str) -> str:
+        aliases = PDF_ALIASES.get(field_name, [])
+        cfg = {"search_labels": aliases}
+        value, _src, _label = find_value(lines_, field_name, cfg, aliases)
         return str(value or "").strip()
+
+    def _norm_vehicle(value: str) -> str:
+        return re.sub(r"[^A-Za-z0-9]", "", value or "").upper()
 
     if getattr(claim, "portal_id", "") != "uiic" or not folder or not os.path.isdir(folder):
         return
@@ -682,7 +686,7 @@ def supplement_uiic_claim_from_folder(folder: str, claim: ClaimData, main_report
         # If both documents expose a Claim No., they must agree. This prevents
         # a stray survey PDF from another claim in the same folder from
         # supplementing the active UIIC case.
-        secondary_claim_no = _claim_number_in(lines)
+        secondary_claim_no = _identity_value(lines, "claim_no")
         active_claim_no = str(getattr(claim, "claim_no", "") or "").strip()
         if active_claim_no and secondary_claim_no and secondary_claim_no != active_claim_no:
             logger.warning(
@@ -690,6 +694,20 @@ def supplement_uiic_claim_from_folder(folder: str, claim: ClaimData, main_report
                 name,
                 secondary_claim_no,
                 active_claim_no,
+            )
+            continue
+
+        # Claim numbers can be duplicated or copied into sample/old reports.
+        # Vehicle registration is a second strong identity check. If both the
+        # active case and secondary PDF expose a vehicle number, they must match.
+        secondary_vehicle = _identity_value(lines, "vehicle_registration_number")
+        active_vehicle = str(getattr(claim, "vehicle_registration_number", "") or "").strip()
+        if active_vehicle and secondary_vehicle and _norm_vehicle(secondary_vehicle) != _norm_vehicle(active_vehicle):
+            logger.warning(
+                "Skipping UIIC PDF supplement %s: vehicle %s does not match active vehicle %s",
+                name,
+                secondary_vehicle,
+                active_vehicle,
             )
             continue
 
