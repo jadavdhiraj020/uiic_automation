@@ -738,6 +738,21 @@ def supplement_uiic_claim_from_folder(folder: str, claim: ClaimData, main_report
     """
     def _identity_value(lines_: List[PdfLine], field_name: str) -> str:
         aliases = PDF_ALIASES.get(field_name, [])
+
+        if field_name == "vehicle_registration_number":
+            vehicle_rx = re.compile(
+                r"\b([A-Z]{2}[-\s]*\d{1,2}[-\s]*[A-Z]{1,3}(?:[-\s]*[A-Z]{1,3})?[-\s]*\d{1,4})\b",
+                re.I,
+            )
+            for label in aliases:
+                for item in lines_:
+                    remainder = after_label(item.text, label)
+                    if remainder is None:
+                        continue
+                    m = vehicle_rx.search(remainder)
+                    if m:
+                        return m.group(1).strip()
+
         cfg = {"search_labels": aliases}
         value, _src, _label = find_value(lines_, field_name, cfg, aliases)
         return str(value or "").strip()
