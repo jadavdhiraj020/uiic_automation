@@ -213,7 +213,10 @@ def parse_value(text: str, kind: str) -> Optional[str]:
             return None
         token = m.group(1).strip(".,:;")
         return None if token.lower() in {"no", "number", "na", "nil", "none"} else token
-    value = text.strip(" :;-–—")\n    if value.lower() in {"and", "or", "of", "the", "na", "n/a", "nil", "none"}:\n        return None\n    return value or None
+    value = text.strip(" :;-–—")
+    if value.lower() in {"and", "or", "of", "the", "na", "n/a", "nil", "none"}:
+        return None
+    return value or None
 
 
 def read_lines(pdf_path: str, max_pages: Optional[int] = None) -> List[PdfLine]:
