@@ -84,8 +84,30 @@ def get_owner_window_class():
     class _LockSettingsDialog(QDialog):
         def __init__(self, current_mode: str, parent=None):
             super().__init__(parent)
-            self.setWindowTitle("Startup Security Preference")
-            self.setMinimumWidth(420)
+            self.setStyleSheet(
+                """
+                QDialog {
+                    background-color: #F8FAFC;
+                    font-family: "Segoe UI", Arial, sans-serif;
+                }
+                QLabel {
+                    color: #0F172A;
+                    font-size: 9.5pt;
+                }
+                QRadioButton {
+                    color: #0F172A;
+                    font-size: 9.5pt;
+                    spacing: 8px;
+                }
+                QLineEdit {
+                    background-color: #FFFFFF;
+                    border: 1px solid #CBD5E1;
+                    border-radius: 7px;
+                    padding: 6px 8px;
+                    color: #0F172A;
+                }
+                """
+            )
             self.selected_mode = current_mode
             self.selected_pin = ""
 
@@ -204,6 +226,20 @@ def get_owner_window_class():
                     background-color: #F8FAFC;
                     font-family: "Segoe UI", Arial, sans-serif;
                     color: #0F172A;
+                }
+                QLabel {
+                    color: #0F172A;
+                    font-size: 9.5pt;
+                }
+                QRadioButton {
+                    color: #0F172A;
+                    font-size: 9.5pt;
+                    spacing: 8px;
+                }
+                QCheckBox {
+                    color: #0F172A;
+                    font-size: 9.5pt;
+                    spacing: 6px;
                 }
                 #headerBar {
                     background-color: #0F172A;
