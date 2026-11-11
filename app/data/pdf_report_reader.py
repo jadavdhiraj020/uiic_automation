@@ -231,6 +231,60 @@ def read_lines(pdf_path: str, max_pages: Optional[int] = None) -> List[PdfLine]:
     return out
 
 
+def ocr_lines(pdf_path: str, max_pages: int = 6) -> List[PdfLine]:
+    """Local scanned-PDF fallback using the RapidOCR engine already bundled in App-3."""
+    import tempfile
+
+    try:
+        import pypdfium2 as pdfium
+        from app.automation.ocr_engine import run_shared_ocr
+    except Exception as exc:
+        logger.warning("Local scanned-PDF OCR unavailable: %s", exc)
+        return []
+
+    out: List[PdfLine] = []
+    try:
+        pdf = pdfium.PdfDocument(pdf_path)
+        page_count = min(len(pdf), max_pages)
+        for page_index in range(page_count):
+            page = pdf[page_index]
+            bitmap = page.render(scale=2.2)
+            image = bitmap.to_pil()
+            fd, temp_path = tempfile.mkstemp(suffix=".png")
+            os.close(fd)
+            try:
+                image.save(temp_path)
+                result = run_shared_ocr(temp_path, cls=True)
+                line_no = 0
+                if result and result[0]:
+                    for item in result[0]:
+                        try:
+                            text = item[1][0]
+                        except Exception:
+                            continue
+                        cleaned = norm(str(text))
+                        if cleaned:
+                            line_no += 1
+                            out.append(PdfLine(page_index + 1, line_no, cleaned))
+            finally:
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
+            try:
+                page.close()
+            except Exception:
+                pass
+        try:
+            pdf.close()
+        except Exception:
+            pass
+    except Exception as exc:
+        logger.warning("Local scanned-PDF OCR failed: %s", exc)
+        return []
+    return out
+
+
 def find_value(lines: List[PdfLine], field_name: str, cfg: dict, all_labels: List[str]):
     kind = field_type(field_name, cfg)
     for label in labels_for(field_name, cfg):
@@ -293,8 +347,12 @@ def read_pdf_report(pdf_path: str, portal_id: str = "uiic") -> ClaimData:
     mapping = load_field_mapping(portal_id=portal_id)
     defaults = load_automation_defaults(portal_id=portal_id)
     lines = read_lines(pdf_path)
+    used_ocr = False
     if not lines:
-        raise RuntimeError("PDF has no extractable text. Scanned-PDF OCR support is not enabled in this V1.")
+        lines = ocr_lines(pdf_path)
+        used_ocr = bool(lines)
+    if not lines:
+        raise RuntimeError("PDF contains no readable text and local OCR could not read it.")
 
     claim = ClaimData(portal_id=portal_id or "uiic")
     claim.source_excel_path = ""
