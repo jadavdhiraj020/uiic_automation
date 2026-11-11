@@ -421,3 +421,42 @@ def test_uiic_horizontal_overflow_pairs_rows_by_position(monkeypatch):
     assert claim.final_report_date == "05/11/2026"
     assert claim.invoice_date == "05/11/2026"
 
+def test_uiic_pdf_unsourced_zero_is_skipped_but_sourced_zero_is_real():
+    from app.automation.claim_assessment import _is_unsourced_pdf_zero
+    from app.data.data_model import ClaimData
+
+    pdf_claim = ClaimData(
+        portal_id="uiic",
+        source_report_path=r"C:\\test\\survey_report.pdf",
+        towing_charges="0",
+    )
+    assert _is_unsourced_pdf_zero(pdf_claim, "towing_charges", pdf_claim.towing_charges) is True
+
+    pdf_claim._excel_coords["towing_charges"] = "PDF p6 line 10"
+    assert _is_unsourced_pdf_zero(pdf_claim, "towing_charges", pdf_claim.towing_charges) is False
+
+    excel_claim = ClaimData(
+        portal_id="uiic",
+        source_excel_path=r"C:\\test\\Main.xlsx",
+        towing_charges="0",
+    )
+    assert _is_unsourced_pdf_zero(excel_claim, "towing_charges", excel_claim.towing_charges) is False
+
+
+def test_uiic_pdf_missing_fee_does_not_create_fake_professional_fee_source():
+    from app.data.data_model import ClaimData
+    from app.data.pdf_report_reader import supplement_uiic_claim_from_folder
+
+    claim = ClaimData(
+        portal_id="uiic",
+        claim_no="ACTIVE123",
+        vehicle_registration_number="CH01BT4945",
+        source_report_path=r"C:\\test\\survey_report.pdf",
+    )
+
+    # Nonexistent folder exits without inventing a fee source.
+    supplement_uiic_claim_from_folder(r"C:\\definitely_missing_folder", claim, claim.source_report_path)
+
+    assert claim.professional_fee == "0"
+    assert "professional_fee" not in claim._excel_coords
+
