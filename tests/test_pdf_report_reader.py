@@ -296,3 +296,24 @@ def test_uiic_explicit_nil_depreciation_policy_sets_yes_without_guessing_time():
     assert claim.time_hh == ""
     assert claim.time_mm == ""
 
+def test_uiic_pdf_supplement_preserves_sourced_zero_value():
+    from app.data.data_model import ClaimData
+    from app.data.pdf_report_reader import PdfLine, _apply_uiic_structured_fields
+
+    claim = ClaimData(
+        portal_id="uiic",
+        source_report_path=r"C:\\test\\survey_report.pdf",
+        parts_nil_dep_excl_gst="0",
+    )
+    claim._excel_coords["parts_nil_dep_excl_gst"] = "PDF p5 line 3"
+
+    supplemental_lines = [
+        PdfLine(1, 1, "SPARE PARTS"),
+        PdfLine(1, 2, "Glass Parts Metal Parts Fibber 30% Rubber/Plastic 50% Dep. GST %"),
+        PdfLine(1, 3, "Total Before GST 1000.00 500.00 200.00 0.00 300.00"),
+    ]
+    _apply_uiic_structured_fields(supplemental_lines, claim, fill_only_missing=True)
+
+    assert claim.parts_nil_dep_excl_gst == "0"
+    assert claim._excel_coords["parts_nil_dep_excl_gst"] == "PDF p5 line 3"
+
