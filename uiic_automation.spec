@@ -357,6 +357,8 @@ hiddenimports.extend(
         "app.data.oic_assessment_generator",
         "app.data.excel_parts_extractor",
         "app.data.excel_reader",
+        "app.data.report_reader",
+        "app.data.pdf_report_reader",
         "app.data.assessment_generator",
         "app.data.data_model",
         "app.data.folder_scanner",
