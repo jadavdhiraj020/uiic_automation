@@ -638,6 +638,19 @@ class ClaimFolderService:
             claim._scan_result = scan_result
             claim.source_excel_path = scan_result.excel_path or ""
             claim.source_report_path = report_source
+
+            # UIIC PDF-only cases may keep the fee bill / assessment summary in
+            # another PDF in the same case folder. Supplement only from PDFs
+            # that contain strong survey/fee/assessment markers; invoices and
+            # estimates are ignored by the supplementer.
+            if self.portal_id == "uiic" and source_ext == ".pdf":
+                try:
+                    from app.data.pdf_report_reader import supplement_uiic_claim_from_folder
+                    supplement_uiic_claim_from_folder(folder, claim, report_source)
+                    claim.calculate_derived_fields()
+                except Exception as supplement_exc:
+                    logger.warning("UIIC PDF folder supplement failed: %s", supplement_exc)
+
             claim._background_generation_stop_event = threading.Event()
 
             # F6 FIX: import once here, used by printable block, OIC block,
