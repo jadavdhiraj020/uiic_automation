@@ -476,15 +476,25 @@ class ClaimData:
             self.expected_completion_date = ""
             self._excel_coords.pop("expected_completion_date", None)
 
-        # 1b. Survey time fallback for UIIC: if date_of_survey is present but time_hh is not set
+        # 1b. Survey time fallback for UIIC.
+        # Preserve the legacy 11:00 fallback for Excel users only.  For PDF
+        # survey reports, a missing time must remain blank so the surveyor can
+        # fill it manually while reviewing the visible portal.
         if self.portal_id == "uiic":
-            if self.date_of_survey and not self.time_hh:
+            is_pdf_report = str(getattr(self, "source_report_path", "") or "").lower().endswith(".pdf")
+            if self.date_of_survey and not self.time_hh and not is_pdf_report:
                 self.time_hh = "11"
                 self.time_mm = "00"
                 self.time_of_survey = f"{self.time_hh}:{self.time_mm}"
                 self._excel_coords["time_hh"] = "Default (11:00 AM)"
                 self._excel_coords["time_of_survey"] = self._excel_coords["time_hh"]
                 self._excel_logs.append("  📊 time_of_survey: '11:00' (Source: Default Fallback)")
+            elif is_pdf_report and self._excel_coords.get("time_hh", "").startswith("Default"):
+                self.time_hh = ""
+                self.time_mm = ""
+                self.time_of_survey = ""
+                self._excel_coords.pop("time_hh", None)
+                self._excel_coords.pop("time_of_survey", None)
             elif not self.date_of_survey and self._excel_coords.get("time_hh", "").startswith("Default"):
                 self.time_hh = ""
                 self.time_mm = ""
