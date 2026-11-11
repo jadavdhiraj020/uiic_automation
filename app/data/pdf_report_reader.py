@@ -56,7 +56,7 @@ PDF_ALIASES = {
     "cause_nature_of_accident": ["CAUSE & NATURE OF ACCIDENT", "CAUSE AND NATURE OF ACCIDENT", "Nature of Accident"],
     "mobile_no": ["Mobile", "Mob", "Contact No", "Contact Number"],
     "email_id": ["E-mail", "Email", "E mail"],
-    "initial_loss_amount": ["Initial Loss Assessment", "Initial Loss", "Net Payable"],
+    "initial_loss_amount": ["Initial Loss Assessment", "Initial Loss"],
     "towing_charges": ["Add Towing Charges", "Towing Charges", "Towing Charge"],
     "voluntary_excess": ["Voluntary Excess", "Voluntry Excess"],
     "compulsory_excess": ["Less Compulsory Excess", "Compulsory Excess", "(-) Excess", "Less Excess"],
@@ -76,7 +76,7 @@ PDF_ALIASES = {
     "reinspection_fee": ["Reinspection Fee", "Re-inspection Fee"],
     "daily_allowance": ["Daily Allowance"],
     "photo_charges": ["Photographs", "Photograph", "Photo Charges", "Photography"],
-    "workshop_estimate_amount": ["Workshop Estimate Amount", "Estimate Amount", "Net Payable"],
+    "workshop_estimate_amount": ["Workshop Estimate Amount", "Estimate Amount"],
     "surveyor_license_number": ["License No.", "Licence No.", "Surveyor License Number"],
     "surveyor_license_expiry_date": ["Date of Expiry", "License Expiry Date"],
 }
@@ -125,7 +125,7 @@ def field_type(field_name: str, cfg: dict) -> str:
         return "amount"
     if cfg.get("allow_literal_values"):
         return "literal"
-    if any(x in low for x in ("claim_no", "invoice_no", "license_number", "chassis", "engine", "registration_number", "reference_no")):
+    if low.endswith("_no") or low.endswith("_number") or any(x in low for x in ("claim_no", "invoice_no", "license_number", "chassis", "engine", "registration_number", "reference_no")):
         return "id"
     return "text"
 
@@ -213,8 +213,7 @@ def parse_value(text: str, kind: str) -> Optional[str]:
             return None
         token = m.group(1).strip(".,:;")
         return None if token.lower() in {"no", "number", "na", "nil", "none"} else token
-    value = text.strip(" :;-–—")
-    return value or None
+    value = text.strip(" :;-–—")\n    if value.lower() in {"and", "or", "of", "the", "na", "n/a", "nil", "none"}:\n        return None\n    return value or None
 
 
 def read_lines(pdf_path: str, max_pages: Optional[int] = None) -> List[PdfLine]:
