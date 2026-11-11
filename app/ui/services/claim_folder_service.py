@@ -698,7 +698,10 @@ class ClaimFolderService:
                 )
                 claim._background_generation_thread = bg_thread
                 bg_thread.start()
-                logs.append("Info: Excel PDF assessment generation started in background.") if scan_result.excel_path else logs.append("Info: PDF report selected; Excel-only assessment generation skipped.")
+                if scan_result.excel_path:
+                    logs.append("Info: Excel PDF assessment generation started in background.")
+                else:
+                    logs.append("Info: PDF report selected; Excel-only assessment generation skipped.")
 
             # Issue 4: Reuse _portal_defaults loaded above — no second disk read.
             defaults = _portal_defaults
