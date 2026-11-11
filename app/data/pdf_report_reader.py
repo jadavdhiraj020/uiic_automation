@@ -874,6 +874,14 @@ def _apply_uiic_structured_fields(lines: List[PdfLine], claim: ClaimData, *, fil
         return val in (None, "", "0", "0.0", "0.00")
 
     age, dep50, nil, parts_src = _uiic_parts_buckets(lines)
+    gst_for = _uiic_gst_summary_for_rows(lines)
+    if age is None and gst_for.get("metal") is not None:
+        age, parts_src = gst_for.get("metal"), "PDF GST SUMMARY FOR"
+    if dep50 is None and gst_for.get("plastic") is not None:
+        dep50, parts_src = gst_for.get("plastic"), parts_src or "PDF GST SUMMARY FOR"
+    if nil is None and gst_for.get("glass") is not None:
+        nil, parts_src = gst_for.get("glass"), parts_src or "PDF GST SUMMARY FOR"
+
     for name, value in (
         ("parts_age_dep_excl_gst", age),
         ("parts_50_dep_excl_gst", dep50),
@@ -887,6 +895,9 @@ def _apply_uiic_structured_fields(lines: List[PdfLine], claim: ClaimData, *, fil
     if parts18 is None:
         parts18, parts18_src = _uiic_classic_parts_18_taxable(lines)
         parts18_reason = "classic spare-parts rows assessed at 18% GST"
+    if parts18 is None and gst_for.get("parts_18") is not None:
+        parts18, parts18_src = gst_for.get("parts_18"), "PDF GST SUMMARY FOR"
+        parts18_reason = "GST SUMMARY FOR parts taxable at 18%"
     if can_set("parts_gst18_amount"):
         _set_pdf_field(claim, "parts_gst18_amount", parts18, parts18_src, parts18_reason)
 
@@ -895,6 +906,9 @@ def _apply_uiic_structured_fields(lines: List[PdfLine], claim: ClaimData, *, fil
     if labour18 is None:
         labour18, labour18_src = _uiic_classic_labour_before_gst(lines)
         labour_reason = "classic labour total before GST"
+    if labour18 is None and gst_for.get("labour_18") is not None:
+        labour18, labour18_src = gst_for.get("labour_18"), "PDF GST SUMMARY FOR"
+        labour_reason = "GST SUMMARY FOR labour taxable at 18%"
     if can_set("labour_gst18_amount"):
         _set_pdf_field(claim, "labour_gst18_amount", labour18, labour18_src, labour_reason)
 
@@ -914,14 +928,39 @@ def _apply_uiic_structured_fields(lines: List[PdfLine], claim: ClaimData, *, fil
         nil_dep, nil_dep_src = _uiic_nil_depreciation_from_text(lines)
         _set_pdf_field(claim, "nil_depreciation", nil_dep, nil_dep_src, "explicit NIL DEPRECIATION policy wording")
 
+    report_ref, report_ref_src = _uiic_report_reference(lines)
+    if can_set("final_report_no"):
+        _set_pdf_field(claim, "final_report_no", report_ref, report_ref_src, "full report reference")
+
     header_date, header_src = _uiic_header_date(lines)
     if can_set("final_report_date"):
         _set_pdf_field(claim, "final_report_date", header_date, header_src, "report header date")
-    if can_set("invoice_date"):
-        _set_pdf_field(claim, "invoice_date", header_date, header_src, "UIIC report/invoice date fallback")
 
-    # Survey fee bill values. These only match when the line itself carries a
-    # clear bill label, so they are safe to use across UIIC PDF layouts.
+    fee_invoice_no, fee_invoice_date, fee_invoice_src = _uiic_fee_bill_invoice(lines)
+    if can_set("invoice_no"):
+        _set_pdf_field(
+            claim,
+            "invoice_no",
+            fee_invoice_no or report_ref,
+            fee_invoice_src or report_ref_src,
+            "surveyor fee invoice number" if fee_invoice_no else "report reference fallback",
+        )
+    if can_set("invoice_date"):
+        _set_pdf_field(
+            claim,
+            "invoice_date",
+            fee_invoice_date or header_date,
+            fee_invoice_src or header_src,
+            "surveyor fee invoice date" if fee_invoice_date else "report header date fallback",
+        )
+
+    ws_no, ws_date, ws_src = _uiic_strong_workshop_invoice(lines)
+    if can_set("workshop_invoice_no"):
+        _set_pdf_field(claim, "workshop_invoice_no", ws_no, ws_src, "explicit workshop/repairer invoice label")
+    if can_set("workshop_invoice_date"):
+        _set_pdf_field(claim, "workshop_invoice_date", ws_date, ws_src, "explicit workshop/repairer invoice date")
+
+    # Surveyor charges must come only from a clearly identified fee-bill page.
     fee_specs = (
         ("survey_fee", ("professional fees", "professional fee", "survey fee", "survey fees")),
         ("reinspection_fee", ("re-inspection fee", "reinspection fee")),
@@ -931,8 +970,8 @@ def _apply_uiic_structured_fields(lines: List[PdfLine], claim: ClaimData, *, fil
     )
     for name, labels in fee_specs:
         if can_set(name):
-            value, src = _uiic_summary_amount(lines, labels)
-            _set_pdf_field(claim, name, value, src, "UIIC survey fee bill")
+            value, src = _uiic_fee_bill_amount(lines, labels)
+            _set_pdf_field(claim, name, value, src, "UIIC survey fee bill page")
 
 
 def supplement_uiic_claim_from_folder(folder: str, claim: ClaimData, main_report_path: str = "") -> None:
@@ -1084,6 +1123,18 @@ def read_pdf_report(pdf_path: str, portal_id: str = "uiic") -> ClaimData:
         "parts_nil_dep_excl_gst",
         "parts_gst18_amount",
         "labour_gst18_amount",
+        "workshop_invoice_no",
+        "workshop_invoice_date",
+        "invoice_no",
+        "invoice_date",
+        "final_report_no",
+        "final_report_date",
+        "survey_fee",
+        "reinspection_fee",
+        "traveling_expenses",
+        "professional_fee",
+        "daily_allowance",
+        "photo_charges",
     }
     for field_name, cfg in mapping.items():
         if field_name.startswith("_") or not isinstance(cfg, dict):
