@@ -251,6 +251,9 @@ def _run_background_document_generation(
 
     # 3. Auto-generate OIC assessment Excel (Website 3).
     if portal_id == "oic" and scan_result.excel_path:
+        from app.data.excel_parts_extractor import OicPartsReviewError
+
+        claim._oic_parts_review_error = ""
         is_oic_auto_generated = False
         if "oic_assessment_excel" in claim.assessment_files:
             oic_fpath = claim.assessment_files["oic_assessment_excel"]
@@ -328,6 +331,11 @@ def _run_background_document_generation(
                 )
             else:
                 bg_logger.warning(generation.message)
+        except OicPartsReviewError as gen_exc:
+            # Do not let the automation reuse an older generated workbook when
+            # the current source needs a human review.
+            claim._oic_parts_review_error = str(gen_exc)
+            bg_logger.warning(f"OIC parts need review: {gen_exc}")
         except Exception as gen_exc:
             bg_logger.warning(
                 f"OIC auto-generation of assessment Excel failed: {gen_exc}"

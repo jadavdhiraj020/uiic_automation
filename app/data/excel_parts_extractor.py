@@ -11,8 +11,11 @@ Only RR, Denting, and C/W are valid labour columns.
 """
 
 import logging
+import math
 import os
+import re
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from typing import Dict, List, Optional, Tuple
 
 import openpyxl
@@ -35,6 +38,10 @@ class HeaderDetection:
     confidence: int
     matched_keys: List[str]
     missing_keys: List[str]
+
+
+class OicPartsReviewError(ValueError):
+    """An OIC parts table needs human review before generating an assessment."""
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -205,6 +212,88 @@ def _detect_parts_header(sheet) -> HeaderDetection:
     return best
 
 
+def _detect_oic_parts_header(sheet) -> HeaderDetection:
+    """Find a single, unambiguous OIC parts header using bounded aliases."""
+    aliases = {
+        "sn": ("sn", "sno", "sr", "srno", "sl", "slno", "serial", "serialno", "serialnumber"),
+        "part_desc": ("partname", "partsname", "partdesc", "partsdesc", "partdescription", "partsdescription", "description", "discription", "particular", "particulars", "item", "itemdescription", "nomenclature"),
+        "estimated": ("estimated", "estimate", "estimatedamount", "estimateamount", "estamount", "estamt"),
+        "metal": ("metal", "metallic", "metalamount", "metallicamount", "mage", "magewise", "magedepreciation"),
+        "plastic": ("plastic", "plasticamount", "p50", "p50percent"),
+        "glass": ("glass", "glassamount", "g0", "g0percent"),
+    }
+    expected = ["sn", "part_desc", "estimated", "metal", "plastic", "glass"]
+    candidates = []
+    incomplete = []
+
+    for row in range(1, sheet.max_row + 1):
+        matches = {key: [] for key in expected}
+        fuzzy_matches = set()
+        for col in range(1, sheet.max_column + 1):
+            raw = sheet.cell(row=row, column=col).value
+            if raw is None:
+                continue
+            text = re.sub(r"[^a-z0-9]+", "", str(raw).casefold())
+            if not text:
+                continue
+            for key, words in aliases.items():
+                # Fuzzy matching is limited to longer whole labels; short
+                # abbreviations must match exactly to avoid guessing a column.
+                exact = text in words
+                fuzzy = len(text) >= 5 and any(
+                    len(word) >= 5 and SequenceMatcher(None, text, word).ratio()
+                    >= (0.85 if min(len(text), len(word)) >= 7 else 0.9)
+                    for word in words
+                )
+                if exact or fuzzy:
+                    matches[key].append(col)
+                    if not exact:
+                        fuzzy_matches.add((key, col))
+
+        if len(matches["part_desc"]) != 1:
+            if matches["sn"] and sum(bool(matches[key]) for key in ("metal", "plastic", "glass")) >= 2:
+                incomplete.append(row)
+            continue
+        desc_col = matches["part_desc"][0]
+        serials = [col for col in matches["sn"] if col < desc_col]
+        if not serials:
+            continue
+        material_keys = ("metal", "plastic", "glass")
+        material_matches = {key: [col for col in matches[key] if col > desc_col] for key in material_keys}
+        found = sum(bool(material_matches[key]) for key in material_keys)
+        if found < 2:
+            continue
+        if found != 3 or any(len(material_matches[key]) != 1 for key in material_keys):
+            incomplete.append(row)
+            continue
+        material_cols = {material_matches[key][0] for key in material_keys}
+        estimates = [col for col in matches["estimated"] if col > desc_col and col not in material_cols]
+        if len(estimates) != 1:
+            incomplete.append(row)
+            continue
+
+        col_map = {"sn": max(serials), "part_desc": desc_col}
+        col_map.update({key: material_matches[key][0] for key in material_keys})
+        col_map["estimated"] = estimates[0]
+        matched = [key for key in expected if key in col_map]
+        score = 100 - 3 * sum((key, col) in fuzzy_matches for key, col in col_map.items())
+        candidates.append(HeaderDetection(row, col_map, score, score, matched,
+                                          [key for key in expected if key not in col_map]))
+
+    if not candidates:
+        if incomplete:
+            raise OicPartsReviewError(f"OIC parts header is incomplete or ambiguous at row(s) {incomplete}; review the material columns")
+        for row in sheet.iter_rows(values_only=True):
+            if any(re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
+                   in {"partsdetails", "partdetails", "sparepartsdetails", "detailsofparts", "spareparts"} for value in row):
+                raise OicPartsReviewError("OIC parts section was found but its header could not be identified; review the workbook")
+        return HeaderDetection(None, {}, 0, 0, [], expected.copy())
+    candidates.sort(key=lambda item: item.score, reverse=True)
+    if len(candidates) > 1 and candidates[0].score == candidates[1].score:
+        raise OicPartsReviewError(f"Multiple equally likely OIC parts headers at rows {candidates[0].row} and {candidates[1].row}; review the workbook")
+    return candidates[0]
+
+
 def _detect_labour_header(sheet) -> HeaderDetection:
     """
     Locate the Labour Charges table header row using keyword scoring.
@@ -279,6 +368,7 @@ def _extract_parts_rows(
     audit_lines: Optional[List[str]] = None,
     boundary_keyword: str = "sub total",
     stop_row: Optional[int] = None,
+    oic_positive_materials: bool = False,
 ) -> List[dict]:
     """Extract spare part rows from the sheet using the detected header and column map."""
     rows = []
@@ -351,6 +441,19 @@ def _extract_parts_rows(
         plastic_val = _clean_numeric(sheet.cell(row=r, column=plastic_col).value) if plastic_col else None
         glass_val = _clean_numeric(sheet.cell(row=r, column=glass_col).value) if glass_col else None
 
+        if oic_positive_materials:
+            for name, value in (("metal", metal_val), ("plastic", plastic_val), ("glass", glass_val)):
+                if value is not None and (not math.isfinite(value) or value < 0):
+                    raise OicPartsReviewError(f"OIC parts row {r} has an invalid {name} amount; review '{part_name}'")
+                col = {"metal": metal_col, "plastic": plastic_col, "glass": glass_col}[name]
+                raw = sheet.cell(row=r, column=col).value if col else None
+                if value is None and raw is not None and str(raw).strip().casefold() not in ("", "na", "n.a.", "n/a", "-", "nil", "none"):
+                    raise OicPartsReviewError(f"OIC parts row {r} has an unreadable {name} amount; review '{part_name}'")
+            # Zero means the material is not used for this item.
+            metal_val = metal_val if metal_val is not None and metal_val > 0 else None
+            plastic_val = plastic_val if plastic_val is not None and plastic_val > 0 else None
+            glass_val = glass_val if glass_val is not None and glass_val > 0 else None
+
         # Count how many material columns have values
         material_values = []
         if metal_val is not None:
@@ -361,6 +464,11 @@ def _extract_parts_rows(
             material_values.append("glass")
 
         if len(material_values) > 1:
+            if oic_positive_materials:
+                raise OicPartsReviewError(
+                    f"OIC parts row {r} has positive amounts in multiple material columns "
+                    f"({', '.join(material_values)}); review '{part_name}'"
+                )
             # Multiple materials in one row — skip with log
             if audit_lines is not None:
                 audit_lines.append(
@@ -538,6 +646,7 @@ def extract_parts_and_labour(
     parts_hsn=8512,
     labour_hsn=8729,
     boundary_keyword: str = "sub total",
+    oic_flexible_parts: bool = False,
 ) -> Tuple[List[dict], List[dict], List[str]]:
     """
     End-to-end extraction of spare parts and labour rows from an Excel file.
@@ -590,7 +699,11 @@ def extract_parts_and_labour(
     labour_rows: List[dict] = []
 
     # ── Phase 1: Spare Parts ──
-    parts_detection = _detect_parts_header(src_ws)
+    try:
+        parts_detection = _detect_oic_parts_header(src_ws) if oic_flexible_parts else _detect_parts_header(src_ws)
+    except Exception:
+        src_wb.close()
+        raise
     if parts_detection.row:
         parts_header = parts_detection.row
         parts_col_map = parts_detection.col_map
@@ -604,6 +717,7 @@ def extract_parts_and_labour(
             f"Confidence: {parts_detection.confidence}%",
             f"Matched: {', '.join(parts_detection.matched_keys) or '-'}",
             f"Missing: {', '.join(parts_detection.missing_keys) or '-'}",
+            f"Columns: {parts_col_map}",
         ])
 
         if parts_detection.confidence < _MIN_HEADER_CONFIDENCE:
@@ -620,11 +734,15 @@ def extract_parts_and_labour(
             _labour_detection_for_stop = _detect_labour_header(src_ws)
             _stop_row = _labour_detection_for_stop.row  # None if not found
 
-            parts_rows = _extract_parts_rows(
-                src_ws, parts_header, parts_col_map, hsn_code=parts_hsn,
-                audit_lines=audit_lines, boundary_keyword=boundary_keyword,
-                stop_row=_stop_row,
-            )
+            try:
+                parts_rows = _extract_parts_rows(
+                    src_ws, parts_header, parts_col_map, hsn_code=parts_hsn,
+                    audit_lines=audit_lines, boundary_keyword=boundary_keyword,
+                    stop_row=_stop_row, oic_positive_materials=oic_flexible_parts,
+                )
+            except Exception:
+                src_wb.close()
+                raise
             logger.info("Parts extractor: extracted %d spare part rows", len(parts_rows))
     else:
         logger.warning("Parts extractor: no spare parts header found in Excel")

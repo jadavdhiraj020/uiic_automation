@@ -120,6 +120,9 @@ async def fill_assessment_of_loss(
 
 async def _fill_invoice_section(page: Page, claim, defaults, log: AutomationLogger, delay: int):
     log._section = "Invoice Details"
+    review_error = getattr(claim, "_oic_parts_review_error", "")
+    if review_error:
+        raise ValueError(f"OIC parts need review: {review_error}")
     log.info("▸ Filling Invoice Section")
     
     # 1. Invoice Number (Optional)

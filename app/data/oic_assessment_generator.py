@@ -244,7 +244,7 @@ def generate_oic_assessment(
     # ── Phase 1: Extract ──────────────────────────────────────────────────────
     parts_rows, labour_rows, extractor_audit = extract_parts_and_labour(
         source_excel_path, parts_hsn=parts_hsn, labour_hsn=labour_hsn,
-        boundary_keyword=boundary_kw,
+        boundary_keyword=boundary_kw, oic_flexible_parts=True,
     )
     logger.info(
         "OIC assessment generator: extracted %d parts + %d labour rows",
