@@ -75,6 +75,7 @@ from app.portals.oic.automation.ui_utils import (
 )
 from app.portals.oic.automation.date_formatter import format_oic_date
 from app.portals.oic.city_mapping import city_from_licence
+from app.portals.oic.license_type_mapping import resolve_license_type
 from app.portals.oic.rto_mapping import match_rto_name
 
 
@@ -157,6 +158,43 @@ async def _select_driver_city(page: Page, city: str, log: AutomationLogger, dela
     except Exception as exc:
         log.field_failed("City", str(exc))
         return False
+    finally:
+        if opened:
+            try:
+                await page.keyboard.press("Escape")
+            except Exception:
+                pass
+        await asyncio.sleep(delay / 1000.0)
+
+
+async def _select_mapped_licence_type(page: Page, value: str, source: str,
+                                      log: AutomationLogger, delay: int) -> None:
+    """Choose the mapped option exactly, without a different partial match."""
+    opened = False
+    try:
+        dropdown = page.locator(SEL_LICENSE_TYPE_DROPDOWN).first
+        await dropdown.wait_for(state="visible", timeout=10000)
+        await dropdown.scroll_into_view_if_needed()
+        await dropdown.click()
+        opened = True
+        panel = page.locator(".p-dropdown-panel:visible").last
+        await panel.wait_for(state="visible", timeout=5000)
+        items = panel.locator("li[role='option'], .p-dropdown-item")
+        exact = items.filter(has_text=re.compile(r"^\s*" + re.escape(value) + r"\s*$", re.IGNORECASE))
+        count = 0
+        for _ in range(15):
+            count = await exact.count()
+            if count:
+                break
+            await asyncio.sleep(0.3)
+        if count != 1:
+            log.warning(f"Mapped Licence Type '{value}' is not uniquely available; review it manually.")
+            return
+        await exact.first.click()
+        opened = False
+        log.field_selected("License Type", value, source=source)
+    except Exception as exc:
+        log.field_failed("License Type", str(exc))
     finally:
         if opened:
             try:
@@ -598,12 +636,24 @@ async def _fill_driver_details(page: Page, claim, log, delay: int, automation_de
             "Date of Birth", log, delay
         )
 
-    # 3. License Type * (mandatory) — PrimeNG dropdown
-    if claim.license_type_of_driver:
-        await select_primeng_dropdown(
-            page, SEL_LICENSE_TYPE_DROPDOWN, claim.license_type_of_driver,
-            "License Type", log, delay
-        )
+    # 3. Prefer the vehicle-class mapping; keep Excel's licence type as a
+    # fallback only when the class is not recognized, never when ambiguous.
+    licence_type, licence_source = resolve_license_type(
+        claim.class_of_vehicle, claim.license_type_of_driver
+    )
+    if licence_type:
+        source = "Class of Vehicle" if licence_source == "class" else "Excel Licence Type"
+        if licence_source == "class" or str(claim.license_type_of_driver or "").strip().casefold() == "lmv":
+            await _select_mapped_licence_type(page, licence_type, source, log, delay)
+        else:
+            await select_primeng_dropdown(
+                page, SEL_LICENSE_TYPE_DROPDOWN, licence_type, "License Type", log, delay, source=source
+            )
+    elif licence_source == "ambiguous":
+        log.warning("Class of Vehicle does not identify one Licence Type; no new choice made. "
+                    "OIC requires a manual selection before advancing if the field is blank.")
+    else:
+        log.warning("Licence Type could not be determined; continuing with the remaining fields.")
 
     # 4. Valid From * (mandatory) — MUI DatePicker (DL issue date, DD-MM-YYYY)
     _dl_issue = format_oic_date(claim.driver_license_issue_date)

@@ -977,6 +977,19 @@ class ClaimData:
         from app.portals.oic.automation.basic_details_module import _extract_variant
         variant = _extract_variant(self.vehicle_make)
 
+        from app.portals.oic.license_type_mapping import resolve_license_type
+        licence_type, licence_source = resolve_license_type(
+            self.class_of_vehicle, self.license_type_of_driver
+        )
+        if licence_source == "class":
+            licence_preview_source = _src("class_of_vehicle") or "Class of Vehicle"
+        elif licence_source == "excel":
+            licence_preview_source = _src("license_type_of_driver")
+        elif licence_source == "ambiguous":
+            licence_preview_source = "Ambiguous Class of Vehicle"
+        else:
+            licence_preview_source = ""
+
         from app.portals.oic.rto_mapping import match_rto_name
         rto_match = match_rto_name(self.rto_name)
 
@@ -1048,7 +1061,7 @@ class ClaimData:
             ("Driver Name",           self.driver_name,           True,  _src("driver_name")),
             ("Registered Owner Name", self.registered_owner_name, False, _src("registered_owner_name")),
             ("Date of Birth",         self.dob_of_driver,         True,  _src("dob_of_driver")),
-            ("License Type",          self.license_type_of_driver,True,  _src("license_type_of_driver")),
+            ("License Type",          licence_type,               True,  licence_preview_source),
             ("Valid From (DL Issue)",  self.driver_license_issue_date, True, _src("driver_license_issue_date")),
             ("Valid Up To (DL Expiry)",self.driver_license_expiry_date, True, _src("driver_license_expiry_date")),
             ("License Number",        self.driver_license_number, True,  _src("driver_license_number")),
