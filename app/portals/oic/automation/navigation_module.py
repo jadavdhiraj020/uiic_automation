@@ -1,6 +1,6 @@
 """
 navigation_module.py — Resilient navigation workflow for Oriental Insurance (OIC).
-Bypasses dashboard filters directly to 'Others' tab -> Motor OD Surveyor Assessment -> Generate Assessment.
+Opens Motor OD Surveyor Assessment from the dashboard, then Generate Assessment.
 """
 
 import asyncio
@@ -13,7 +13,6 @@ from app.automation.automation_logger import AutomationLogger, _ts
 from app.portals.oic.automation import popup_service
 from app.portals.oic.automation.ui_utils import capture_error_screenshot
 from app.portals.oic.automation.selectors import (
-    SEL_OTHERS_TABS,
     SEL_MOTOR_SUB_LINKS,
     SEL_GENERATE_ASSESSMENT_BTNS,
 )
@@ -70,42 +69,7 @@ async def navigate_to_claim(
         if isinstance(log, AutomationLogger): log.outdent()
         return None
 
-    # 2. Locate and expand 'Others' menu tab
-    if isinstance(log, AutomationLogger):
-        log.info("Locating 'Others' menu section...")
-    else:
-        log(f"[{_ts()}]   📂 Locating 'Others' menu section...")
-
-    others_click = False
-    others_selectors = SEL_OTHERS_TABS
-
-    for sel in others_selectors:
-        try:
-            loc = page.locator(sel).first
-            if await loc.is_visible(timeout=2500):
-                await loc.click()
-                others_click = True
-                if isinstance(log, AutomationLogger):
-                    log.success(f"Clicked 'Others' tab via: {sel}")
-                else:
-                    log(f"[{_ts()}]   ✅ Clicked 'Others' tab via: {sel}")
-                break
-        except Exception:
-            continue
-
-    if not others_click:
-        await capture_error_screenshot(page, "others_tab_not_found", log)
-        if isinstance(log, AutomationLogger):
-            log.warning("Could not explicitly click 'Others' tab. Attempting direct sub-link locate.")
-        else:
-            log(f"[{_ts()}]   ⚠️ 'Others' tab click skipped or not found. Continuing.")
-
-    await asyncio.sleep(0.5)
-    if stop_cb():
-        if isinstance(log, AutomationLogger): log.outdent()
-        return None
-
-    # 3. Click 'Motor OD Surveyor Assessment' link
+    # 2. The Motor OD card is visible in the dashboard's default Claims tab.
     if isinstance(log, AutomationLogger):
         log.info("Locating 'Motor OD Surveyor Assessment' sub-link...")
     else:
@@ -117,14 +81,14 @@ async def navigate_to_claim(
     for sel in motor_selectors:
         try:
             loc = page.locator(sel).first
-            if await loc.is_visible(timeout=3000):
-                await loc.click()
-                motor_click = True
-                if isinstance(log, AutomationLogger):
-                    log.success(f"Clicked sub-link via: {sel}")
-                else:
-                    log(f"[{_ts()}]   ✅ Clicked sub-link via: {sel}")
-                break
+            await loc.wait_for(state="visible", timeout=3000)
+            await loc.click()
+            motor_click = True
+            if isinstance(log, AutomationLogger):
+                log.success(f"Clicked sub-link via: {sel}")
+            else:
+                log(f"[{_ts()}]   ✅ Clicked sub-link via: {sel}")
+            break
         except Exception:
             continue
 
@@ -143,7 +107,7 @@ async def navigate_to_claim(
     # Dismiss any sub-navigation popups
     await popup_service.dismiss_portal_popup(page, log, max_wait_s=0.5, context="Sub-navigation")
 
-    # 4. Wait for Surveyor Assessment page & Click 'Generate Assessment +'
+    # 3. Wait for Surveyor Assessment page & Click 'Generate Assessment +'
     try:
         await page.wait_for_url(
             lambda u: "surveyor-assessment" in u.lower() or "surveyorassessment" in u.lower() or "assessment" in u.lower(),
@@ -163,14 +127,14 @@ async def navigate_to_claim(
     for sel in gen_selectors:
         try:
             loc = page.locator(sel).first
-            if await loc.is_visible(timeout=3000):
-                await loc.click()
-                gen_click = True
-                if isinstance(log, AutomationLogger):
-                    log.success(f"Successfully triggered 'Generate Assessment +' via: {sel}")
-                else:
-                    log(f"[{_ts()}]   ✅ Successfully triggered 'Generate Assessment +' via: {sel}")
-                break
+            await loc.wait_for(state="visible", timeout=3000)
+            await loc.click()
+            gen_click = True
+            if isinstance(log, AutomationLogger):
+                log.success(f"Successfully triggered 'Generate Assessment +' via: {sel}")
+            else:
+                log(f"[{_ts()}]   ✅ Successfully triggered 'Generate Assessment +' via: {sel}")
+            break
         except Exception:
             continue
 

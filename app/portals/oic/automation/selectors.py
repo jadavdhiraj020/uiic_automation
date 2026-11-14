@@ -47,9 +47,9 @@ SEL_MOTOR_SUB_LINKS = [
 ]
 
 SEL_GENERATE_ASSESSMENT_BTNS = [
+    "a:has-text('Generate Assessment +')",
     "button:has-text('Generate Assessment +')",
     "button:has-text('Generate Assessment')",
-    "a:has-text('Generate Assessment +')",
     ".btn-primary:has-text('Generate Assessment')",
     "button:has-text('+')",
     "[data-ng-click*='generate']",
