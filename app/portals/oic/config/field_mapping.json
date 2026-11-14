@@ -6,7 +6,15 @@
     "search_labels": ["Claim no", "Claim Number", "claim_number", "claim_no", "Claim number"],
     "row_offset": 0,
     "col_offset": 1,
-    "_mandatory": true
+    "_mandatory": false
+  },
+
+  "policy_number": {
+    "sheet": "ALL",
+    "search_labels": ["Cover Note/Policy No.", "Policy Number", "Policy No.", "Policy No", "policy_number"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": false
   },
 
   "vehicle_registration_number": {

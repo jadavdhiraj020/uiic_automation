@@ -7,11 +7,12 @@ Handles:
   1. Select Claim Type dropdown (Cashless / Reimbursement)
      - Uses same payment_to logic as Website 1 (UIIC)
      - REPAIRER → Cashless, INSURED → Reimbursement
-  2. Fill Claim Number (always — never Policy Number)
+  2. Fill Policy Number, or Claim Number if the policy is unavailable
   3. Click Next button
 
 DOM References (from HTML_DOM.txt):
   - Claim Type: PrimeNG p-dropdown #claimType
+  - Policy Number: PrimeNG p-inputtext #policyNumber
   - Claim Number: PrimeNG p-inputtext #claimNumber
   - Next button: button.next-btn[aria-label="Next"] (disabled until valid)
 """
@@ -25,6 +26,7 @@ from playwright.async_api import Page
 from app.automation.automation_logger import AutomationLogger, _ts
 from app.data.data_model import ClaimData
 from app.portals.oic.automation import popup_service
+from app.portals.oic.automation.selectors import SEL_CLAIM_NUMBER_INPUT, SEL_POLICY_NUMBER_INPUT
 from app.portals.oic.automation.ui_utils import capture_error_screenshot, fill_input_with_delay
 from app.utils import load_automation_defaults
 
@@ -62,7 +64,7 @@ async def fill_claim_search(
     """
     Fill the Generate Assessment search form (Step 1):
       1. Select Claim Type from PrimeNG dropdown
-      2. Fill Claim Number
+      2. Fill Policy Number, or Claim Number if no policy number is available
       3. Click Next
 
     Returns True on success, False on failure.
@@ -121,28 +123,30 @@ async def fill_claim_search(
         if isinstance(log, AutomationLogger): log.outdent()
         return False
 
-    # ── Step 2: Fill Claim Number (always — skip Policy Number) ───────────────
-    claim_no = str(claim.claim_no).strip()
-    if not claim_no:
-        _log_error("Claim Number is empty — cannot proceed.")
+    # ── Step 2: Search by policy first; use claim only when policy is absent ──
+    policy_number = str(getattr(claim, "policy_number", "") or "").strip()
+    claim_no = str(claim.claim_no or "").strip()
+    if not policy_number and not claim_no:
+        _log_error("Policy Number and Claim Number are both empty — cannot proceed.")
         if isinstance(log, AutomationLogger): log.outdent()
         return False
 
-    _log_info(f"⌨️ [Typing] Entering Claim Number: '{claim_no}'...")
+    field_name, selector, search_value = (
+        ("Policy Number", SEL_POLICY_NUMBER_INPUT, policy_number)
+        if policy_number else ("Claim Number", SEL_CLAIM_NUMBER_INPUT, claim_no)
+    )
+    _log_info(f"⌨️ [Typing] Entering {field_name}: '{search_value}'...")
 
     try:
-        await fill_input_with_delay(page, "#claimNumber", claim_no, "Claim Number", log, delay_ms=field_delay_ms)
+        await fill_input_with_delay(page, selector, search_value, field_name, log, delay_ms=field_delay_ms)
 
-        # Verify the input value
-        claim_input = page.locator("#claimNumber").first
-        actual_val = await claim_input.input_value()
-        if actual_val.strip() == claim_no:
-            _log_success(f"Claim Number filled → '{claim_no}'")
-        else:
-            _log_warning(f"Claim Number input shows '{actual_val}', expected '{claim_no}'.")
+        actual_val = await page.locator(selector).first.input_value()
+        if actual_val.strip() != search_value:
+            raise ValueError(f"{field_name} input shows '{actual_val}', expected '{search_value}'")
+        _log_success(f"{field_name} filled → '{search_value}'")
     except Exception as exc:
-        await capture_error_screenshot(page, "claim_number_fill_failed", log)
-        _log_error(f"Failed to fill Claim Number: {exc}")
+        await capture_error_screenshot(page, "search_number_fill_failed", log)
+        _log_error(f"Failed to fill {field_name}: {exc}")
         if isinstance(log, AutomationLogger): log.outdent()
         return False
 

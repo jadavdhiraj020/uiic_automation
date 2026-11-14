@@ -272,6 +272,7 @@ _OIC_METADATA = PortalUiMetadata(
             "claim_details",
             "Claim Details",
             [
+                "Policy Number",
                 "Claim No",
                 "Claim Type",
             ],

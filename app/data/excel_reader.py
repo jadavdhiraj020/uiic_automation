@@ -253,7 +253,8 @@ def _is_junk(val: Any) -> bool:
 def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                   is_date: bool = False,
                   allow_literal_values: bool = False,
-                  allow_text_values: bool = False) -> Tuple[Optional[str], Optional[str]]:
+                  allow_text_values: bool = False,
+                  stop_at_next_label: bool = False) -> Tuple[Optional[str], Optional[str]]:
     """
     Find label text anywhere in the sheet. Then:
       1. Move row_offset rows down.
@@ -308,6 +309,14 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                         val = orig_cell.split(":", 1)[-1].strip(" -\n\t")
                     else:
                         val = re.sub(re.escape(label), "", orig_cell, flags=re.IGNORECASE).strip(" -:\n\t")
+
+                    if stop_at_next_label:
+                        # A policy and claim/period can share one cell. Do not
+                        # consume the following field when the policy is blank.
+                        val = re.split(
+                            r"\b(?:claim\s*(?:no\.?|number|#)|period|idv|valid(?:ity)?|insured)\b",
+                            val, maxsplit=1, flags=re.IGNORECASE,
+                        )[0].strip(" :-\n\t")
                     
                     if val:
                         result = _extract_value(val, is_date, allow_literal_values, allow_text_values)
@@ -325,9 +334,22 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
 
                 target_row = all_rows[target_r]
 
+                row_end = len(target_row)
+                if stop_at_next_label and target_r == r_idx:
+                    for boundary_c in range(c_idx + 1, len(target_row)):
+                        candidate = str(target_row[boundary_c] or "").strip()
+                        if not candidate or candidate in (":", "-", "--"):
+                            continue
+                        if _is_junk(candidate) or re.match(
+                            r"^(?:claim\s*(?:no\.?|number|#)|period|idv|valid(?:ity)?|insured)\b",
+                            candidate, re.IGNORECASE,
+                        ):
+                            row_end = boundary_c
+                            break
+
                 # ── Strategy 1: Try col_offset hint first ──────────────────
                 hint_c = c_idx + col_offset
-                if 0 <= hint_c < len(target_row):
+                if 0 <= hint_c < row_end:
                     val = target_row[hint_c]
                     result = _extract_value(val, is_date, allow_literal_values, allow_text_values)
                     if result is not None:
@@ -339,7 +361,7 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                         return result, coord_str
 
                 # ── Strategy 2: Scan right from label col to find first value
-                for scan_c in range(c_idx + 1, len(target_row)):
+                for scan_c in range(c_idx + 1, row_end):
                     val = target_row[scan_c]
                     result = _extract_value(val, is_date, allow_literal_values, allow_text_values)
                     if result is not None:
@@ -731,7 +753,8 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
                     for sh in wb.all_sheets():
                         value, coord = _search_label(
                             sh, current_label, row_off, col_off, is_date,
-                            allow_literal_values, allow_text_values
+                            allow_literal_values, allow_text_values,
+                            stop_at_next_label=(portal_id == "oic" and field_name == "policy_number"),
                         )
                         if value:
                             sh_name = sh.name if hasattr(sh, 'name') else 'Sheet'
@@ -745,7 +768,8 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
                     if sh:
                         value, coord = _search_label(
                             sh, current_label, row_off, col_off, is_date,
-                            allow_literal_values, allow_text_values
+                            allow_literal_values, allow_text_values,
+                            stop_at_next_label=(portal_id == "oic" and field_name == "policy_number"),
                         )
                         if value:
                             src_str = f"{coord} ({sheet_name})"

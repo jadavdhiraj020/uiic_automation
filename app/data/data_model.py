@@ -434,6 +434,7 @@ class ClaimData:
     surveyor_mobile: str = ""
     surveyor_address: str = ""
     surveyor_pan: str = ""
+    policy_number: str = ""            # OIC search prefers policy over claim number
 
     # Property aliases for backward compatibility and naming flexibility
     @property
@@ -692,8 +693,8 @@ class ClaimData:
         errors, warnings = [], []
 
         # ── 1. Claim identity ─────────────────────────────────────────────────
-        if not self.claim_no or self.claim_no.strip() == "":
-            errors.append("Claim Number is missing")
+        if not str(self.policy_number or "").strip() and not str(self.claim_no or "").strip():
+            errors.append("Policy Number and Claim Number are both missing")
 
         # ── 2. Interim Report fields (Step 3) ─────────────────────────────────
         # Validated early (before Vehicle details) because these fields carry a
@@ -991,7 +992,8 @@ class ClaimData:
 
         return [
             # Claim Details
-            ("Claim No",              self.claim_no,              True,  _src("claim_no")),
+            ("Policy Number",         self.policy_number,        not bool(str(self.claim_no or "").strip()), _src("policy_number")),
+            ("Claim No",              self.claim_no,              not bool(str(self.policy_number or "").strip()), _src("claim_no")),
             ("Claim Type",            "Reimbursement" if "insured" in str(self.payment_to).lower() or "reimbursement" in str(self.payment_to).lower() else "Cashless",
                                                                   True,  _src("payment_to")),
             
