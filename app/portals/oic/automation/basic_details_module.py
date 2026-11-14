@@ -74,6 +74,57 @@ from app.portals.oic.automation.ui_utils import (
     _get_oic_fill_settings,
 )
 from app.portals.oic.automation.date_formatter import format_oic_date
+from app.portals.oic.rto_mapping import match_rto_name
+
+
+async def _select_rto(page: Page, excel_value: str, log: AutomationLogger, delay: int) -> None:
+    """Match the Excel RTO against the currently available portal options."""
+    opened = False
+    try:
+        dropdown = page.locator(SEL_RTO_DROPDOWN).first
+        await dropdown.wait_for(state="visible", timeout=10000)
+        await dropdown.scroll_into_view_if_needed()
+        await dropdown.click()
+        opened = True
+        panel = page.locator(".p-dropdown-panel:visible").last
+        await panel.wait_for(state="visible", timeout=5000)
+        items = panel.locator("li[role='option'], .p-dropdown-item")
+        await items.first.wait_for(state="attached", timeout=10000)
+        options = []
+        for _ in range(10):
+            options = [text.strip() for text in await items.all_text_contents()]
+            if options and options[0].casefold() not in {"loading", "loading...", "fetching..."}:
+                break
+            await asyncio.sleep(0.3)
+        name = match_rto_name(excel_value, options)
+        if not name:
+            await page.keyboard.press("Escape")
+            opened = False
+            log.warning(f"No RTO matched the Excel value '{excel_value}'; review it manually.")
+            return
+        exact = items.filter(has_text=re.compile(r"^\s*" + re.escape(name) + r"\s*$", re.IGNORECASE))
+        count = await exact.count()
+        if not count:
+            await page.keyboard.press("Escape")
+            opened = False
+            log.warning(f"RTO '{name}' is no longer available in the portal; review it manually.")
+            return
+        if name.casefold() != excel_value.strip().casefold() or count > 1:
+            log.warning(f"RTO from Excel '{excel_value}' matched portal option '{name}'"
+                        + (f" ({count} identical labels; using the first)" if count > 1 else "")
+                        + "; review the selected office.")
+        await exact.first.click()
+        opened = False
+        log.field_selected("RTO", name, source="RTO name from Excel")
+    except Exception as exc:
+        if opened:
+            try:
+                await page.keyboard.press("Escape")
+            except Exception:
+                pass
+        log.field_failed("RTO", str(exc))
+    finally:
+        await asyncio.sleep(delay / 1000.0)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PUBLIC API
@@ -280,12 +331,12 @@ async def _fill_vehicle_details(page: Page, claim, log, delay: int):
                 "Type of Fuel", log, delay
             )
 
-    # 15. Optional: RTO — PrimeNG dropdown
-    if claim.rto_name:
-        await select_primeng_dropdown(
-            page, SEL_RTO_DROPDOWN, claim.rto_name,
-            "RTO", log, delay
-        )
+    # 15. Match the RTO value extracted from Excel to the portal's options.
+    rto = str(claim.rto_name or "").strip()
+    if rto:
+        await _select_rto(page, rto, log, delay)
+    else:
+        log.warning("RTO name was not found in Excel; review it manually.")
 
     # 16. Optional: Registered Laden Weight — PrimeNG InputNumber
     if claim.registered_laden_weight:

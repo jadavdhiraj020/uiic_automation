@@ -291,6 +291,8 @@ _OIC_METADATA = PortalUiMetadata(
                 "Type of Body",
                 "Color of Vehicle",
                 "Type of Fuel",
+                "RTO",
+                "RTO Portal Match",
             ],
         ),
         FieldGroup(

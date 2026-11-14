@@ -109,7 +109,7 @@
   },
   "rto_name": {
     "sheet": "ALL",
-    "search_labels": ["RTO Name", "RTO", "Registering Authority"],
+    "search_labels": ["RTO Name", "RTO Office", "Registering Authority", "Registration Authority", "Registration Office", "RTO"],
     "row_offset": 0,
     "col_offset": 1,
     "allow_text_values": true,

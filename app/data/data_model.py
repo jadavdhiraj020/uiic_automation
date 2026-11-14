@@ -977,6 +977,9 @@ class ClaimData:
         from app.portals.oic.automation.basic_details_module import _extract_variant
         variant = _extract_variant(self.vehicle_make)
 
+        from app.portals.oic.rto_mapping import match_rto_name
+        rto_match = match_rto_name(self.rto_name)
+
         # State comes from the driving licence; city remains address-based.
         from app.portals.oic.automation.basic_details_module import (
             _state_from_driver_license, _extract_city, _extract_pin_code, _is_owner_driver
@@ -1013,6 +1016,7 @@ class ClaimData:
             ("Color of Vehicle",      self.vehicle_color,         False, _src("vehicle_color")),
             ("Type of Fuel",          self.type_of_fuel,          False, _src("type_of_fuel")),
             ("RTO",                   self.rto_name,              False, _src("rto_name")),
+            ("RTO Portal Match",      rto_match,                  False, "Matched from Excel RTO"),
             ("Registered Laden Weight", self.registered_laden_weight, False, _src("registered_laden_weight")),
             ("Seating Capacity",      self.seating_capacity,      False, _src("seating_capacity")),
             ("Fitness Valid Upto",    self.fitness_valid_upto,     False, _src("fitness_valid_upto")),
