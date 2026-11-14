@@ -630,13 +630,15 @@ async def _fill_driver_details(page: Page, claim, log, delay: int, automation_de
     # )
     log.info("  ℹ️ [Country] → pre-filled by portal (read-only) — skipped")
 
-    # 15. State * (mandatory) — PrimeNG dropdown
-    state = _extract_state(claim.driver_city_state)
+    # 15. State * (mandatory) — use the driving licence's issuing-state prefix.
+    state = _state_from_driver_license(claim.driver_license_number)
     if state:
         await select_primeng_dropdown(
             page, SEL_STATE_DROPDOWN, state,
             "State", log, delay
         )
+    else:
+        log.warning("Driver State could not be determined from the driving licence prefix; review it manually.")
 
     # 16. City * (mandatory) — PrimeNG dropdown
     city = _extract_city(claim.driver_city_state)
@@ -1087,6 +1089,57 @@ def _split_license_number(license_no: str) -> tuple:
         return (raw[:4], raw[4:8], raw[8:])
 
     return (raw, "", "")
+
+
+# Values match the state labels observed in the OIC portal dropdown.
+_LICENSE_STATE_LABELS = {
+    "AN": "ANDAMAN & NICOBAR ISLANDS",
+    "AP": "ANDHRA PRADESH",
+    "AR": "ARUNACHAL PRADESH",
+    "AS": "ASSAM",
+    "BR": "BIHAR",
+    "CG": "CHATTISGARH",
+    "CH": "CHANDIGARH",
+    "DD": "DAMAN AND DIU AND DADRA AND NAGAR HAVELI",
+    "DN": "DAMAN AND DIU AND DADRA AND NAGAR HAVELI",
+    "DL": "DELHI",
+    "GA": "GOA",
+    "GJ": "GUJARAT",
+    "HP": "HIMACHAL PRADESH",
+    "HR": "HARYANA",
+    "JH": "JHARKHAND",
+    "JK": "JAMMU AND KASHMIR",
+    "KA": "KARNATAKA",
+    "KL": "KERALA",
+    "LA": "LADAKH",
+    "LD": "LAKSHADWEEP",
+    "MH": "MAHARASHTRA",
+    "ML": "MEGHALAYA",
+    "MN": "MANIPUR",
+    "MP": "MADHYA PRADESH",
+    "MZ": "MIZORAM",
+    "NL": "NAGALAND",
+    "OD": "ODISHA",
+    "OR": "ODISHA",
+    "PB": "PUNJAB",
+    "PY": "PONDICHERRY",
+    "RJ": "RAJASTHAN",
+    "SK": "SIKKIM",
+    "TG": "TELANGANA",
+    "TN": "TAMIL NADU",
+    "TR": "TRIPURA",
+    "TS": "TELANGANA",
+    "UA": "UTTARAKHAND",
+    "UK": "UTTARAKHAND",
+    "UP": "UTTAR PRADESH",
+    "WB": "WEST BENGAL",
+}
+
+
+def _state_from_driver_license(license_number: str) -> str:
+    """Return the OIC state label for a recognized driving licence prefix."""
+    match = re.match(r"^\s*([A-Za-z]{2})", str(license_number or ""))
+    return _LICENSE_STATE_LABELS.get(match.group(1).upper(), "") if match else ""
 
 
 def _extract_state(city_state: str) -> str:
