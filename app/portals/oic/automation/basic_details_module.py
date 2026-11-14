@@ -74,6 +74,7 @@ from app.portals.oic.automation.ui_utils import (
     _get_oic_fill_settings,
 )
 from app.portals.oic.automation.date_formatter import format_oic_date
+from app.portals.oic.city_mapping import city_from_licence
 from app.portals.oic.rto_mapping import match_rto_name
 
 
@@ -124,6 +125,44 @@ async def _select_rto(page: Page, excel_value: str, log: AutomationLogger, delay
                 pass
         log.field_failed("RTO", str(exc))
     finally:
+        await asyncio.sleep(delay / 1000.0)
+
+
+async def _select_driver_city(page: Page, city: str, log: AutomationLogger, delay: int) -> bool:
+    """Select the exact district from the live city dropdown."""
+    opened = False
+    try:
+        dropdown = page.locator(SEL_CITY_DROPDOWN).first
+        await dropdown.wait_for(state="visible", timeout=10000)
+        await dropdown.scroll_into_view_if_needed()
+        await dropdown.click()
+        opened = True
+        panel = page.locator(".p-dropdown-panel:visible").last
+        await panel.wait_for(state="visible", timeout=5000)
+        items = panel.locator("li[role='option'], .p-dropdown-item")
+        exact = items.filter(has_text=re.compile(r"^\s*" + re.escape(city) + r"\s*$", re.IGNORECASE))
+        count = 0
+        for _ in range(15):
+            count = await exact.count()
+            if count:
+                break
+            await asyncio.sleep(0.3)
+        if count != 1:
+            log.warning(f"City '{city}' has {count} matching portal options; review it manually.")
+            return False
+        await exact.first.click()
+        opened = False
+        log.field_selected("City", city, source="Driver licence prefix")
+        return True
+    except Exception as exc:
+        log.field_failed("City", str(exc))
+        return False
+    finally:
+        if opened:
+            try:
+                await page.keyboard.press("Escape")
+            except Exception:
+                pass
         await asyncio.sleep(delay / 1000.0)
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -185,8 +224,8 @@ async def fill_basic_details(
 
         # ── 5. Driver Details ─────────────────────────────────────────────────
         log.info(f"🪪 Subsection 5/6: Driver Details")
-        await _fill_driver_details(page, claim, log, field_delay_ms, _automation_defaults)
-        if stop_cb():
+        driver_ok = await _fill_driver_details(page, claim, log, field_delay_ms, _automation_defaults)
+        if not driver_ok or stop_cb():
             return False
 
         # ── 6. Workshop Details ───────────────────────────────────────────────
@@ -691,13 +730,20 @@ async def _fill_driver_details(page: Page, claim, log, delay: int, automation_de
     else:
         log.warning("Driver State could not be determined from the driving licence prefix; review it manually.")
 
-    # 16. City * (mandatory) — PrimeNG dropdown
-    city = _extract_city(claim.driver_city_state)
-    if city:
-        await select_primeng_dropdown(
-            page, SEL_CITY_DROPDOWN, city,
-            "City", log, delay
-        )
+    # 16. Use the issuing-office code in the driver's licence for the district.
+    # Do not continue with a stale city or PIN if state/city selection failed.
+    if not state:
+        return False
+    state_label = page.locator(f"{SEL_STATE_DROPDOWN} .p-dropdown-label").first
+    if (await state_label.inner_text()).strip().casefold() != state.casefold():
+        log.warning("Driver State was not selected; city and PIN require manual review.")
+        return False
+    city = city_from_licence(claim.driver_license_number)
+    if not city:
+        log.warning("No city mapping exists for the driver licence prefix; review it manually.")
+        return False
+    if not await _select_driver_city(page, city, log, delay):
+        return False
 
     # Row 5 ─────────────────────────────────────────────────────────────────
 
@@ -714,9 +760,8 @@ async def _fill_driver_details(page: Page, claim, log, delay: int, automation_de
     # 800 ms gives Angular one full change-detection cycle (typically ~400 ms)
     # plus a safety margin, without adding significant wall-clock cost.
     await asyncio.sleep(0.8)
-    pincode = claim.driver_pin_code or _extract_pin_code(claim.driver_address or claim.place_of_survey or "")
-    if pincode:
-        await _select_pincode_dropdown(page, SEL_PINCODE_DROPDOWN, pincode, log, delay)
+    if not await _select_pincode_dropdown(page, SEL_PINCODE_DROPDOWN, log, delay):
+        return False
 
     # 18. Address * (mandatory) — textarea
     address = claim.driver_address or claim.place_of_survey or ""
@@ -736,6 +781,7 @@ async def _fill_driver_details(page: Page, claim, log, delay: int, automation_de
         )
 
     log.success("  ✅ Driver Details subsection done.")
+    return True
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -912,44 +958,12 @@ async def _click_next_button(page: Page, log) -> bool:
 async def _select_pincode_dropdown(
     page: Page,
     selector: str,
-    pincode: str,
     log,
     delay: int,
-) -> None:
-    """
-    Select a pincode from the OIC PrimeNG dropdown.
-
-    The pincode dropdown is state-dependent: options only populate after
-    State and City dropdowns are filled. This helper:
-
-      1. Strips the raw pincode to a clean 6-digit string.
-      2. Waits (up to 6 s) for the dropdown container to become enabled
-         (i.e., not .p-disabled).
-      3. Opens the dropdown and waits for options to appear.
-      4. Matches by checking if the option text *starts with* the 6-digit
-         code (portal may display "110001 - South Delhi" etc.).
-      5. Falls back to substring matching if no prefix match found.
-      6. Logs a clear warning if no match could be selected.
-    """
-    label = "Pincode"
-
-    # Normalise — keep only digits, must be exactly 6 to be a valid Indian pincode
-    raw_digits = re.sub(r"\D", "", str(pincode))
-    if not raw_digits:
-        log.warning(f"  ⚠️ [Pincode] blank value — skipping")
-        return
-    if len(raw_digits) != 6:
-        log.warning(
-            f"  ⚠️ [Pincode] '{pincode}' → extracted '{raw_digits}' "
-            f"({len(raw_digits)} digits, need exactly 6) — skipping"
-        )
-        return
-    pin6 = raw_digits
-
+) -> bool:
+    """Select the first available six-digit PIN for the selected city."""
+    opened = False
     try:
-        # ── 1. Wait for dropdown container to be enabled ──────────────────────
-        # After City is selected Angular re-enables the pincode dropdown.
-        # Poll up to 6 s (20 × 300 ms).
         dropdown = page.locator(selector).first
         enabled = False
         for _ in range(20):
@@ -966,70 +980,40 @@ async def _select_pincode_dropdown(
                 pass
 
         if not enabled:
-            log.warning(f"  ⚠️ [Pincode] dropdown still disabled after waiting — skipping")
-            return
+            log.warning("Pincode dropdown is unavailable; review it manually.")
+            return False
 
-        # ── 2. Open the dropdown ──────────────────────────────────────────────
         await dropdown.wait_for(state="visible", timeout=5000)
         await dropdown.scroll_into_view_if_needed()
         await dropdown.click()
+        opened = True
+        panel = page.locator(".p-dropdown-panel:visible").last
+        await panel.wait_for(state="visible", timeout=5000)
+        items = panel.locator("li[role='option']:not([aria-disabled='true']):not(.p-disabled)")
 
-        # ── 3. Wait for options to populate ──────────────────────────────────
-        panel = page.locator(".p-dropdown-panel:visible, .p-overlay:visible")
-        items = panel.locator(".p-dropdown-item, li[role='option']")
-
-        count = 0
-        for _ in range(15):  # poll up to 4.5 s (15 × 300 ms)
+        for _ in range(15):
             await asyncio.sleep(0.3)
-            count = await items.count()
-            if count > 0:
-                first_txt = (await items.first.inner_text()).strip().lower()
-                if "loading" not in first_txt and "fetching" not in first_txt:
-                    break
-
-        if count == 0:
-            await page.keyboard.press("Escape")
-            log.warning(f"  ⚠️ [Pincode] dropdown opened but no options loaded — skipping")
-            return
-
-        # ── 4. Match: prefix match first, substring fallback ─────────────────
-        matched = False
-
-        # Pass 1: option text starts with the 6-digit pincode
-        for i in range(count):
-            item_txt = (await items.nth(i).inner_text()).strip()
-            if item_txt.startswith(pin6):
-                await items.nth(i).click()
-                matched = True
-                log.field_selected(label, item_txt) if hasattr(log, "field_selected") else \
-                    log.info(f"  ✅ [Pincode] selected → '{item_txt}'")
-                break
-
-        # Pass 2: substring match
-        if not matched:
-            for i in range(count):
-                item_txt = (await items.nth(i).inner_text()).strip()
-                if pin6 in item_txt:
-                    await items.nth(i).click()
-                    matched = True
-                    log.field_selected(label, item_txt) if hasattr(log, "field_selected") else \
-                        log.info(f"  ✅ [Pincode] selected → '{item_txt}'")
-                    break
-
-        if not matched:
-            await page.keyboard.press("Escape")
-            if hasattr(log, "field_failed"):
-                log.field_failed(label, f"No match for '{pin6}' in {count} options")
-            else:
-                log.warning(f"  ⚠️ [Pincode] no match for '{pin6}' ({count} options)")
+            labels = await items.all_text_contents()
+            for index, text in enumerate(labels):
+                value = text.strip()
+                if re.match(r"^\d{6}(?!\d)", value):
+                    await items.nth(index).click()
+                    opened = False
+                    log.field_selected("Pincode", value, source="First available portal option")
+                    return True
+        log.warning("No PIN options loaded for the selected city; review it manually.")
+        return False
 
     except Exception as exc:
-        if hasattr(log, "field_failed"):
-            log.field_failed(label, str(exc))
-        else:
-            log.error(f"  ❌ [Pincode] error: {exc}")
-
-    await asyncio.sleep(delay / 1000.0)
+        log.field_failed("Pincode", str(exc))
+        return False
+    finally:
+        if opened:
+            try:
+                await page.keyboard.press("Escape")
+            except Exception:
+                pass
+        await asyncio.sleep(delay / 1000.0)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

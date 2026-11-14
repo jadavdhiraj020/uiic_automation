@@ -980,13 +980,13 @@ class ClaimData:
         from app.portals.oic.rto_mapping import match_rto_name
         rto_match = match_rto_name(self.rto_name)
 
-        # State comes from the driving licence; city remains address-based.
+        # State and city come from the driving licence's issuing-office prefix.
         from app.portals.oic.automation.basic_details_module import (
-            _state_from_driver_license, _extract_city, _extract_pin_code, _is_owner_driver
+            _state_from_driver_license, _is_owner_driver
         )
+        from app.portals.oic.city_mapping import city_from_licence
         state_fallback = _state_from_driver_license(self.driver_license_number)
-        city_fallback = _extract_city(self.driver_city_state)
-        pincode_fallback = _extract_pin_code(self.driver_address or self.place_of_survey or "")
+        city_fallback = city_from_licence(self.driver_license_number)
 
         # Close Proximity and Nil Dep Cover derived/keyword
         from app.portals.oic.automation.basic_details_module import _resolve_loss_proximity, _resolve_nil_depreciation
@@ -1059,8 +1059,8 @@ class ClaimData:
             ("Third Party Involved",  "NO",                       False, "Hardcoded"),
             ("Country",               "INDIA",                    True,  "Hardcoded"),
             ("State",                 state_fallback,             True,  _src("driver_license_number") if state_fallback else ""),
-            ("City",                  city_fallback,              True,  _src("driver_city_state") or "Derived"),
-            ("Pincode",               self.driver_pin_code or pincode_fallback, True, _src("driver_pin_code") or "Derived from Address"),
+            ("City",                  city_fallback,              True,  _src("driver_license_number") if city_fallback else ""),
+            ("Pincode",               "First available in portal", True, "Selected after city"),
             ("Address",               self.driver_address,        True,  _src("driver_address")),
             ("Charges Filed",         self.charges_filed,         False, _src("charges_filed")),
 
