@@ -15,7 +15,7 @@ from typing import Callable, Optional
 import cv2
 import numpy as np
 
-from playwright.async_api import Page
+from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 
 from app.automation.automation_logger import AutomationLogger, _ts
 from app.portals.oic.automation import popup_service
@@ -31,6 +31,8 @@ from app.portals.oic.automation.selectors import (
     SEL_LOGIN_BTN,
     SEL_REFRESH_BTN,
     SEL_ERROR_MSG,
+    SEL_LANGUAGE_WELCOME,
+    SEL_LANGUAGE_ENGLISH,
     SEL_HEADER_LOGIN_BTN,
     SEL_LOGIN_FORM_CONTAINER,
     SEL_STARTUP_DIALOG_CLOSE,
@@ -310,6 +312,41 @@ async def do_login(
     # Go to login page
     await page.goto(portal_url, wait_until="domcontentloaded", timeout=30000)
     await asyncio.sleep(1.5)
+
+    # The welcome dialog can appear even while the notification popup is present.
+    # Select English first so the existing popup and login flow can proceed.
+    english_button = page.locator(SEL_LANGUAGE_ENGLISH).first
+    try:
+        await english_button.wait_for(state="visible", timeout=4000)
+    except PlaywrightTimeoutError:
+        if await page.locator(SEL_LANGUAGE_WELCOME).first.is_visible():
+            message = "OIC language dialog is visible, but its English option was not found."
+            if isinstance(log, AutomationLogger):
+                log.error(message)
+                log.outdent()
+            else:
+                log(f"[{_ts()}]   ❌ {message}")
+            return False
+    else:
+        if stop_cb():
+            if isinstance(log, AutomationLogger):
+                log.outdent()
+            return False
+        try:
+            await english_button.click(timeout=5000)
+            await page.locator(SEL_LANGUAGE_WELCOME).first.wait_for(state="hidden", timeout=5000)
+            if isinstance(log, AutomationLogger):
+                log.info("Selected English on the OIC welcome dialog.")
+            else:
+                log(f"[{_ts()}]   ℹ️ Selected English on the OIC welcome dialog.")
+        except Exception as exc:
+            message = f"Could not select English on the OIC welcome dialog: {exc}"
+            if isinstance(log, AutomationLogger):
+                log.error(message)
+                log.outdent()
+            else:
+                log(f"[{_ts()}]   ❌ {message}")
+            return False
 
     # Try to close OIC PrimeNG startup dialog banner if visible
     try:

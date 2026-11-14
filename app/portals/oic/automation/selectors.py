@@ -14,6 +14,8 @@ SEL_REFRESH_BTN = "button[aria-label*='Refresh CAPTCHA'], button.reset-btn-icon,
 SEL_ERROR_MSG = ".error-msg, .alert-danger, .text-danger, .ng-scope .alert, #errorMsg, .error-message"
 
 # --- HEADER / LOGIN CONTAINER SELECTORS ---
+SEL_LANGUAGE_WELCOME = "#language-welcome-title"
+SEL_LANGUAGE_ENGLISH = ".language-welcome__choices button:has-text('Continue in English')"
 SEL_HEADER_LOGIN_BTN = "button.header-login-btn, button#login-btn:visible"
 SEL_LOGIN_FORM_CONTAINER = ".login-formno"
 SEL_STARTUP_DIALOG_CLOSE = "button.p-dialog-header-close, button[aria-label='Close'], button.p-dialog-header-icon"
