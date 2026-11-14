@@ -466,16 +466,18 @@ class ClaimData:
             self.surveyor_mobile = _clean_mobile_10(self.surveyor_mobile)
             self._excel_logs.append(f"  📊 surveyor_mobile cleaned: '{self.surveyor_mobile}'")
 
-        # 1. Expected completion date depends ONLY and ONLY on date_of_survey (+1 calendar month)
-        if self.date_of_survey and str(self.date_of_survey).strip():
-            self.expected_completion_date = _add_one_calendar_month(self.date_of_survey)
-            self._excel_coords["expected_completion_date"] = self._excel_coords.get("date_of_survey", "")
-            self._excel_logs.append(
-                f"  📊 expected_completion_date: '{self.expected_completion_date}' (+1 month from date_of_survey '{self.date_of_survey}')"
-            )
-        else:
-            self.expected_completion_date = ""
-            self._excel_coords.pop("expected_completion_date", None)
+        # OIC uses the mapped submission date; other portals derive completion
+        # from the survey date as before.
+        if self.portal_id != "oic":
+            if self.date_of_survey and str(self.date_of_survey).strip():
+                self.expected_completion_date = _add_one_calendar_month(self.date_of_survey)
+                self._excel_coords["expected_completion_date"] = self._excel_coords.get("date_of_survey", "")
+                self._excel_logs.append(
+                    f"  📊 expected_completion_date: '{self.expected_completion_date}' (+1 month from date_of_survey '{self.date_of_survey}')"
+                )
+            else:
+                self.expected_completion_date = ""
+                self._excel_coords.pop("expected_completion_date", None)
 
         # 1b. Survey time fallback for UIIC.
         # Preserve the legacy 11:00 fallback for Excel users only.  For PDF

@@ -476,7 +476,7 @@
 
   "expected_completion_date": {
     "sheet": "ALL",
-    "search_labels": ["Submission Date", "Final Document Date", "Expected Completion Date", "Completion Date", "Date of Final Submission"],
+    "search_labels": ["Submission Date", "Final Document Date", "Expected Completion Date", "Completion Date", "Date of Final Submission", "Date:"],
     "row_offset": 0,
     "col_offset": 1,
     "_mandatory": false
