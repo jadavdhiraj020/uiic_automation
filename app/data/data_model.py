@@ -973,7 +973,7 @@ class ClaimData:
         def _src(key: str) -> str:
             return self._excel_coords.get(key, "")
 
-        # Extract variant dynamically for preview
+        # Match the value sent to the OIC Variant field.
         from app.portals.oic.automation.basic_details_module import _extract_variant
         variant = _extract_variant(self.vehicle_make)
 
@@ -1000,7 +1000,7 @@ class ClaimData:
             # Vehicle Details (all 24 fields)
             ("Registration No",       self.vehicle_registration_number, True, _src("vehicle_registration_number")),
             ("Make",                  self.vehicle_make,          True,  _src("vehicle_make")),
-            ("Variant",               variant,                    False, "Derived from Make"),
+            ("Variant",               variant,                    False, "Same as Make"),
             ("Registration Date",     self.date_of_registration,  False, _src("date_of_registration")),
             ("Year of Manufacture",   self.year_of_manufacture,   False, _src("year_of_manufacture")),
             ("Chassis No",            self.chassis_no,            True,  _src("chassis_no")),

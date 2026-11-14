@@ -183,7 +183,7 @@ async def _fill_vehicle_details(page: Page, claim, log, delay: int):
             "Make", log, delay
         )
 
-    # 3. Optional: Variant — try to extract from vehicle_make if separate
+    # 3. Optional: OIC Variant uses the same full value as Make.
     variant = _extract_variant(claim.vehicle_make)
     if variant:
         await fill_input_with_delay(
@@ -1139,32 +1139,8 @@ def _extract_pin_code(address: str) -> str:
 
 
 def _extract_variant(vehicle_make: str) -> str:
-    """
-    Extract variant from combined "Make & Variant" string.
-    E.g., "MARUTI ALTO K10 VXI" → "VXI" (last word if it looks like a trim level).
-    Returns empty string if no clear variant is found.
-    """
-    if not vehicle_make:
-        return ""
-
-    words = str(vehicle_make).strip().split()
-    if len(words) <= 2:
-        return ""
-
-    # Common variant suffixes
-    variant_patterns = {"vxi", "lxi", "zxi", "ldi", "vdi", "zdi", "std", "lx",
-                        "vx", "zx", "ld", "vd", "zd", "plus", "pro", "amt",
-                        "at", "mt", "turbo", "sport", "base", "top"}
-
-    last = words[-1].lower()
-    if last in variant_patterns:
-        return words[-1].upper()
-
-    # If last word is all caps and short, likely a variant
-    if words[-1].isupper() and len(words[-1]) <= 5:
-        return words[-1]
-
-    return ""
+    """Use the complete Make value for the OIC Variant field and preview."""
+    return vehicle_make or ""
 
 
 def _extract_year_from_make(vehicle_make: str) -> str:
