@@ -27,6 +27,10 @@ dependencies = [
     # (onednn_instruction.cc:118). Locked to the stable 2.x branch.
     "paddlepaddle>=2.6.0,<3.0.0",
     "paddleocr>=2.8.0,<3.0.0",
+    # RapidOCR (ONNX Runtime) – lightweight OCR engine used by ocr_engine.py
+    # for CAPTCHA solving and document/cheque OCR
+    "rapidocr_onnxruntime>=1.4.0",
+    "onnxruntime>=1.16.0",
     # Image Processing and PaddleOCR runtime extras
     "Pillow>=10.0.0",
     "numpy<2.0.0",
