@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from decimal import Decimal, InvalidOperation
 from typing import Callable, List
 
 from playwright.async_api import Page
@@ -1356,7 +1357,7 @@ async def _fill_survey_charges(page: Page, claim, defaults, log: AutomationLogge
     }
 
     desc_val = defaults.get("expense_description", "conveyance")
-    expenses_filled = False
+    expected_expenses = []
 
     for expense_name, raw_amt in exp_map.items():
         try:
@@ -1365,12 +1366,13 @@ async def _fill_survey_charges(page: Page, claim, defaults, log: AutomationLogge
             amt = 0
 
         if amt > 0:
-            expenses_filled = True
             portal_label = _EXPENSE_PORTAL_LABEL_MAP.get(expense_name, expense_name)
             log.info(f"   Adding expense: {expense_name} (portal: '{portal_label}') with amount {amt}")
 
             # Select dropdown using portal label (avoids mismatches like "Others" vs "Other Expenses")
             await select_primeng_dropdown(page, S.SEL_LOSS_EXPENSES_DROPDOWN, portal_label, "Expenses Dropdown", log, delay_ms=delay)
+            if not await _dropdown_has_value(page.locator(S.SEL_LOSS_EXPENSES_DROPDOWN).first, portal_label):
+                raise RuntimeError(f"Expense type '{portal_label}' was not selected; cannot add its amount")
 
             # Click Add Expenses +
             await page.locator(S.SEL_LOSS_ADD_EXPENSES_BTN).click()
@@ -1378,20 +1380,15 @@ async def _fill_survey_charges(page: Page, claim, defaults, log: AutomationLogge
 
             # Fill dynamic accordion section using portal label for the tab locator
             await _fill_dynamic_expense_accordion(page, portal_label, str(amt), desc_val, log, delay)
+            expected_expenses.append((portal_label, str(amt)))
 
-    return expenses_filled
+    if expected_expenses:
+        await _verify_expense_rows(page, expected_expenses, str(desc_val), log, delay)
+    return bool(expected_expenses)
 
 
-async def _fill_dynamic_expense_accordion(
-    page: Page,
-    portal_label: str,  # Portal accordion header text (e.g. 'Daily Allowance', 'Others')
-    amount_val: str,
-    desc_val: str,
-    log: AutomationLogger,
-    delay: int,
-):
-    log.info(f"   Expanding and filling dynamic subsection for: {portal_label}")
-
+async def _open_expense_inputs(page: Page, portal_label: str):
+    """Open one expense accordion and return its description and amount inputs."""
     # Locate the accordion tab by its portal header text.
     # Use .last because new tabs are appended — the last one is the one just added.
     tab_locator = page.locator(
@@ -1403,7 +1400,6 @@ async def _fill_dynamic_expense_accordion(
     # Expand tab if collapsed
     class_attr = await tab_locator.get_attribute("class") or ""
     if "p-accordion-tab-active" not in class_attr:
-        log.info(f"   Accordion tab for '{portal_label}' is collapsed — expanding")
         await tab_locator.locator(".p-accordion-header-link").click()
         await asyncio.sleep(0.2)  # Wait for expand animation
 
@@ -1413,24 +1409,128 @@ async def _fill_dynamic_expense_accordion(
 
     desc_input = content.locator("input#description, input[name='itemDesc']").first
     amt_input = content.locator("input[name='amount'], input[name='itemAmount'], #itemAmount input").first
+    await desc_input.wait_for(state="visible", timeout=5000)
+    await amt_input.wait_for(state="visible", timeout=5000)
+    return desc_input, amt_input
+
+
+def _expense_decimal(value: str):
+    normalized = re.sub(r"[₹,\s]", "", str(value or ""))
+    try:
+        result = Decimal(normalized)
+        return result if normalized and result.is_finite() else None
+    except (InvalidOperation, ValueError):
+        return None
+
+
+async def _expense_amount_matches(amt_input, amount_val: str) -> bool:
+    """Check the visible value and the InputNumber's committed numeric value."""
+    expected = _expense_decimal(amount_val)
+    actual = _expense_decimal(await amt_input.input_value())
+    committed = _expense_decimal(await amt_input.get_attribute("aria-valuenow"))
+    invalid = (await amt_input.get_attribute("aria-invalid") or "").lower() == "true"
+    return expected is not None and actual == expected and committed == expected and not invalid
+
+
+async def _fill_dynamic_expense_accordion(
+    page: Page,
+    portal_label: str,
+    amount_val: str,
+    desc_val: str,
+    log: AutomationLogger,
+    delay: int,
+):
+    log.info(f"   Expanding and filling dynamic subsection for: {portal_label}")
+    desc_input, amt_input = await _open_expense_inputs(page, portal_label)
 
     # Fill description
-    await desc_input.wait_for(state="visible", timeout=5000)
     await desc_input.scroll_into_view_if_needed()
     await desc_input.focus()
     await desc_input.fill(str(desc_val))
-    await desc_input.evaluate("el => { el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); el.dispatchEvent(new Event('blur', { bubbles: true })); }")
+    await amt_input.focus()  # A real focus change commits the description.
+    if (await desc_input.input_value()).strip() != str(desc_val).strip():
+        raise RuntimeError(f"{portal_label} description did not persist after entry")
     log.field_filled(f"{portal_label} Description", desc_val)
 
-    # Fill amount
-    await amt_input.wait_for(state="visible", timeout=5000)
+    # PrimeReact InputNumber can briefly display a filled value even though
+    # the underlying form will discard it on the next rerender. Enter every
+    # amount with real keystrokes so the component processes each change.
     await amt_input.scroll_into_view_if_needed()
-    await amt_input.focus()
-    await amt_input.fill(str(amount_val))
-    await amt_input.evaluate("el => { el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); el.dispatchEvent(new Event('blur', { bubbles: true })); }")
-    log.field_filled(f"{portal_label} Amount", amount_val)
+    _, typing_delay = _get_oic_fill_settings()
+    for attempt in range(1, 4):
+        await amt_input.click()
+        await amt_input.press("Control+A")
+        await amt_input.press("Backspace")
+        await amt_input.press_sequentially(str(amount_val), delay=max(50, typing_delay))
+        await amt_input.press("Tab")
+        committed = False
+        for _ in range(8):
+            if await _expense_amount_matches(amt_input, amount_val):
+                committed = True
+                break
+            await asyncio.sleep(0.2)
+        if committed:
+            log.field_filled(f"{portal_label} Amount", amount_val)
+            break
+        log.warning(f"   {portal_label} amount did not commit on attempt {attempt}; retrying")
+    else:
+        raise RuntimeError(f"{portal_label} amount '{amount_val}' did not commit after 3 attempts")
 
     await asyncio.sleep(0.1)
+
+
+async def _verify_expense_rows(page, expenses, description, log, delay):
+    """Reopen all rows after insertion and repair any values lost on rerender."""
+    clean_rounds = 0
+    for round_number in range(1, 5):
+        needs_repair = []
+        for portal_label, amount in expenses:
+            desc_input, amt_input = await _open_expense_inputs(page, portal_label)
+            desc_ok = (await desc_input.input_value()).strip() == description.strip()
+            amount_ok = await _expense_amount_matches(amt_input, amount)
+            if not desc_ok or not amount_ok:
+                failed_fields = ", ".join(name for name, ok in (("description", desc_ok), ("amount", amount_ok)) if not ok)
+                log.warning(f"   {portal_label} {failed_fields} did not persist on review {round_number}")
+                needs_repair.append((portal_label, amount))
+
+        # The portal's read-only total must also reflect a committed amount.
+        # Do not guess its exact tax/deduction calculation for different cases.
+        if not needs_repair:
+            total_input = page.locator("#totalClaimedAmount input").first
+            await total_input.wait_for(state="visible", timeout=5000)
+            minimum_without_tax = sum(Decimal(amount) for _, amount in expenses)
+            total_matches = False
+            for _ in range(8):
+                actual_total = _expense_decimal(await total_input.input_value())
+                committed_total = _expense_decimal(await total_input.get_attribute("aria-valuenow"))
+                tax_values = []
+                for selector in ("#surveyorGst input", "#surveyorTds input", "#surveyorGstTds input"):
+                    field = page.locator(selector).first
+                    tax_values.append(_expense_decimal(await field.get_attribute("aria-valuenow"))
+                                      if await field.count() else None)
+                if actual_total is not None and actual_total > 0 and actual_total == committed_total:
+                    # Existing expense rows can add to the total too.
+                    if not all(value == 0 for value in tax_values) or actual_total >= minimum_without_tax:
+                        total_matches = True
+                        break
+                await asyncio.sleep(0.25)
+            if not total_matches:
+                log.warning("   Surveyor claimed total was not committed; retrying the expense rows")
+                needs_repair = list(expenses)
+
+        if not needs_repair:
+            clean_rounds += 1
+            if clean_rounds >= 2:
+                log.info(f"   Verified {len(expenses)} expense amount(s) after reopening the rows")
+                return
+            continue
+
+        clean_rounds = 0
+        for portal_label, amount in needs_repair:
+            log.warning(f"   {portal_label} did not persist on review {round_number}; refilling")
+            await _fill_dynamic_expense_accordion(page, portal_label, amount, description, log, delay)
+
+    raise RuntimeError("Survey expense amounts did not remain committed after reopening; review the expense rows")
 
 
 async def _fill_recommendation_declaration(
