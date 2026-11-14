@@ -57,7 +57,7 @@ def _to_grayscale(img) -> np.ndarray:
 def get_variants(img_bytes: bytes):
     """
     Generate binarization variants of the captcha image for OCR.
-    Uses 3 high-value variants (gray + otsu + adaptive) for optimal speed/accuracy.
+    Start with straightened, enlarged text, then retain the original variants.
     """
     try:
         nparr = np.frombuffer(img_bytes, np.uint8)
@@ -68,14 +68,28 @@ def get_variants(img_bytes: bytes):
         gray = _to_grayscale(img)
         variants = []
 
-        # 1. Raw grayscale — baseline for clean captchas
+        # OIC displays short, slanted, light characters on a dark background.
+        # Straighten the text, invert it, and restore vertical detail for OCR.
+        height, width = gray.shape
+        inverted = cv2.bitwise_not(gray)
+        shear = 0.48
+        transform = np.float32([[1, shear, 0], [0, 1, 0]])
+        straightened = cv2.warpAffine(
+            inverted, transform, (width + int(shear * height), height), borderValue=255
+        )
+        straightened = cv2.resize(
+            straightened, None, fx=1, fy=2, interpolation=cv2.INTER_CUBIC
+        )
+        variants.append(("straightened", straightened))
+
+        # Raw grayscale remains a fallback for changes to the portal image.
         variants.append(("gray", gray))
 
-        # 2. Otsu thresholding — best for bimodal intensity captchas
+        # Otsu thresholding — best for bimodal intensity captchas
         _, thresh_otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         variants.append(("otsu", thresh_otsu))
 
-        # 3. Adaptive Thresholding — handles uneven lighting/noise
+        # Adaptive Thresholding — handles uneven lighting/noise
         thresh_adapt = cv2.adaptiveThreshold(
             gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
         )
@@ -100,9 +114,9 @@ def score_candidate(cand: str) -> float:
         return 0.0
     
     score = 1.0 # base score
-    if len(text) == 5:
-        score += 2.0 # Prioritize 5-character string lengths with weight 2.0
-    elif len(text) in (4, 6):
+    if len(text) == 6:
+        score += 2.0 # OIC's current CAPTCHA has six characters.
+    elif len(text) in (4, 5):
         score += 0.5
     elif len(text) < 3 or len(text) > 8:
         score -= 0.5
@@ -115,10 +129,47 @@ def score_candidate(cand: str) -> float:
     return score
 
 
+def _correct_captcha_case(img_bytes: bytes, candidate: str) -> str:
+    """Correct visually similar letter case when all six glyphs are isolated."""
+    if len(candidate) != 6:
+        return candidate
+    try:
+        img = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_UNCHANGED)
+        if img is None:
+            return candidate
+        gray = _to_grayscale(img)
+        height, width = gray.shape
+        _, mask = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY)
+        _, _, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+        glyphs = []
+        for x, y, w, h, area in stats[1:]:
+            if (area >= 6 and h >= 4 and width * 0.05 <= x < width * 0.95
+                    and height * 0.2 <= y and y + h <= height * 0.8):
+                glyphs.append((x, h))
+        glyphs.sort()
+        if len(glyphs) != 6:
+            return candidate
+        gaps = [glyphs[i + 1][0] - glyphs[i][0] for i in range(5)]
+        typical_gap = float(np.median(gaps))
+        if typical_gap <= 0 or any(gap < typical_gap * 0.6 or gap > typical_gap * 1.4 for gap in gaps):
+            return candidate
+
+        letters = list(candidate)
+        for index, (_, glyph_height) in enumerate(glyphs):
+            if letters[index].lower() in "cosuvwxz":
+                letters[index] = (
+                    letters[index].upper() if glyph_height >= height * 0.2
+                    else letters[index].lower()
+                )
+        return "".join(letters)
+    except Exception:
+        return candidate
+
+
 def _solve_captcha_best_of_n(img_bytes: bytes, log) -> Optional[str]:
     """
     Solves CAPTCHA using multiple variants, scores candidate OCRs, and
-    prioritizes exactly 5-character string lengths with weight length_score = 2.0.
+    prioritizes the six-character CAPTCHA observed on the OIC login page.
     """
     from app.automation.captcha_solver import solve_captcha_from_bytes
 
@@ -149,8 +200,7 @@ def _solve_captcha_best_of_n(img_bytes: bytes, log) -> Optional[str]:
         base_score = float(count)
         # Apply score_candidate logic
         c_score = score_candidate(cand)
-        # Maintain direct length check weight 2.0 logic
-        length_score = 2.0 if len(cand) == 5 else 0.0
+        length_score = 2.0 if len(cand) == 6 else 0.0
         
         total_score = base_score + length_score + (c_score - 1.0)
         scored_candidates.append((cand, total_score))
@@ -164,24 +214,15 @@ def _solve_captcha_best_of_n(img_bytes: bytes, log) -> Optional[str]:
     else:
         log(f"[{_ts()}]   ℹ️ {msg}")
 
-    return scored_candidates[0][0]
+    return _correct_captcha_case(img_bytes, scored_candidates[0][0])
 
 
 async def _get_captcha_bytes(page) -> bytes:
-    """Reads CAPTCHA from canvas using toDataURL or screenshot fallback."""
+    """Capture the rendered CAPTCHA; fall back to its original canvas pixels."""
     await asyncio.sleep(0.5)
-    try:
-        # Evaluate toDataURL on canvas
-        base64_data = await page.evaluate("""() => {
-            const canvas = document.querySelector('canvas#captcha, canvas');
-            return canvas ? canvas.toDataURL('image/png') : null;
-        }""")
-        if base64_data and "," in base64_data:
-            return base64.b64decode(base64_data.split(",")[1])
-    except Exception as e:
-        logger.warning(f"toDataURL failed, falling back to screenshot: {e}")
 
-    # Fallback: screenshot of locator
+    # OIC stretches the canvas's intrinsic 300x150 pixels into a much flatter
+    # visible box. OCR needs the rendered shape that the user actually sees.
     for sel in ["canvas#captcha", "canvas", "img#captchaImg"]:
         try:
             loc = page.locator(sel).first
@@ -189,6 +230,16 @@ async def _get_captcha_bytes(page) -> bytes:
                 return await loc.screenshot()
         except Exception:
             continue
+
+    try:
+        base64_data = await page.evaluate("""() => {
+            const canvas = document.querySelector('canvas#captcha, canvas');
+            return canvas ? canvas.toDataURL('image/png') : null;
+        }""")
+        if base64_data and "," in base64_data:
+            return base64.b64decode(base64_data.split(",")[1])
+    except Exception as e:
+        logger.warning(f"CAPTCHA canvas fallback failed: {e}")
     raise RuntimeError("Could not retrieve CAPTCHA image element.")
 
 
