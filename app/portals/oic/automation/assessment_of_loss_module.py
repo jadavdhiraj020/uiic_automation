@@ -146,11 +146,15 @@ async def _fill_invoice_section(page: Page, claim, defaults, log: AutomationLogg
     await select_primeng_dropdown(page, S.SEL_LOSS_GST_TYPE_DROPDOWN, gst_type, "GST Type", log, delay_ms=delay)
 
     # 4. Invoice Amount Without GST (Mandatory, from Excel)
-    inv_amt = getattr(claim, "invoice_amount_without_gst", "0")
+    inv_amt = getattr(claim, "invoice_amount_without_gst", "")
+    if not str(inv_amt or "").strip():
+        raise ValueError("Invoice Amount Without GST is missing; review the taxable amounts")
     await fill_primeng_inputnumber(page, S.SEL_LOSS_INV_AMT_NO_GST, inv_amt, "Invoice Amount Without GST", log, delay_ms=delay)
 
     # 5. Invoice GST Amount (Mandatory, from Excel)
-    gst_amt = getattr(claim, "invoice_gst_amount", "0")
+    gst_amt = getattr(claim, "invoice_gst_amount", "")
+    if not str(gst_amt or "").strip():
+        raise ValueError("Invoice GST Amount is missing; review the mapped GST amounts")
     await fill_primeng_inputnumber(page, S.SEL_LOSS_INV_GST_AMT, gst_amt, "Invoice GST Amount", log, delay_ms=delay)
 
     # Click Add Invoice +

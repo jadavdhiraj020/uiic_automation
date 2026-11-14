@@ -254,7 +254,8 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                   is_date: bool = False,
                   allow_literal_values: bool = False,
                   allow_text_values: bool = False,
-                  stop_at_next_label: bool = False) -> Tuple[Optional[str], Optional[str]]:
+                  stop_at_next_label: bool = False,
+                  exact_offset: bool = False) -> Tuple[Optional[str], Optional[str]]:
     """
     Find label text anywhere in the sheet. Then:
       1. Move row_offset rows down.
@@ -265,6 +266,7 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
          any column; the value just needs to be to the right on the same row.
 
     Returns tuple (cleaned string value, coordinate info string) or (None, None).
+    If exact_offset is set, only the configured cell is considered.
     """
     label_lower = " ".join(label.lower().split())  # normalize whitespace
     all_rows = list(sheet.rows())
@@ -302,7 +304,7 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                     )
                 )
 
-                if can_try_inline and len(inline_content) >= 1:
+                if not exact_offset and can_try_inline and len(inline_content) >= 1:
                     orig_cell = str(cell)
                     # Try splitting by colon or just removing the label text
                     if ":" in orig_cell and not allow_text_values:
@@ -359,6 +361,9 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                             f"value at {coord_str} = {result}"
                         )
                         return result, coord_str
+
+                if exact_offset:
+                    continue
 
                 # ── Strategy 2: Scan right from label col to find first value
                 for scan_c in range(c_idx + 1, row_end):
@@ -755,6 +760,7 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
                             sh, current_label, row_off, col_off, is_date,
                             allow_literal_values, allow_text_values,
                             stop_at_next_label=(portal_id == "oic" and field_name == "policy_number"),
+                            exact_offset=bool(cfg.get("exact_offset")),
                         )
                         if value:
                             sh_name = sh.name if hasattr(sh, 'name') else 'Sheet'
@@ -770,6 +776,7 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
                             sh, current_label, row_off, col_off, is_date,
                             allow_literal_values, allow_text_values,
                             stop_at_next_label=(portal_id == "oic" and field_name == "policy_number"),
+                            exact_offset=bool(cfg.get("exact_offset")),
                         )
                         if value:
                             src_str = f"{coord} ({sheet_name})"

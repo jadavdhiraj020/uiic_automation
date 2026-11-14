@@ -1103,7 +1103,7 @@ def read_pdf_report(pdf_path: str, portal_id: str = "uiic") -> ClaimData:
 
     all_labels: List[str] = []
     for name, cfg in mapping.items():
-        if not name.startswith("_") and isinstance(cfg, dict):
+        if not name.startswith("_") and isinstance(cfg, dict) and not cfg.get("excel_only"):
             all_labels += labels_for(name, cfg)
 
     default_keys = {
@@ -1142,6 +1142,9 @@ def read_pdf_report(pdf_path: str, portal_id: str = "uiic") -> ClaimData:
     }
     for field_name, cfg in mapping.items():
         if field_name.startswith("_") or not isinstance(cfg, dict):
+            continue
+
+        if cfg.get("excel_only"):
             continue
 
         # These UIIC values come from structured assessment/GST tables. Generic

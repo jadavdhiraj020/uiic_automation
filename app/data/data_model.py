@@ -278,6 +278,14 @@ class ClaimData:
     # ── OIC Assessment of Loss ───────────────────────────────────────────────
     invoice_amount_without_gst: str = "0"
     invoice_gst_amount: str = "0"
+    spares_taxable_amount: str = ""
+    spares_cgst_amount: str = ""
+    spares_sgst_amount: str = ""
+    spares_igst_amount: str = ""
+    labour_taxable_amount: str = ""
+    labour_cgst_amount: str = ""
+    labour_sgst_amount: str = ""
+    labour_igst_amount: str = ""
     salvage_amount: str = "0"
     surveyor_license_number: str = ""
     surveyor_license_expiry_date: str = ""
@@ -479,6 +487,9 @@ class ClaimData:
                 self.expected_completion_date = ""
                 self._excel_coords.pop("expected_completion_date", None)
 
+        if self.portal_id == "oic" and not str(self.source_report_path or "").lower().endswith(".pdf"):
+            self._calculate_oic_invoice_amounts()
+
         # 1b. Survey time fallback for UIIC.
         # Preserve the legacy 11:00 fallback for Excel users only.  For PDF
         # survey reports, a missing time must remain blank so the surveyor can
@@ -658,6 +669,44 @@ class ClaimData:
                         self._excel_logs.append(f"  📊 year_of_manufacture cleaned: '{self.year_of_manufacture}' (extracted from '{yom_str}')")
                 except Exception as exc:
                     logger.warning("Failed to clean year_of_manufacture %s: %s", self.year_of_manufacture, exc)
+
+    def _calculate_oic_invoice_amounts(self):
+        """Calculate OIC invoice totals from the exact mapped Excel cells."""
+        def amounts(keys):
+            values = []
+            for key in keys:
+                raw = str(getattr(self, key, "") or "").strip().replace(",", "")
+                if not raw:
+                    return None
+                try:
+                    value = Decimal(raw)
+                except InvalidOperation:
+                    return None
+                if not value.is_finite():
+                    return None
+                values.append(value)
+            return values
+
+        def set_total(field_name, values, source):
+            if values is None:
+                setattr(self, field_name, "")
+                self._excel_coords.pop(field_name, None)
+                self._excel_logs.append(f"  [MISSING] {field_name}: {source}")
+                return
+            result = format(sum(values).quantize(Decimal("0.01")), "f")
+            setattr(self, field_name, result)
+            self._excel_coords[field_name] = source
+            self._excel_logs.append(f"  [CALCULATED] {field_name}: '{result}' ({source})")
+
+        taxable = amounts(("spares_taxable_amount", "labour_taxable_amount"))
+        set_total("invoice_amount_without_gst", taxable, "Spares + Labour taxable amounts")
+
+        split_gst = amounts(("spares_cgst_amount", "spares_sgst_amount", "labour_cgst_amount", "labour_sgst_amount"))
+        if split_gst is None or any(value > 0 for value in split_gst):
+            set_total("invoice_gst_amount", split_gst, "Spares + Labour CGST and SGST")
+        else:
+            igst = amounts(("spares_igst_amount", "labour_igst_amount"))
+            set_total("invoice_gst_amount", igst, "Spares + Labour IGST")
 
     def validate(self) -> Tuple[List[str], List[str]]:
         """
@@ -1104,6 +1153,14 @@ class ClaimData:
             ("Workshop Inv Date",     self.workshop_invoice_date, False, _src("workshop_invoice_date") or _src("vendor_invoice_date")),
 
             # Assessment of Loss Details
+            ("Spares Taxable Amount", self.spares_taxable_amount, False, _src("spares_taxable_amount")),
+            ("Spares CGST Amount", self.spares_cgst_amount, False, _src("spares_cgst_amount")),
+            ("Spares SGST Amount", self.spares_sgst_amount, False, _src("spares_sgst_amount")),
+            ("Spares IGST Amount", self.spares_igst_amount, False, _src("spares_igst_amount")),
+            ("Labour Taxable Amount", self.labour_taxable_amount, False, _src("labour_taxable_amount")),
+            ("Labour CGST Amount", self.labour_cgst_amount, False, _src("labour_cgst_amount")),
+            ("Labour SGST Amount", self.labour_sgst_amount, False, _src("labour_sgst_amount")),
+            ("Labour IGST Amount", self.labour_igst_amount, False, _src("labour_igst_amount")),
             ("Inv Amt Without GST (₹)", self.invoice_amount_without_gst, True, _src("invoice_amount_without_gst")),
             ("Invoice GST Amt (₹)",   self.invoice_gst_amount,    True,  _src("invoice_gst_amount")),
             ("Compulsory Excess (₹)", self.compulsory_excess,     False, _src("compulsory_excess")),
