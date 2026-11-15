@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 from decimal import Decimal, InvalidOperation
 from typing import Callable, List
@@ -68,13 +69,18 @@ async def fill_assessment_of_loss(
 
     defaults = load_automation_defaults(portal_id="oic")
     delay = field_delay_ms
+    claim._oic_upload_failed = False
 
     try:
         # 1. Invoice Section
         if stop_cb():
             log.warning("Stop requested before Invoice Section.")
             return False
-        await _fill_invoice_section(page, claim, defaults, log, delay)
+        try:
+            await _fill_invoice_section(page, claim, defaults, log, delay, stop_cb)
+        except Exception:
+            claim._oic_upload_failed = True
+            raise
 
         # 2. Excess Section
         if stop_cb():
@@ -119,59 +125,91 @@ async def fill_assessment_of_loss(
 # ── Private Subsection Handlers ──────────────────────────────────────────────
 
 
-async def _fill_invoice_section(page: Page, claim, defaults, log: AutomationLogger, delay: int):
-    log._section = "Invoice Details"
+async def _fill_invoice_section(page: Page, claim, defaults, log: AutomationLogger, delay: int, stop_cb):
+    from app.portals.oic.automation.assessment_upload_excel import build_upload_workbook
+
+    log._section = "Invoice Excel Upload"
     review_error = getattr(claim, "_oic_parts_review_error", "")
     if review_error:
         raise ValueError(f"OIC parts need review: {review_error}")
-    log.info("▸ Filling Invoice Section")
-    
-    # 1. Invoice Number (Optional)
-    # OCR is primary source: claim.workshop_invoice_no, then fallback to claim.invoice_no
-    inv_no = getattr(claim, "workshop_invoice_no", "") or getattr(claim, "invoice_no", "")
-    if inv_no:
-        log.info(f"   OCR invoice number detected: '{inv_no}'")
-        await fill_input_with_delay(page, S.SEL_LOSS_INV_NO, inv_no, "Invoice Number", log, delay_ms=delay)
+    path, invoice, items = build_upload_workbook(claim, defaults)
+    log.info(f"Prepared OIC invoice upload: {path} ({len(items)} items)")
+    file_input = page.locator('input[type="file"]#fileInput[name="excel"]')
+    submit = page.get_by_role("button", name="Submit", exact=True)
+    validation = page.get_by_role("button", name="View Validation Errors", exact=True)
+    await submit.scroll_into_view_if_needed()
+    await file_input.set_input_files(path)
+    log.info("Selected invoice workbook; waiting for portal upload and Submit")
+    state = {"invoice": False, "missing": items, "unexpected": []}
+    for _ in range(120):
+        if stop_cb():
+            raise RuntimeError("Automation stopped during invoice upload")
+        if await validation.is_enabled():
+            await validation.click()
+            raise RuntimeError("OIC reported validation errors for the uploaded workbook")
+        # The portal places the filename as a text node in the same span as
+        # the nested success message. An exact get_by_text(filename) therefore
+        # also sees the message and never matches the filename on its own.
+        uploaded = await page.evaluate("""filename =>
+            Array.from(document.querySelectorAll('span.fileSpan')).some(row => {
+                const name = Array.from(row.childNodes)
+                    .filter(node => node.nodeType === Node.TEXT_NODE)
+                    .map(node => node.textContent).join('').trim();
+                const status = row.querySelector('p.fileGreen');
+                return name === filename && status &&
+                    status.textContent.trim() === 'File Uploaded Successfully' &&
+                    row.getClientRects().length > 0 && status.getClientRects().length > 0;
+            })
+        """, os.path.basename(path))
+        if uploaded and await submit.is_enabled():
+            break
+        await asyncio.sleep(0.5)
     else:
-        log.info("   Invoice Number is empty/not found (optional) — skipping")
-
-    # 2. Invoice Date (Mandatory)
-    # OCR is primary source: claim.workshop_invoice_date, then fallback to claim.invoice_date
-    inv_date = getattr(claim, "workshop_invoice_date", "") or getattr(claim, "invoice_date", "")
-    if inv_date:
-        log.info(f"   OCR invoice date detected: '{inv_date}'")
-        await fill_mui_datepicker(page, S.SEL_LOSS_INV_DATE_LABEL, inv_date, "Invoice Date", log, delay_ms=delay)
-    else:
-        log.field_failed("Invoice Date", "Missing invoice date (mandatory)")
-        raise ValueError("Mandatory Invoice Date is missing")
-
-    # 3. GST Type (Dropdown)
-    gst_type = defaults.get("gst_type", "IGST")
-    await select_primeng_dropdown(page, S.SEL_LOSS_GST_TYPE_DROPDOWN, gst_type, "GST Type", log, delay_ms=delay)
-
-    # 4. Invoice Amount Without GST (Mandatory, from Excel)
-    inv_amt = getattr(claim, "invoice_amount_without_gst", "")
-    if not str(inv_amt or "").strip():
-        raise ValueError("Invoice Amount Without GST is missing; review the taxable amounts")
-    await fill_primeng_inputnumber(page, S.SEL_LOSS_INV_AMT_NO_GST, inv_amt, "Invoice Amount Without GST", log, delay_ms=delay)
-
-    # 5. Invoice GST Amount (Mandatory, from Excel)
-    gst_amt = getattr(claim, "invoice_gst_amount", "")
-    if not str(gst_amt or "").strip():
-        raise ValueError("Invoice GST Amount is missing; review the mapped GST amounts")
-    await fill_primeng_inputnumber(page, S.SEL_LOSS_INV_GST_AMT, gst_amt, "Invoice GST Amount", log, delay_ms=delay)
-
-    # Click Add Invoice +
-    log.info("   Clicking 'Add Invoice +' button")
-    await page.locator(S.SEL_LOSS_ADD_INV_BTN).click()
-    await asyncio.sleep(0.5)  # wait for invoice row + Item Type dropdown to appear
-
-    # Fill invoice items from Excel (Spare Parts + Labour Charges)
-    await _fill_invoice_items(page, claim, defaults, log, delay)
+        raise RuntimeError("OIC did not confirm the selected Excel upload and enable Submit")
+    await submit.click()
+    log.info("Submitted invoice workbook; waiting for imported invoice and items")
+    for _ in range(120):
+        if stop_cb():
+            raise RuntimeError("Automation stopped during invoice import")
+        if await validation.is_enabled():
+            await validation.click()
+            raise RuntimeError("OIC rejected the invoice workbook; validation errors are displayed")
+        state = await page.evaluate("""({ invoice, items }) => {
+            const norm = s => (s || '').trim().toLowerCase();
+            const tabs = Array.from(document.querySelectorAll('.p-accordion-tab'));
+            const invoiceTab = tabs.find(tab => {
+                const heading = tab.querySelector(':scope > .p-accordion-header h6');
+                return heading && /invoice number/i.test(heading.textContent) &&
+                    norm(heading.querySelector('b')?.textContent) === norm(invoice);
+            });
+            if (!invoiceTab) return {invoice: false, expanded: false, missing: items, unexpected: []};
+            const header = invoiceTab.querySelector(':scope > .p-accordion-header .p-accordion-header-link');
+            const actual = Array.from(invoiceTab.querySelectorAll('.p-accordion-tab')).map(tab => {
+                const headings = tab.querySelectorAll(':scope > .p-accordion-header h6');
+                const subtype = Array.from(headings).find(h => /item sub type/i.test(h.textContent));
+                return (subtype?.querySelector('b')?.textContent || '').trim();
+            }).filter(Boolean);
+            const remaining = actual.map(norm);
+            const missing = [];
+            for (const item of items) {
+                const index = remaining.indexOf(norm(item));
+                if (index < 0) missing.push(item); else remaining.splice(index, 1);
+            }
+            return {invoice: true, expanded: header?.getAttribute('aria-expanded') === 'true', missing, unexpected: remaining};
+        }""", {"invoice": invoice, "items": items})
+        if state["invoice"] and not state["expanded"]:
+            await page.locator(".p-accordion-header-link").filter(has_text=invoice).first.click()
+            await asyncio.sleep(0.5)
+            continue
+        if state["invoice"] and not state["missing"] and not state["unexpected"]:
+            log.info(f"OIC confirmed invoice and all {len(items)} imported items")
+            return
+        await asyncio.sleep(0.5)
+    raise RuntimeError(f"OIC did not confirm all imported items; missing: {state['missing']}, unexpected: {state['unexpected']}. Review the invoice before continuing")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PRODUCTION: OIC Assessment Excel → Re-read → Portal Fill
+# Legacy manual item entry helpers (the active OIC flow uses Excel upload).
 #
 # 1. Generates auto_oic_assessment.xlsx from the source Excel
 # 2. Re-reads the generated Excel (source of truth)

@@ -513,6 +513,14 @@
     "sheet": "ALL", "search_labels": ["GST SUMMARY – LABOUR", "GST SUMMARY - LABOUR"],
     "row_offset": 4, "col_offset": 5, "exact_offset": true, "excel_only": true, "_mandatory": false
   },
+  "metal_depreciation_rate": {
+    "sheet": "ALL", "search_labels": ["SO, DEP. ON METAL", "DEP. ON METAL"],
+    "row_offset": 0, "col_offset": 3, "exact_offset": true, "excel_only": true, "_mandatory": false
+  },
+  "paint_depreciation_rate": {
+    "sheet": "ALL", "search_labels": ["LESS COST OF PAINT MATERIAL", "PAINT DEP."],
+    "row_offset": 0, "col_offset": -1, "exact_offset": true, "excel_only": true, "_mandatory": false
+  },
   "invoice_amount_without_gst": {
     "sheet": "ALL",
     "search_labels": ["invoice_amount_without_gst", "Invoice Amount Without GST", "Invoice Amount Excl GST", "net_payable_excluding_gst", "Net Invoice Amt"],

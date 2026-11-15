@@ -629,7 +629,15 @@ class AutomationEngine:
                 "Claim Assessment",
             ]
 
-        # No pre-run validation hard abort for OIC. Errors will be shown in the UI but the engine will proceed and launch the browser.
+        # OIC's import template accepts only specific depreciation rates.
+        # Check before opening a browser, including non-UI entry points.
+        if self.portal_id == "oic":
+            from app.portals.oic.automation.assessment_upload_excel import depreciation_errors
+            rate_errors = depreciation_errors(claim)
+            if rate_errors:
+                message = "; ".join(rate_errors)
+                self.log.error(f"OIC upload cannot start: {message}")
+                return AutomationRunResult(False, message)
 
         field_delay = _setting_int(settings, "field_wait_ms", "field_delay_ms", 400)
 
@@ -1217,6 +1225,9 @@ class AutomationEngine:
                         stop_cb=self._check_stop,
                         field_delay_ms=field_delay,
                     ):
+                        if getattr(claim, "_oic_upload_failed", False) and not self._check_stop():
+                            self.log.error("Invoice upload failed. Automation has stopped; the browser remains open for review.")
+                            await self._wait_for_manual_review(browser)
                         return AutomationRunResult(
                             False, "Phase 6 (Assessment of Loss) failed."
                         )

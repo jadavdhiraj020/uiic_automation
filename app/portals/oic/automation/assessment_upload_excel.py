@@ -1,0 +1,169 @@
+"""Build and validate the OIC bulk invoice/item import workbook."""
+
+from datetime import datetime
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from io import BytesIO
+from pathlib import Path
+import re
+from zipfile import ZipFile
+
+import openpyxl
+from openpyxl.worksheet.datavalidation import DataValidation
+
+from app.data.excel_parts_extractor import (
+    _detect_labour_header, _is_summary_row, _normalize_boundary_keyword, _MIN_HEADER_CONFIDENCE,
+    extract_parts_and_labour,
+)
+from app.data.oic_assessment_generator import _next_available_path
+from app.utils import ensure_dir, user_data_dir
+
+
+SUPPORTED_DEPRECIATION = frozenset(Decimal(x) for x in (0, 5, 10, 15, 20, 25, 30, 35, 40, 50))
+INVOICE_HEADERS = ("Invoice Number", "Invoice Date (DD-MM-YYYY)", "Invoice GST Type", "Invoice Amount", "Invoice GST Amount")
+ITEM_HEADERS = ("Invoice Number", "Item Description", "Item Sub Type", "Side Description", "Item Amount", "Depreciation Rate", "GST Rate", "Estimated Amount", "Estimated Amount Remarks", "HSN Code", "GST Amount")
+
+
+def _number(value, label):
+    text = str(value if value is not None else "").strip().replace(",", "").rstrip("%").strip()
+    try:
+        result = Decimal(text)
+    except InvalidOperation as exc:
+        raise ValueError(f"{label} is missing or is not a number") from exc
+    if not result.is_finite() or result < 0:
+        raise ValueError(f"{label} must be a non-negative number")
+    return result
+
+
+def depreciation_errors(claim):
+    """Return specific OIC upload blockers before launching the browser."""
+    errors = []
+    for field, label in (("metal_depreciation_rate", "Metal"), ("paint_depreciation_rate", "Paint")):
+        try:
+            rate = _number(getattr(claim, field, ""), f"{label} depreciation rate")
+        except ValueError as exc:
+            errors.append(str(exc) + "; check OIC Field Mapping and rescan the folder")
+            continue
+        if rate not in SUPPORTED_DEPRECIATION:
+            errors.append(f"{label} depreciation rate {rate}% is not supported by the OIC upload template (allowed: 0, 5, 10, 15, 20, 25, 30, 35, 40, 50). Check the source Excel and mapping.")
+    return errors
+
+
+def _labour_totals(path, boundary_keyword):
+    wb = openpyxl.load_workbook(path, data_only=True, read_only=False)
+    try:
+        ws = wb.active
+        detected = _detect_labour_header(ws)
+        if not detected.row or detected.confidence < _MIN_HEADER_CONFIDENCE:
+            raise ValueError("OIC labour table could not be identified reliably")
+        columns = dict(detected.col_map)
+        for cell in ws[detected.row]:
+            if re.fullmatch(r"\s*paint(?:ing)?\s*", str(cell.value or ""), re.I):
+                columns["painting"] = cell.column
+                break
+        keys = ("rr", "denting", "cw", "painting")
+        missing = [key for key in keys if key not in columns]
+        if missing:
+            raise ValueError("OIC labour columns missing: " + ", ".join(missing))
+        boundaries = {x.strip().casefold().replace(" ", "") for x in _normalize_boundary_keyword(boundary_keyword).split("|") if x.strip()}
+        totals = {key: Decimal(0) for key in keys}
+        for row in ws.iter_rows(min_row=detected.row + 1):
+            if any(str(c.value or "").strip().casefold().replace(" ", "") in boundaries for c in row):
+                break
+            name = ws.cell(row[0].row, columns["labour_desc"]).value
+            if not name or _is_summary_row(str(name)):
+                continue
+            for key in keys:
+                raw = ws.cell(row[0].row, columns[key]).value
+                if raw is None or str(raw).strip().casefold() in ("", "-", "na", "n/a", "nil"):
+                    continue
+                totals[key] += _number(raw, f"Labour {key} row {row[0].row}")
+        return totals
+    finally:
+        wb.close()
+
+
+def _date(value):
+    if isinstance(value, datetime):
+        return value.strftime("%d-%m-%Y")
+    for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(str(value).strip(), fmt).strftime("%d-%m-%Y")
+        except ValueError:
+            pass
+    raise ValueError("Workshop invoice date is missing or invalid")
+
+
+def build_upload_workbook(claim, defaults):
+    """Create a fresh OIC import workbook and return its path and item names."""
+    errors = depreciation_errors(claim)
+    if errors:
+        raise ValueError("; ".join(errors))
+    source = Path(str(getattr(claim, "source_excel_path", "") or ""))
+    if not source.is_file():
+        raise ValueError("Source survey Excel is missing; rescan the claim folder")
+    invoice = str(getattr(claim, "workshop_invoice_no", "") or getattr(claim, "invoice_no", "") or "").strip()
+    if not invoice:
+        raise ValueError("Workshop invoice number is missing")
+    invoice_date = _date(getattr(claim, "workshop_invoice_date", "") or getattr(claim, "invoice_date", ""))
+    invoice_amount = _number(getattr(claim, "invoice_amount_without_gst", ""), "Invoice amount")
+    invoice_gst = _number(getattr(claim, "invoice_gst_amount", ""), "Invoice GST amount")
+    gst_type = str(defaults.get("gst_type", "IGST")).strip().upper()
+    if gst_type not in ("IGST", "CGST/SGST"):
+        raise ValueError(f"Unsupported invoice GST type: {gst_type}")
+    metal_rate = _number(claim.metal_depreciation_rate, "Metal depreciation rate")
+    paint_rate = _number(claim.paint_depreciation_rate, "Paint depreciation rate")
+    boundary = defaults.get("table_boundary_keyword", "sub total|total|grand total")
+    parts, _, _ = extract_parts_and_labour(str(source), boundary_keyword=boundary, oic_flexible_parts=True)
+    totals = _labour_totals(str(source), boundary)
+    part_hsn = str(defaults.get("item_hsn_code") or "8512").strip()
+    labour_hsn = str(defaults.get("labour_hsn_code") or "8729").strip()
+    rows = []
+    for part in parts:
+        material = part["material_type"]
+        category, rate = {"metal": ("Metallic Parts", metal_rate), "plastic": ("Plastic", Decimal(50)), "glass": ("Glass", Decimal(0))}[material]
+        rows.append((category, str(part["part_name"]), _number(part["billed_amount"], "Part amount"), rate, _number(part["estimated_amount"], "Part estimated amount"), part_hsn))
+    for key, name in (("rr", "R/R"), ("denting", "DENTING"), ("cw", "C/W"), ("painting", "PAINT")):
+        rows.append(("Labour Charge", name, totals[key], paint_rate if key == "painting" else Decimal(0), totals[key], labour_hsn))
+
+    wb = openpyxl.Workbook()
+    inv = wb.active
+    inv.title = "Invoice"
+    inv.append(INVOICE_HEADERS)
+    inv.append((invoice, invoice_date, gst_type, float(invoice_amount), float(invoice_gst)))
+    ws = wb.create_sheet("Items")
+    ws.append(ITEM_HEADERS)
+    cached = {}
+    for r, (category, name, amount, rate, estimate, hsn) in enumerate(rows, 2):
+        ws.append((invoice, category, name, "Front", float(amount), float(rate), 18, float(estimate), None, hsn, f"=ROUND((E{r}-(E{r}*F{r}/100))*(G{r}/100),2)"))
+        cached[f"K{r}"] = (amount * (1 - rate / 100) * Decimal("0.18")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    for sheet, target, options in (
+        (inv, "C2:C1048576", "IGST,CGST/SGST"),
+        (ws, "B2:B1048576", "Non-Metallic Parts,Metallic Parts,Plastic,Glass,Labour Charge,Others"),
+        (ws, "D2:D1048576", "Left,Right,Bottom,Top,Rear,Front,Vertex"),
+        (ws, "F2:F1048576", "0,5,10,15,20,25,30,35,40,50"),
+        (ws, "G2:G1048576", "0,5,12,18,28"),
+    ):
+        validation = DataValidation(type="list", formula1=f'"{options}"', allow_blank=True)
+        sheet.add_data_validation(validation)
+        validation.add(target)
+    # Excel formulas need cached values for portal importers that do not recalculate.
+    buffer = BytesIO()
+    wb.save(buffer)
+    wb.close()
+    # Keep import workbooks out of claim folders so later scans cannot select
+    # one as the original survey report or as a document to upload.
+    output = _next_available_path(ensure_dir(user_data_dir("oic", "assessment_uploads")), "auto_oic_upload.xlsx")
+    buffer.seek(0)
+    with ZipFile(buffer, "r") as src, ZipFile(output, "w") as dest:
+        for info in src.infolist():
+            data = src.read(info.filename)
+            if info.filename == "xl/worksheets/sheet2.xml":
+                xml = data.decode("utf-8")
+                for cell, value in cached.items():
+                    pattern = rf'(<c r="{cell}"[^>]*>\s*<f[^>]*>.*?</f>\s*<v>).*?(</v>)'
+                    xml, count = re.subn(pattern, lambda m: m.group(1) + str(value) + m.group(2), xml, count=1)
+                    if count != 1:
+                        raise ValueError(f"Unable to cache GST formula in {cell}")
+                data = xml.encode("utf-8")
+            dest.writestr(info, data)
+    return output, invoice, [row[1] for row in rows]

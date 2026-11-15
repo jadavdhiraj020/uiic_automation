@@ -286,6 +286,8 @@ class ClaimData:
     labour_cgst_amount: str = ""
     labour_sgst_amount: str = ""
     labour_igst_amount: str = ""
+    metal_depreciation_rate: str = ""
+    paint_depreciation_rate: str = ""
     salvage_amount: str = "0"
     surveyor_license_number: str = ""
     surveyor_license_expiry_date: str = ""
@@ -743,6 +745,9 @@ class ClaimData:
         """
         errors, warnings = [], []
 
+        from app.portals.oic.automation.assessment_upload_excel import depreciation_errors
+        errors.extend(depreciation_errors(self))
+
         # ── 1. Claim identity ─────────────────────────────────────────────────
         if not str(self.policy_number or "").strip() and not str(self.claim_no or "").strip():
             errors.append("Policy Number and Claim Number are both missing")
@@ -1161,6 +1166,8 @@ class ClaimData:
             ("Labour CGST Amount", self.labour_cgst_amount, False, _src("labour_cgst_amount")),
             ("Labour SGST Amount", self.labour_sgst_amount, False, _src("labour_sgst_amount")),
             ("Labour IGST Amount", self.labour_igst_amount, False, _src("labour_igst_amount")),
+            ("Metal Depreciation Rate (%)", self.metal_depreciation_rate, True, _src("metal_depreciation_rate")),
+            ("Paint Depreciation Rate (%)", self.paint_depreciation_rate, True, _src("paint_depreciation_rate")),
             ("Inv Amt Without GST (₹)", self.invoice_amount_without_gst, True, _src("invoice_amount_without_gst")),
             ("Invoice GST Amt (₹)",   self.invoice_gst_amount,    True,  _src("invoice_gst_amount")),
             ("Compulsory Excess (₹)", self.compulsory_excess,     False, _src("compulsory_excess")),
