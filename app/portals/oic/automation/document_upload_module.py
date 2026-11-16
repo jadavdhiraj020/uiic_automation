@@ -27,8 +27,6 @@ logger = logging.getLogger(__name__)
 # ── Constants ─────────────────────────────────────────────────────────────────
 _DEFAULT_MAX_FILE_BYTES = 5 * 1024 * 1024   # 5 MB portal limit per file
 _DL_MAX_FILE_BYTES = 10 * 1024 * 1024       # 10 MB for Driving License
-_PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png"}
-_UPLOADABLE_EXTS = {".pdf", ".jpg", ".jpeg", ".png", ".gif", ".bmp"}
 
 # Section definitions: (section_num, label, selector, required, source_priority)
 _UPLOAD_SECTIONS = [
@@ -89,30 +87,6 @@ def _resolve_file(
             fpath = pool.get(key, "")
             if fpath and os.path.isfile(fpath):
                 return fpath
-    return None
-
-
-def _find_first_vehicle_photo(data: ClaimData) -> Optional[str]:
-    """Find the first vehicle photo file (jpg/png) in the claim folder."""
-    folder = PdfMergeService.get_folder_path(data)
-    if not folder or not os.path.isdir(folder):
-        return None
-
-    # Priority 1: Look for vehicle_photo_1.* files
-    for fname in sorted(os.listdir(folder)):
-        if fname.lower().startswith("vehicle_photo_1"):
-            ext = Path(fname).suffix.lower()
-            if ext in _PHOTO_EXTENSIONS:
-                return os.path.join(folder, fname)
-
-    # Priority 2: Any vehicle photo
-    for fname in sorted(os.listdir(folder)):
-        fname_lower = fname.lower()
-        if ("vehicle" in fname_lower or "vehical" in fname_lower or "photo" in fname_lower):
-            ext = Path(fname).suffix.lower()
-            if ext in _PHOTO_EXTENSIONS:
-                return os.path.join(folder, fname)
-
     return None
 
 
@@ -236,23 +210,19 @@ async def _upload_driving_license(
     log: AutomationLogger,
     used_files: Set[str],
 ) -> bool:
-    """Handle Section 5: Driving License (front + back with duplicate IDs)."""
+    """Upload the driving licence first and the vehicle RC in the second slot."""
     log.info("▸ Section 5: Driving License")
 
     dl_path = _resolve_file(data, "driving_license", pools=["upload_doc_files"])
-    if not dl_path:
-        log.info("  Section 5 (Driving License): Optional, no file found — skipping")
-        return False
-
-    used_files.add(os.path.normpath(dl_path))
-
-    # Compress if needed (DL has 10MB limit)
-    upload_path = _compress_if_needed(dl_path, "Driving License", log, limit_bytes=_DL_MAX_FILE_BYTES)
+    rc_path = _resolve_file(data, "registration_certificate", pools=["upload_doc_files", "claim_doc_files"])
 
     uploaded_any = False
 
     # Front side
     try:
+        if not dl_path:
+            raise FileNotFoundError("No driving licence file found")
+        upload_path = _compress_if_needed(dl_path, "Driving License", log, limit_bytes=_DL_MAX_FILE_BYTES)
         front_input = page.locator(S.SEL_UPLOAD_DL_FRONT).first
         await asyncio.sleep(0.15)
 
@@ -264,6 +234,7 @@ async def _upload_driving_license(
             log=log,
         )
         if front_ok:
+            used_files.add(os.path.normpath(dl_path))
             log.success(f"  DL Front Side: uploaded '{Path(upload_path).name}'")
             uploaded_any = True
         else:
@@ -274,8 +245,11 @@ async def _upload_driving_license(
     await dismiss_portal_popup(page, log, max_wait_s=1.5, context="DL Front")
     await asyncio.sleep(0.3)
 
-    # Back side (same file)
+    # The user's OIC workflow places the vehicle RC in the second slot.
     try:
+        if not rc_path:
+            raise FileNotFoundError("No registration certificate (RC) file found")
+        upload_path = _compress_if_needed(rc_path, "Registration Certificate", log, limit_bytes=_DL_MAX_FILE_BYTES)
         back_input = page.locator(S.SEL_UPLOAD_DL_BACK).first
         await asyncio.sleep(0.15)
 
@@ -283,16 +257,17 @@ async def _upload_driving_license(
             page,
             file_input_selector=S.SEL_UPLOAD_DL_BACK,
             file_path=upload_path,
-            label="DL Back Side",
+            label="RC in DL Back Side",
             log=log,
         )
         if back_ok:
-            log.success(f"  DL Back Side: uploaded '{Path(upload_path).name}'")
+            used_files.add(os.path.normpath(rc_path))
+            log.success(f"  RC in DL Back Side: uploaded '{Path(upload_path).name}'")
             uploaded_any = True
         else:
-            log.warning("  DL Back Side: upload failed")
+            log.warning("  RC in DL Back Side: upload failed")
     except Exception as exc:
-        log.warning(f"  DL Back Side: error: {exc}")
+        log.warning(f"  RC in DL Back Side: error: {exc}")
 
     await dismiss_portal_popup(page, log, max_wait_s=1.5, context="DL Back")
 
@@ -308,30 +283,26 @@ async def _upload_photographs(
     """Handle Section 6: Photographs (only jpg/png/jpeg accepted)."""
     log.info("▸ Section 6: Photographs")
 
-    # Try upload_doc_files first, then find vehicle photo in folder
-    photo_path = _resolve_file(data, "photographs", pools=["upload_doc_files"])
-    if not photo_path:
-        photo_path = _find_first_vehicle_photo(data)
+    from app.portals.oic.photo_documents import IMAGE_EXTENSIONS, photo_sources, prepare_photo
 
-    if not photo_path:
+    mapped_photo = _resolve_file(data, "photographs", pools=["upload_doc_files"])
+    scan_result = getattr(data, "_scan_result", None)
+    if scan_result:
+        original = getattr(scan_result, "original_upload_doc_paths", {}).get("photographs")
+        if original and os.path.isfile(original):
+            mapped_photo = original
+    folder = PdfMergeService.get_folder_path(data)
+    photos = photo_sources(folder, mapped_photo)
+    if not photos:
         log.warning("  Section 6 (Photographs): REQUIRED but no photo file found — skipping")
         return False
-
-    # Validate extension — portal only accepts jpg/png/jpeg
-    ext = Path(photo_path).suffix.lower()
-    if ext not in _PHOTO_EXTENSIONS:
-        log.warning(
-            f"  Section 6 (Photographs): file '{Path(photo_path).name}' has unsupported extension "
-            f"'{ext}'. Portal only accepts: {', '.join(_PHOTO_EXTENSIONS)}"
-        )
-        return False
-
-    used_files.add(os.path.normpath(photo_path))
-
-    # Compress if needed
-    upload_path = _compress_if_needed(photo_path, "Photographs", log)
-
+    photo_path = photos[0]
+    temporary_photo = None
     try:
+        prepared, temporary_photo = prepare_photo(photo_path)
+        if temporary_photo:
+            log.info(f"  Converted '{Path(photo_path).name}' to a JPG for Photographs")
+        upload_path = _compress_if_needed(prepared, "Photographs", log)
         await asyncio.sleep(0.15)
 
         success = await upload_file_via_input(
@@ -342,6 +313,8 @@ async def _upload_photographs(
             log=log,
         )
         if success:
+            if Path(photo_path).suffix.lower() in IMAGE_EXTENSIONS:
+                used_files.add(os.path.normpath(photo_path))
             log.success(f"  Section 6 (Photographs): uploaded '{Path(upload_path).name}'")
         else:
             log.warning("  Section 6 (Photographs): upload failed")
@@ -352,6 +325,12 @@ async def _upload_photographs(
     except Exception as exc:
         log.error(f"  Section 6 (Photographs): upload error: {exc}")
         return False
+    finally:
+        if temporary_photo:
+            try:
+                os.unlink(temporary_photo)
+            except OSError:
+                pass
 
 
 async def _upload_other_documents(
@@ -375,7 +354,7 @@ async def _upload_other_documents(
     precomputed_pdf = getattr(scan_result, "claim_related_merged_pdf", None) if scan_result else None
 
     # Failsafe: scan folder directly for claim_others_documents_*.pdf
-    if not precomputed_pdf or not os.path.isfile(precomputed_pdf):
+    if (not precomputed_pdf or not os.path.isfile(precomputed_pdf)) and scan_result is None:
         folder = PdfMergeService.get_folder_path(data)
         if folder and os.path.isdir(folder):
             import glob as _glob
@@ -435,7 +414,19 @@ async def _upload_other_documents(
         exclude_filenames=_OTHER_DOCS_EXCLUDE_FILENAMES,
         exclude_prefixes=_OTHER_DOCS_EXCLUDE_PREFIXES,
     )
-    remaining = PdfMergeService.collect_remaining(data, used_files, config)
+    if scan_result is not None:
+        # A current scan is authoritative; do not upload an older bundle from a
+        # previous run when the current scan's merge failed.
+        remaining = [p for p in getattr(scan_result, "claim_related_files", [])
+                     if p and os.path.isfile(p) and os.path.normpath(p) not in used_files]
+    else:
+        remaining = PdfMergeService.collect_remaining(data, used_files, config)
+    unsupported = [p for p in remaining if Path(p).suffix.lower() not in config.only_extensions]
+    if unsupported:
+        log.warning(
+            "  Other Documents could not be fully prepared after the scan merge failed; "
+            f"please review these files: {[Path(p).name for p in unsupported]}"
+        )
     if not remaining:
         log.info("  Section 7 (Other Documents): No remaining files to merge — skipping")
         return False

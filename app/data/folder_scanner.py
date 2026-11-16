@@ -1292,6 +1292,26 @@ def scan_folder(
                     result.claim_related_files.append(_full)
                     logger.info("claim_related candidate: %s", _fname)
 
+        # OIC uses one photo in its dedicated field. Preserve the rest in the
+        # Other Documents bundle, including the complete source when it is a
+        # PDF (which may contain several photos on one page).
+        if portal_id == "oic":
+            from app.portals.oic.photo_documents import IMAGE_EXTENSIONS, photo_sources
+
+            _mapped_photo = result.original_upload_doc_paths.get("photographs") or result.upload_doc_files.get("photographs")
+            _photos = photo_sources(folder_path, _mapped_photo)
+            _extra_photos = _photos[1:] if _photos and Path(_photos[0]).suffix.lower() in IMAGE_EXTENSIONS else _photos
+            if _photos and Path(_photos[0]).suffix.lower() in IMAGE_EXTENSIONS:
+                _selected = os.path.normcase(os.path.abspath(_photos[0]))
+                result.claim_related_files = [p for p in result.claim_related_files if os.path.normcase(os.path.abspath(p)) != _selected]
+            _known = {os.path.normcase(os.path.abspath(p)) for p in result.claim_related_files}
+            for _photo in _extra_photos:
+                _norm = os.path.normcase(os.path.abspath(_photo))
+                if _norm not in _known:
+                    result.claim_related_files.append(_photo)
+                    _known.add(_norm)
+                    logger.info("OIC additional photograph for Other Documents: %s", Path(_photo).name)
+
         # Pre-merge now so UI can show the real filename and size
         if result.claim_related_files and folder_path:
             if _cancel_checkpoint("before_claim_related_premerge"):
@@ -1306,6 +1326,30 @@ def scan_folder(
                 for f in result.claim_related_files
                 if Path(f).suffix.lower() in _mergeable_exts
             ]
+            # Convert extra photo formats supported by Pillow for PDF merging.
+            _photo_merge_temps = []
+            if portal_id == "oic":
+                import tempfile
+                from PIL import Image, ImageSequence
+                for _photo in result.claim_related_files:
+                    if Path(_photo).suffix.lower() not in {".tif", ".tiff", ".webp"}:
+                        continue
+                    try:
+                        with Image.open(_photo) as _image:
+                            _frames = [frame.convert("RGB") for frame in ImageSequence.Iterator(_image)]
+                        if not _frames:
+                            continue
+                        _fd, _converted = tempfile.mkstemp(prefix="oic_extra_photo_", suffix=".pdf")
+                        os.close(_fd)
+                        _photo_merge_temps.append(_converted)
+                        try:
+                            _frames[0].save(_converted, save_all=True, append_images=_frames[1:])
+                        finally:
+                            for _frame in _frames:
+                                _frame.close()
+                        _mergeable.append(_converted)
+                    except Exception as _photo_exc:
+                        logger.warning("Could not prepare extra photo %s: %s", _photo, _photo_exc)
             logger.info(
                 "claim_related: %d candidates, %d mergeable → %s",
                 len(result.claim_related_files),
@@ -1314,8 +1358,20 @@ def scan_folder(
             )
             if _mergeable:
                 if _cancel_checkpoint("before_claim_related_merge_write"):
+                    for _tmp_photo in _photo_merge_temps:
+                        try:
+                            os.unlink(_tmp_photo)
+                        except OSError:
+                            pass
                     return result
-                merged = _merge_claim_related_pdf(_mergeable, _out)
+                try:
+                    merged = _merge_claim_related_pdf(_mergeable, _out)
+                finally:
+                    for _tmp_photo in _photo_merge_temps:
+                        try:
+                            os.unlink(_tmp_photo)
+                        except OSError:
+                            pass
                 if merged:
                     _mark_generated(merged)
                     result.claim_related_merged_pdf = merged
@@ -1334,6 +1390,11 @@ def scan_folder(
                         "Pre-merge failed; merge will be retried at automation runtime."
                     )
             else:
+                for _tmp_photo in _photo_merge_temps:
+                    try:
+                        os.unlink(_tmp_photo)
+                    except OSError:
+                        pass
                 logger.info(
                     "claim_related: no mergeable files (all are .doc/.xlsx/.txt) — skipping pre-merge."
                 )

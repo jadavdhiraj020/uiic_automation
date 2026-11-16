@@ -33,6 +33,11 @@
       "driving license",
       "dl"
     ],
+    "registration_certificate": [
+      "registration_certificate",
+      "registration certificate",
+      "rc"
+    ],
     "photographs": [
       "vehicle_photo",
       "photograph",
