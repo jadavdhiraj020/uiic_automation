@@ -4,6 +4,7 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from io import BytesIO
 from pathlib import Path
+import os
 import re
 from zipfile import ZipFile
 
@@ -46,6 +47,19 @@ def depreciation_errors(claim):
         if rate not in SUPPORTED_DEPRECIATION:
             errors.append(f"{label} depreciation rate {rate}% is not supported by the OIC upload template (allowed: 0, 5, 10, 15, 20, 25, 30, 35, 40, 50). Check the source Excel and mapping.")
     return errors
+
+
+def prepared_upload_error(claim):
+    """Require the workbook produced for the current folder scan."""
+    error = str(getattr(claim, "_oic_upload_error", "") or "").strip()
+    if error:
+        return f"OIC upload Excel could not be prepared: {error}"
+    path = str(getattr(claim, "_oic_upload_path", "") or "").strip()
+    invoice = str(getattr(claim, "_oic_upload_invoice", "") or "").strip()
+    items = getattr(claim, "_oic_upload_items", None)
+    if not path or not Path(path).is_file() or not invoice or not items:
+        return "OIC upload Excel is missing. Rescan the claim folder before starting."
+    return ""
 
 
 def _labour_totals(path, boundary_keyword):
@@ -93,7 +107,7 @@ def _date(value):
     raise ValueError("Workshop invoice date is missing or invalid")
 
 
-def build_upload_workbook(claim, defaults):
+def build_upload_workbook(claim, defaults, output_folder=None):
     """Create a fresh OIC import workbook and return its path and item names."""
     errors = depreciation_errors(claim)
     if errors:
@@ -115,6 +129,8 @@ def build_upload_workbook(claim, defaults):
     boundary = defaults.get("table_boundary_keyword", "sub total|total|grand total")
     parts, _, _ = extract_parts_and_labour(str(source), boundary_keyword=boundary, oic_flexible_parts=True)
     totals = _labour_totals(str(source), boundary)
+    if not parts and not any(totals.values()):
+        raise ValueError("No non-zero OIC spare parts or labour amounts were found in the source Excel")
     part_hsn = str(defaults.get("item_hsn_code") or "8512").strip()
     labour_hsn = str(defaults.get("labour_hsn_code") or "8729").strip()
     rows = []
@@ -150,20 +166,49 @@ def build_upload_workbook(claim, defaults):
     buffer = BytesIO()
     wb.save(buffer)
     wb.close()
-    # Keep import workbooks out of claim folders so later scans cannot select
-    # one as the original survey report or as a document to upload.
-    output = _next_available_path(ensure_dir(user_data_dir("oic", "assessment_uploads")), "auto_oic_upload.xlsx")
+    # A scan may request the claim folder; the scanner excludes these generated
+    # workbooks from source and document selection on subsequent scans.
+    output_dir = ensure_dir(str(output_folder or user_data_dir("oic", "assessment_uploads")))
+    output = _next_available_path(output_dir, "auto_oic_upload.xlsx")
     buffer.seek(0)
-    with ZipFile(buffer, "r") as src, ZipFile(output, "w") as dest:
-        for info in src.infolist():
-            data = src.read(info.filename)
-            if info.filename == "xl/worksheets/sheet2.xml":
-                xml = data.decode("utf-8")
-                for cell, value in cached.items():
-                    pattern = rf'(<c r="{cell}"[^>]*>\s*<f[^>]*>.*?</f>\s*<v>).*?(</v>)'
-                    xml, count = re.subn(pattern, lambda m: m.group(1) + str(value) + m.group(2), xml, count=1)
-                    if count != 1:
-                        raise ValueError(f"Unable to cache GST formula in {cell}")
-                data = xml.encode("utf-8")
-            dest.writestr(info, data)
+    created = False
+    try:
+        with open(output, "xb") as output_file:
+            created = True
+            with ZipFile(buffer, "r") as src, ZipFile(output_file, "w") as dest:
+                for info in src.infolist():
+                    data = src.read(info.filename)
+                    if info.filename == "xl/worksheets/sheet2.xml":
+                        xml = data.decode("utf-8")
+                        for cell, value in cached.items():
+                            pattern = rf'(<c r="{cell}"[^>]*>\s*<f[^>]*>.*?</f>\s*<v>).*?(</v>)'
+                            xml, count = re.subn(pattern, lambda m: m.group(1) + str(value) + m.group(2), xml, count=1)
+                            if count != 1:
+                                raise ValueError(f"Unable to cache GST formula in {cell}")
+                        data = xml.encode("utf-8")
+                    dest.writestr(info, data)
+    except Exception:
+        if created:
+            try:
+                os.remove(output)
+            except OSError:
+                pass
+        raise
     return output, invoice, [row[1] for row in rows]
+
+
+def upload_amount_warning(path):
+    """Warn before starting if the portal's known invoice check will fail."""
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    try:
+        invoice_amount = _number(wb["Invoice"]["D2"].value, "Invoice amount")
+        total = sum(
+            (_number(row[4], "Item amount") for row in wb["Items"].iter_rows(min_row=2, values_only=True) if row[0] is not None),
+            Decimal(0),
+        )
+        if invoice_amount < total:
+            return (f"OIC upload invoice amount {invoice_amount:.2f} is less than the item total {total:.2f}; "
+                    "OIC has rejected this mismatch. Review the source amounts before starting.")
+        return ""
+    finally:
+        wb.close()

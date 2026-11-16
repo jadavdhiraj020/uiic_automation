@@ -777,13 +777,19 @@ class MainWindow(QMainWindow):
         portal_id = scan_context.portal_id
         portal_display = getattr(scan_context, "portal_display_name", "") or portal_id.upper()
         if portal_id == "oic":
-            from app.portals.oic.automation.assessment_upload_excel import depreciation_errors
+            from app.portals.oic.automation.assessment_upload_excel import depreciation_errors, prepared_upload_error
             rate_errors = depreciation_errors(self._claim)
             if rate_errors:
                 message = "\n".join(rate_errors)
                 self._set_status("error", "OIC depreciation needs review")
                 self.log(f"Start blocked: {message}")
                 _warn("OIC Depreciation Needs Review", message)
+                return
+            upload_error = prepared_upload_error(self._claim)
+            if upload_error:
+                self._set_status("error", "OIC upload Excel needs review")
+                self.log(f"Start blocked: {upload_error}")
+                _warn("OIC Upload Needs Review", upload_error)
                 return
         settings = load_settings(portal_id=portal_id)
         if hasattr(self, "web_queue"):

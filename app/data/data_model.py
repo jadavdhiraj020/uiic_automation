@@ -747,6 +747,12 @@ class ClaimData:
 
         from app.portals.oic.automation.assessment_upload_excel import depreciation_errors
         errors.extend(depreciation_errors(self))
+        upload_error = getattr(self, "_oic_upload_error", "")
+        if upload_error and not errors:
+            errors.append(f"OIC upload Excel could not be prepared: {upload_error}")
+        upload_warning = getattr(self, "_oic_upload_warning", "")
+        if upload_warning:
+            warnings.append(upload_warning)
 
         # ── 1. Claim identity ─────────────────────────────────────────────────
         if not str(self.policy_number or "").strip() and not str(self.claim_no or "").strip():

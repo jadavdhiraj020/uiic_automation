@@ -518,15 +518,23 @@ class DataReviewPanel(QWidget):
 
         self.empty_label.parentWidget().setVisible(False)
         errors, warnings = claim.validate()
+        upload_warning = getattr(claim, "_oic_upload_warning", "") if portal_id == "oic" else ""
         if errors:
-            self.validation_bar.setText("MISSING FIELDS - Review before starting:\n" + "\n".join(f"  - {e}" for e in errors))
+            message = "MISSING FIELDS - Review before starting:\n" + "\n".join(f"  - {e}" for e in errors)
+            if upload_warning:
+                message += "\n\n" + upload_warning
+            self.validation_bar.setText(message)
             self.validation_bar.setObjectName("validationError")
             self.validation_bar.setStyleSheet("")
             self.validation_bar.style().unpolish(self.validation_bar)
             self.validation_bar.style().polish(self.validation_bar)
             self.validation_bar.setVisible(True)
         elif warnings:
-            self.validation_bar.setText("Optional fields missing: " + " | ".join(warnings))
+            optional = [warning for warning in warnings if warning != upload_warning]
+            messages = ([upload_warning] if upload_warning else [])
+            if optional:
+                messages.append("Optional fields missing: " + " | ".join(optional))
+            self.validation_bar.setText("\n".join(messages))
             self.validation_bar.setObjectName("validationWarn")
             self.validation_bar.setStyleSheet("")
             self.validation_bar.style().unpolish(self.validation_bar)
@@ -684,6 +692,7 @@ class DocumentReviewPanel(QWidget):
             "estimate":                 "Estimate",
             "invoice":                  "Invoice",
             "reinspection_report":      "Re-Inspection Report",
+            "oic_upload_excel":         "OIC Upload Excel",
         }
 
         stats = QWidget()

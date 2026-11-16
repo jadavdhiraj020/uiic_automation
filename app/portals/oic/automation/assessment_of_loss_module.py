@@ -126,14 +126,19 @@ async def fill_assessment_of_loss(
 
 
 async def _fill_invoice_section(page: Page, claim, defaults, log: AutomationLogger, delay: int, stop_cb):
-    from app.portals.oic.automation.assessment_upload_excel import build_upload_workbook
+    from app.portals.oic.automation.assessment_upload_excel import prepared_upload_error
 
     log._section = "Invoice Excel Upload"
     review_error = getattr(claim, "_oic_parts_review_error", "")
     if review_error:
         raise ValueError(f"OIC parts need review: {review_error}")
-    path, invoice, items = build_upload_workbook(claim, defaults)
-    log.info(f"Prepared OIC invoice upload: {path} ({len(items)} items)")
+    upload_error = prepared_upload_error(claim)
+    if upload_error:
+        raise ValueError(upload_error)
+    path = claim._oic_upload_path
+    invoice = claim._oic_upload_invoice
+    items = claim._oic_upload_items
+    log.info(f"Using OIC invoice upload prepared during scan: {path} ({len(items)} items)")
     file_input = page.locator('input[type="file"]#fileInput[name="excel"]')
     submit = page.get_by_role("button", name="Submit", exact=True)
     validation = page.get_by_role("button", name="View Validation Errors", exact=True)

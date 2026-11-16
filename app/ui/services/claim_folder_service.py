@@ -157,11 +157,6 @@ def _run_background_document_generation(
         name = os.path.basename(path or "").lower()
         return bool(re.fullmatch(r"auto_primary_assessment(?:_\d+)?\.xlsx", name))
 
-    def _is_oic_generated_assessment(path: str) -> bool:
-        import re
-        name = os.path.basename(path or "").lower()
-        return bool(re.fullmatch(r"auto_oic_assessment(?:_\d+)?\.xlsx", name))
-
     # 2. Auto-generate primary assessment Excel if not provided by user, or update if it is app-generated.
     is_auto_generated = False
     if "assessment_excel" in claim.assessment_files:
@@ -244,102 +239,6 @@ def _run_background_document_generation(
                 bg_logger.warning(
                     f"Auto-generation of assessment Excel failed: {gen_exc}"
                 )
-
-    if is_cancelled():
-        bg_logger.info("Background document generation thread cancelled before OIC assessment generation.")
-        return
-
-    # 3. Auto-generate OIC assessment Excel (Website 3).
-    if portal_id == "oic" and scan_result.excel_path:
-        from app.data.excel_parts_extractor import OicPartsReviewError
-
-        claim._oic_parts_review_error = ""
-        is_oic_auto_generated = False
-        if "oic_assessment_excel" in claim.assessment_files:
-            oic_fpath = claim.assessment_files["oic_assessment_excel"]
-            if _is_oic_generated_assessment(oic_fpath):
-                is_oic_auto_generated = True
-
-        try:
-            old_oic_path = (
-                claim.assessment_files.get("oic_assessment_excel", "")
-                if is_oic_auto_generated
-                else ""
-            )
-
-            from app.data.oic_assessment_generator import (
-                generate_oic_assessment_result,
-            )
-            from app.utils import load_automation_defaults as _load_defaults
-
-            oic_defaults = _load_defaults(portal_id="oic")
-            _abs_excel = os.path.abspath(scan_result.excel_path)
-            _oic_output_dir = os.path.dirname(_abs_excel)
-            
-            bg_logger.info(f"Generating OIC assessment Excel for {Path(scan_result.excel_path).name}...")
-            generation = generate_oic_assessment_result(
-                _abs_excel,
-                _oic_output_dir,
-                oic_defaults,
-            )
-            oic_generated_path = generation.output_path
-            
-            # Mark generated paths
-            for p in generation.generated_files or []:
-                if p and os.path.exists(p):
-                    norm_existing = {
-                        os.path.normcase(os.path.normpath(x))
-                        for x in getattr(scan_result, "generated_files", [])
-                    }
-                    norm_p = os.path.normcase(os.path.normpath(p))
-                    if norm_p not in norm_existing:
-                        scan_result.generated_files.append(p)
-            
-            if oic_generated_path:
-                claim.assessment_files["oic_assessment_excel"] = oic_generated_path
-                if old_oic_path:
-                    payload = {
-                        "timestamp": datetime.now().isoformat(),
-                        "portal_id": portal_id,
-                        "folder_path": os.path.abspath(folder),
-                        "event": "generated_assessment_replaced",
-                        "document_type": "oic_assessment_excel",
-                        "old_path": old_oic_path,
-                        "new_path": oic_generated_path,
-                        "action": "switch_mapping_after_success",
-                    }
-                    if not hasattr(scan_result, "policy_events"):
-                        scan_result.policy_events = []
-                    scan_result.policy_events.append(payload)
-                    try:
-                        log_dir = ensure_dir(user_data_dir("logs", portal_id.lower()))
-                        audit_path = os.path.join(log_dir, "scan_policy_audit.jsonl")
-                        with open(audit_path, "a", encoding="utf-8") as f:
-                            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-                    except Exception as exc:
-                        logging.getLogger(__name__).warning("Failed to write scan policy audit event: %s", exc)
-
-                    bg_logger.info(
-                        "OIC auto-generated assessment replaced after new file was created successfully. "
-                        f"Previous file kept: {Path(old_oic_path).name}; new file: {Path(oic_generated_path).name}"
-                    )
-                    _delete_old_generated_bundle_static(
-                        old_oic_path, oic_generated_path, "oic_assessment_excel"
-                    )
-                bg_logger.info(
-                    f"OIC auto-generated assessment: {Path(oic_generated_path).name} from {Path(scan_result.excel_path).name}"
-                )
-            else:
-                bg_logger.warning(generation.message)
-        except OicPartsReviewError as gen_exc:
-            # Do not let the automation reuse an older generated workbook when
-            # the current source needs a human review.
-            claim._oic_parts_review_error = str(gen_exc)
-            bg_logger.warning(f"OIC parts need review: {gen_exc}")
-        except Exception as gen_exc:
-            bg_logger.warning(
-                f"OIC auto-generation of assessment Excel failed: {gen_exc}"
-            )
 
     if is_cancelled():
         bg_logger.info("Background document generation thread cancelled before completion.")
@@ -669,6 +568,37 @@ class ClaimFolderService:
             # OIC block uses its own load with portal_id="oic" (intentional —
             # it always needs OIC defaults regardless of the active portal).
             _portal_defaults = load_automation_defaults(portal_id=self.portal_id)
+
+            # Prepare the exact OIC upload workbook before returning scan data,
+            # so the user can review it and Start cannot race a background job.
+            if self.portal_id == "oic":
+                from app.portals.oic.automation.assessment_upload_excel import (
+                    build_upload_workbook, upload_amount_warning,
+                )
+                claim._oic_upload_path = ""
+                claim._oic_upload_error = ""
+                claim._oic_upload_warning = ""
+                claim._oic_parts_review_error = ""
+                try:
+                    output_path, invoice, items = build_upload_workbook(
+                        claim, _portal_defaults, output_folder=folder,
+                    )
+                    _mark_generated_file(output_path)
+                    claim._oic_upload_path = output_path
+                    claim._oic_upload_invoice = invoice
+                    claim._oic_upload_items = items
+                    claim._oic_upload_warning = upload_amount_warning(output_path)
+                    claim.assessment_files["oic_upload_excel"] = output_path
+                    logs.append(f"OIC upload Excel prepared: {output_path} ({len(items)} items)")
+                    if claim._oic_upload_warning:
+                        logs.append(f"Warning: {claim._oic_upload_warning}")
+                except Exception as prepare_exc:
+                    claim._oic_upload_path = ""
+                    claim._oic_upload_error = str(prepare_exc)
+                    logs.append(f"OIC upload Excel needs review: {prepare_exc}")
+                    logger.warning("OIC upload Excel preparation failed: %s", prepare_exc)
+                if stop_cb and stop_cb():
+                    return _cancel_after_service_generation("after_oic_upload_preparation")
 
             # ── Generate Printable Excel copy + PDF & Portal-specific assessment Excels in background ──
             # Production-grade structured logging setup: initialize first so bg thread can share log file & correlation ID.
