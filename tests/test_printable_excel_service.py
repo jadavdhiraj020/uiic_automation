@@ -519,5 +519,20 @@ def test_unblock_office_resiliency_empty_path():
     assert unblock_office_resiliency("") is False
     assert unblock_office_resiliency(None) is False
 
+def test_detect_used_column_range_includes_far_right_real_data(tmp_path):
+    from app.data.printable_excel_service import _detect_used_column_range
 
+    path = tmp_path / "wide_report.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws["A1"] = "Survey Report"
+    ws["L5"] = "GST"
+    ws["N5"] = "Workshop Invoice Date"
+    ws["O5"] = "27/10/2026"
+    # Styling-only far-right cell must not extend the detected data width.
+    ws["Z10"].number_format = "0.00"
+    wb.save(path)
+    wb.close()
+
+    assert _detect_used_column_range(str(path)) == ("A", "O")
 
