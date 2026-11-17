@@ -1020,6 +1020,7 @@ def scan_folder(
             import uuid
             from app.data.printable_excel_service import (
                 _create_printable_excel,
+                _detect_used_column_range,
                 _generate_pdf,
                 _validate_column_range,
                 _validate_scale,
@@ -1027,9 +1028,32 @@ def scan_folder(
             from app.utils import load_automation_defaults
 
             _pdefaults = dict(load_automation_defaults(portal_id="uiic") or {})
-            _mode = str(_pdefaults.get("printable_print_mode", "scale_percentage")).strip().lower()
+            _configured_mode = str(_pdefaults.get("printable_print_mode", "scale_percentage")).strip().lower()
             _scale = _validate_scale(_pdefaults.get("printable_scale_percentage", 80)) or 80
-            _col_range = _validate_column_range(_pdefaults.get("printable_column_range", "A:L")) or ("A", "L")
+            _configured_range = _validate_column_range(_pdefaults.get("printable_column_range", "A:L")) or ("A", "L")
+
+            # UIIC survey_report.pdf must never clip real right-side data such
+            # as the last GST column or Workshop Invoice Date. Detect the real
+            # used width from cell values and export that full width fitted to
+            # one page. This changes only the temporary printable copy, never
+            # the user's original workbook.
+            _used_start, _used_end = _detect_used_column_range(result.excel_path)
+            _start_num = min(1, 1)  # Explicitly retain column A for report layout.
+            _end_num = max(
+                _validate_column_range(f"A:{_used_end}") and __import__("app.data.printable_excel_service", fromlist=["_col_letter_to_number"])._col_letter_to_number(_used_end) or 1,
+                __import__("app.data.printable_excel_service", fromlist=["_col_letter_to_number"])._col_letter_to_number(_configured_range[1]),
+            )
+            from openpyxl.utils import get_column_letter as _get_column_letter
+            _col_range = ("A", _get_column_letter(_end_num))
+            _mode = "column_range"
+            logger.info(
+                "UIIC PDF full-width export: configured=%s %s, detected used=%s:%s, effective=A:%s",
+                _configured_mode,
+                _configured_range,
+                _used_start,
+                _used_end,
+                _col_range[1],
+            )
 
             temp_excel = os.path.join(
                 tempfile.gettempdir(), f"temp_survey_{uuid.uuid4().hex[:8]}.xlsx"
