@@ -1019,6 +1019,7 @@ def scan_folder(
             import tempfile
             import uuid
             from app.data.printable_excel_service import (
+                _col_letter_to_number,
                 _create_printable_excel,
                 _detect_used_column_range,
                 _generate_pdf,
@@ -1038,10 +1039,9 @@ def scan_folder(
             # one page. This changes only the temporary printable copy, never
             # the user's original workbook.
             _used_start, _used_end = _detect_used_column_range(result.excel_path)
-            _start_num = min(1, 1)  # Explicitly retain column A for report layout.
             _end_num = max(
-                _validate_column_range(f"A:{_used_end}") and __import__("app.data.printable_excel_service", fromlist=["_col_letter_to_number"])._col_letter_to_number(_used_end) or 1,
-                __import__("app.data.printable_excel_service", fromlist=["_col_letter_to_number"])._col_letter_to_number(_configured_range[1]),
+                _col_letter_to_number(_used_end),
+                _col_letter_to_number(_configured_range[1]),
             )
             from openpyxl.utils import get_column_letter as _get_column_letter
             _col_range = ("A", _get_column_letter(_end_num))
