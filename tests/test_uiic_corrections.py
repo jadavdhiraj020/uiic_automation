@@ -833,5 +833,56 @@ def test_uiic_scan_folder_freshly_regenerates_and_overwrites_survey_report(tmp_p
     with open(assessment_path, "rb") as f:
         assert f.read() == b"%PDF-1.4 NEW_REPORT"
 
+def test_uiic_workshop_invoice_date_fallback_reads_far_right_excel_cell(tmp_path):
+    from datetime import datetime
+    from app.data.excel_reader import _find_workshop_invoice_date_near_invoice, _open_workbook
 
+    path = tmp_path / "main1.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws["B20"] = "Workshop Invoice No"
+    ws["C20"] = "WS-100745"
+    ws["N20"] = "Dated"
+    ws["O20"] = datetime(2026, 10, 27)
+    wb.save(path)
+    wb.close()
+
+    with _open_workbook(str(path)) as wrapped:
+        value, source = _find_workshop_invoice_date_near_invoice(wrapped)
+
+    assert value == "27/10/2026"
+    assert "O20" not in (source or "")  # wrapper reports R/C coordinates
+    assert "R20C15" in (source or "")
+
+
+def test_uiic_scan_pdf_export_extends_to_far_right_used_column(tmp_path):
+    from unittest.mock import patch
+    from app.data.folder_scanner import scan_folder
+
+    path = tmp_path / "main1.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws["A1"] = "Survey Report"
+    ws["L10"] = "GST"
+    ws["N20"] = "Workshop Invoice Date"
+    ws["O20"] = "27/10/2026"
+    wb.save(path)
+    wb.close()
+
+    captured = {}
+
+    def fake_render(excel_in, pdf_out, logs, **kwargs):
+        captured.update(kwargs)
+        with open(pdf_out, "wb") as fh:
+            fh.write(b"%PDF-1.4 full width")
+        return True
+
+    with patch("app.data.printable_excel_service._generate_pdf_excel_com", side_effect=fake_render):
+        result = scan_folder(str(tmp_path), portal_id="uiic")
+
+    assert result.assessment_files.get("survey_report")
+    assert captured.get("print_mode") == "column_range"
+    assert captured.get("col_range") == ("A", "O")
 
