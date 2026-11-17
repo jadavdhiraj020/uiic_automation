@@ -502,6 +502,56 @@ def _format_date(raw: str) -> str:
     return val
 
 
+def _find_workshop_invoice_date_near_invoice(wb) -> Tuple[Optional[str], Optional[str]]:
+    """Fallback for layouts where the invoice date is far-right on the same row.
+
+    This reads the original Excel data, not the generated PDF, so clipping in
+    survey_report.pdf can never hide the Workshop Invoice Date from ClaimData.
+    """
+    invoice_labels = (
+        "workshop invoice no",
+        "workshop invoice number",
+        "ws invoice no",
+        "work shop invoice",
+        "repairer invoice no",
+        "garage invoice no",
+        "workshop bill no",
+    )
+    date_rx = re.compile(r"\b\d{1,2}[-/.]\d{1,2}[-/.]\d{4}\b")
+
+    for sh in wb.all_sheets():
+        rows = list(sh.rows())
+        sh_name = sh.name if hasattr(sh, "name") else "Sheet"
+        for r_idx, row in enumerate(rows):
+            for c_idx, cell in enumerate(row):
+                low = " ".join(str(cell or "").strip().lower().split())
+                if not low or not any(label in low for label in invoice_labels):
+                    continue
+
+                # The date can sit several columns to the right, often after a
+                # simple "Dated" heading. Scan the whole remaining row.
+                for scan_c in range(c_idx + 1, len(row)):
+                    raw = row[scan_c]
+                    if raw in (None, ""):
+                        continue
+                    raw_s = str(raw).strip()
+                    if not raw_s:
+                        continue
+
+                    # openpyxl returns genuine date-formatted cells as datetime.
+                    if isinstance(raw, datetime):
+                        return raw.strftime("%d/%m/%Y"), f"R{r_idx+1}C{scan_c+1} ({sh_name})"
+
+                    m = date_rx.search(raw_s)
+                    if not m:
+                        continue
+                    value = _format_date(m.group(0))
+                    if value:
+                        return value, f"R{r_idx+1}C{scan_c+1} ({sh_name})"
+
+    return None, None
+
+
 def _parse_time_string(val: str) -> Optional[Tuple[str, str]]:
     """
     Parse a string for a valid time, converting to 24-hour (HH, MM).
@@ -850,6 +900,25 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
                 labels_str = ' | '.join(labels)
                 missing_fields.append(f"{field_name} (labels: '{labels_str}')")
                 logger.warning(f"  [MISSING] {field_name}: labels '{labels_str}' not found or value empty")
+
+    # UIIC fallback: some surveyor templates keep Workshop Invoice Date in
+    # the far-right column of the Workshop Invoice row with only a generic
+    # "Dated" heading. Read it directly from the original Excel row so PDF
+    # print-area clipping cannot make the portal field disappear.
+    if portal_id == "uiic" and not str(getattr(claim, "workshop_invoice_date", "") or "").strip():
+        ws_inv_date, ws_inv_src = _find_workshop_invoice_date_near_invoice(wb)
+        if ws_inv_date:
+            claim.workshop_invoice_date = ws_inv_date
+            claim._excel_coords["workshop_invoice_date"] = ws_inv_src or "Excel invoice row fallback"
+            claim._excel_logs.append(
+                f"  📊 workshop_invoice_date: '{ws_inv_date}' "
+                f"(Source: {ws_inv_src or 'Excel invoice row fallback'})"
+            )
+            logger.info(
+                "  [FALLBACK FOUND] workshop_invoice_date = %s at %s",
+                ws_inv_date,
+                ws_inv_src,
+            )
 
     # ── Calculate Derived Business Logic ──────────────────────────────────────
     # Professional Fee calculation for UIIC: Survey Fee + Re-inspection Fee (Decimal monetary arithmetic).
