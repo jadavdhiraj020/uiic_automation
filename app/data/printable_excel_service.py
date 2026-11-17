@@ -82,6 +82,35 @@ def _col_letter_to_number(col: str) -> int:
     return result
 
 
+def _detect_used_column_range(excel_path: str, sheet_index: int = 0) -> Tuple[str, str]:
+    """Return the first/last columns that contain real cell values.
+
+    Formatting-only cells are ignored so a styled but empty far-right column
+    does not shrink the PDF unnecessarily.
+    """
+    import openpyxl
+    from openpyxl.utils import get_column_letter
+
+    wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=False)
+    try:
+        ws = wb.worksheets[sheet_index]
+        min_col = None
+        max_col = None
+        for row in ws.iter_rows():
+            for cell in row:
+                if cell.value in (None, ""):
+                    continue
+                if min_col is None or cell.column < min_col:
+                    min_col = cell.column
+                if max_col is None or cell.column > max_col:
+                    max_col = cell.column
+        if min_col is None or max_col is None:
+            return "A", "A"
+        return get_column_letter(min_col), get_column_letter(max_col)
+    finally:
+        wb.close()
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def process_printable_output(
