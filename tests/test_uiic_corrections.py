@@ -886,3 +886,27 @@ def test_uiic_scan_pdf_export_extends_to_far_right_used_column(tmp_path):
     assert captured.get("print_mode") == "column_range"
     assert captured.get("col_range") == ("A", "O")
 
+def test_uiic_workshop_invoice_date_uses_invoice_source_row_even_with_generic_dated(tmp_path):
+    from datetime import datetime
+    from app.data.excel_reader import _find_workshop_invoice_date_near_invoice, _open_workbook
+
+    path = tmp_path / "main1.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws["C20"] = "WS-100745"
+    ws["N20"] = "Dated"
+    ws["O20"] = datetime(2026, 10, 27)
+    wb.save(path)
+    wb.close()
+
+    with _open_workbook(str(path)) as wrapped:
+        value, source = _find_workshop_invoice_date_near_invoice(
+            wrapped,
+            invoice_coord="R20C3 (Sheet1)",
+            invoice_no="WS-100745",
+        )
+
+    assert value == "27/10/2026"
+    assert "R20C15" in (source or "")
+
