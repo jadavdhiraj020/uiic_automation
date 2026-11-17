@@ -502,12 +502,67 @@ def _format_date(raw: str) -> str:
     return val
 
 
-def _find_workshop_invoice_date_near_invoice(wb) -> Tuple[Optional[str], Optional[str]]:
+def _find_workshop_invoice_date_near_invoice(
+    wb,
+    invoice_coord: str = "",
+    invoice_no: str = "",
+) -> Tuple[Optional[str], Optional[str]]:
     """Fallback for layouts where the invoice date is far-right on the same row.
 
     This reads the original Excel data, not the generated PDF, so clipping in
     survey_report.pdf can never hide the Workshop Invoice Date from ClaimData.
     """
+    # Strongest path: if Workshop Invoice No was already extracted, use
+    # its exact source row and scan that Excel row for a date. This avoids
+    # depending on a separate "Workshop Invoice Date" label.
+    coord_match = re.search(r"R(\d+)C(\d+)\s*\(([^)]+)\)", str(invoice_coord or ""))
+    if coord_match:
+        row_no = int(coord_match.group(1))
+        sheet_name = coord_match.group(3).strip()
+        sh = wb.get_sheet(sheet_name)
+        if sh is not None:
+            rows = list(sh.rows())
+            if 1 <= row_no <= len(rows):
+                row = rows[row_no - 1]
+                for scan_c, raw in enumerate(row):
+                    if raw in (None, ""):
+                        continue
+                    if isinstance(raw, datetime):
+                        return raw.strftime("%d/%m/%Y"), f"R{row_no}C{scan_c+1} ({sheet_name})"
+                    raw_s = str(raw).strip()
+                    m = re.search(r"\b\d{1,2}[-/.]\d{1,2}[-/.]\d{4}\b", raw_s)
+                    if m:
+                        value = _format_date(m.group(0))
+                        if value:
+                            return value, f"R{row_no}C{scan_c+1} ({sheet_name})"
+
+    # Second strong path: locate the already-extracted invoice number itself,
+    # then scan that row for the date even if the row has only a generic
+    # heading such as "Dated".
+    invoice_no_norm = re.sub(r"\s+", "", str(invoice_no or "")).lower()
+    if invoice_no_norm:
+        for sh in wb.all_sheets():
+            rows = list(sh.rows())
+            sh_name = sh.name if hasattr(sh, "name") else "Sheet"
+            for r_idx, row in enumerate(rows):
+                if not any(
+                    invoice_no_norm in re.sub(r"\s+", "", str(cell or "")).lower()
+                    for cell in row
+                    if cell not in (None, "")
+                ):
+                    continue
+                for scan_c, raw in enumerate(row):
+                    if raw in (None, ""):
+                        continue
+                    if isinstance(raw, datetime):
+                        return raw.strftime("%d/%m/%Y"), f"R{r_idx+1}C{scan_c+1} ({sh_name})"
+                    raw_s = str(raw).strip()
+                    m = re.search(r"\b\d{1,2}[-/.]\d{1,2}[-/.]\d{4}\b", raw_s)
+                    if m:
+                        value = _format_date(m.group(0))
+                        if value:
+                            return value, f"R{r_idx+1}C{scan_c+1} ({sh_name})"
+
     invoice_labels = (
         "workshop invoice no",
         "workshop invoice number",
@@ -906,7 +961,11 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
     # "Dated" heading. Read it directly from the original Excel row so PDF
     # print-area clipping cannot make the portal field disappear.
     if portal_id == "uiic" and not str(getattr(claim, "workshop_invoice_date", "") or "").strip():
-        ws_inv_date, ws_inv_src = _find_workshop_invoice_date_near_invoice(wb)
+        ws_inv_date, ws_inv_src = _find_workshop_invoice_date_near_invoice(
+            wb,
+            invoice_coord=str(claim._excel_coords.get("workshop_invoice_no", "") or ""),
+            invoice_no=str(getattr(claim, "workshop_invoice_no", "") or ""),
+        )
         if ws_inv_date:
             claim.workshop_invoice_date = ws_inv_date
             claim._excel_coords["workshop_invoice_date"] = ws_inv_src or "Excel invoice row fallback"
