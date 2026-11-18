@@ -1054,8 +1054,12 @@ class ClaimData:
         else:
             licence_preview_source = ""
 
-        from app.portals.oic.rto_mapping import match_rto_name
-        rto_match = match_rto_name(self.rto_name)
+        from app.portals.oic.rto_mapping import resolve_rto_choice
+        rto_choice = resolve_rto_choice(self.vehicle_registration_number, self.rto_name)
+        rto_match = rto_choice.name
+        rto_preview_source = f"{rto_choice.source} (saved portal list; review on portal)" if rto_choice.source else ""
+        if rto_choice.possible_mismatch:
+            rto_preview_source += "; possible mismatch with registration code"
 
         # State and city come from the driving licence's issuing-office prefix.
         from app.portals.oic.automation.basic_details_module import (
@@ -1093,7 +1097,7 @@ class ClaimData:
             ("Color of Vehicle",      self.vehicle_color,         False, _src("vehicle_color")),
             ("Type of Fuel",          self.type_of_fuel,          False, _src("type_of_fuel")),
             ("RTO",                   self.rto_name,              False, _src("rto_name")),
-            ("RTO Portal Match",      rto_match,                  False, "Matched from Excel RTO"),
+            ("RTO Portal Match",      rto_match,                  False, rto_preview_source),
             ("Registered Laden Weight", self.registered_laden_weight, False, _src("registered_laden_weight")),
             ("Seating Capacity",      self.seating_capacity,      False, _src("seating_capacity")),
             ("Fitness Valid Upto",    self.fitness_valid_upto,     False, _src("fitness_valid_upto")),

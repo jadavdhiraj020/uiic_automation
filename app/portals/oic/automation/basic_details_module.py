@@ -76,11 +76,11 @@ from app.portals.oic.automation.ui_utils import (
 from app.portals.oic.automation.date_formatter import format_oic_date
 from app.portals.oic.city_mapping import city_from_licence
 from app.portals.oic.license_type_mapping import resolve_license_type
-from app.portals.oic.rto_mapping import match_rto_name
+from app.portals.oic.rto_mapping import resolve_rto_choice
 
 
-async def _select_rto(page: Page, excel_value: str, log: AutomationLogger, delay: int) -> None:
-    """Match the Excel RTO against the currently available portal options."""
+async def _select_rto(page: Page, registration_number: str, excel_value: str, log: AutomationLogger, delay: int) -> None:
+    """Select an RTO using registration, Excel RTO, then the first portal option."""
     opened = False
     try:
         dropdown = page.locator(SEL_RTO_DROPDOWN).first
@@ -90,34 +90,42 @@ async def _select_rto(page: Page, excel_value: str, log: AutomationLogger, delay
         opened = True
         panel = page.locator(".p-dropdown-panel:visible").last
         await panel.wait_for(state="visible", timeout=5000)
-        items = panel.locator("li[role='option'], .p-dropdown-item")
+        items = panel.locator("li[role='option']:not(.p-disabled):not([aria-disabled='true']), .p-dropdown-item:not(.p-disabled):not([aria-disabled='true'])")
         await items.first.wait_for(state="attached", timeout=10000)
         options = []
-        for _ in range(10):
+        previous_options = None
+        stable_polls = 0
+        for _ in range(15):
             options = [text.strip() for text in await items.all_text_contents()]
-            if options and options[0].casefold() not in {"loading", "loading...", "fetching..."}:
+            choice = resolve_rto_choice(registration_number, excel_value, options)
+            stable_polls = stable_polls + 1 if options == previous_options else 0
+            previous_options = options
+            if choice.name and stable_polls >= 2:
                 break
             await asyncio.sleep(0.3)
-        name = match_rto_name(excel_value, options)
-        if not name:
+        if not choice.name:
             await page.keyboard.press("Escape")
             opened = False
-            log.warning(f"No RTO matched the Excel value '{excel_value}'; review it manually.")
+            log.warning("No selectable RTO options were available; review it manually.")
             return
-        exact = items.filter(has_text=re.compile(r"^\s*" + re.escape(name) + r"\s*$", re.IGNORECASE))
+        exact = items.filter(has_text=re.compile(r"^\s*" + re.escape(choice.name) + r"\s*$", re.IGNORECASE))
         count = await exact.count()
         if not count:
             await page.keyboard.press("Escape")
             opened = False
-            log.warning(f"RTO '{name}' is no longer available in the portal; review it manually.")
+            log.warning(f"RTO '{choice.name}' is no longer available in the portal; review it manually.")
             return
-        if name.casefold() != excel_value.strip().casefold() or count > 1:
-            log.warning(f"RTO from Excel '{excel_value}' matched portal option '{name}'"
-                        + (f" ({count} identical labels; using the first)" if count > 1 else "")
-                        + "; review the selected office.")
+        if choice.source == "first available option":
+            log.warning(f"RTO registration code '{choice.registration_code or 'unavailable'}' and Excel RTO '{excel_value}' did not match; selecting the first option '{choice.name}', which may be unrelated. Review it manually.")
+        elif choice.source == "Excel RTO name":
+            log.warning(f"RTO registration code '{choice.registration_code or 'unavailable'}' did not match a portal option; using Excel RTO '{excel_value}' -> '{choice.name}'. Review the selected office.")
+        if choice.possible_mismatch:
+            log.warning(f"RTO registration code '{choice.registration_code}' maps to '{choice.mapped_location}', which may differ from Excel RTO '{excel_value}'. Review the mismatch.")
+        if count > 1:
+            log.warning(f"RTO '{choice.name}' has {count} identical portal labels; selecting the first. Review the office.")
         await exact.first.click()
         opened = False
-        log.field_selected("RTO", name, source="RTO name from Excel")
+        log.field_selected("RTO", choice.name, source=choice.source)
     except Exception as exc:
         if opened:
             try:
@@ -408,12 +416,9 @@ async def _fill_vehicle_details(page: Page, claim, log, delay: int):
                 "Type of Fuel", log, delay
             )
 
-    # 15. Match the RTO value extracted from Excel to the portal's options.
+    # 15. Resolve the RTO using the registration code and Excel RTO fallback.
     rto = str(claim.rto_name or "").strip()
-    if rto:
-        await _select_rto(page, rto, log, delay)
-    else:
-        log.warning("RTO name was not found in Excel; review it manually.")
+    await _select_rto(page, str(claim.vehicle_registration_number or ""), rto, log, delay)
 
     # 16. Optional: Registered Laden Weight — PrimeNG InputNumber
     if claim.registered_laden_weight:
