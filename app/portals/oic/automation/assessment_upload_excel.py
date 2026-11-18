@@ -13,13 +13,14 @@ from openpyxl.worksheet.datavalidation import DataValidation
 
 from app.data.excel_parts_extractor import (
     _detect_labour_header, _is_summary_row, _normalize_boundary_keyword, _MIN_HEADER_CONFIDENCE,
-    extract_parts_and_labour,
+    extract_parts_and_labour, select_oic_survey_sheet,
 )
 from app.data.oic_assessment_generator import _next_available_path
 from app.utils import ensure_dir, user_data_dir
 
 
 SUPPORTED_DEPRECIATION = frozenset(Decimal(x) for x in (0, 5, 10, 15, 20, 25, 30, 35, 40, 50))
+PAINT_SPLIT_RATE = Decimal("12.5")
 INVOICE_HEADERS = ("Invoice Number", "Invoice Date (DD-MM-YYYY)", "Invoice GST Type", "Invoice Amount", "Invoice GST Amount")
 ITEM_HEADERS = ("Invoice Number", "Item Description", "Item Sub Type", "Side Description", "Item Amount", "Depreciation Rate", "GST Rate", "Estimated Amount", "Estimated Amount Remarks", "HSN Code", "GST Amount")
 
@@ -35,8 +36,24 @@ def _number(value, label):
     return result
 
 
+def _nil_depreciation(claim):
+    """Return True/False only when the mapped Excel value is unambiguous."""
+    raw = getattr(claim, "nil_depreciation", "")
+    value = str(raw if raw is not None else "").strip().casefold()
+    if value in {"yes", "y", "true", "1", "nil dep", "nil depreciation"}:
+        return True
+    if value in {"no", "n", "false", "0"}:
+        return False
+    return None
+
+
 def depreciation_errors(claim):
     """Return specific OIC upload blockers before launching the browser."""
+    nil_depreciation = _nil_depreciation(claim)
+    if nil_depreciation is None:
+        return ["Nil Depreciation must be Yes or No; check OIC Field Mapping and rescan the folder"]
+    if nil_depreciation:
+        return []
     errors = []
     for field, label in (("metal_depreciation_rate", "Metal"), ("paint_depreciation_rate", "Paint")):
         try:
@@ -44,8 +61,11 @@ def depreciation_errors(claim):
         except ValueError as exc:
             errors.append(str(exc) + "; check OIC Field Mapping and rescan the folder")
             continue
-        if rate not in SUPPORTED_DEPRECIATION:
-            errors.append(f"{label} depreciation rate {rate}% is not supported by the OIC upload template (allowed: 0, 5, 10, 15, 20, 25, 30, 35, 40, 50). Check the source Excel and mapping.")
+        if rate not in SUPPORTED_DEPRECIATION and not (field == "paint_depreciation_rate" and rate == PAINT_SPLIT_RATE):
+            allowed = "0, 5, 10, 15, 20, 25, 30, 35, 40, 50"
+            if field == "paint_depreciation_rate":
+                allowed += ", 12.5 (split into material and labour)"
+            errors.append(f"{label} depreciation rate {rate}% is not supported by the OIC upload template (allowed: {allowed}). Check the source Excel and mapping.")
     return errors
 
 
@@ -65,7 +85,7 @@ def prepared_upload_error(claim):
 def _labour_totals(path, boundary_keyword):
     wb = openpyxl.load_workbook(path, data_only=True, read_only=False)
     try:
-        ws = wb.active
+        ws = select_oic_survey_sheet(wb)
         detected = _detect_labour_header(ws)
         if not detected.row or detected.confidence < _MIN_HEADER_CONFIDENCE:
             raise ValueError("OIC labour table could not be identified reliably")
@@ -119,13 +139,13 @@ def build_upload_workbook(claim, defaults, output_folder=None):
     if not invoice:
         raise ValueError("Workshop invoice number is missing")
     invoice_date = _date(getattr(claim, "workshop_invoice_date", "") or getattr(claim, "invoice_date", ""))
-    invoice_amount = _number(getattr(claim, "invoice_amount_without_gst", ""), "Invoice amount")
     invoice_gst = _number(getattr(claim, "invoice_gst_amount", ""), "Invoice GST amount")
     gst_type = str(defaults.get("gst_type", "IGST")).strip().upper()
     if gst_type not in ("IGST", "CGST/SGST"):
         raise ValueError(f"Unsupported invoice GST type: {gst_type}")
-    metal_rate = _number(claim.metal_depreciation_rate, "Metal depreciation rate")
-    paint_rate = _number(claim.paint_depreciation_rate, "Paint depreciation rate")
+    nil_depreciation = _nil_depreciation(claim)
+    metal_rate = Decimal(0) if nil_depreciation else _number(claim.metal_depreciation_rate, "Metal depreciation rate")
+    paint_rate = Decimal(0) if nil_depreciation else _number(claim.paint_depreciation_rate, "Paint depreciation rate")
     boundary = defaults.get("table_boundary_keyword", "sub total|total|grand total")
     parts, _, _ = extract_parts_and_labour(str(source), boundary_keyword=boundary, oic_flexible_parts=True)
     totals = _labour_totals(str(source), boundary)
@@ -136,11 +156,22 @@ def build_upload_workbook(claim, defaults, output_folder=None):
     rows = []
     for part in parts:
         material = part["material_type"]
-        category, rate = {"metal": ("Metallic Parts", metal_rate), "plastic": ("Plastic", Decimal(50)), "glass": ("Glass", Decimal(0))}[material]
+        category, rate = {"metal": ("Metallic Parts", metal_rate), "plastic": ("Plastic", Decimal(0) if nil_depreciation else Decimal(50)), "glass": ("Glass", Decimal(0))}[material]
         rows.append((category, str(part["part_name"]), _number(part["billed_amount"], "Part amount"), rate, _number(part["estimated_amount"], "Part estimated amount"), part_hsn))
-    for key, name in (("rr", "R/R"), ("denting", "DENTING"), ("cw", "C/W"), ("painting", "PAINT")):
-        rows.append(("Labour Charge", name, totals[key], paint_rate if key == "painting" else Decimal(0), totals[key], labour_hsn))
+    for key, name in (("rr", "R/R"), ("denting", "DENTING"), ("cw", "C/W")):
+        rows.append(("Labour Charge", name, totals[key], Decimal(0), totals[key], labour_hsn))
+    paint_total = totals["painting"]
+    if nil_depreciation or paint_rate == PAINT_SPLIT_RATE:
+        material_amount = (paint_total * Decimal("0.25")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        labour_amount = paint_total - material_amount
+        rows.append(("Plastic", "Painting material", material_amount, Decimal(0) if nil_depreciation else Decimal(50), material_amount, part_hsn))
+        rows.append(("Labour Charge", "Painting labour", labour_amount, Decimal(0), labour_amount, labour_hsn))
+    else:
+        rows.append(("Labour Charge", "PAINT", paint_total, paint_rate, paint_total, labour_hsn))
 
+    # OIC compares this field against the sum of the uploaded item amounts.
+    # Derive it from the same rows rather than from the separate GST summary.
+    invoice_amount = sum((row[2] for row in rows), Decimal(0))
     wb = openpyxl.Workbook()
     inv = wb.active
     inv.title = "Invoice"
@@ -194,6 +225,7 @@ def build_upload_workbook(claim, defaults, output_folder=None):
             except OSError:
                 pass
         raise
+    claim._oic_upload_invoice_amount = format(invoice_amount, "f")
     return output, invoice, [row[1] for row in rows]
 
 

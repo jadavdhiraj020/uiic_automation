@@ -641,6 +641,15 @@ def _extract_labour_rows(
 # PUBLIC CONVENIENCE API
 # ══════════════════════════════════════════════════════════════════════════════
 
+def select_oic_survey_sheet(workbook):
+    """Prefer the survey report over the workbook's last-viewed sheet."""
+    matches = [sheet for sheet in workbook.worksheets
+               if re.sub(r"[^a-z0-9]", "", sheet.title.casefold()) == "surveyreport"]
+    if len(matches) > 1:
+        raise ValueError("More than one survey report sheet found; review the workbook")
+    return matches[0] if matches else workbook.active
+
+
 def extract_parts_and_labour(
     excel_path: str,
     parts_hsn=8512,
@@ -690,7 +699,11 @@ def extract_parts_and_labour(
 
     logger.info("Parts extractor: loading source Excel %s", excel_path)
     src_wb = openpyxl.load_workbook(excel_path, data_only=True)
-    src_ws = src_wb.active
+    try:
+        src_ws = select_oic_survey_sheet(src_wb) if oic_flexible_parts else src_wb.active
+    except Exception:
+        src_wb.close()
+        raise
 
     audit_lines.append(f"Source Sheet: {src_ws.title}")
     audit_lines.append("")

@@ -835,12 +835,14 @@ class ClaimData:
             warnings.append("No claim documents found in folder")
 
         # ── 5. Assessment of Loss financials ──────────────────────────────────
+        upload_invoice_amount = getattr(self, "_oic_upload_invoice_amount", "")
+        invoice_amount = upload_invoice_amount if upload_invoice_amount != "" else self.invoice_amount_without_gst
         try:
-            inv_amt = _parse_amount_for_total(self.invoice_amount_without_gst)
-            if not self.invoice_amount_without_gst or str(self.invoice_amount_without_gst).strip() == "":
+            inv_amt = _parse_amount_for_total(invoice_amount)
+            if not invoice_amount or str(invoice_amount).strip() == "":
                 errors.append("Invoice Amount Without GST is missing")
         except ValueError:
-            errors.append(f"Invoice Amount Without GST '{self.invoice_amount_without_gst}' is not a valid numeric amount")
+            errors.append(f"Invoice Amount Without GST '{invoice_amount}' is not a valid numeric amount")
             inv_amt = None
 
         try:
@@ -1174,7 +1176,8 @@ class ClaimData:
             ("Labour IGST Amount", self.labour_igst_amount, False, _src("labour_igst_amount")),
             ("Metal Depreciation Rate (%)", self.metal_depreciation_rate, True, _src("metal_depreciation_rate")),
             ("Paint Depreciation Rate (%)", self.paint_depreciation_rate, True, _src("paint_depreciation_rate")),
-            ("Inv Amt Without GST (₹)", self.invoice_amount_without_gst, True, _src("invoice_amount_without_gst")),
+            ("Inv Amt Without GST (GST Summary) (₹)", self.invoice_amount_without_gst, False, _src("invoice_amount_without_gst")),
+            ("OIC Upload Invoice Amount (₹)", getattr(self, "_oic_upload_invoice_amount", ""), True, "Sum of upload item amounts"),
             ("Invoice GST Amt (₹)",   self.invoice_gst_amount,    True,  _src("invoice_gst_amount")),
             ("Compulsory Excess (₹)", self.compulsory_excess,     False, _src("compulsory_excess")),
             ("Voluntary Excess (₹)",  self.voluntary_excess,      False, _src("voluntary_excess")),

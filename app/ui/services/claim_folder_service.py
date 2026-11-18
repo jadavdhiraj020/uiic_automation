@@ -578,6 +578,7 @@ class ClaimFolderService:
                 claim._oic_upload_path = ""
                 claim._oic_upload_error = ""
                 claim._oic_upload_warning = ""
+                claim._oic_upload_invoice_amount = ""
                 claim._oic_parts_review_error = ""
                 try:
                     output_path, invoice, items = build_upload_workbook(
@@ -590,6 +591,7 @@ class ClaimFolderService:
                     claim._oic_upload_warning = upload_amount_warning(output_path)
                     claim.assessment_files["oic_upload_excel"] = output_path
                     logs.append(f"OIC upload Excel prepared: {output_path} ({len(items)} items)")
+                    logs.append(f"OIC upload invoice amount: {claim._oic_upload_invoice_amount} (sum of item amounts)")
                     if claim._oic_upload_warning:
                         logs.append(f"Warning: {claim._oic_upload_warning}")
                 except Exception as prepare_exc:
