@@ -19,7 +19,6 @@ Architecture mirrors basic_details_module.py:
 
 from __future__ import annotations
 
-import asyncio
 import re
 from typing import Callable
 
@@ -35,6 +34,7 @@ from app.portals.oic.automation.ui_utils import (
     fill_mui_datepicker,
     fill_textarea_primeng,
     capture_error_screenshot,
+    advance_form,
 )
 from app.portals.oic.automation import selectors as S
 from app.portals.oic.automation.recovery import field_problem
@@ -95,7 +95,7 @@ async def fill_interim_report(
             log.warning("Stop requested before clicking Next.")
             return False
 
-        if not await _click_next_button(page, log):
+        if not await _click_next_button(page, log, stop_cb):
             return False
 
         log.section_done("Interim Report")
@@ -329,88 +329,10 @@ async def _fill_claim_assessment_contact(page, claim, defaults, log, delay):
 # ── Navigation ───────────────────────────────────────────────────────────────
 
 
-async def _click_next_button(page, log) -> bool:
-    """Click the Next button to advance from Interim Report to Assessment of Loss.
-
-    Strategy:
-      1. Try selectors from selectors.py (SEL_INTERIM_NEXT constants) first,
-         then fall back to common patterns from basic_details_module.
-      2. After clicking, verify the page actually transitioned by waiting for
-         a URL or DOM change — prevents false-True returns when validation
-         errors keep the browser on Step 3.
-
-    Returns True on success, False on failure.
-    """
-    log.info("▸ Clicking Next to advance to Assessment of Loss (Step 4)")
-
-    # Ordered list of selectors to try.  The first two come from selectors.py
-    # constants; the remaining are extra safety fallbacks.
-    candidates = [
-        S.SEL_INTERIM_NEXT,          # "button.next-btn[aria-label='Next'], button:has-text('Next')"
-        "button[aria-label='Next']",
-        "button.next-btn",
-        "button.p-button:has-text('Next')",
-        "button[type='button']:has-text('Next')",
-    ]
-
-    # Capture the URL before clicking so we can detect navigation.
-    url_before = page.url
-
-    for sel in candidates:
-        try:
-            btn = page.locator(sel).first
-            if not await btn.is_visible():
-                continue
-            await btn.scroll_into_view_if_needed()
-            await asyncio.sleep(0.2)
-            await btn.click()
-            log.info("   ✅ Next button clicked — waiting for page transition")
-
-            # ── Post-click verification ──────────────────────────────────
-            # Give the portal up to 8 seconds to either change the URL or
-            # render a Step-4-specific element.  If neither happens the page
-            # likely stayed on Step 3 due to a validation error.
-            transitioned = False
-            try:
-                # Strategy A: URL changed (most reliable)
-                await page.wait_for_function(
-                    "url => window.location.href !== url",
-                    arg=url_before,
-                    timeout=8000,
-                )
-                transitioned = True
-            except Exception:
-                pass
-
-            if not transitioned:
-                # Strategy B: A Step-4 heading / breadcrumb appeared in DOM
-                try:
-                    await page.wait_for_selector(
-                        "text=Assessment of Loss",
-                        state="visible",
-                        timeout=5000,
-                    )
-                    transitioned = True
-                except Exception:
-                    pass
-
-            if transitioned:
-                log.info("   ✅ Page transitioned to Assessment of Loss (Step 4)")
-                return True
-            else:
-                log.warning(
-                    "   ⚠️ Next clicked but page did not transition — "
-                    "possible validation error on Interim Report form"
-                )
-                await capture_error_screenshot(page, "interim_next_no_transition", log)
-                return False
-
-        except Exception:
-            continue  # Try next selector
-
-    log.error("   ❌ Next button not found or not clickable")
-    await capture_error_screenshot(page, "interim_next_button", log)
-    return False
+async def _click_next_button(page, log, stop_cb) -> bool:
+    return await advance_form(
+        page, log, S.SEL_INTERIM_NEXT, "Next", "loss", stop_cb, "interim_next_no_transition",
+    )
 
 
 # ── Internal Helpers ─────────────────────────────────────────────────────────

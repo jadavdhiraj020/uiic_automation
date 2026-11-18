@@ -264,33 +264,23 @@ class AutomationEngine:
         if self._oic_recovery is not None:
             self._oic_recovery.respond(prompt_id, decision)
 
-    async def _run_oic_phase(self, page, label, operation, ready, instruction):
+    async def _run_oic_phase(self, page, label, operation, ready, instruction, *, section=None, describe=None):
         """Resume past a failed page action only after reaching its destination."""
         if self._oic_recovery is None:
             return await operation()
-        reason = f"OIC did not complete {label}."
+        from app.portals.oic.automation.recovery import wait_until_ready
+
         try:
             succeeded = await operation()
-            if succeeded:
-                for _ in range(5):
-                    if self._stop_requested:
-                        return False
-                    if await ready():
-                        return succeeded
-                    await asyncio.sleep(0.2)
         except Exception as exc:
             self.log.exception(f"OIC {label} failed", exc)
-            reason = f"{label} failed: {exc}"
+            succeeded = False
+        if await wait_until_ready(ready, seconds=2 if succeeded else 1, stopped=self._stop_event.is_set):
+            return True
         if self._stop_requested:
             return False
-        from app.portals.oic.automation.recovery import portal_messages
-
-        with suppress(Exception):
-            messages = await asyncio.wait_for(portal_messages(page), timeout=2)
-            if messages:
-                reason += "\n" + "\n".join(dict.fromkeys(messages))
         return await self._oic_recovery.pause(
-            page, self.log, label, reason, ready=ready, instruction=instruction,
+            page, self.log, label, "", ready=ready, instruction=instruction, section=section, describe=describe,
         )
 
     @property
@@ -726,7 +716,9 @@ class AutomationEngine:
                 await monitor.install(context)
             page = context.pages[0] if self._oic_recovery is not None and context.pages else await context.new_page()
             if self._oic_recovery is not None:
-                from app.portals.oic.automation.recovery import current_recovery, form_step_is_open, same_origin
+                from app.portals.oic.automation.recovery import (
+                    assessment_claim_mismatch, current_recovery, form_step_is_open, same_origin,
+                )
 
                 recovery_token = current_recovery.set(self._oic_recovery)
                 resources.callback(current_recovery.reset, recovery_token)
@@ -735,13 +727,7 @@ class AutomationEngine:
                 async def oic_step(step):
                     if not same_origin(page, settings["portal_url"]) or not await form_step_is_open(page, step):
                         return False
-                    if step != "search" and claim.claim_no:
-                        shown_claim = page.locator("input#claimNumber[readonly], input#claimNumber[disabled]").first
-                        if await shown_claim.is_visible():
-                            shown = (await shown_claim.input_value(timeout=2000)).strip()
-                            if shown and shown.casefold() != str(claim.claim_no).strip().casefold():
-                                return False
-                    return True
+                    return step == "search" or not await assessment_claim_mismatch(page, claim.claim_no)
 
                 async def signed_in():
                     nonlocal authenticated_page
@@ -1252,24 +1238,36 @@ class AutomationEngine:
                     from app.portals.oic.automation.basic_details_module import (
                         fill_basic_details,
                     )
+                    from app.portals.oic.automation.recovery import STEP_MARKERS
+                    from app.portals.oic.automation.validation import portal_validation_summary
 
-                    async def run_form_phase(handler, label, destination, instruction):
+                    async def run_form_phase(handler, section, destination, button="Next"):
+                        title, _ = STEP_MARKERS[destination]
+
+                        async def describe():
+                            if await form_step_is_open(page, destination) and await assessment_claim_mismatch(page, claim.claim_no):
+                                return "Check the claim number", f"Chrome shows a different claim. Open claim {claim.claim_no}."
+                            issue = await portal_validation_summary(page, button)
+                            if issue:
+                                return issue
+                            return f"Open {title}", f"In Chrome, check this form and click {button}."
+
                         return await self._run_oic_phase(
-                            page, label,
+                            page, f"Open {title}",
                             lambda: handler(
                                 page, claim, log=self.log, stop_cb=self._check_stop,
                                 field_delay_ms=field_delay,
                             ),
                             lambda: oic_step(destination),
-                            instruction,
+                            "Return here and click Continue when the next step opens.",
+                            section=section, describe=describe,
                         )
 
                     # Phase 3: Claim Search (Generate Assessment form)
                     self.step_cb(2, steps[2])
                     self.log.phase_banner(3, total_steps, "Claim Search")
                     if not await run_form_phase(
-                        fill_claim_search, "Claim Search / Next", "basic",
-                        "Open Basic Details for the correct claim in Chrome, then click Continue.",
+                        fill_claim_search, "Claim Search", "basic",
                     ):
                         return AutomationRunResult(
                             False, "Phase 3 (Claim Search) failed."
@@ -1279,8 +1277,7 @@ class AutomationEngine:
                     self.step_cb(3, steps[3])
                     self.log.phase_banner(4, total_steps, "Basic Details")
                     if not await run_form_phase(
-                        fill_basic_details, "Basic Details / Next", "interim",
-                        "Finish Basic Details and open Interim Report in Chrome, then click Continue.",
+                        fill_basic_details, "Basic Details", "interim",
                     ):
                         return AutomationRunResult(
                             False, "Phase 4 (Basic Details) failed."
@@ -1294,8 +1291,7 @@ class AutomationEngine:
                     )
 
                     if not await run_form_phase(
-                        oic_fill_interim_report, "Interim Report / Next", "loss",
-                        "Finish Interim Report and open Assessment of Loss in Chrome, then click Continue.",
+                        oic_fill_interim_report, "Interim Report", "loss",
                     ):
                         return AutomationRunResult(
                             False, "Phase 5 (Interim Report) failed."
@@ -1329,8 +1325,7 @@ class AutomationEngine:
                         )
 
                         if not await run_form_phase(
-                            fill_assessment_of_loss, "Assessment of Loss / Save and Next", "upload",
-                            "Finish Assessment of Loss and open Document Upload in Chrome, then click Continue.",
+                            fill_assessment_of_loss, "Assessment of Loss", "upload", "Save and Next",
                         ):
                             if self._oic_recovery is None and getattr(claim, "_oic_upload_failed", False) and not self._check_stop():
                                 self.log.error("Invoice upload failed. Automation has stopped; the browser remains open for review.")
@@ -1439,9 +1434,8 @@ class AutomationEngine:
                 if self._oic_recovery is not None and not self._stop_requested:
                     try:
                         await self._oic_recovery.pause(
-                            page, self.log, "Automation interrupted", str(exc),
-                            ready=lambda: asyncio.sleep(0, result=False),
-                            instruction="There is no safe point to resume from here. Click Stop and review the open Chrome tab.",
+                            page, self.log, "Automation interrupted", "App3 could not resume this run.",
+                            instruction="Stop this run and review the open Chrome tab.", stop_only=True,
                         )
                     except asyncio.CancelledError:
                         pass

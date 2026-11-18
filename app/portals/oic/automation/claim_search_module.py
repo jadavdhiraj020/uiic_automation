@@ -25,10 +25,9 @@ from playwright.async_api import Page
 
 from app.automation.automation_logger import AutomationLogger, _ts
 from app.data.data_model import ClaimData
-from app.portals.oic.automation import popup_service
 from app.portals.oic.automation.recovery import field_problem, field_was_handled
-from app.portals.oic.automation.selectors import SEL_CLAIM_NUMBER_INPUT, SEL_POLICY_NUMBER_INPUT
-from app.portals.oic.automation.ui_utils import capture_error_screenshot, fill_input_with_delay
+from app.portals.oic.automation.selectors import SEL_CLAIM_NUMBER_INPUT, SEL_NEXT_BTN, SEL_POLICY_NUMBER_INPUT
+from app.portals.oic.automation.ui_utils import advance_form, capture_error_screenshot, fill_input_with_delay
 from app.utils import load_automation_defaults
 
 logger = logging.getLogger(__name__)
@@ -159,69 +158,11 @@ async def fill_claim_search(
         return False
 
     # ── Step 3: Click Next Button ─────────────────────────────────────────────
-    _log_info("🖱️ [Clicking] Clicking 'Next' button...")
-
-    try:
-        next_btn = page.get_by_role("button", name="Next")
-        await next_btn.wait_for(state="visible", timeout=5000)
-
-        # Wait for Next button to become enabled (disabled until form is valid)
-        for attempt in range(1, 11):  # Max 10 checks over 5 seconds
-            is_disabled = await next_btn.get_attribute("disabled")
-            if is_disabled is None:
-                break  # Button is enabled
-            if attempt < 10:
-                await asyncio.sleep(0.5)
-        else:
-            _log_warning("Next button still disabled after 5s. Attempting click anyway...")
-
-        await next_btn.click()
-        _log_info("Next button clicked. Waiting for Step 2 (Basic Details)...")
-        await asyncio.sleep(1.0)
-
-        # Dismiss any popups that appear after Next click
-        await popup_service.dismiss_portal_popup(page, log, max_wait_s=1.5, context="Post-search Next")
-
-        # M6 FIX: Verify the stepper actually advanced to Step 2
-        # Check for: active step indicator change, or new form content loaded
-        step2_verified = False
-        for check in range(1, 7):  # Max 6 checks over 3 seconds
-            try:
-                # PrimeNG stepper marks the active step — check if step 2 is now active
-                step2_active = await page.locator(
-                    ".p-steps-item:nth-child(2).p-highlight, "
-                    ".p-steps-item:nth-child(2) .p-steps-number[aria-selected='true'], "
-                    ".p-steps-item:nth-child(2).ui-state-highlight"
-                ).first.is_visible(timeout=500)
-                if step2_active:
-                    step2_verified = True
-                    break
-            except Exception:
-                pass
-
-            # Alternative: check if claim search form (#claimType) is gone
-            try:
-                search_form_gone = not await page.locator("#claimType").is_visible(timeout=300)
-                if search_form_gone:
-                    step2_verified = True
-                    break
-            except Exception:
-                step2_verified = True  # Element not found = form changed
-                break
-
-            await asyncio.sleep(0.5)
-
-        if step2_verified:
-            _log_success("Generate Assessment search step completed — Step 2 (Basic Details) active.")
-        else:
-            _log_warning("Could not verify Step 2 activation. Search form may still be visible. Continuing...")
-    except Exception as exc:
-        await capture_error_screenshot(page, "next_button_click_failed", log)
-        _log_error(f"Failed to click Next button: {exc}")
-        if isinstance(log, AutomationLogger): log.outdent()
-        return False
-
+    advanced = await advance_form(
+        page, log, SEL_NEXT_BTN, "Next", "basic", stop_cb, "claim_search_next_no_transition",
+    )
+    if advanced:
+        _log_success("Basic Details is open.")
     if isinstance(log, AutomationLogger):
         log.outdent()
-
-    return True
+    return advanced

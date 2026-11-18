@@ -24,6 +24,7 @@ from app.portals.oic.automation.popup_service import dismiss_portal_popup
 from app.portals.oic.automation.recovery import (
     action_problem, current_recovery, field_problem, field_was_handled, portal_messages,
 )
+from app.portals.oic.automation.validation import portal_validation_summary
 
 logger = logging.getLogger(__name__)
 
@@ -725,7 +726,8 @@ async def fill_document_upload_section(
                         page, log, "Submit assessment",
                         "OIC has not confirmed final submission.",
                         lambda: _submission_confirmed(page),
-                        "Complete submission in Chrome and leave the portal confirmation visible, then click Continue.",
+                        "Click Continue here after OIC confirms the submission in Chrome.",
+                        describe=lambda: portal_validation_summary(page, "Submit"),
                     )
         else:
             log.info("auto_submit_documents is disabled — stopping before Submit for manual review")

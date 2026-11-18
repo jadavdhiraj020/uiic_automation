@@ -35,6 +35,7 @@ from app.portals.oic.automation.ui_utils import (
     fill_mui_datepicker,
     select_primeng_dropdown,
     capture_error_screenshot,
+    advance_form,
     _get_oic_fill_settings,
 )
 from app.portals.oic.automation import selectors as S
@@ -119,7 +120,7 @@ async def fill_assessment_of_loss(
         if stop_cb():
             log.warning("Stop requested before Save and Next.")
             return False
-        if not await _click_save_and_next_button(page, log):
+        if not await _click_save_and_next_button(page, log, stop_cb):
             return False
 
         log.section_done("Assessment of Loss")
@@ -1730,26 +1731,14 @@ async def _fill_recommendation_declaration(
         await run_field(page, log, "Declaration", check_declaration)
 
 
-async def _click_save_and_next_button(page: Page, log: AutomationLogger) -> bool:
-    log.info("▸ Clicking 'Save and Next'")
-    btn = page.locator(S.SEL_LOSS_SAVE_AND_NEXT_BTN)
-    await btn.wait_for(state="visible", timeout=5000)
-    await btn.scroll_into_view_if_needed()
-    await btn.click()
-    
-    # Wait until "Document Upload" section/tab is active/visible
-    log.info("   Waiting for 'Document Upload' section to load...")
-    try:
-        # OIC upload controls are hidden <input type=file> elements; attachment
-        # of the first upload-specific input is the reliable transition signal.
-        await page.wait_for_selector(S.SEL_UPLOAD_WORKSHOP_ESTIMATE, state="attached", timeout=15000)
-        log.success("   Document Upload section successfully loaded")
-        return True
-    except Exception as e:
-        log.error(f"   Transition to Document Upload failed or timed out: {e}")
+async def _click_save_and_next_button(page: Page, log: AutomationLogger, stop_cb) -> bool:
+    advanced = await advance_form(
+        page, log, S.SEL_LOSS_SAVE_AND_NEXT_BTN, "Save and Next", "upload", stop_cb,
+        "assessment_next_no_transition",
+    )
+    if not advanced and not stop_cb():
         await _log_assessment_transition_blockers(page, log)
-        await capture_error_screenshot(page, "assessment_next_no_transition", log)
-        return False
+    return advanced
 
 
 async def _collect_visible_validation_messages(page: Page, limit: int = 12) -> list[str]:

@@ -24,6 +24,7 @@ from PyQt6.QtGui import (
     QPixmap,
 )
 from PyQt6.QtWidgets import (
+    QApplication,
     QMainWindow,
     QWidget,
     QVBoxLayout,
@@ -859,6 +860,9 @@ class MainWindow(QMainWindow):
         if not worker or self._automation_stopping or self._close_requested:
             return
         self._dismiss_oic_recovery()
+        if prompt is None:
+            self._set_status("running", "Running")
+            return
         self._set_status("running", "Paused for review")
         dialog = _OicRecoveryMessage(self)
         self._oic_recovery_dialog = dialog
@@ -867,28 +871,40 @@ class MainWindow(QMainWindow):
         dialog.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
         dialog.setIcon(QMessageBox.Icon.Warning)
         dialog.setTextFormat(Qt.TextFormat.PlainText)
-        dialog.setText(f"{prompt.section} — {prompt.action}")
+        title = f"Check {prompt.action}" if prompt.can_skip else prompt.action
+        dialog.setText(title)
         instructions = prompt.instruction or (
-            "Fix this in Chrome and click Continue, or skip this field."
+            "Fix the field in Chrome, then click Continue."
             if prompt.can_skip
             else "Complete this action in Chrome, then click Continue."
         )
-        dialog.setInformativeText(f"{prompt.reason}\n\n{instructions}")
-        fixed = dialog.addButton("I fixed it — continue", QMessageBox.ButtonRole.AcceptRole)
-        skip = dialog.addButton("Skip this field", QMessageBox.ButtonRole.ActionRole)
-        skip.setEnabled(prompt.can_skip)
-        dialog.setDefaultButton(fixed)
+        details = [prompt.reason, instructions]
+        if prompt.section and prompt.section != title:
+            details.insert(0, prompt.section)
+        dialog.setInformativeText("\n\n".join(text for text in details if text))
 
         def respond(decision):
             if self._worker is not worker or self._oic_recovery_dialog is not dialog:
                 return
             self._dismiss_oic_recovery()
             worker.resume_oic(prompt.id, decision)
-            self._set_status("running", "Running")
+            self._set_status("running", "Checking Chrome…")
 
-        fixed.clicked.connect(lambda: respond("fixed"))
-        skip.clicked.connect(lambda: respond("skip"))
+        if prompt.stop_only:
+            stop = dialog.addButton("Stop automation", QMessageBox.ButtonRole.ActionRole)
+            stop.clicked.connect(self._stop_automation)
+        else:
+            fixed = dialog.addButton("I fixed it — continue" if prompt.can_skip else "Continue", QMessageBox.ButtonRole.AcceptRole)
+            dialog.setDefaultButton(fixed)
+            fixed.clicked.connect(lambda: respond("fixed"))
+        if prompt.can_skip:
+            skip = dialog.addButton("Skip this field", QMessageBox.ButtonRole.ActionRole)
+            skip.clicked.connect(lambda: respond("skip"))
         dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        if not dialog.isActiveWindow():
+            QApplication.alert(self, 5000)
 
     def _dismiss_oic_recovery(self):
         dialog = getattr(self, "_oic_recovery_dialog", None)

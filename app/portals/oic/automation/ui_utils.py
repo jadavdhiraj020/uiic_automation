@@ -7,7 +7,8 @@ from datetime import datetime
 
 from app.automation.automation_logger import AutomationLogger, _ts
 from app.portals.oic.automation.date_formatter import format_oic_date as _format_oic_date
-from app.portals.oic.automation.recovery import field_problem
+from app.portals.oic.automation.recovery import current_recovery, field_problem, form_step_is_open, wait_until_ready
+from app.portals.oic.automation.validation import field_validation_message
 
 # ── JavaScript Snippets ───────────────────────────────────────────────────────
 
@@ -120,6 +121,37 @@ _JS_CLICK_RADIO = r"""
 
 # ── Python Helpers ────────────────────────────────────────────────────────────
 
+async def advance_form(page, log, selector, button_name, destination, stop_cb, screenshot_name):
+    async def ready():
+        return await form_step_is_open(page, destination)
+
+    if stop_cb():
+        return False
+    try:
+        if await ready():
+            return True
+        visible_buttons = ", ".join(f"{part.strip()}:visible" for part in selector.split(","))
+        await page.locator(visible_buttons).first.click(timeout=6000)
+    except Exception as exc:
+        message = f"Could not click {button_name}: {exc}"
+        log.warning(message) if isinstance(log, AutomationLogger) else log(message)
+    else:
+        message = f"Clicked {button_name}. Waiting for OIC to open the next step."
+        log.info(message) if isinstance(log, AutomationLogger) else log(message)
+    if await wait_until_ready(ready, seconds=12, stopped=stop_cb):
+        return True
+    if not stop_cb():
+        await capture_error_screenshot(page, screenshot_name, log)
+    return False
+
+
+async def _check_field_validation(locator):
+    if current_recovery.get() is not None:
+        message = await field_validation_message(locator)
+        if message:
+            raise ValueError(message)
+
+
 def _get_oic_fill_settings():
     """Retrieve dynamic fill settings (instant fill vs typing speed) from OIC defaults."""
     try:
@@ -159,6 +191,7 @@ async def fill_input_with_delay(
         result = await page.evaluate(_JS_FILL, [selector, str(value)])
         if not result or not result.get("ok"):
             raise ValueError("OIC could not update this field.")
+        await _check_field_validation(locator)
         
         if isinstance(log, AutomationLogger):
             kwargs = {}
@@ -186,6 +219,7 @@ async def select_dropdown_with_delay(
         await page.wait_for_selector(selector, state="visible", timeout=5000)
         res = await page.evaluate(_JS_SELECT, [selector, str(value)])
         if res and res.get("ok"):
+            await _check_field_validation(page.locator(selector).first)
             if isinstance(log, AutomationLogger):
                 kwargs = {}
                 if source is not None:
@@ -409,6 +443,7 @@ async def select_primeng_dropdown(
             item_text = (await items.nth(i).inner_text()).strip().lower()
             if search in item_text or item_text in search:
                 await items.nth(i).click()
+                await _check_field_validation(dropdown)
                 matched = True
                 if isinstance(log, AutomationLogger):
                     kwargs = {}
@@ -425,9 +460,10 @@ async def select_primeng_dropdown(
             for i in range(count):
                 item_text = (await items.nth(i).inner_text()).strip().lower()
                 if any(w for w in words if len(w) > 2 and w in item_text):
-                    await items.nth(i).click()
-                    matched = True
                     actual = await items.nth(i).inner_text()
+                    await items.nth(i).click()
+                    await _check_field_validation(dropdown)
+                    matched = True
                     if isinstance(log, AutomationLogger):
                         kwargs = {}
                         if source is not None:
@@ -484,6 +520,7 @@ async def fill_primeng_inputnumber(
 
         # Trigger change events
         await inner_input.evaluate("el => { el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); el.dispatchEvent(new Event('blur', { bubbles: true })); }")
+        await _check_field_validation(inner_input)
 
         if isinstance(log, AutomationLogger):
             kwargs = {}
@@ -575,6 +612,7 @@ async def fill_mui_datepicker(
         await page.keyboard.press("Escape")
         await asyncio.sleep(0.05)
         await page.keyboard.press("Tab")
+        await _check_field_validation(input_el)
 
         if isinstance(log, AutomationLogger):
             kwargs = {}
@@ -632,6 +670,7 @@ async def fill_textarea_primeng(
             "el.dispatchEvent(new Event('change', {bubbles: true})); "
             "el.dispatchEvent(new Event('blur',   {bubbles: true})); }"
         )
+        await _check_field_validation(locator)
 
         if isinstance(log, AutomationLogger):
             kwargs = {}
