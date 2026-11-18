@@ -436,23 +436,15 @@ async def _upload_other_documents(
         f"{[Path(f).name for f in remaining[:5]]}{'...' if len(remaining) > 5 else ''}"
     )
 
-    folder = PdfMergeService.get_folder_path(data)
-    if folder:
-        output_path = os.path.join(folder, "oic_other_documents_merged.pdf")
-    else:
-        tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False, prefix="_oic_other_merged_")
-        tmp.close()
-        output_path = tmp.name
-
-    merged_path = PdfMergeService.merge(remaining, output_path, config, log=log)
-    if not merged_path or not os.path.isfile(merged_path):
-        log.warning("  Section 7 (Other Documents): Merge failed — skipping")
-        return False
-
-    # Compress if needed
-    upload_path = _compress_if_needed(merged_path, "Other Documents (merged)", log, limit_bytes=max_bytes)
-
+    tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False, prefix="_oic_other_merged_")
+    tmp.close()
+    output_path = tmp.name
     try:
+        merged_path = PdfMergeService.merge(remaining, output_path, config, log=log)
+        if not merged_path or not os.path.isfile(merged_path):
+            log.warning("  Section 7 (Other Documents): Merge failed — skipping")
+            return False
+        upload_path = _compress_if_needed(merged_path, "Other Documents (merged)", log, limit_bytes=max_bytes)
         other_input = page.locator(S.SEL_UPLOAD_OTHER_DOCS).first
         await asyncio.sleep(0.15)
 
@@ -478,6 +470,12 @@ async def _upload_other_documents(
     except Exception as exc:
         log.error(f"  Section 7 (Other Documents): upload error: {exc}")
         return False
+    finally:
+        if os.path.exists(output_path):
+            try:
+                os.unlink(output_path)
+            except OSError:
+                pass
 
 
 async def _fill_remarks(

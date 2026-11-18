@@ -6,6 +6,7 @@ from io import BytesIO
 from pathlib import Path
 import os
 import re
+import tempfile
 from zipfile import ZipFile
 
 import openpyxl
@@ -15,7 +16,7 @@ from app.data.excel_parts_extractor import (
     _detect_labour_header, _is_summary_row, _normalize_boundary_keyword, _MIN_HEADER_CONFIDENCE,
     extract_parts_and_labour, select_oic_survey_sheet,
 )
-from app.data.oic_assessment_generator import _next_available_path
+from app.portals.oic.generated_files import publish_generated
 from app.utils import ensure_dir, user_data_dir
 
 
@@ -200,12 +201,11 @@ def build_upload_workbook(claim, defaults, output_folder=None):
     # A scan may request the claim folder; the scanner excludes these generated
     # workbooks from source and document selection on subsequent scans.
     output_dir = ensure_dir(str(output_folder or user_data_dir("oic", "assessment_uploads")))
-    output = _next_available_path(output_dir, "auto_oic_upload.xlsx")
+    output = os.path.join(output_dir, "auto_oic_upload_current.xlsx")
     buffer.seek(0)
-    created = False
+    fd, staged = tempfile.mkstemp(prefix=".oic-upload-", suffix=".tmp", dir=output_dir)
     try:
-        with open(output, "xb") as output_file:
-            created = True
+        with os.fdopen(fd, "wb") as output_file:
             with ZipFile(buffer, "r") as src, ZipFile(output_file, "w") as dest:
                 for info in src.infolist():
                     data = src.read(info.filename)
@@ -218,13 +218,10 @@ def build_upload_workbook(claim, defaults, output_folder=None):
                                 raise ValueError(f"Unable to cache GST formula in {cell}")
                         data = xml.encode("utf-8")
                     dest.writestr(info, data)
-    except Exception:
-        if created:
-            try:
-                os.remove(output)
-            except OSError:
-                pass
-        raise
+        publish_generated(staged, output)
+    finally:
+        if os.path.exists(staged):
+            os.remove(staged)
     claim._oic_upload_invoice_amount = format(invoice_amount, "f")
     return output, invoice, [row[1] for row in rows]
 

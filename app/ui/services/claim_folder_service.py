@@ -83,7 +83,10 @@ def _run_background_document_generation(
             bg_logger.info("UIIC: survey_report.pdf and assessment_report.pdf handled directly during scan; skipping duplicate background printable generation.")
         else:
             try:
-                from app.data.printable_excel_service import process_printable_output
+                if portal_id == "oic":
+                    from app.portals.oic.printable_report import process_oic_printable as process_printable_output
+                else:
+                    from app.data.printable_excel_service import process_printable_output
                 _output_dir = os.path.dirname(os.path.abspath(scan_result.excel_path))
                 _settings = dict(portal_defaults or {})
                 bg_logger.info(f"Generating printable Excel/PDF copy for {Path(scan_result.excel_path).name}...")
@@ -581,10 +584,12 @@ class ClaimFolderService:
                 claim._oic_upload_invoice_amount = ""
                 claim._oic_parts_review_error = ""
                 try:
+                    upload_was_present = os.path.exists(os.path.join(folder, "auto_oic_upload_current.xlsx"))
                     output_path, invoice, items = build_upload_workbook(
                         claim, _portal_defaults, output_folder=folder,
                     )
-                    _mark_generated_file(output_path)
+                    if not upload_was_present:
+                        _mark_generated_file(output_path)
                     claim._oic_upload_path = output_path
                     claim._oic_upload_invoice = invoice
                     claim._oic_upload_items = items
