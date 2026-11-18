@@ -21,6 +21,9 @@ from app.portals.oic.automation.ui_utils import (
 )
 from app.portals.oic.automation import selectors as S
 from app.portals.oic.automation.popup_service import dismiss_portal_popup
+from app.portals.oic.automation.recovery import (
+    action_problem, current_recovery, field_problem, field_was_handled, portal_messages,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +152,39 @@ def _compress_if_needed(
 # INDIVIDUAL SECTION HANDLERS
 # ══════════════════════════════════════════════════════════════════════════════
 
+async def _submission_confirmed(page):
+    from app.web_sync.submission import confirms_submission
+
+    monitor = getattr(page.context, "_app3_submission_monitor", None)
+    if monitor and monitor.confirmed:
+        return True
+    if page.is_closed():
+        return False
+    return any(confirms_submission(message) for message in await portal_messages(page))
+
+
+async def _attach_document(page, *, file_input_selector, file_path, label, log):
+    before = set(await portal_messages(page)) if current_recovery.get() else set()
+    attached = await upload_file_via_input(
+        page, file_input_selector=file_input_selector, file_path=file_path, label=label, log=log,
+    )
+    if current_recovery.get() is None:
+        return attached
+    reason = "OIC could not attach the file."
+    if attached:
+        for _ in range(8):
+            for message in await portal_messages(page):
+                if message in before:
+                    continue
+                if re.search(r"\b(error|failed|invalid|unsupported|rejected|exceeds?|maximum file size|cannot|unable)\b", message, re.I):
+                    await field_problem(page, log, label, message)
+                    return False
+            await asyncio.sleep(0.25)
+        return True
+    await field_problem(page, log, label, reason)
+    return False
+
+
 async def _upload_section(
     page: Page,
     section_num: int,
@@ -162,10 +198,12 @@ async def _upload_section(
 ) -> bool:
     """Upload a file for a single numbered section. Returns True if file was uploaded."""
     log.info(f"▸ Section {section_num}: {label}")
+    slot = f"Section {section_num} ({label})"
 
     if not file_path:
         if required:
             log.warning(f"  Section {section_num} ({label}): REQUIRED but no file found — skipping")
+            await field_problem(page, log, slot, "No file was found for this upload slot.")
         else:
             log.info(f"  Section {section_num} ({label}): Optional, no file found — skipping")
         return False
@@ -173,19 +211,16 @@ async def _upload_section(
     # Track used file
     used_files.add(os.path.normpath(file_path))
 
-    # Compress if oversized
-    upload_path = _compress_if_needed(file_path, label, log, limit_bytes=max_bytes)
-
     # Locate and upload (no scroll on hidden input)
     try:
-        file_input = page.locator(selector).first
+        upload_path = _compress_if_needed(file_path, label, log, limit_bytes=max_bytes)
         await asyncio.sleep(0.15)
 
-        success = await upload_file_via_input(
+        success = await _attach_document(
             page,
             file_input_selector=selector,
             file_path=upload_path,
-            label=f"Section {section_num} ({label})",
+            label=slot,
             log=log,
         )
 
@@ -195,12 +230,14 @@ async def _upload_section(
             log.warning(f"  Section {section_num} ({label}): upload_file_via_input returned False")
 
         # Dismiss any portal popup (file size alert, etc.)
-        await dismiss_portal_popup(page, log, max_wait_s=2.0, context=f"Section {section_num}")
+        if success:
+            await dismiss_portal_popup(page, log, max_wait_s=2.0, context=f"Section {section_num}")
 
         return success
 
     except Exception as exc:
         log.error(f"  Section {section_num} ({label}): upload error: {exc}")
+        await field_problem(page, log, slot, str(exc))
         return False
 
 
@@ -219,6 +256,7 @@ async def _upload_driving_license(
     uploaded_any = False
 
     # Front side
+    front_ok = False
     try:
         if not dl_path:
             raise FileNotFoundError("No driving licence file found")
@@ -226,7 +264,7 @@ async def _upload_driving_license(
         front_input = page.locator(S.SEL_UPLOAD_DL_FRONT).first
         await asyncio.sleep(0.15)
 
-        front_ok = await upload_file_via_input(
+        front_ok = await _attach_document(
             page,
             file_input_selector=S.SEL_UPLOAD_DL_FRONT,
             file_path=upload_path,
@@ -241,11 +279,14 @@ async def _upload_driving_license(
             log.warning("  DL Front Side: upload failed")
     except Exception as exc:
         log.warning(f"  DL Front Side: error: {exc}")
+        await field_problem(page, log, "DL Front Side", str(exc))
 
-    await dismiss_portal_popup(page, log, max_wait_s=1.5, context="DL Front")
+    if front_ok:
+        await dismiss_portal_popup(page, log, max_wait_s=1.5, context="DL Front")
     await asyncio.sleep(0.3)
 
     # The user's OIC workflow places the vehicle RC in the second slot.
+    back_ok = False
     try:
         if not rc_path:
             raise FileNotFoundError("No registration certificate (RC) file found")
@@ -253,7 +294,7 @@ async def _upload_driving_license(
         back_input = page.locator(S.SEL_UPLOAD_DL_BACK).first
         await asyncio.sleep(0.15)
 
-        back_ok = await upload_file_via_input(
+        back_ok = await _attach_document(
             page,
             file_input_selector=S.SEL_UPLOAD_DL_BACK,
             file_path=upload_path,
@@ -268,8 +309,10 @@ async def _upload_driving_license(
             log.warning("  RC in DL Back Side: upload failed")
     except Exception as exc:
         log.warning(f"  RC in DL Back Side: error: {exc}")
+        await field_problem(page, log, "RC in DL Back Side", str(exc))
 
-    await dismiss_portal_popup(page, log, max_wait_s=1.5, context="DL Back")
+    if back_ok:
+        await dismiss_portal_popup(page, log, max_wait_s=1.5, context="DL Back")
 
     return uploaded_any
 
@@ -295,6 +338,7 @@ async def _upload_photographs(
     photos = photo_sources(folder, mapped_photo)
     if not photos:
         log.warning("  Section 6 (Photographs): REQUIRED but no photo file found — skipping")
+        await field_problem(page, log, "Section 6 (Photographs)", "No vehicle photograph was found.")
         return False
     photo_path = photos[0]
     temporary_photo = None
@@ -305,7 +349,7 @@ async def _upload_photographs(
         upload_path = _compress_if_needed(prepared, "Photographs", log)
         await asyncio.sleep(0.15)
 
-        success = await upload_file_via_input(
+        success = await _attach_document(
             page,
             file_input_selector=S.SEL_UPLOAD_PHOTOGRAPHS,
             file_path=upload_path,
@@ -319,11 +363,13 @@ async def _upload_photographs(
         else:
             log.warning("  Section 6 (Photographs): upload failed")
 
-        await dismiss_portal_popup(page, log, max_wait_s=2.0, context="Photographs")
+        if success:
+            await dismiss_portal_popup(page, log, max_wait_s=2.0, context="Photographs")
         return success
 
     except Exception as exc:
         log.error(f"  Section 6 (Photographs): upload error: {exc}")
+        await field_problem(page, log, "Section 6 (Photographs)", str(exc))
         return False
     finally:
         if temporary_photo:
@@ -386,7 +432,7 @@ async def _upload_other_documents(
 
         try:
             await asyncio.sleep(0.15)
-            success = await upload_file_via_input(
+            success = await _attach_document(
                 page,
                 file_input_selector=S.SEL_UPLOAD_OTHER_DOCS,
                 file_path=upload_path,
@@ -400,10 +446,12 @@ async def _upload_other_documents(
                 )
             else:
                 log.warning("  Section 7 (Other Documents): upload failed")
-            await dismiss_portal_popup(page, log, max_wait_s=2.0, context="Other Documents")
+            if success:
+                await dismiss_portal_popup(page, log, max_wait_s=2.0, context="Other Documents")
             return success
         except Exception as exc:
             log.error(f"  Section 7 (Other Documents): upload error: {exc}")
+            await field_problem(page, log, "Section 7 (Other Documents)", str(exc))
             return False
 
     # ── Priority 2: Runtime merge fallback ───────────────────────────────────
@@ -443,12 +491,13 @@ async def _upload_other_documents(
         merged_path = PdfMergeService.merge(remaining, output_path, config, log=log)
         if not merged_path or not os.path.isfile(merged_path):
             log.warning("  Section 7 (Other Documents): Merge failed — skipping")
+            await field_problem(page, log, "Section 7 (Other Documents)", "The PDF merge failed.")
             return False
         upload_path = _compress_if_needed(merged_path, "Other Documents (merged)", log, limit_bytes=max_bytes)
         other_input = page.locator(S.SEL_UPLOAD_OTHER_DOCS).first
         await asyncio.sleep(0.15)
 
-        success = await upload_file_via_input(
+        success = await _attach_document(
             page,
             file_input_selector=S.SEL_UPLOAD_OTHER_DOCS,
             file_path=upload_path,
@@ -464,11 +513,13 @@ async def _upload_other_documents(
         else:
             log.warning("  Section 7 (Other Documents): upload failed")
 
-        await dismiss_portal_popup(page, log, max_wait_s=2.0, context="Other Documents")
+        if success:
+            await dismiss_portal_popup(page, log, max_wait_s=2.0, context="Other Documents")
         return success
 
     except Exception as exc:
         log.error(f"  Section 7 (Other Documents): upload error: {exc}")
+        await field_problem(page, log, "Section 7 (Other Documents)", str(exc))
         return False
     finally:
         if os.path.exists(output_path):
@@ -540,6 +591,13 @@ async def _click_submit(
 
         # Wait for portal to process
         log.wait("Waiting for submission processing...")
+        if current_recovery.get() is not None:
+            for _ in range(20):
+                if await _submission_confirmed(page):
+                    return True
+                await asyncio.sleep(0.25)
+            return False
+
         await asyncio.sleep(5.0)
 
         # Dismiss any confirmation/success popup
@@ -609,8 +667,9 @@ async def fill_document_upload_section(
                 file_path, required, log, section_used,
                 max_bytes=max_file_bytes,
             )
-            if required and not success:
-                required_failures.append(f"Section {section_num} ({label})")
+            slot = f"Section {section_num} ({label})"
+            if required and not success and not field_was_handled(page, log, slot):
+                required_failures.append(slot)
             await asyncio.sleep(0.3)
 
         if required_failures:
@@ -650,7 +709,8 @@ async def fill_document_upload_section(
                 "Using safe fallback. Please update it in Settings → Automation Defaults."
             )
             remarks_text = "Documents verified and uploaded."
-        await _fill_remarks(page, log, remarks_text, delay_ms=field_delay_ms)
+        if not await _fill_remarks(page, log, remarks_text, delay_ms=field_delay_ms):
+            await field_problem(page, log, "Remarks", "OIC could not enter the document remarks.")
 
         if stop_cb():
             return False
@@ -660,6 +720,13 @@ async def fill_document_upload_section(
         if auto_submit:
             if not await _click_submit(page, log):
                 log.warning("Submit failed — documents may need manual submission")
+                if current_recovery.get() is not None:
+                    await action_problem(
+                        page, log, "Submit assessment",
+                        "OIC has not confirmed final submission.",
+                        lambda: _submission_confirmed(page),
+                        "Complete submission in Chrome and leave the portal confirmation visible, then click Continue.",
+                    )
         else:
             log.info("auto_submit_documents is disabled — stopping before Submit for manual review")
 

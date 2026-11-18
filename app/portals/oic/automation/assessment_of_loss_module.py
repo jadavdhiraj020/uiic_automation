@@ -38,6 +38,9 @@ from app.portals.oic.automation.ui_utils import (
     _get_oic_fill_settings,
 )
 from app.portals.oic.automation import selectors as S
+from app.portals.oic.automation.recovery import (
+    action_problem, field_decision, field_problem, field_was_handled, form_step_is_open, run_field,
+)
 
 
 
@@ -78,9 +81,15 @@ async def fill_assessment_of_loss(
             return False
         try:
             await _fill_invoice_section(page, claim, defaults, log, delay, stop_cb)
-        except Exception:
+        except Exception as exc:
             claim._oic_upload_failed = True
-            raise
+            if not await action_problem(
+                page, log, "Import invoice workbook", str(exc),
+                lambda: _manual_invoice_is_open(page, claim._oic_upload_invoice),
+                "Finish importing the expected invoice in Chrome and leave Assessment of Loss open.",
+            ):
+                raise
+            claim._oic_upload_failed = False
 
         # 2. Excess Section
         if stop_cb():
@@ -123,6 +132,21 @@ async def fill_assessment_of_loss(
 
 
 # ── Private Subsection Handlers ──────────────────────────────────────────────
+
+
+async def _manual_invoice_is_open(page, invoice):
+    if not invoice or not await form_step_is_open(page, "loss"):
+        return False
+    errors = page.get_by_role("button", name="View Validation Errors", exact=True)
+    if await errors.count() and await errors.is_enabled():
+        return False
+    headings = page.locator(".p-accordion-header h6:visible")
+    return await headings.evaluate_all(
+        """(nodes, invoice) => nodes.some(node =>
+            /invoice number/i.test(node.textContent) &&
+            node.querySelector('b')?.textContent.trim().toLowerCase() === invoice.trim().toLowerCase())""",
+        invoice,
+    )
 
 
 async def _fill_invoice_section(page: Page, claim, defaults, log: AutomationLogger, delay: int, stop_cb):
@@ -1282,7 +1306,8 @@ async def _fill_excess_section(page: Page, claim, defaults, log: AutomationLogge
         comp_val = 0
 
     log.info(f"   Filling Compulsory Excess Amount = {comp_val}")
-    await _ensure_compulsory_excess_and_fill(page, str(comp_val), log, delay)
+    await run_field(page, log, "Compulsory Excess Amount",
+                    lambda: _ensure_compulsory_excess_and_fill(page, str(comp_val), log, delay))
 
     # ── Imposed & Voluntary Excess (added via Select Excess dropdown + Add Excess+) ──
     try:
@@ -1297,11 +1322,13 @@ async def _fill_excess_section(page: Page, claim, defaults, log: AutomationLogge
 
     # Add Imposed Excess if found
     if imp_val > 0:
-        await _add_and_fill_excess(page, "Imposed Excess", str(imp_val), log, delay)
+        await run_field(page, log, "Imposed Excess",
+                        lambda: _add_and_fill_excess(page, "Imposed Excess", str(imp_val), log, delay))
 
     # Add Voluntary Excess if found
     if vol_val > 0:
-        await _add_and_fill_excess(page, "Voluntary Excess", str(vol_val), log, delay)
+        await run_field(page, log, "Voluntary Excess",
+                        lambda: _add_and_fill_excess(page, "Voluntary Excess", str(vol_val), log, delay))
 
     if imp_val == 0 and vol_val == 0:
         log.info("   No imposed or voluntary excess found in Excel — skipping excess addition")
@@ -1360,15 +1387,19 @@ async def _fill_survey_charges(page: Page, claim, defaults, log: AutomationLogge
     lic_no = getattr(claim, "surveyor_license_number", "")
     if not lic_no:
         log.field_failed("Surveyor License Number", "Missing license number (mandatory)")
-        raise ValueError("Mandatory Surveyor License Number is missing")
-    await fill_input_with_delay(page, S.SEL_LOSS_SURVEY_LICENSE_NO, lic_no, "License Number", log, delay_ms=delay)
+        if not await field_problem(page, log, "Surveyor License Number", "No surveyor licence number was provided."):
+            raise ValueError("Mandatory Surveyor License Number is missing")
+    else:
+        await fill_input_with_delay(page, S.SEL_LOSS_SURVEY_LICENSE_NO, lic_no, "License Number", log, delay_ms=delay)
 
     # 3. License Expiry Date (Mandatory)
     lic_exp = getattr(claim, "surveyor_license_expiry_date", "")
     if not lic_exp:
         log.field_failed("Surveyor License Expiry Date", "Missing license expiry date (mandatory)")
-        raise ValueError("Mandatory Surveyor License Expiry Date is missing")
-    await fill_mui_datepicker(page, S.SEL_LOSS_SURVEY_LICENSE_EXP_LABEL, lic_exp, "License Expiry Date", log, delay_ms=delay)
+        if not await field_problem(page, log, "Surveyor License Expiry Date", "No surveyor licence expiry date was provided."):
+            raise ValueError("Mandatory Surveyor License Expiry Date is missing")
+    else:
+        await fill_mui_datepicker(page, S.SEL_LOSS_SURVEY_LICENSE_EXP_LABEL, lic_exp, "License Expiry Date", log, delay_ms=delay)
 
     # 4. OICL GST Number (Optional)
     oicl_gst = getattr(claim, "oicl_gst_number", "")
@@ -1413,12 +1444,23 @@ async def _fill_survey_charges(page: Page, claim, defaults, log: AutomationLogge
             log.info(f"   Adding expense: {expense_name} (portal: '{portal_label}') with amount {amt}")
 
             # Select dropdown using portal label (avoids mismatches like "Others" vs "Other Expenses")
-            await select_primeng_dropdown(page, S.SEL_LOSS_EXPENSES_DROPDOWN, portal_label, "Expenses Dropdown", log, delay_ms=delay)
-            if not await _dropdown_has_value(page.locator(S.SEL_LOSS_EXPENSES_DROPDOWN).first, portal_label):
-                raise RuntimeError(f"Expense type '{portal_label}' was not selected; cannot add its amount")
+            dropdown_label = f"{portal_label} Expense Type"
+            await select_primeng_dropdown(page, S.SEL_LOSS_EXPENSES_DROPDOWN, portal_label, dropdown_label, log, delay_ms=delay)
+            if field_decision(page, log, dropdown_label) == "skip":
+                continue
+            if not field_was_handled(page, log, dropdown_label):
+                if not await _dropdown_has_value(page.locator(S.SEL_LOSS_EXPENSES_DROPDOWN).first, portal_label):
+                    if not await field_problem(page, log, dropdown_label, "OIC did not retain the expense type."):
+                        raise RuntimeError(f"Expense type '{portal_label}' was not selected; cannot add its amount")
+                    if field_decision(page, log, dropdown_label) == "skip":
+                        continue
 
             # Click Add Expenses +
-            await page.locator(S.SEL_LOSS_ADD_EXPENSES_BTN).click()
+            add_label = f"Add {portal_label} expense"
+            await run_field(page, log, add_label,
+                            lambda: page.locator(S.SEL_LOSS_ADD_EXPENSES_BTN).click(timeout=8000))
+            if field_decision(page, log, add_label) == "skip":
+                continue
             await asyncio.sleep(0.3)  # Wait for dynamic section/accordion tab to render
 
             # Fill dynamic accordion section using portal label for the tab locator
@@ -1484,42 +1526,55 @@ async def _fill_dynamic_expense_accordion(
     delay: int,
 ):
     log.info(f"   Expanding and filling dynamic subsection for: {portal_label}")
-    desc_input, amt_input = await _open_expense_inputs(page, portal_label)
+    section = f"{portal_label} expense row"
+    inputs = await run_field(page, log, section, lambda: _open_expense_inputs(page, portal_label))
+    if inputs is None:
+        return
+    desc_input, amt_input = inputs
+    description_label = f"{portal_label} Description"
+    amount_label = f"{portal_label} Amount"
 
-    # Fill description
-    await desc_input.scroll_into_view_if_needed()
-    await desc_input.focus()
-    await desc_input.fill(str(desc_val))
-    await amt_input.focus()  # A real focus change commits the description.
-    if (await desc_input.input_value()).strip() != str(desc_val).strip():
-        raise RuntimeError(f"{portal_label} description did not persist after entry")
-    log.field_filled(f"{portal_label} Description", desc_val)
+    async def fill_description():
+        # Fill description
+        await desc_input.scroll_into_view_if_needed()
+        await desc_input.focus()
+        await desc_input.fill(str(desc_val))
+        await amt_input.focus()  # A real focus change commits the description.
+        if (await desc_input.input_value()).strip() != str(desc_val).strip():
+            raise RuntimeError(f"{portal_label} description did not persist after entry")
+        log.field_filled(f"{portal_label} Description", desc_val)
 
-    # PrimeReact InputNumber can briefly display a filled value even though
-    # the underlying form will discard it on the next rerender. Enter every
-    # amount with real keystrokes so the component processes each change.
-    await amt_input.scroll_into_view_if_needed()
-    _, typing_delay = _get_oic_fill_settings()
-    for attempt in range(1, 4):
-        await amt_input.click()
-        await amt_input.press("Control+A")
-        await amt_input.press("Backspace")
-        await amt_input.press_sequentially(str(amount_val), delay=max(50, typing_delay))
-        await amt_input.press("Tab")
-        committed = False
-        for _ in range(8):
-            if await _expense_amount_matches(amt_input, amount_val):
-                committed = True
+    async def fill_amount():
+        # PrimeReact InputNumber can briefly display a filled value even though
+        # the underlying form will discard it on the next rerender. Enter every
+        # amount with real keystrokes so the component processes each change.
+        await amt_input.scroll_into_view_if_needed()
+        _, typing_delay = _get_oic_fill_settings()
+        for attempt in range(1, 4):
+            await amt_input.click()
+            await amt_input.press("Control+A")
+            await amt_input.press("Backspace")
+            await amt_input.press_sequentially(str(amount_val), delay=max(50, typing_delay))
+            await amt_input.press("Tab")
+            committed = False
+            for _ in range(8):
+                if await _expense_amount_matches(amt_input, amount_val):
+                    committed = True
+                    break
+                await asyncio.sleep(0.2)
+            if committed:
+                log.field_filled(f"{portal_label} Amount", amount_val)
                 break
-            await asyncio.sleep(0.2)
-        if committed:
-            log.field_filled(f"{portal_label} Amount", amount_val)
-            break
-        log.warning(f"   {portal_label} amount did not commit on attempt {attempt}; retrying")
-    else:
-        raise RuntimeError(f"{portal_label} amount '{amount_val}' did not commit after 3 attempts")
+            log.warning(f"   {portal_label} amount did not commit on attempt {attempt}; retrying")
+        else:
+            raise RuntimeError(f"{portal_label} amount '{amount_val}' did not commit after 3 attempts")
 
-    await asyncio.sleep(0.1)
+        await asyncio.sleep(0.1)
+
+    if not field_was_handled(page, log, description_label):
+        await run_field(page, log, description_label, fill_description)
+    if not field_was_handled(page, log, amount_label):
+        await run_field(page, log, amount_label, fill_amount)
 
 
 async def _verify_expense_rows(page, expenses, description, log, delay):
@@ -1527,10 +1582,24 @@ async def _verify_expense_rows(page, expenses, description, log, delay):
     clean_rounds = 0
     for round_number in range(1, 5):
         needs_repair = []
+        failed_checks = []
+        manual_amount = False
         for portal_label, amount in expenses:
+            if field_was_handled(page, log, f"{portal_label} expense row"):
+                manual_amount = True
+                continue
+            skip_desc = field_was_handled(page, log, f"{portal_label} Description")
+            skip_amount = field_was_handled(page, log, f"{portal_label} Amount")
+            manual_amount = manual_amount or skip_amount
+            if skip_desc and skip_amount:
+                continue
             desc_input, amt_input = await _open_expense_inputs(page, portal_label)
-            desc_ok = (await desc_input.input_value()).strip() == description.strip()
-            amount_ok = await _expense_amount_matches(amt_input, amount)
+            desc_ok = skip_desc or (await desc_input.input_value()).strip() == description.strip()
+            amount_ok = skip_amount or await _expense_amount_matches(amt_input, amount)
+            if not desc_ok:
+                failed_checks.append(f"{portal_label} Description")
+            if not amount_ok:
+                failed_checks.append(f"{portal_label} Amount")
             if not desc_ok or not amount_ok:
                 failed_fields = ", ".join(name for name, ok in (("description", desc_ok), ("amount", amount_ok)) if not ok)
                 log.warning(f"   {portal_label} {failed_fields} did not persist on review {round_number}")
@@ -1538,7 +1607,7 @@ async def _verify_expense_rows(page, expenses, description, log, delay):
 
         # The portal's read-only total must also reflect a committed amount.
         # Do not guess its exact tax/deduction calculation for different cases.
-        if not needs_repair:
+        if not needs_repair and not manual_amount:
             total_input = page.locator("#totalClaimedAmount input").first
             await total_input.wait_for(state="visible", timeout=5000)
             minimum_without_tax = sum(Decimal(amount) for _, amount in expenses)
@@ -1560,6 +1629,7 @@ async def _verify_expense_rows(page, expenses, description, log, delay):
             if not total_matches:
                 log.warning("   Surveyor claimed total was not committed; retrying the expense rows")
                 needs_repair = list(expenses)
+                failed_checks.append("Surveyor Claimed Total")
 
         if not needs_repair:
             clean_rounds += 1
@@ -1573,7 +1643,9 @@ async def _verify_expense_rows(page, expenses, description, log, delay):
             log.warning(f"   {portal_label} did not persist on review {round_number}; refilling")
             await _fill_dynamic_expense_accordion(page, portal_label, amount, description, log, delay)
 
-    raise RuntimeError("Survey expense amounts did not remain committed after reopening; review the expense rows")
+    for label in failed_checks or ["Surveyor Claimed Total"]:
+        if not await field_problem(page, log, label, "The value did not stay committed after reopening the expense rows."):
+            raise RuntimeError("Survey expense amounts did not remain committed after reopening; review the expense rows")
 
 
 async def _fill_recommendation_declaration(
@@ -1592,12 +1664,15 @@ async def _fill_recommendation_declaration(
     if expenses_filled:
         rec_val = defaults.get("final_recommendation", "agree")
         log.info(f"   Surveyor expenses filled → populating Final Recommendation: '{rec_val}'")
-        rec_box = page.locator(S.SEL_LOSS_FINAL_REC)
-        await rec_box.wait_for(state="visible", timeout=5000)
-        await rec_box.scroll_into_view_if_needed()
-        await rec_box.focus()
-        await rec_box.fill(str(rec_val))
-        await rec_box.evaluate("el => { el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); }")
+        async def fill_recommendation():
+            rec_box = page.locator(S.SEL_LOSS_FINAL_REC)
+            await rec_box.wait_for(state="visible", timeout=5000)
+            await rec_box.scroll_into_view_if_needed()
+            await rec_box.focus()
+            await rec_box.fill(str(rec_val))
+            await rec_box.evaluate("el => { el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); }")
+
+        await run_field(page, log, "Final Recommendation", fill_recommendation)
     else:
         log.info("   No surveyor expenses filled → skipping Final Recommendation field")
 
@@ -1606,48 +1681,53 @@ async def _fill_recommendation_declaration(
     if declaration_setting.strip().lower() != "yes":
         log.info(f"   Declaration checkbox skipped per settings (declaration_checked='{declaration_setting}')")
     else:
-        dec_input = page.locator(S.SEL_LOSS_DECLARATION)
-        await dec_input.wait_for(state="attached", timeout=5000)
+        async def check_declaration():
+            dec_input = page.locator(S.SEL_LOSS_DECLARATION)
+            await dec_input.wait_for(state="attached", timeout=5000)
 
-        is_checked = await dec_input.is_checked()
-        if not is_checked:
-            log.info("   Declaration checkbox is not checked. Checking/enabling it now...")
-            clicked_successfully = False
+            is_checked = await dec_input.is_checked()
+            if not is_checked:
+                log.info("   Declaration checkbox is not checked. Checking/enabling it now...")
+                clicked_successfully = False
 
-            try:
-                # 1. Try robust label click first
-                dec_label = page.locator(S.SEL_LOSS_DECLARATION_LABEL)
-                await dec_label.wait_for(state="visible", timeout=3000)
-                await dec_label.scroll_into_view_if_needed()
-                await dec_label.click(timeout=3000)
-                clicked_successfully = True
-                log.info("   Successfully clicked declaration checkbox label")
-            except Exception as label_err:
-                log.warning(f"   Robust label click failed or timed out: {label_err}. Trying standard input click fallback.")
-
-            if not clicked_successfully:
                 try:
-                    # 2. Fallback to standard input element click
-                    await dec_input.scroll_into_view_if_needed()
-                    await dec_input.click(timeout=3000)
+                    # 1. Try robust label click first
+                    dec_label = page.locator(S.SEL_LOSS_DECLARATION_LABEL)
+                    await dec_label.wait_for(state="visible", timeout=3000)
+                    await dec_label.scroll_into_view_if_needed()
+                    await dec_label.click(timeout=3000)
                     clicked_successfully = True
-                    log.info("   Successfully clicked declaration checkbox input directly")
-                except Exception as input_err:
-                    log.warning(f"   Input click fallback failed: {input_err}. Forcing checked state via JS.")
+                    log.info("   Successfully clicked declaration checkbox label")
+                except Exception as label_err:
+                    log.warning(f"   Robust label click failed or timed out: {label_err}. Trying standard input click fallback.")
 
-            # 3. Ultimate fallback: Force check state using JS evaluation
-            if not clicked_successfully:
-                await dec_input.evaluate("el => { el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); }")
-                log.info("   Forced checked state on declaration checkbox via JS evaluation")
+                if not clicked_successfully:
+                    try:
+                        # 2. Fallback to standard input element click
+                        await dec_input.scroll_into_view_if_needed()
+                        await dec_input.click(timeout=3000)
+                        clicked_successfully = True
+                        log.info("   Successfully clicked declaration checkbox input directly")
+                    except Exception as input_err:
+                        log.warning(f"   Input click fallback failed: {input_err}. Forcing checked state via JS.")
 
-            # Verify checked state
-            await asyncio.sleep(0.3)
-            is_checked_now = await dec_input.is_checked()
-            if not is_checked_now:
-                log.warning("   Declaration checkbox still not checked. Forcing checked state via JS.")
-                await dec_input.evaluate("el => { el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); }")
-        else:
-            log.info("   Declaration checkbox is already checked (enabled)")
+                # 3. Ultimate fallback: Force check state using JS evaluation
+                if not clicked_successfully:
+                    await dec_input.evaluate("el => { el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); }")
+                    log.info("   Forced checked state on declaration checkbox via JS evaluation")
+
+                # Verify checked state
+                await asyncio.sleep(0.3)
+                is_checked_now = await dec_input.is_checked()
+                if not is_checked_now:
+                    log.warning("   Declaration checkbox still not checked. Forcing checked state via JS.")
+                    await dec_input.evaluate("el => { el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); }")
+            else:
+                log.info("   Declaration checkbox is already checked (enabled)")
+            if not await dec_input.is_checked():
+                raise RuntimeError("The declaration did not stay checked.")
+
+        await run_field(page, log, "Declaration", check_declaration)
 
 
 async def _click_save_and_next_button(page: Page, log: AutomationLogger) -> bool:

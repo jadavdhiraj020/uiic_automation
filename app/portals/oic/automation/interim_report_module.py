@@ -37,6 +37,7 @@ from app.portals.oic.automation.ui_utils import (
     capture_error_screenshot,
 )
 from app.portals.oic.automation import selectors as S
+from app.portals.oic.automation.recovery import field_problem
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -149,6 +150,7 @@ async def _fill_survey_details(page, claim, defaults, log, delay):
         )
     else:
         log.field_failed("Date of Survey", "empty — no value from Excel")
+        await field_problem(page, log, "Date of Survey", "empty — no value from Excel")
 
     # 5. Place of Survey
     place_of_survey = getattr(claim, "place_of_survey", "")
@@ -159,6 +161,7 @@ async def _fill_survey_details(page, claim, defaults, log, delay):
         )
     else:
         log.field_failed("Place of Survey", "empty — no value from Excel")
+        await field_problem(page, log, "Place of Survey", "empty — no value from Excel")
 
     # 6. Surveyor Appointed Date (MUI DatePicker)
     date_of_allotment = getattr(claim, "date_of_allotment", "")
@@ -169,6 +172,7 @@ async def _fill_survey_details(page, claim, defaults, log, delay):
         )
     else:
         log.field_failed("Surveyor Appointed Date", "empty — no value from Excel")
+        await field_problem(page, log, "Surveyor Appointed Date", "empty — no value from Excel")
 
 
 # ── Subsection 2: Documentation Verification ─────────────────────────────────
@@ -252,6 +256,7 @@ async def _fill_claim_assessment_contact(page, claim, defaults, log, delay):
         )
     else:
         log.field_failed("Initial Loss Assessment Amount", "empty — no value from Excel")
+        await field_problem(page, log, "Initial Loss Assessment Amount", "empty — no value from Excel")
 
     # 2. Mobile Number of The Claimant (optional)
     mobile = getattr(claim, "mobile_no", "")
@@ -286,6 +291,7 @@ async def _fill_claim_assessment_contact(page, claim, defaults, log, delay):
         )
     else:
         log.field_failed("Submission Date of Final Document", "empty — no value available")
+        await field_problem(page, log, "Submission Date of Final Document", "empty — no value available")
 
     # 5. Surveyor's Observation (textarea)
     #    Priority: Excel value if available → configurable default
@@ -310,6 +316,7 @@ async def _fill_claim_assessment_contact(page, claim, defaults, log, delay):
         )
     else:
         log.field_failed("Cause and Nature of Accident", "empty — no value from Excel")
+        await field_problem(page, log, "Cause and Nature of Accident", "empty — no value from Excel")
 
     # 7. Particulars of Loss/Damage (text input, configurable default)
     particulars = defaults.get("particulars_of_loss_damage", "As per estimate")

@@ -231,6 +231,7 @@ class AutomationEngine:
         portal_id: str,
         log_cb: Callable[[str], None] = print,
         step_cb: Callable[[int, str], None] = lambda i, s: None,
+        recovery_cb=None,
     ):
         def safe_log_cb(msg):
             try:
@@ -253,6 +254,44 @@ class AutomationEngine:
         self.step_cb = safe_step_cb
         self._stop_event = threading.Event()
         self.log = AutomationLogger("ENGINE", self.log_cb, portal_id=self.portal_id)
+        self._oic_recovery = None
+        if portal_id == "oic" and recovery_cb is not None:
+            from app.portals.oic.automation.recovery import OperatorRecovery
+
+            self._oic_recovery = OperatorRecovery(recovery_cb, self._stop_event.is_set)
+
+    def resume_oic(self, prompt_id, decision):
+        if self._oic_recovery is not None:
+            self._oic_recovery.respond(prompt_id, decision)
+
+    async def _run_oic_phase(self, page, label, operation, ready, instruction):
+        """Resume past a failed page action only after reaching its destination."""
+        if self._oic_recovery is None:
+            return await operation()
+        reason = f"OIC did not complete {label}."
+        try:
+            succeeded = await operation()
+            if succeeded:
+                for _ in range(5):
+                    if self._stop_requested:
+                        return False
+                    if await ready():
+                        return succeeded
+                    await asyncio.sleep(0.2)
+        except Exception as exc:
+            self.log.exception(f"OIC {label} failed", exc)
+            reason = f"{label} failed: {exc}"
+        if self._stop_requested:
+            return False
+        from app.portals.oic.automation.recovery import portal_messages
+
+        with suppress(Exception):
+            messages = await asyncio.wait_for(portal_messages(page), timeout=2)
+            if messages:
+                reason += "\n" + "\n".join(dict.fromkeys(messages))
+        return await self._oic_recovery.pause(
+            page, self.log, label, reason, ready=ready, instruction=instruction,
+        )
 
     @property
     def _stop_requested(self) -> bool:
@@ -274,7 +313,10 @@ class AutomationEngine:
     def _check_stop(self) -> bool:
         """Internal callback passed to modules."""
         if self._stop_event.is_set():
-            self.log_cb("⛔ Stop requested. Closing automation safely...")
+            if self._oic_recovery is not None:
+                self.log_cb("⛔ Stop requested. Chrome remains open for review.")
+            else:
+                self.log_cb("⛔ Stop requested. Closing automation safely...")
             return True
         return False
 
@@ -658,18 +700,23 @@ class AutomationEngine:
             if settings.get("proxy_url"):
                 launch_args.append(f"--proxy-server={settings['proxy_url']}")
 
-            browser = await browser_type.launch(
-                headless=_setting_bool(settings, "browser_headless", False),
-                args=launch_args,
-                slow_mo=_setting_int(settings, "browser_slow_mo_ms", "slow_mo_ms", 0),
-            )
-            resources.push_async_callback(close_resource, browser, "browser")
-            if self._check_stop():
-                return AutomationRunResult(False, "Automation stopped by user.")
+            slow_mo = _setting_int(settings, "browser_slow_mo_ms", "slow_mo_ms", 0)
+            if self._oic_recovery is not None:
+                from app.portals.oic.automation.review_browser import launch_review_browser
 
-            # Create context without viewport to allow --start-maximized to work
-            context = await browser.new_context(no_viewport=True)
-            resources.push_async_callback(close_resource, context, "context")
+                browser = await launch_review_browser(browser_type, launch_args, slow_mo, self._stop_event.is_set)
+                context = browser.contexts[0]
+            else:
+                browser = await browser_type.launch(
+                    headless=_setting_bool(settings, "browser_headless", False),
+                    args=launch_args,
+                    slow_mo=slow_mo,
+                )
+                resources.push_async_callback(close_resource, browser, "browser")
+                if self._check_stop():
+                    return AutomationRunResult(False, "Automation stopped by user.")
+                context = await browser.new_context(no_viewport=True)
+                resources.push_async_callback(close_resource, context, "context")
             if self._check_stop():
                 return AutomationRunResult(False, "Automation stopped by user.")
             web_submission = settings.get("_web_submission")
@@ -677,7 +724,40 @@ class AutomationEngine:
                 from app.web_sync.submission import SubmissionMonitor
                 monitor = SubmissionMonitor(**web_submission)
                 await monitor.install(context)
-            page = await context.new_page()
+            page = context.pages[0] if self._oic_recovery is not None and context.pages else await context.new_page()
+            if self._oic_recovery is not None:
+                from app.portals.oic.automation.recovery import current_recovery, form_step_is_open, same_origin
+
+                recovery_token = current_recovery.set(self._oic_recovery)
+                resources.callback(current_recovery.reset, recovery_token)
+                authenticated_page = None
+
+                async def oic_step(step):
+                    if not same_origin(page, settings["portal_url"]) or not await form_step_is_open(page, step):
+                        return False
+                    if step != "search" and claim.claim_no:
+                        shown_claim = page.locator("input#claimNumber[readonly], input#claimNumber[disabled]").first
+                        if await shown_claim.is_visible():
+                            shown = (await shown_claim.input_value(timeout=2000)).strip()
+                            if shown and shown.casefold() != str(claim.claim_no).strip().casefold():
+                                return False
+                    return True
+
+                async def signed_in():
+                    nonlocal authenticated_page
+                    from urllib.parse import urlsplit
+                    from app.portals.oic.automation.selectors import SEL_LOGIN_FORM_CONTAINER
+
+                    for candidate in reversed(context.pages):
+                        if candidate.is_closed() or not same_origin(candidate, settings["portal_url"]):
+                            continue
+                        route = urlsplit(candidate.url).path.rstrip("/").casefold()
+                        if route not in ("/dashboard", "/workspace", "/home"):
+                            continue
+                        if not await candidate.locator(SEL_LOGIN_FORM_CONTAINER).first.is_visible():
+                            authenticated_page = candidate
+                            return True
+                    return False
 
             # --- CIRCUIT BREAKER MONITOR ---
             health_state = {
@@ -723,7 +803,7 @@ class AutomationEngine:
                         health_state["empty_pages_since"] = None
 
                         active = alive[-1]
-                        if active.url.startswith("chrome-error://"):
+                        if active.url.startswith("chrome-error://") and self._oic_recovery is None:
                             self.log.error(
                                 "CIRCUIT BREAKER: Network disconnected or 502/504 error. Aborting run."
                             )
@@ -870,12 +950,20 @@ class AutomationEngine:
                 else:
                     from app.automation.login_module import do_login
 
-                success = await do_login(
-                    page,
-                    settings=settings,
-                    log=self.log,
-                    stop_cb=self._check_stop,
-                )
+                def login():
+                    login_settings = settings
+                    if self._oic_recovery is not None:
+                        # The desktop login recovery prompt replaces the timed manual wait.
+                        login_settings = {**settings, "manual_login_timeout_s": 0}
+                    return do_login(page, settings=login_settings, log=self.log, stop_cb=self._check_stop)
+
+                if self._oic_recovery is not None:
+                    success = await self._run_oic_phase(
+                        page, "Login", login, signed_in,
+                        "Sign in to OIC in Chrome and open the dashboard, then click Continue.",
+                    )
+                else:
+                    success = await login()
                 if not success:
                     message = (
                         "Automation stopped by user."
@@ -886,9 +974,12 @@ class AutomationEngine:
                 if self._check_stop():
                     return AutomationRunResult(False, "Automation stopped by user.")
 
-                page = await _get_active_page(
-                    context, self.log, [], self._check_stop, portal_id=self.portal_id
-                )
+                if self._oic_recovery is not None:
+                    page = authenticated_page
+                else:
+                    page = await _get_active_page(
+                        context, self.log, [], self._check_stop, portal_id=self.portal_id
+                    )
                 if page is None:
                     message = (
                         "Automation stopped by user."
@@ -929,13 +1020,19 @@ class AutomationEngine:
                         navigate_to_claim,
                     )
 
-                    claim_page = await navigate_to_claim(
-                        page,
-                        claim.claim_no,
-                        settings=settings,
-                        log=self.log,
-                        stop_cb=self._check_stop,
-                    )
+                    def navigate():
+                        return navigate_to_claim(
+                            page, claim.claim_no, settings=settings, log=self.log, stop_cb=self._check_stop,
+                        )
+
+                    if self._oic_recovery is not None:
+                        navigated = await self._run_oic_phase(
+                            page, "Open Generate Assessment", navigate, lambda: oic_step("search"),
+                            "Open Generate Assessment and leave the Claim Search form open, then click Continue.",
+                        )
+                        claim_page = page if navigated else None
+                    else:
+                        claim_page = await navigate()
                 else:
                     from app.automation.navigation_module import navigate_to_claim
 
@@ -1156,15 +1253,23 @@ class AutomationEngine:
                         fill_basic_details,
                     )
 
+                    async def run_form_phase(handler, label, destination, instruction):
+                        return await self._run_oic_phase(
+                            page, label,
+                            lambda: handler(
+                                page, claim, log=self.log, stop_cb=self._check_stop,
+                                field_delay_ms=field_delay,
+                            ),
+                            lambda: oic_step(destination),
+                            instruction,
+                        )
+
                     # Phase 3: Claim Search (Generate Assessment form)
                     self.step_cb(2, steps[2])
                     self.log.phase_banner(3, total_steps, "Claim Search")
-                    if not await fill_claim_search(
-                        page,
-                        claim,
-                        log=self.log,
-                        stop_cb=self._check_stop,
-                        field_delay_ms=field_delay,
+                    if not await run_form_phase(
+                        fill_claim_search, "Claim Search / Next", "basic",
+                        "Open Basic Details for the correct claim in Chrome, then click Continue.",
                     ):
                         return AutomationRunResult(
                             False, "Phase 3 (Claim Search) failed."
@@ -1173,12 +1278,9 @@ class AutomationEngine:
                     # Phase 4: Basic Details
                     self.step_cb(3, steps[3])
                     self.log.phase_banner(4, total_steps, "Basic Details")
-                    if not await fill_basic_details(
-                        page,
-                        claim,
-                        log=self.log,
-                        stop_cb=self._check_stop,
-                        field_delay_ms=field_delay,
+                    if not await run_form_phase(
+                        fill_basic_details, "Basic Details / Next", "interim",
+                        "Finish Basic Details and open Interim Report in Chrome, then click Continue.",
                     ):
                         return AutomationRunResult(
                             False, "Phase 4 (Basic Details) failed."
@@ -1191,12 +1293,9 @@ class AutomationEngine:
                         fill_interim_report as oic_fill_interim_report,
                     )
 
-                    if not await oic_fill_interim_report(
-                        page,
-                        claim,
-                        log=self.log,
-                        stop_cb=self._check_stop,
-                        field_delay_ms=field_delay,
+                    if not await run_form_phase(
+                        oic_fill_interim_report, "Interim Report / Next", "loss",
+                        "Finish Interim Report and open Assessment of Loss in Chrome, then click Continue.",
                     ):
                         return AutomationRunResult(
                             False, "Phase 5 (Interim Report) failed."
@@ -1205,7 +1304,7 @@ class AutomationEngine:
                     # Phase 6: Assessment of Loss
                     self.step_cb(5, steps[5])
                     self.log.phase_banner(6, total_steps, "Assessment of Loss")
-                    if not await self._wait_for_deferred_ocr(
+                    invoice_ready = await self._wait_for_deferred_ocr(
                         claim,
                         kind="invoice",
                         label="Workshop Invoice",
@@ -1214,42 +1313,56 @@ class AutomationEngine:
                             ("Workshop Invoice Date", "workshop_invoice_date"),
                         ),
                         dependent_step="OIC Assessment of Loss",
-                    ):
-                        return AutomationRunResult(
-                            False, "Phase 6 failed: invoice OCR timed out or stopped."
-                        )
-                    from app.portals.oic.automation.assessment_of_loss_module import (
-                        fill_assessment_of_loss,
                     )
-
-                    if not await fill_assessment_of_loss(
-                        page,
-                        claim,
-                        log=self.log,
-                        stop_cb=self._check_stop,
-                        field_delay_ms=field_delay,
-                    ):
-                        if getattr(claim, "_oic_upload_failed", False) and not self._check_stop():
-                            self.log.error("Invoice upload failed. Automation has stopped; the browser remains open for review.")
-                            await self._wait_for_manual_review(browser)
-                        return AutomationRunResult(
-                            False, "Phase 6 (Assessment of Loss) failed."
+                    if not invoice_ready:
+                        if self._oic_recovery is None or self._stop_requested:
+                            return AutomationRunResult(False, "Phase 6 failed: invoice OCR timed out or stopped.")
+                        await self._oic_recovery.pause(
+                            page, self.log, "Prepare workshop invoice",
+                            "Invoice extraction did not finish. Review the invoice in Chrome.",
+                            ready=lambda: oic_step("upload"),
+                            instruction="Finish Assessment of Loss and open Document Upload in Chrome, then click Continue.",
                         )
+                    else:
+                        from app.portals.oic.automation.assessment_of_loss_module import (
+                            fill_assessment_of_loss,
+                        )
+
+                        if not await run_form_phase(
+                            fill_assessment_of_loss, "Assessment of Loss / Save and Next", "upload",
+                            "Finish Assessment of Loss and open Document Upload in Chrome, then click Continue.",
+                        ):
+                            if self._oic_recovery is None and getattr(claim, "_oic_upload_failed", False) and not self._check_stop():
+                                self.log.error("Invoice upload failed. Automation has stopped; the browser remains open for review.")
+                                await self._wait_for_manual_review(browser)
+                            return AutomationRunResult(False, "Phase 6 (Assessment of Loss) failed.")
 
                     # Phase 7: Document Upload
                     self.step_cb(6, steps[6])
                     self.log.phase_banner(7, total_steps, "Document Upload")
                     from app.portals.oic.automation.document_upload_module import (
                         fill_document_upload_section,
+                        _submission_confirmed,
                     )
 
-                    if not await fill_document_upload_section(
-                        page,
-                        claim,
-                        log=self.log,
-                        stop_cb=self._check_stop,
-                        field_delay_ms=field_delay,
-                    ):
+                    try:
+                        uploaded = await fill_document_upload_section(
+                            page, claim, log=self.log, stop_cb=self._check_stop,
+                            field_delay_ms=field_delay,
+                        )
+                    except Exception as exc:
+                        if self._oic_recovery is None:
+                            raise
+                        self.log.exception("OIC document upload failed", exc)
+                        uploaded = False
+                    if not uploaded and self._oic_recovery is not None and not self._stop_requested:
+                        uploaded = await self._oic_recovery.pause(
+                            page, self.log, "Finish Document Upload",
+                            "OIC automation could not complete Document Upload. Check Chrome and the app log.",
+                            ready=lambda: _submission_confirmed(page),
+                            instruction="Finish Document Upload and verify submission in Chrome, or click Stop to end the run.",
+                        )
+                    if not uploaded:
                         return AutomationRunResult(
                             False, "Phase 7 (Document Upload) failed."
                         )
@@ -1317,10 +1430,21 @@ class AutomationEngine:
                 return AutomationRunResult(True, "Automation finished.")
 
             except asyncio.CancelledError:
+                if self._oic_recovery is not None:
+                    return AutomationRunResult(False, "OIC automation stopped. Chrome is available for review.")
                 self.log.error("Automation cancelled.")
                 return AutomationRunResult(False, "Automation cancelled.")
             except Exception as exc:
                 self.log.exception("Automation failed", exc)
+                if self._oic_recovery is not None and not self._stop_requested:
+                    try:
+                        await self._oic_recovery.pause(
+                            page, self.log, "Automation interrupted", str(exc),
+                            ready=lambda: asyncio.sleep(0, result=False),
+                            instruction="There is no safe point to resume from here. Click Stop and review the open Chrome tab.",
+                        )
+                    except asyncio.CancelledError:
+                        pass
                 return AutomationRunResult(False, f"Automation failed: {exc}")
             finally:
                 if health_task:

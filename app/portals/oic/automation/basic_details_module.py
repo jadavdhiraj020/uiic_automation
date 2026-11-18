@@ -77,6 +77,7 @@ from app.portals.oic.automation.date_formatter import format_oic_date
 from app.portals.oic.city_mapping import city_from_licence
 from app.portals.oic.license_type_mapping import resolve_license_type
 from app.portals.oic.rto_mapping import resolve_rto_choice
+from app.portals.oic.automation.recovery import field_problem, field_was_handled
 
 
 async def _select_rto(page: Page, registration_number: str, excel_value: str, log: AutomationLogger, delay: int) -> None:
@@ -107,6 +108,7 @@ async def _select_rto(page: Page, registration_number: str, excel_value: str, lo
             await page.keyboard.press("Escape")
             opened = False
             log.warning("No selectable RTO options were available; review it manually.")
+            await field_problem(page, log, "RTO", "No selectable RTO options were available.")
             return
         exact = items.filter(has_text=re.compile(r"^\s*" + re.escape(choice.name) + r"\s*$", re.IGNORECASE))
         count = await exact.count()
@@ -114,6 +116,7 @@ async def _select_rto(page: Page, registration_number: str, excel_value: str, lo
             await page.keyboard.press("Escape")
             opened = False
             log.warning(f"RTO '{choice.name}' is no longer available in the portal; review it manually.")
+            await field_problem(page, log, "RTO", "The selected RTO option is no longer available.")
             return
         if choice.source == "first available option":
             log.warning(f"RTO registration code '{choice.registration_code or 'unavailable'}' and Excel RTO '{excel_value}' did not match; selecting the first option '{choice.name}', which may be unrelated. Review it manually.")
@@ -133,6 +136,7 @@ async def _select_rto(page: Page, registration_number: str, excel_value: str, lo
             except Exception:
                 pass
         log.field_failed("RTO", str(exc))
+        await field_problem(page, log, "RTO", str(exc))
     finally:
         await asyncio.sleep(delay / 1000.0)
 
@@ -203,6 +207,7 @@ async def _select_mapped_licence_type(page: Page, value: str, source: str,
         log.field_selected("License Type", value, source=source)
     except Exception as exc:
         log.field_failed("License Type", str(exc))
+        await field_problem(page, log, "License Type", str(exc))
     finally:
         if opened:
             try:
@@ -632,6 +637,8 @@ async def _fill_driver_details(page: Page, claim, log, delay: int, automation_de
             page, SEL_DRIVER_NAME, claim.driver_name,
             "Driver Name", log, delay
         )
+    else:
+        await field_problem(page, log, "Driver Name", "No driver name was found in the claim data.")
 
     # 2. Date of Birth * (mandatory) — MUI DatePicker (DD-MM-YYYY)
     _dob = format_oic_date(claim.dob_of_driver)
@@ -640,6 +647,8 @@ async def _fill_driver_details(page: Page, claim, log, delay: int, automation_de
             page, SEL_DOB_OF_DRIVER_LABEL, _dob,
             "Date of Birth", log, delay
         )
+    else:
+        await field_problem(page, log, "Date of Birth", "No usable driver date of birth was found.")
 
     # 3. Prefer the vehicle-class mapping; keep Excel's licence type as a
     # fallback only when the class is not recognized, never when ambiguous.
@@ -667,6 +676,8 @@ async def _fill_driver_details(page: Page, claim, log, delay: int, automation_de
             page, SEL_LICENSE_VALID_FROM_LABEL, _dl_issue,
             "Valid From (DL Issue Date)", log, delay
         )
+    else:
+        await field_problem(page, log, "Valid From (DL Issue Date)", "No usable licence issue date was found.")
 
     # Row 2 ─────────────────────────────────────────────────────────────────
 
@@ -677,6 +688,8 @@ async def _fill_driver_details(page: Page, claim, log, delay: int, automation_de
             page, SEL_LICENSE_VALID_UPTO_LABEL, _dl_expiry,
             "Valid Up To (DL Expiry Date)", log, delay
         )
+    else:
+        await field_problem(page, log, "Valid Up To (DL Expiry Date)", "No usable licence expiry date was found.")
 
     # 6-8. License Number * (mandatory) — split into 3 parts
     if claim.driver_license_number:
@@ -784,21 +797,21 @@ async def _fill_driver_details(page: Page, claim, log, delay: int, automation_de
         )
     else:
         log.warning("Driver State could not be determined from the driving licence prefix; review it manually.")
+        if not await field_problem(page, log, "State", "No state mapping exists for this driving licence prefix."):
+            return False
 
     # 16. Use the issuing-office code in the driver's licence for the district.
     # Do not continue with a stale city or PIN if state/city selection failed.
-    if not state:
-        return False
-    state_label = page.locator(f"{SEL_STATE_DROPDOWN} .p-dropdown-label").first
-    if (await state_label.inner_text()).strip().casefold() != state.casefold():
-        log.warning("Driver State was not selected; city and PIN require manual review.")
-        return False
+    if not field_was_handled(page, log, "State"):
+        state_label = page.locator(f"{SEL_STATE_DROPDOWN} .p-dropdown-label").first
+        if (await state_label.inner_text(timeout=3000)).strip().casefold() != state.casefold():
+            if not await field_problem(page, log, "State", "OIC did not retain the state selection."):
+                return False
     city = city_from_licence(claim.driver_license_number)
-    if not city:
-        log.warning("No city mapping exists for the driver licence prefix; review it manually.")
-        return False
-    if not await _select_driver_city(page, city, log, delay):
-        return False
+    if not city or not await _select_driver_city(page, city, log, delay):
+        reason = "OIC did not retain the district selection." if city else "No district mapping exists for this driving licence prefix."
+        if not await field_problem(page, log, "City", reason):
+            return False
 
     # Row 5 ─────────────────────────────────────────────────────────────────
 
@@ -816,7 +829,8 @@ async def _fill_driver_details(page: Page, claim, log, delay: int, automation_de
     # plus a safety margin, without adding significant wall-clock cost.
     await asyncio.sleep(0.8)
     if not await _select_pincode_dropdown(page, SEL_PINCODE_DROPDOWN, log, delay):
-        return False
+        if not await field_problem(page, log, "Pincode", "No PIN code could be selected."):
+            return False
 
     # 18. Address * (mandatory) — textarea
     address = claim.driver_address or claim.place_of_survey or ""
@@ -825,6 +839,8 @@ async def _fill_driver_details(page: Page, claim, log, delay: int, automation_de
             page, SEL_DRIVER_ADDRESS, address,
             "Address", log, delay
         )
+    else:
+        await field_problem(page, log, "Address", "No driver or survey address was found.")
 
     # Row 6 ─────────────────────────────────────────────────────────────────
 
@@ -1375,11 +1391,13 @@ async def _fill_year_picker(page: Page, selector: str, year: str, label: str, lo
                     log.field_failed(label, f"Year '{year}' not found in picker")
                 else:
                     log(f"[{_ts()}]   ⚠️ [{label}] year '{year}' not in picker")
+                await field_problem(page, log, label, "The year was not available in the picker.")
 
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.field_failed(label, str(e))
         else:
             log(f"[{_ts()}]   ⚠️ [{label}] error: {e}")
+        await field_problem(page, log, label, str(e))
 
     await asyncio.sleep(delay / 1000.0)

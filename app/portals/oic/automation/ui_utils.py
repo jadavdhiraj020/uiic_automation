@@ -7,6 +7,7 @@ from datetime import datetime
 
 from app.automation.automation_logger import AutomationLogger, _ts
 from app.portals.oic.automation.date_formatter import format_oic_date as _format_oic_date
+from app.portals.oic.automation.recovery import field_problem
 
 # ── JavaScript Snippets ───────────────────────────────────────────────────────
 
@@ -155,7 +156,9 @@ async def fill_input_with_delay(
                 await locator.press_sequentially(char, delay=typing_delay)
             
         # Trigger Angular changes and event dispatches to settle state
-        await page.evaluate(_JS_FILL, [selector, str(value)])
+        result = await page.evaluate(_JS_FILL, [selector, str(value)])
+        if not result or not result.get("ok"):
+            raise ValueError("OIC could not update this field.")
         
         if isinstance(log, AutomationLogger):
             kwargs = {}
@@ -169,6 +172,7 @@ async def fill_input_with_delay(
             log.field_failed(label, str(e))
         else:
             log(f"[{_ts()}]   ⚠️ [{label}] error: {e}")
+        await field_problem(page, log, label, str(e))
 
     await asyncio.sleep(delay_ms / 1000.0)
 
@@ -195,11 +199,13 @@ async def select_dropdown_with_delay(
                 log.field_failed(label, f"No match for '{value}': {err}")
             else:
                 log(f"[{_ts()}]   ⚠️ [{label}] select failed (no match for '{value}'): {err}")
+            await field_problem(page, log, label, f"No match for '{value}': {err}")
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.field_failed(label, str(e))
         else:
             log(f"[{_ts()}]   ⚠️ [{label}] error: {e}")
+        await field_problem(page, log, label, str(e))
 
     await asyncio.sleep(delay_ms / 1000.0)
 
@@ -227,11 +233,13 @@ async def click_radio_with_delay(
                 log.field_failed(label, f"Click failed: {err}")
             else:
                 log(f"[{_ts()}]   ⚠️ [{label}] click failed: {err}")
+            await field_problem(page, log, label, f"Click failed: {err}")
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.field_failed(label, str(e))
         else:
             log(f"[{_ts()}]   ⚠️ [{label}] error: {e}")
+        await field_problem(page, log, label, str(e))
 
     await asyncio.sleep(delay_ms / 1000.0)
 
@@ -358,6 +366,7 @@ async def click_primeng_radio(
             log.field_failed(label, str(e))
         else:
             log(f"[{_ts()}]   ⚠️ [{label}] error: {e}")
+        await field_problem(page, log, label, str(e))
 
     await asyncio.sleep(delay_ms / 1000.0)
 
@@ -435,12 +444,14 @@ async def select_primeng_dropdown(
                 log.field_failed(label, f"No match for '{value}' in {count} options")
             else:
                 log(f"[{_ts()}]   ⚠️ [{label}] no match for '{value}' ({count} options)")
+            await field_problem(page, log, label, f"No match for '{value}' in {count} options")
 
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.field_failed(label, str(e))
         else:
             log(f"[{_ts()}]   ⚠️ [{label}] error: {e}")
+        await field_problem(page, log, label, str(e))
 
     await asyncio.sleep(delay_ms / 1000.0)
 
@@ -486,6 +497,7 @@ async def fill_primeng_inputnumber(
             log.field_failed(label, str(e))
         else:
             log(f"[{_ts()}]   ⚠️ [{label}] error: {e}")
+        await field_problem(page, log, label, str(e))
 
     await asyncio.sleep(delay_ms / 1000.0)
 
@@ -532,6 +544,7 @@ async def fill_mui_datepicker(
             log.field_failed(label, "empty date value — skipped")
         else:
             log(f"[{_ts()}]   ⚠️ [{label}] empty date value — skipped")
+        await field_problem(page, log, label, "empty date value — skipped")
         return False
 
     try:
@@ -577,6 +590,7 @@ async def fill_mui_datepicker(
             log.field_failed(label, str(e))
         else:
             log(f"[{_ts()}]   ⚠️ [{label}] error: {e}")
+        await field_problem(page, log, label, str(e))
         return False
     finally:
         await asyncio.sleep(delay_ms / 1000.0)
@@ -631,5 +645,6 @@ async def fill_textarea_primeng(
             log.field_failed(label, str(e))
         else:
             log(f"[{_ts()}]   ⚠️ [{label}] error: {e}")
+        await field_problem(page, log, label, str(e))
 
     await asyncio.sleep(delay_ms / 1000.0)

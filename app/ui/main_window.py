@@ -59,6 +59,12 @@ from app.ui.components.workspace_page import WorkspacePage
 
 CONFIG_DIR = resource_path("app", "config")
 
+
+class _OicRecoveryMessage(QMessageBox):
+    def reject(self):
+        # Keep the prompt available until a response or Stop ends the pause.
+        pass
+
 # Set UIIC as default portal on startup (backward compatible)
 try:
     set_active_portal("uiic")
@@ -822,6 +828,8 @@ class MainWindow(QMainWindow):
 
         self._worker.log_signal.connect(self._append_log)
         self._worker.step_signal.connect(self.workspace_page.set_step)
+        if portal_id == "oic":
+            self._worker.recovery_signal.connect(self._show_oic_recovery)
 
         self.workspace_page.set_automation_running(True)
         self._set_portal_selector_locked(
@@ -846,6 +854,49 @@ class MainWindow(QMainWindow):
         if hasattr(self, "web_queue"):
             self.web_queue.refresh()
 
+    def _show_oic_recovery(self, prompt):
+        worker = self._worker
+        if not worker or self._automation_stopping or self._close_requested:
+            return
+        self._dismiss_oic_recovery()
+        self._set_status("running", "Paused for review")
+        dialog = _OicRecoveryMessage(self)
+        self._oic_recovery_dialog = dialog
+        dialog.setWindowTitle("OIC automation paused")
+        dialog.setWindowModality(Qt.WindowModality.NonModal)
+        dialog.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setTextFormat(Qt.TextFormat.PlainText)
+        dialog.setText(f"{prompt.section} — {prompt.action}")
+        instructions = prompt.instruction or (
+            "Fix this in Chrome and click Continue, or skip this field."
+            if prompt.can_skip
+            else "Complete this action in Chrome, then click Continue."
+        )
+        dialog.setInformativeText(f"{prompt.reason}\n\n{instructions}")
+        fixed = dialog.addButton("I fixed it — continue", QMessageBox.ButtonRole.AcceptRole)
+        skip = dialog.addButton("Skip this field", QMessageBox.ButtonRole.ActionRole)
+        skip.setEnabled(prompt.can_skip)
+        dialog.setDefaultButton(fixed)
+
+        def respond(decision):
+            if self._worker is not worker or self._oic_recovery_dialog is not dialog:
+                return
+            self._dismiss_oic_recovery()
+            worker.resume_oic(prompt.id, decision)
+            self._set_status("running", "Running")
+
+        fixed.clicked.connect(lambda: respond("fixed"))
+        skip.clicked.connect(lambda: respond("skip"))
+        dialog.show()
+
+    def _dismiss_oic_recovery(self):
+        dialog = getattr(self, "_oic_recovery_dialog", None)
+        if dialog:
+            self._oic_recovery_dialog = None
+            dialog.hide()
+            dialog.deleteLater()
+
     def _stop_automation(self):
         if hasattr(self, "web_queue") and getattr(self.web_queue, "_pending_start_case_id", None):
             self.web_queue._pending_start_case_id = None
@@ -853,6 +904,7 @@ class MainWindow(QMainWindow):
             self._scan_worker.request_stop()
         if self._worker:
             self._automation_stopping = True
+            self._dismiss_oic_recovery()
             self._worker.stop()
             self.workspace_page.btn_stop.setEnabled(False)
             self.workspace_page.btn_start.setEnabled(False)
@@ -863,6 +915,7 @@ class MainWindow(QMainWindow):
 
     def _on_automation_ui_reset(self, success, message):
         """Called when automation finishes — updates UI. Thread may still be winding down."""
+        self._dismiss_oic_recovery()
         self._last_success = success
         self._last_message = message
         self.workspace_page.set_automation_finished(success)

@@ -6,6 +6,7 @@ class AutomationWorker(QObject):
     log_signal  = pyqtSignal(str)
     step_signal = pyqtSignal(int, str)
     done_signal = pyqtSignal(bool, str)
+    recovery_signal = pyqtSignal(object)
 
     def __init__(self, claim, settings_override=None, portal_id: str = "uiic"):
         super().__init__()
@@ -23,10 +24,14 @@ class AutomationWorker(QObject):
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
+            recovery_options = {}
+            if self.portal_id == "oic":
+                recovery_options["recovery_cb"] = self.recovery_signal.emit
             self._engine = AutomationEngine(
                 log_cb    = lambda msg: self.log_signal.emit(msg),
                 step_cb   = lambda i, s: self.step_signal.emit(i, s),
                 portal_id = self.portal_id,
+                **recovery_options,
             )
             if self._stop_event.is_set():
                 self._engine.request_stop()
@@ -56,6 +61,10 @@ class AutomationWorker(QObject):
         self._stop_event.set()
         if self._engine:
             self._engine.request_stop()
+
+    def resume_oic(self, prompt_id, decision):
+        if self._engine and not self._stop_event.is_set():
+            self._engine.resume_oic(prompt_id, decision)
 
 
 class FolderScanWorker(QObject):

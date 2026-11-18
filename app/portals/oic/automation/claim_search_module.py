@@ -26,6 +26,7 @@ from playwright.async_api import Page
 from app.automation.automation_logger import AutomationLogger, _ts
 from app.data.data_model import ClaimData
 from app.portals.oic.automation import popup_service
+from app.portals.oic.automation.recovery import field_problem, field_was_handled
 from app.portals.oic.automation.selectors import SEL_CLAIM_NUMBER_INPUT, SEL_POLICY_NUMBER_INPUT
 from app.portals.oic.automation.ui_utils import capture_error_screenshot, fill_input_with_delay
 from app.utils import load_automation_defaults
@@ -112,12 +113,13 @@ async def fill_claim_search(
         if claim_type.lower() in selected_text.lower():
             _log_success(f"Claim Type selected → '{selected_text}'")
         else:
-            _log_warning(f"Claim Type label shows '{selected_text}', expected '{claim_type}'. Continuing...")
+            raise ValueError(f"Claim Type shows '{selected_text}', expected '{claim_type}'.")
     except Exception as exc:
         await capture_error_screenshot(page, "claim_type_select_failed", log)
         _log_error(f"Failed to select Claim Type dropdown: {exc}")
-        if isinstance(log, AutomationLogger): log.outdent()
-        return False
+        if not await field_problem(page, log, "Claim Type", str(exc)):
+            if isinstance(log, AutomationLogger): log.outdent()
+            return False
 
     if stop_cb():
         if isinstance(log, AutomationLogger): log.outdent()
@@ -140,15 +142,17 @@ async def fill_claim_search(
     try:
         await fill_input_with_delay(page, selector, search_value, field_name, log, delay_ms=field_delay_ms)
 
-        actual_val = await page.locator(selector).first.input_value()
-        if actual_val.strip() != search_value:
-            raise ValueError(f"{field_name} input shows '{actual_val}', expected '{search_value}'")
-        _log_success(f"{field_name} filled → '{search_value}'")
+        if not field_was_handled(page, log, field_name):
+            actual_val = await page.locator(selector).first.input_value()
+            if actual_val.strip() != search_value:
+                raise ValueError(f"{field_name} did not retain the entered value.")
+            _log_success(f"{field_name} filled → '{search_value}'")
     except Exception as exc:
         await capture_error_screenshot(page, "search_number_fill_failed", log)
         _log_error(f"Failed to fill {field_name}: {exc}")
-        if isinstance(log, AutomationLogger): log.outdent()
-        return False
+        if not await field_problem(page, log, field_name, str(exc)):
+            if isinstance(log, AutomationLogger): log.outdent()
+            return False
 
     if stop_cb():
         if isinstance(log, AutomationLogger): log.outdent()
