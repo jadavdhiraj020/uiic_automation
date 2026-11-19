@@ -15,10 +15,11 @@ Then clicks "Next" to advance to the next step.
 
 import asyncio
 import re
+from contextlib import suppress
 from datetime import datetime
 from typing import Callable, Optional
 
-from playwright.async_api import Page
+from playwright.async_api import Error as PlaywrightError, Page
 
 from app.automation.automation_logger import AutomationLogger
 from app.portals.oic.automation.selectors import (
@@ -79,7 +80,9 @@ from app.portals.oic.city_mapping import city_from_licence
 from app.portals.oic.license_type_mapping import resolve_license_type
 from app.portals.oic.rto_mapping import resolve_rto_choice
 from app.portals.oic.automation.dropdowns import dropdown_is_available, select_dropdown_option
-from app.portals.oic.automation.recovery import field_decision, field_problem, field_was_handled
+from app.portals.oic.automation.recovery import (
+    field_decision, field_problem, field_was_handled, run_field, wait_until_ready,
+)
 
 
 async def _select_rto(page: Page, registration_number: str, excel_value: str, log: AutomationLogger, delay: int) -> None:
@@ -522,6 +525,47 @@ async def _is_field_editable(page: Page, selector: str) -> bool:
 # PRIVATE — DRIVER DETAILS
 # ══════════════════════════════════════════════════════════════════════════════
 
+async def _fill_driver_name(page: Page, name: str, log, delay: int) -> None:
+    if not name:
+        await field_problem(page, log, "Driver Name", "No driver name was found in the claim data.")
+        return
+
+    locator = page.locator(f"input{SEL_DRIVER_NAME}:visible").or_(
+        page.get_by_role("textbox", name=re.compile(r"^Driver Name\s*\*?$", re.IGNORECASE)),
+    ).first
+
+    async def fill_and_verify():
+        instant_fill, typing_delay = _get_oic_fill_settings()
+        typing_timeout = max(4000, len(name) * typing_delay + 1000)
+        expected = name.casefold()
+        matching_reads = 0
+
+        async def kept_name():
+            nonlocal matching_reads
+            actual = (await locator.input_value(timeout=800)).strip().casefold()
+            matching_reads = matching_reads + 1 if actual == expected else 0
+            return matching_reads >= 2
+
+        for type_each_character in (not instant_fill, True):
+            with suppress(PlaywrightError):
+                if type_each_character:
+                    await locator.fill("", timeout=4000)
+                    await locator.press_sequentially(name, delay=typing_delay, timeout=typing_timeout)
+                else:
+                    await locator.fill(name, timeout=4000)
+                await locator.press("Tab", timeout=1500)
+
+            matching_reads = 0
+            if await wait_until_ready(kept_name, seconds=2):
+                log.field_filled("Driver Name", name)
+                return
+
+        raise ValueError("OIC did not keep the driver name. Enter it in Chrome.")
+
+    await run_field(page, log, "Driver Name", fill_and_verify)
+    await asyncio.sleep(delay / 1000.0)
+
+
 async def _fill_driver_details(page: Page, claim, log, delay: int, automation_defaults: dict | None = None):
     """Fill Driver Details subsection — all 19 fields."""
     log._section = "Driver Details"
@@ -529,13 +573,7 @@ async def _fill_driver_details(page: Page, claim, log, delay: int, automation_de
     # Row 1 ─────────────────────────────────────────────────────────────────
 
     # 1. Driver Name * (mandatory)
-    if claim.driver_name:
-        await fill_input_with_delay(
-            page, SEL_DRIVER_NAME, claim.driver_name,
-            "Driver Name", log, delay
-        )
-    else:
-        await field_problem(page, log, "Driver Name", "No driver name was found in the claim data.")
+    await _fill_driver_name(page, claim.oic_driver_name, log, delay)
 
     # 2. Date of Birth * (mandatory) — MUI DatePicker (DD-MM-YYYY)
     _dob = format_oic_date(claim.dob_of_driver)

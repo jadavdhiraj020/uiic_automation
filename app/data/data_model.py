@@ -446,6 +446,12 @@ class ClaimData:
     surveyor_pan: str = ""
     policy_number: str = ""            # OIC search prefers policy over claim number
 
+    @property
+    def oic_driver_name(self) -> str:
+        """The name shown in OIC's single-line, 20-character driver field."""
+        name = re.sub(r"[\r\n\t]+", " ", str(self.driver_name or "")).strip()
+        return name[:20].rstrip()
+
     # Property aliases for backward compatibility and naming flexibility
     @property
     def labour_excl_gst(self) -> str:
@@ -800,7 +806,7 @@ class ClaimData:
                 errors.append(f"Year of Manufacture '{year_str}' must be a valid 4-digit year")
 
         # Driver mandatory fields
-        if not self.driver_name:
+        if not self.oic_driver_name:
             warnings.append("Driver Name not found in Excel")
         if not self.driver_license_number:
             warnings.append("Driver License Number not found in Excel")
@@ -1126,7 +1132,7 @@ class ClaimData:
             ("PAN Number",            self.surveyor_pan,          False, _src("surveyor_pan")),
 
             # Driver Details (all 19 fields)
-            ("Driver Name",           self.driver_name,           True,  _src("driver_name")),
+            ("Driver Name",           self.oic_driver_name,       True,  _src("driver_name")),
             ("Registered Owner Name", self.registered_owner_name, False, _src("registered_owner_name")),
             ("Date of Birth",         self.dob_of_driver,         True,  _src("dob_of_driver")),
             ("License Type",          licence_type,               True,  licence_preview_source),
