@@ -17,7 +17,6 @@ DOM References (from HTML_DOM.txt):
   - Next button: button.next-btn[aria-label="Next"] (disabled until valid)
 """
 
-import asyncio
 import logging
 from typing import Callable
 
@@ -26,8 +25,8 @@ from playwright.async_api import Page
 from app.automation.automation_logger import AutomationLogger, _ts
 from app.data.data_model import ClaimData
 from app.portals.oic.automation.recovery import field_problem, field_was_handled
-from app.portals.oic.automation.selectors import SEL_CLAIM_NUMBER_INPUT, SEL_NEXT_BTN, SEL_POLICY_NUMBER_INPUT
-from app.portals.oic.automation.ui_utils import advance_form, capture_error_screenshot, fill_input_with_delay
+from app.portals.oic.automation.selectors import SEL_CLAIM_NUMBER_INPUT, SEL_CLAIM_TYPE_DROPDOWN, SEL_NEXT_BTN, SEL_POLICY_NUMBER_INPUT
+from app.portals.oic.automation.ui_utils import advance_form, capture_error_screenshot, fill_input_with_delay, select_primeng_dropdown
 from app.utils import load_automation_defaults
 
 logger = logging.getLogger(__name__)
@@ -92,33 +91,12 @@ async def fill_claim_search(
     claim_type = _resolve_claim_type(claim, defaults)
     _log_info(f"🔽 [Dropdown] Selecting Claim Type: '{claim_type}' (payment_to='{claim.payment_to}')...")
 
-    try:
-        # Click the PrimeNG dropdown trigger to open the options panel
-        dropdown = page.locator("#claimType")
-        await dropdown.wait_for(state="visible", timeout=8000)
-        await dropdown.click()
-        await asyncio.sleep(0.3)
-
-        # Wait for dropdown panel to render and select the matching option
-        option = page.get_by_role("option", name=claim_type, exact=True)
-        await option.wait_for(state="visible", timeout=3000)
-        await option.click()
-        await asyncio.sleep(0.3)
-
-        # Verify the dropdown now shows the selected value
-        selected_label = await dropdown.locator(".p-dropdown-label").inner_text()
-        selected_text = selected_label.strip()
-
-        if claim_type.lower() in selected_text.lower():
-            _log_success(f"Claim Type selected → '{selected_text}'")
-        else:
-            raise ValueError(f"Claim Type shows '{selected_text}', expected '{claim_type}'.")
-    except Exception as exc:
-        await capture_error_screenshot(page, "claim_type_select_failed", log)
-        _log_error(f"Failed to select Claim Type dropdown: {exc}")
-        if not await field_problem(page, log, "Claim Type", str(exc)):
-            if isinstance(log, AutomationLogger): log.outdent()
-            return False
+    if not await select_primeng_dropdown(
+        page, SEL_CLAIM_TYPE_DROPDOWN, claim_type, "Claim Type", log, field_delay_ms, exact=True,
+    ):
+        if isinstance(log, AutomationLogger):
+            log.outdent()
+        return False
 
     if stop_cb():
         if isinstance(log, AutomationLogger): log.outdent()

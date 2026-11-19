@@ -1446,15 +1446,12 @@ async def _fill_survey_charges(page: Page, claim, defaults, log: AutomationLogge
 
             # Select dropdown using portal label (avoids mismatches like "Others" vs "Other Expenses")
             dropdown_label = f"{portal_label} Expense Type"
-            await select_primeng_dropdown(page, S.SEL_LOSS_EXPENSES_DROPDOWN, portal_label, dropdown_label, log, delay_ms=delay)
+            if not await select_primeng_dropdown(
+                page, S.SEL_LOSS_EXPENSES_DROPDOWN, portal_label, dropdown_label, log, delay_ms=delay, exact=True,
+            ):
+                raise RuntimeError(f"Expense type '{portal_label}' was not selected; cannot add its amount")
             if field_decision(page, log, dropdown_label) == "skip":
                 continue
-            if not field_was_handled(page, log, dropdown_label):
-                if not await _dropdown_has_value(page.locator(S.SEL_LOSS_EXPENSES_DROPDOWN).first, portal_label):
-                    if not await field_problem(page, log, dropdown_label, "OIC did not retain the expense type."):
-                        raise RuntimeError(f"Expense type '{portal_label}' was not selected; cannot add its amount")
-                    if field_decision(page, log, dropdown_label) == "skip":
-                        continue
 
             # Click Add Expenses +
             add_label = f"Add {portal_label} expense"

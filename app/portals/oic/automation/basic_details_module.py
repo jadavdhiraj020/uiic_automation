@@ -78,144 +78,40 @@ from app.portals.oic.automation.date_formatter import format_oic_date
 from app.portals.oic.city_mapping import city_from_licence
 from app.portals.oic.license_type_mapping import resolve_license_type
 from app.portals.oic.rto_mapping import resolve_rto_choice
-from app.portals.oic.automation.recovery import field_problem, field_was_handled
+from app.portals.oic.automation.dropdowns import dropdown_is_available, select_dropdown_option
+from app.portals.oic.automation.recovery import field_decision, field_problem, field_was_handled
 
 
 async def _select_rto(page: Page, registration_number: str, excel_value: str, log: AutomationLogger, delay: int) -> None:
     """Select an RTO using registration, Excel RTO, then the first portal option."""
-    opened = False
+    if field_was_handled(page, log, "RTO"):
+        return
+    choice = resolve_rto_choice(registration_number, excel_value, ())
+    mapped_choice = resolve_rto_choice(registration_number, excel_value, (choice.mapped_location,))
+    expected = ""
+    if mapped_choice.source == "registration code":
+        choice, expected = mapped_choice, mapped_choice.name
+
+    def choose(options):
+        nonlocal choice
+        choice = resolve_rto_choice(registration_number, excel_value, options)
+        return choice.name
+
     try:
-        dropdown = page.locator(SEL_RTO_DROPDOWN).first
-        await dropdown.wait_for(state="visible", timeout=10000)
-        await dropdown.scroll_into_view_if_needed()
-        await dropdown.click()
-        opened = True
-        panel = page.locator(".p-dropdown-panel:visible").last
-        await panel.wait_for(state="visible", timeout=5000)
-        items = panel.locator("li[role='option']:not(.p-disabled):not([aria-disabled='true']), .p-dropdown-item:not(.p-disabled):not([aria-disabled='true'])")
-        await items.first.wait_for(state="attached", timeout=10000)
-        options = []
-        previous_options = None
-        stable_polls = 0
-        for _ in range(15):
-            options = [text.strip() for text in await items.all_text_contents()]
-            choice = resolve_rto_choice(registration_number, excel_value, options)
-            stable_polls = stable_polls + 1 if options == previous_options else 0
-            previous_options = options
-            if choice.name and stable_polls >= 2:
-                break
-            await asyncio.sleep(0.3)
-        if not choice.name:
-            await page.keyboard.press("Escape")
-            opened = False
-            log.warning("No selectable RTO options were available; review it manually.")
-            await field_problem(page, log, "RTO", "No selectable RTO options were available.")
-            return
-        exact = items.filter(has_text=re.compile(r"^\s*" + re.escape(choice.name) + r"\s*$", re.IGNORECASE))
-        count = await exact.count()
-        if not count:
-            await page.keyboard.press("Escape")
-            opened = False
-            log.warning(f"RTO '{choice.name}' is no longer available in the portal; review it manually.")
-            await field_problem(page, log, "RTO", "The selected RTO option is no longer available.")
-            return
+        selected = await select_dropdown_option(page, SEL_RTO_DROPDOWN, choose, expected=expected, allow_duplicate=True)
         if choice.source == "first available option":
-            log.warning(f"RTO registration code '{choice.registration_code or 'unavailable'}' and Excel RTO '{excel_value}' did not match; selecting the first option '{choice.name}', which may be unrelated. Review it manually.")
+            log.warning(f"RTO registration code '{choice.registration_code or 'unavailable'}' and Excel RTO '{excel_value}' did not match; selected the first option '{selected}'. Review the selected office.")
         elif choice.source == "Excel RTO name":
-            log.warning(f"RTO registration code '{choice.registration_code or 'unavailable'}' did not match a portal option; using Excel RTO '{excel_value}' -> '{choice.name}'. Review the selected office.")
+            log.warning(f"RTO registration code '{choice.registration_code or 'unavailable'}' did not match a portal option; using Excel RTO '{excel_value}' → '{selected}'.")
         if choice.possible_mismatch:
-            log.warning(f"RTO registration code '{choice.registration_code}' maps to '{choice.mapped_location}', which may differ from Excel RTO '{excel_value}'. Review the mismatch.")
-        if count > 1:
-            log.warning(f"RTO '{choice.name}' has {count} identical portal labels; selecting the first. Review the office.")
-        await exact.first.click()
-        opened = False
-        log.field_selected("RTO", choice.name, source=choice.source)
+            log.warning(f"RTO registration code '{choice.registration_code}' maps to '{choice.mapped_location}', which may differ from Excel RTO '{excel_value}'.")
+        log.field_selected("RTO", selected, source=choice.source)
     except Exception as exc:
-        if opened:
-            try:
-                await page.keyboard.press("Escape")
-            except Exception:
-                pass
         log.field_failed("RTO", str(exc))
         await field_problem(page, log, "RTO", str(exc))
     finally:
         await asyncio.sleep(delay / 1000.0)
 
-
-async def _select_driver_city(page: Page, city: str, log: AutomationLogger, delay: int) -> bool:
-    """Select the exact district from the live city dropdown."""
-    opened = False
-    try:
-        dropdown = page.locator(SEL_CITY_DROPDOWN).first
-        await dropdown.wait_for(state="visible", timeout=10000)
-        await dropdown.scroll_into_view_if_needed()
-        await dropdown.click()
-        opened = True
-        panel = page.locator(".p-dropdown-panel:visible").last
-        await panel.wait_for(state="visible", timeout=5000)
-        items = panel.locator("li[role='option'], .p-dropdown-item")
-        exact = items.filter(has_text=re.compile(r"^\s*" + re.escape(city) + r"\s*$", re.IGNORECASE))
-        count = 0
-        for _ in range(15):
-            count = await exact.count()
-            if count:
-                break
-            await asyncio.sleep(0.3)
-        if count != 1:
-            log.warning(f"City '{city}' has {count} matching portal options; review it manually.")
-            return False
-        await exact.first.click()
-        opened = False
-        log.field_selected("City", city, source="Driver licence prefix")
-        return True
-    except Exception as exc:
-        log.field_failed("City", str(exc))
-        return False
-    finally:
-        if opened:
-            try:
-                await page.keyboard.press("Escape")
-            except Exception:
-                pass
-        await asyncio.sleep(delay / 1000.0)
-
-
-async def _select_mapped_licence_type(page: Page, value: str, source: str,
-                                      log: AutomationLogger, delay: int) -> None:
-    """Choose the mapped option exactly, without a different partial match."""
-    opened = False
-    try:
-        dropdown = page.locator(SEL_LICENSE_TYPE_DROPDOWN).first
-        await dropdown.wait_for(state="visible", timeout=10000)
-        await dropdown.scroll_into_view_if_needed()
-        await dropdown.click()
-        opened = True
-        panel = page.locator(".p-dropdown-panel:visible").last
-        await panel.wait_for(state="visible", timeout=5000)
-        items = panel.locator("li[role='option'], .p-dropdown-item")
-        exact = items.filter(has_text=re.compile(r"^\s*" + re.escape(value) + r"\s*$", re.IGNORECASE))
-        count = 0
-        for _ in range(15):
-            count = await exact.count()
-            if count:
-                break
-            await asyncio.sleep(0.3)
-        if count != 1:
-            log.warning(f"Mapped Licence Type '{value}' is not uniquely available; review it manually.")
-            return
-        await exact.first.click()
-        opened = False
-        log.field_selected("License Type", value, source=source)
-    except Exception as exc:
-        log.field_failed("License Type", str(exc))
-        await field_problem(page, log, "License Type", str(exc))
-    finally:
-        if opened:
-            try:
-                await page.keyboard.press("Escape")
-            except Exception:
-                pass
-        await asyncio.sleep(delay / 1000.0)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PUBLIC API
@@ -658,12 +554,10 @@ async def _fill_driver_details(page: Page, claim, log, delay: int, automation_de
     )
     if licence_type:
         source = "Class of Vehicle" if licence_source == "class" else "Excel Licence Type"
-        if licence_source == "class" or str(claim.license_type_of_driver or "").strip().casefold() == "lmv":
-            await _select_mapped_licence_type(page, licence_type, source, log, delay)
-        else:
-            await select_primeng_dropdown(
-                page, SEL_LICENSE_TYPE_DROPDOWN, licence_type, "License Type", log, delay, source=source
-            )
+        exact = licence_source == "class" or str(claim.license_type_of_driver or "").strip().casefold() == "lmv"
+        await select_primeng_dropdown(
+            page, SEL_LICENSE_TYPE_DROPDOWN, licence_type, "License Type", log, delay, source=source, exact=exact,
+        )
     elif licence_source == "ambiguous":
         log.warning("Class of Vehicle does not identify one Licence Type; no new choice made. "
                     "OIC requires a manual selection before advancing if the field is blank.")
@@ -789,48 +683,29 @@ async def _fill_driver_details(page: Page, claim, log, delay: int, automation_de
     # )
     log.info("  ℹ️ [Country] → pre-filled by portal (read-only) — skipped")
 
-    # 15. State * (mandatory) — use the driving licence's issuing-state prefix.
+    # 15–17. State, City and Pincode use dependent dropdowns.
     state = _state_from_driver_license(claim.driver_license_number)
     if state:
-        await select_primeng_dropdown(
-            page, SEL_STATE_DROPDOWN, state,
-            "State", log, delay
-        )
+        if not await select_primeng_dropdown(page, SEL_STATE_DROPDOWN, state, "State", log, delay):
+            return False
+    elif not await field_problem(page, log, "State", "No state mapping exists for this driving licence prefix."):
+        return False
+
+    if field_decision(page, log, "State") == "skip" and not await dropdown_is_available(page, SEL_CITY_DROPDOWN):
+        log.info("City and Pincode are unavailable until a State is selected.")
     else:
-        log.warning("Driver State could not be determined from the driving licence prefix; review it manually.")
-        if not await field_problem(page, log, "State", "No state mapping exists for this driving licence prefix."):
-            return False
-
-    # 16. Use the issuing-office code in the driver's licence for the district.
-    # Do not continue with a stale city or PIN if state/city selection failed.
-    if not field_was_handled(page, log, "State"):
-        state_label = page.locator(f"{SEL_STATE_DROPDOWN} .p-dropdown-label").first
-        if (await state_label.inner_text(timeout=3000)).strip().casefold() != state.casefold():
-            if not await field_problem(page, log, "State", "OIC did not retain the state selection."):
+        city = city_from_licence(claim.driver_license_number)
+        if city:
+            if not await select_primeng_dropdown(
+                page, SEL_CITY_DROPDOWN, city, "City", log, delay, source="Driver licence prefix", exact=True,
+            ):
                 return False
-    city = city_from_licence(claim.driver_license_number)
-    if not city or not await _select_driver_city(page, city, log, delay):
-        reason = "OIC did not retain the district selection." if city else "No district mapping exists for this driving licence prefix."
-        if not await field_problem(page, log, "City", reason):
+        elif not await field_problem(page, log, "City", "No district mapping exists for this driving licence prefix."):
             return False
 
-    # Row 5 ─────────────────────────────────────────────────────────────────
-
-    # 17. Pincode * (mandatory) — PrimeNG dropdown
-    # NOTE: Pincode options load dynamically after State & City are selected.
-    # We use a dedicated helper that waits for the dropdown to populate before
-    # attempting to match the 6-digit code.
-    #
-    # F4 — Explicit settle delay: Angular triggers an async XHR after City
-    # selection to fetch pincodes for the chosen city. The dropdown transitions
-    # through disabled → enabled once the XHR resolves. Without this sleep the
-    # _select_pincode_dropdown poll can start while the DOM update is still
-    # in-flight, causing the first few p-disabled checks to be unreliable.
-    # 800 ms gives Angular one full change-detection cycle (typically ~400 ms)
-    # plus a safety margin, without adding significant wall-clock cost.
-    await asyncio.sleep(0.8)
-    if not await _select_pincode_dropdown(page, SEL_PINCODE_DROPDOWN, log, delay):
-        if not await field_problem(page, log, "Pincode", "No PIN code could be selected."):
+        if field_decision(page, log, "City") == "skip" and not await dropdown_is_available(page, SEL_PINCODE_DROPDOWN):
+            log.info("Pincode is unavailable until a City is selected.")
+        elif not await _select_pincode_dropdown(page, log, delay):
             return False
 
     # 18. Address * (mandatory) — textarea
@@ -932,64 +807,22 @@ async def _click_next_button(page: Page, log, stop_cb) -> bool:
 # PRIVATE — PINCODE DROPDOWN HELPER
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def _select_pincode_dropdown(
-    page: Page,
-    selector: str,
-    log,
-    delay: int,
-) -> bool:
+async def _select_pincode_dropdown(page: Page, log, delay: int) -> bool:
     """Select the first available six-digit PIN for the selected city."""
-    opened = False
+    if field_was_handled(page, log, "Pincode"):
+        return True
+
+    def first_pincode(options):
+        return next((value for value in options if re.match(r"^\d{6}(?!\d)", value)), "")
+
     try:
-        dropdown = page.locator(selector).first
-        enabled = False
-        for _ in range(20):
-            await asyncio.sleep(0.3)
-            try:
-                is_disabled = await dropdown.evaluate(
-                    "el => el.classList.contains('p-disabled') || "
-                    "!!el.closest('.p-disabled')"
-                )
-                if not is_disabled:
-                    enabled = True
-                    break
-            except Exception:
-                pass
-
-        if not enabled:
-            log.warning("Pincode dropdown is unavailable; review it manually.")
-            return False
-
-        await dropdown.wait_for(state="visible", timeout=5000)
-        await dropdown.scroll_into_view_if_needed()
-        await dropdown.click()
-        opened = True
-        panel = page.locator(".p-dropdown-panel:visible").last
-        await panel.wait_for(state="visible", timeout=5000)
-        items = panel.locator("li[role='option']:not([aria-disabled='true']):not(.p-disabled)")
-
-        for _ in range(15):
-            await asyncio.sleep(0.3)
-            labels = await items.all_text_contents()
-            for index, text in enumerate(labels):
-                value = text.strip()
-                if re.match(r"^\d{6}(?!\d)", value):
-                    await items.nth(index).click()
-                    opened = False
-                    log.field_selected("Pincode", value, source="First available portal option")
-                    return True
-        log.warning("No PIN options loaded for the selected city; review it manually.")
-        return False
-
+        pin = await select_dropdown_option(page, SEL_PINCODE_DROPDOWN, first_pincode, allow_duplicate=True)
+        log.field_selected("Pincode", pin, source="First available portal option")
+        return True
     except Exception as exc:
         log.field_failed("Pincode", str(exc))
-        return False
+        return await field_problem(page, log, "Pincode", str(exc))
     finally:
-        if opened:
-            try:
-                await page.keyboard.press("Escape")
-            except Exception:
-                pass
         await asyncio.sleep(delay / 1000.0)
 
 

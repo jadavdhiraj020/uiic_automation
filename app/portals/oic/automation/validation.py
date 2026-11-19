@@ -34,13 +34,18 @@ function readValidation(controls, includeUnlinked) {
         const invalid = control.getAttribute('aria-invalid') === 'true' ||
             Boolean(control.willValidate && !control.validity.valid);
         const linked = references(control.getAttribute('aria-errormessage'));
-        if (invalid) linked.push(...references(control.getAttribute('aria-describedby')));
+        if (invalid) {
+            // A description can be a placeholder or help text. Only an actual
+            // validation element can supply a reason to pause this field.
+            linked.push(...references(control.getAttribute('aria-describedby')).filter(node =>
+                node?.matches(`${errorSelector}, [role="alert"]`)));
+        }
         if (singleField) linked.push(...group.querySelectorAll(errorSelector));
         const errors = linked.filter(visible).filter(node => clean(node.innerText));
         errors.forEach(node => seen.add(node));
         const nativeError = control.validity?.valueMissing ? 'Required.' : control.validationMessage;
         const message = errors[0]?.innerText || nativeError ||
-            (invalid && (label || !includeUnlinked) ? 'Check the value.' : '');
+            (invalid && includeUnlinked && label ? 'Check the value.' : '');
         if (message) issues.push([label, clean(message)]);
     }
 
@@ -62,7 +67,7 @@ async def field_validation_message(locator):
         found = await locator.evaluate(f"field => ({_READ_VALIDATION})([field], false)", timeout=500)
         if found:
             # Allow the portal to clear an error from the previous value.
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.4)
             found = await locator.evaluate(f"field => ({_READ_VALIDATION})([field], false)", timeout=500)
             if found:
                 return operator_reason(found[0][1], "OIC flagged this field. Check its value in Chrome.")

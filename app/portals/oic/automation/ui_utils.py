@@ -7,6 +7,7 @@ from datetime import datetime
 
 from app.automation.automation_logger import AutomationLogger, _ts
 from app.portals.oic.automation.date_formatter import format_oic_date as _format_oic_date
+from app.portals.oic.automation.dropdowns import matching_option, select_dropdown_option
 from app.portals.oic.automation.recovery import (
     current_recovery, field_decision, field_problem, field_was_handled, form_step_is_open, wait_until_ready,
 )
@@ -417,91 +418,28 @@ async def click_primeng_radio(
 
 async def select_primeng_dropdown(
     page: Page, dropdown_selector: str, value: str, label: str,
-    log, delay_ms: int = 80, source: Optional[str] = None
-):
-    """Select a value in a PrimeNG <p-dropdown> component."""
+    log, delay_ms: int = 80, source: Optional[str] = None, *, exact: bool = False,
+) -> bool:
+    """Select the requested option and check the value shown in the same field."""
     if field_was_handled(page, log, label):
-        return
+        return True
     try:
-        # Wait up to 10 seconds for the dropdown to be visible and enabled (not disabled by Angular/PrimeNG)
-        try:
-            await page.wait_for_selector(f"{dropdown_selector}:not(.p-disabled)", state="visible", timeout=10000)
-        except Exception:
-            pass
-
-        dropdown = page.locator(dropdown_selector).first
-        await dropdown.wait_for(state="visible", timeout=5000)
-        await dropdown.scroll_into_view_if_needed()
-        await dropdown.click()
-
-        # Wait for the overlay panel to open and for actual options to populate (dynamic poll)
-        panel = page.locator(".p-dropdown-panel:visible, .p-overlay:visible")
-        items = panel.locator(".p-dropdown-item, li[role='option']")
-
-        count = 0
-        for _ in range(10):  # poll up to 3 seconds (10 * 300ms)
-            await asyncio.sleep(0.3)
-            count = await items.count()
-            if count > 0:
-                # Check if the overlay isn't showing a single "Loading..." or "No records found" option
-                first_text = (await items.first.inner_text()).strip().lower()
-                if "loading" not in first_text and "fetching" not in first_text:
-                    break
-
-        # Search the overlay panel for a matching option
-        search = str(value).strip().lower()
-        matched = False
-        for i in range(count):
-            item_text = (await items.nth(i).inner_text()).strip().lower()
-            if search in item_text or item_text in search:
-                await items.nth(i).click()
-                await _check_field_validation(dropdown)
-                matched = True
-                if isinstance(log, AutomationLogger):
-                    kwargs = {}
-                    if source is not None:
-                        kwargs["source"] = source
-                    log.field_selected(label, value, **kwargs)
-                else:
-                    log(f"[{_ts()}]   ✅ [{label}] selected → '{value}'")
-                break
-
-        if not matched:
-            # Try word-level match
-            words = search.split()
-            for i in range(count):
-                item_text = (await items.nth(i).inner_text()).strip().lower()
-                if any(w for w in words if len(w) > 2 and w in item_text):
-                    actual = await items.nth(i).inner_text()
-                    await items.nth(i).click()
-                    await _check_field_validation(dropdown)
-                    matched = True
-                    if isinstance(log, AutomationLogger):
-                        kwargs = {}
-                        if source is not None:
-                            kwargs["source"] = source
-                        log.field_selected(label, actual.strip(), **kwargs)
-                    else:
-                        log(f"[{_ts()}]   ✅ [{label}] selected → '{actual.strip()}'")
-                    break
-
-        if not matched:
-            # Close dropdown without selecting
-            await page.keyboard.press("Escape")
-            if isinstance(log, AutomationLogger):
-                log.field_failed(label, f"No match for '{value}' in {count} options")
-            else:
-                log(f"[{_ts()}]   ⚠️ [{label}] no match for '{value}' ({count} options)")
-            await field_problem(page, log, label, f"No match for '{value}' in {count} options")
-
-    except Exception as e:
+        chosen = await select_dropdown_option(
+            page, dropdown_selector, lambda options: matching_option(value, options, exact=exact), expected=value,
+        )
         if isinstance(log, AutomationLogger):
-            log.field_failed(label, str(e))
+            log.field_selected(label, chosen, **({"source": source} if source is not None else {}))
         else:
-            log(f"[{_ts()}]   ⚠️ [{label}] error: {e}")
-        await field_problem(page, log, label, str(e))
-
-    await asyncio.sleep(delay_ms / 1000.0)
+            log(f"[{_ts()}] [{label}] selected → '{chosen}'")
+        return True
+    except Exception as exc:
+        if isinstance(log, AutomationLogger):
+            log.field_failed(label, str(exc))
+        else:
+            log(f"[{_ts()}] [{label}] selection failed: {exc}")
+        return await field_problem(page, log, label, str(exc))
+    finally:
+        await asyncio.sleep(delay_ms / 1000.0)
 
 
 async def fill_primeng_inputnumber(
