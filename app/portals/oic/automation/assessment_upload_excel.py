@@ -159,16 +159,19 @@ def build_upload_workbook(claim, defaults, output_folder=None):
         material = part["material_type"]
         category, rate = {"metal": ("Metallic Parts", metal_rate), "plastic": ("Plastic", Decimal(0) if nil_depreciation else Decimal(50)), "glass": ("Glass", Decimal(0))}[material]
         rows.append((category, str(part["part_name"]), _number(part["billed_amount"], "Part amount"), rate, _number(part["estimated_amount"], "Part estimated amount"), part_hsn))
-    for key, name in (("rr", "R/R"), ("denting", "DENTING"), ("cw", "C/W")):
-        rows.append(("Labour Charge", name, totals[key], Decimal(0), totals[key], labour_hsn))
+    labour_rows = [
+        ("Labour Charge", name, totals[key], Decimal(0), totals[key], labour_hsn)
+        for key, name in (("rr", "R/R"), ("denting", "DENTING"), ("cw", "C/W"))
+    ]
     paint_total = totals["painting"]
     if nil_depreciation or paint_rate == PAINT_SPLIT_RATE:
         material_amount = (paint_total * Decimal("0.25")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         labour_amount = paint_total - material_amount
-        rows.append(("Plastic", "Painting material", material_amount, Decimal(0) if nil_depreciation else Decimal(50), material_amount, part_hsn))
-        rows.append(("Labour Charge", "Painting labour", labour_amount, Decimal(0), labour_amount, labour_hsn))
+        labour_rows.append(("Plastic", "Painting material", material_amount, Decimal(0) if nil_depreciation else Decimal(50), material_amount, part_hsn))
+        labour_rows.append(("Labour Charge", "Painting labour", labour_amount, Decimal(0), labour_amount, labour_hsn))
     else:
-        rows.append(("Labour Charge", "PAINT", paint_total, paint_rate, paint_total, labour_hsn))
+        labour_rows.append(("Labour Charge", "PAINT", paint_total, paint_rate, paint_total, labour_hsn))
+    rows.extend(row for row in labour_rows if row[2] != 0)
 
     # OIC compares this field against the sum of the uploaded item amounts.
     # Derive it from the same rows rather than from the separate GST summary.
