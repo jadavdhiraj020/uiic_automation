@@ -268,10 +268,12 @@ class AutomationEngine:
         """Resume past a failed page action only after reaching its destination."""
         if self._oic_recovery is None:
             return await operation()
-        from app.portals.oic.automation.recovery import wait_until_ready
+        from app.portals.oic.automation.recovery import FormAdvanced, wait_until_ready
 
         try:
             succeeded = await operation()
+        except FormAdvanced:
+            return not self._stop_requested
         except Exception as exc:
             self.log.exception(f"OIC {label} failed", exc)
             succeeded = False
@@ -722,6 +724,7 @@ class AutomationEngine:
 
                 recovery_token = current_recovery.set(self._oic_recovery)
                 resources.callback(current_recovery.reset, recovery_token)
+                self._oic_recovery.claim_number = claim.claim_no
                 authenticated_page = None
 
                 async def oic_step(step):
@@ -1241,8 +1244,25 @@ class AutomationEngine:
                     from app.portals.oic.automation.recovery import STEP_MARKERS
                     from app.portals.oic.automation.validation import portal_validation_summary
 
-                    async def run_form_phase(handler, section, destination, button="Next"):
+                    async def run_form_phase(handler, source, destination, button="Next"):
                         title, _ = STEP_MARKERS[destination]
+                        section = "Claim Search" if source == "search" else STEP_MARKERS[source][0]
+
+                        async def ready():
+                            return await oic_step(destination)
+
+                        async def fill_form():
+                            if self._oic_recovery is not None:
+                                self._oic_recovery.form_step = source
+                                self._oic_recovery.next_step_ready = ready
+                            try:
+                                return await handler(
+                                    page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay,
+                                )
+                            finally:
+                                if self._oic_recovery is not None:
+                                    self._oic_recovery.form_step = None
+                                    self._oic_recovery.next_step_ready = None
 
                         async def describe():
                             if await form_step_is_open(page, destination) and await assessment_claim_mismatch(page, claim.claim_no):
@@ -1254,11 +1274,7 @@ class AutomationEngine:
 
                         return await self._run_oic_phase(
                             page, f"Open {title}",
-                            lambda: handler(
-                                page, claim, log=self.log, stop_cb=self._check_stop,
-                                field_delay_ms=field_delay,
-                            ),
-                            lambda: oic_step(destination),
+                            fill_form, ready,
                             "Return here and click Continue when the next step opens.",
                             section=section, describe=describe,
                         )
@@ -1267,7 +1283,7 @@ class AutomationEngine:
                     self.step_cb(2, steps[2])
                     self.log.phase_banner(3, total_steps, "Claim Search")
                     if not await run_form_phase(
-                        fill_claim_search, "Claim Search", "basic",
+                        fill_claim_search, "search", "basic",
                     ):
                         return AutomationRunResult(
                             False, "Phase 3 (Claim Search) failed."
@@ -1277,7 +1293,7 @@ class AutomationEngine:
                     self.step_cb(3, steps[3])
                     self.log.phase_banner(4, total_steps, "Basic Details")
                     if not await run_form_phase(
-                        fill_basic_details, "Basic Details", "interim",
+                        fill_basic_details, "basic", "interim",
                     ):
                         return AutomationRunResult(
                             False, "Phase 4 (Basic Details) failed."
@@ -1291,7 +1307,7 @@ class AutomationEngine:
                     )
 
                     if not await run_form_phase(
-                        oic_fill_interim_report, "Interim Report", "loss",
+                        oic_fill_interim_report, "interim", "loss",
                     ):
                         return AutomationRunResult(
                             False, "Phase 5 (Interim Report) failed."
@@ -1325,7 +1341,7 @@ class AutomationEngine:
                         )
 
                         if not await run_form_phase(
-                            fill_assessment_of_loss, "Assessment of Loss", "upload", "Save and Next",
+                            fill_assessment_of_loss, "loss", "upload", "Save and Next",
                         ):
                             if self._oic_recovery is None and getattr(claim, "_oic_upload_failed", False) and not self._check_stop():
                                 self.log.error("Invoice upload failed. Automation has stopped; the browser remains open for review.")
@@ -1340,6 +1356,8 @@ class AutomationEngine:
                         _submission_confirmed,
                     )
 
+                    if self._oic_recovery is not None:
+                        self._oic_recovery.form_step = "upload"
                     try:
                         uploaded = await fill_document_upload_section(
                             page, claim, log=self.log, stop_cb=self._check_stop,
@@ -1350,6 +1368,9 @@ class AutomationEngine:
                             raise
                         self.log.exception("OIC document upload failed", exc)
                         uploaded = False
+                    finally:
+                        if self._oic_recovery is not None:
+                            self._oic_recovery.form_step = None
                     if not uploaded and self._oic_recovery is not None and not self._stop_requested:
                         uploaded = await self._oic_recovery.pause(
                             page, self.log, "Finish Document Upload",

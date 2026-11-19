@@ -257,6 +257,12 @@ class MainWindow(QMainWindow):
         ver.setObjectName("appVersion")
         lay.addWidget(ver)
 
+        self._review_oic_button = QPushButton("Review issue")
+        self._review_oic_button.setObjectName("navBtn")
+        self._review_oic_button.hide()
+        self._review_oic_button.clicked.connect(self._raise_oic_recovery)
+        lay.addWidget(self._review_oic_button)
+
         self.status_pill = QFrame()
         self.status_pill.setObjectName("statusPill")
         self.status_pill.setProperty("status", "ready")
@@ -900,13 +906,20 @@ class MainWindow(QMainWindow):
         if prompt.can_skip:
             skip = dialog.addButton("Skip this field", QMessageBox.ButtonRole.ActionRole)
             skip.clicked.connect(lambda: respond("skip"))
-        dialog.show()
-        dialog.raise_()
-        dialog.activateWindow()
+        self._review_oic_button.show()
+        self._raise_oic_recovery()
         if not dialog.isActiveWindow():
             QApplication.alert(self, 5000)
 
+    def _raise_oic_recovery(self):
+        dialog = getattr(self, "_oic_recovery_dialog", None)
+        if dialog:
+            dialog.showNormal()
+            dialog.raise_()
+            dialog.activateWindow()
+
     def _dismiss_oic_recovery(self):
+        self._review_oic_button.hide()
         dialog = getattr(self, "_oic_recovery_dialog", None)
         if dialog:
             self._oic_recovery_dialog = None

@@ -29,31 +29,44 @@ ACTIVE_STEP = (
 BLOCKING_DIALOG = '[role="dialog"][aria-modal="true"]:visible, .p-dialog-mask .p-dialog:visible, .swal2-popup:visible'
 
 
+async def active_form_step(page):
+    known_titles = {name.casefold(): step for step, (name, _) in STEP_MARKERS.items()}
+    for selector in ('[aria-current="step"]:visible', ACTIVE_STEP):
+        active = await page.locator(selector).all_inner_texts()
+        titles = {re.sub(r"^[\W\d]+", "", text).strip().casefold() for text in active}
+        active_steps = {known_titles[title] for title in titles if title in known_titles}
+        if len(active_steps) == 1:
+            return active_steps.pop()
+    return None
+
+
 async def form_step_is_open(page, step):
     if page.is_closed() or await page.locator(BLOCKING_DIALOG).count():
         return False
-    title, markers = STEP_MARKERS[step]
-    known_titles = {name.casefold() for name, _ in STEP_MARKERS.values()}
-    for selector in ('[aria-current="step"]:visible', ACTIVE_STEP):
-        active = await page.locator(selector).all_inner_texts()
-        active_titles = {re.sub(r"^[\W\d]+", "", text).strip().casefold() for text in active} & known_titles
-        if len(active_titles) == 1:
-            return title.casefold() in active_titles
+    active = await active_form_step(page)
+    if active is not None and active != step:
+        return False
+    _, markers = STEP_MARKERS[step]
     visible_markers = ", ".join(f"{selector.strip()}:visible" for selector in markers.split(","))
     if await page.locator(visible_markers).count():
         return True
+    if active != step:
+        return False
+    if step == "loss":
+        return bool(await page.locator('input[type=file][name=excel]').count())
     return step == "upload" and bool(await page.locator(f"input[type=file]{S.SEL_UPLOAD_WORKSHOP_ESTIMATE}").count())
 
 
 async def assessment_claim_mismatch(page, expected):
     identifier = lambda value: re.sub(r"[\W_]", "", str(value or "")).casefold()
-    if not identifier(expected):
+    expected = identifier(expected)
+    if not expected:
         return False
     control = page.locator('input#claimNumber:is([readonly], [disabled]):visible').first
     if not await control.is_visible():
         return False
     shown = identifier(await control.input_value(timeout=1000))
-    return bool(shown and shown != identifier(expected))
+    return bool(shown and shown != expected)
 
 
 async def wait_until_ready(ready, *, seconds, stopped=lambda: False):
@@ -102,12 +115,22 @@ class RecoveryPrompt:
     stop_only: bool = False
 
 
+class FormAdvanced(BaseException):
+    """Unwind the old form handler when the operator already opened the next step."""
+
+
 class OperatorRecovery:
     def __init__(self, notify, stopped):
         self.notify = notify
         self.stopped = stopped
         self.pending = None
         self.handled = {}
+        self.form_step = None
+        self.next_step_ready = None
+        self.claim_number = None
+
+    def field_key(self, page, section, action):
+        return (id(page), self.form_step, section, action)
 
     def respond(self, prompt_id, decision):
         pending = self.pending
@@ -130,21 +153,27 @@ class OperatorRecovery:
         self, page, log, action, reason, *, ready=None, instruction=None, describe=None, section=None, stop_only=False,
     ):
         section = section or getattr(log, "_section", None) or "OIC"
-        # Record the document before anyone edits the form. A reload can discard
-        # earlier unsaved work even if the address in Chrome looks the same.
-        marker = uuid4().hex
+        marker = None
         if ready is None and not stop_only and page and not page.is_closed():
-            with suppress(Exception):
-                await asyncio.wait_for(
-                    page.evaluate("""(marker) => {
-                        const step = document.querySelector('.p-steps-item.p-highlight, [aria-current="step"]');
-                        window.__oicManualRecovery = {marker, href: location.href, step: step?.textContent};
-                    }""", marker),
-                    timeout=2,
-                )
+            candidate = uuid4().hex
+
+            async def record_document():
+                return await page.evaluate("""marker => {
+                    window.__oicManualRecovery = {
+                        marker, route: location.origin + location.pathname + location.search
+                    };
+                    return true;
+                }""", candidate)
+
+            if await wait_until_ready(record_document, seconds=3, stopped=self.stopped):
+                marker = candidate
         detail = operator_reason(reason, "")
         guidance = instruction or ""
         title = action
+        if ready is None and not stop_only and marker is None:
+            title, detail = "Chrome is unavailable", "App3 couldn’t confirm where it paused."
+            guidance = "Stop this run. Any open Chrome tab stays available for review."
+            stop_only = True
         while not self.stopped():
             if describe:
                 with suppress(Exception):
@@ -183,35 +212,67 @@ class OperatorRecovery:
                     return True
                 title, detail = action, "The expected page hasn’t opened yet."
                 continue
-            if page and not page.is_closed():
-                try:
-                    same_document = await asyncio.wait_for(
-                        page.evaluate("""(marker) => {
-                            const saved = window.__oicManualRecovery;
-                            const step = document.querySelector('.p-steps-item.p-highlight, [aria-current="step"]');
-                            return saved?.marker === marker && saved.href === location.href && saved.step === step?.textContent;
-                        }""", marker),
-                        timeout=2,
-                    )
-                except Exception:
-                    same_document = False
-                if same_document:
-                    self.handled[(id(page), section, action)] = decision
-                    label = "handled manually" if decision == "fixed" else "skipped by operator"
-                    log.info(f"OIC manual recovery: {section} / {action} {label}.")
-                    self.notify(None)
-                    return True
-            title = "The OIC form changed"
-            detail = "App3 can no longer resume at this field."
-            guidance = "Stop this run. Any open Chrome tab stays available for review."
-            stop_only = True
+            state = "unconfirmed"
+
+            async def check_form():
+                nonlocal state
+                state = await self._field_resume_state(page, marker, decision)
+                return state in ("same", "advanced", "closed", "reloaded")
+
+            await wait_until_ready(check_form, seconds=4, stopped=self.stopped)
+            if self.stopped():
+                break
+            if state == "advanced":
+                log.info(f"OIC manual recovery: {section} already completed in Chrome.")
+                self.notify(None)
+                raise FormAdvanced
+            if state == "same":
+                self.handled[self.field_key(page, section, action)] = decision
+                label = "handled manually" if decision == "fixed" else "skipped by operator"
+                log.info(f"OIC manual recovery: {section} / {action} {label}.")
+                self.notify(None)
+                return True
+            if state in ("closed", "reloaded"):
+                title = "The OIC tab changed"
+                detail = "The tab was closed or reloaded. App3 couldn’t verify the original form."
+                guidance = "Stop this run. Any open Chrome tab stays available for review."
+                stop_only = True
+            elif state == "different_claim":
+                title = action
+                detail = "Chrome is showing a different claim."
+                guidance = "Open the original claim and step in Chrome, then click Continue."
+            else:
+                title = action
+                detail = "App3 is still waiting for the original OIC step."
+                guidance = "Return to that step in Chrome and close any portal messages, then click Continue."
         raise asyncio.CancelledError
+
+    async def _field_resume_state(self, page, marker, decision):
+        if page.is_closed():
+            return "closed"
+        route = await page.evaluate("""marker => {
+            const saved = window.__oicManualRecovery;
+            if (saved?.marker !== marker) return null;
+            return saved.route === location.origin + location.pathname + location.search;
+        }""", marker)
+        if route is None:
+            return "reloaded"
+        if await assessment_claim_mismatch(page, self.claim_number):
+            return "different_claim"
+        original_step_open = route and (self.form_step is None or await form_step_is_open(page, self.form_step))
+        if decision == "fixed" and self.next_step_ready and await self.next_step_ready():
+            return "unconfirmed" if original_step_open else "advanced"
+        if original_step_open:
+            return "same"
+        return "unconfirmed"
 
 
 async def field_problem(page, log, label, reason):
     recovery = current_recovery.get()
     if recovery is None:
         return False
+    if field_was_handled(page, log, label):
+        return True
     detail = operator_reason(reason, "App3 could not fill this field in OIC.")
     return await recovery.pause(page, log, label, detail)
 
@@ -223,11 +284,13 @@ def field_was_handled(page, log, label):
 def field_decision(page, log, label):
     recovery = current_recovery.get()
     if recovery is not None:
-        return recovery.handled.get((id(page), getattr(log, "_section", None) or "OIC", label))
+        return recovery.handled.get(recovery.field_key(page, getattr(log, "_section", None) or "OIC", label))
     return None
 
 
 async def run_field(page, log, label, operation):
+    if field_was_handled(page, log, label):
+        return None
     try:
         return await operation()
     except Exception as exc:

@@ -7,7 +7,9 @@ from datetime import datetime
 
 from app.automation.automation_logger import AutomationLogger, _ts
 from app.portals.oic.automation.date_formatter import format_oic_date as _format_oic_date
-from app.portals.oic.automation.recovery import current_recovery, field_problem, form_step_is_open, wait_until_ready
+from app.portals.oic.automation.recovery import (
+    current_recovery, field_decision, field_problem, field_was_handled, form_step_is_open, wait_until_ready,
+)
 from app.portals.oic.automation.validation import field_validation_message
 
 # ── JavaScript Snippets ───────────────────────────────────────────────────────
@@ -173,6 +175,8 @@ async def fill_input_with_delay(
     log, delay_ms: int = 30, source: Optional[str] = None
 ):
     """Angular-aware instant or typed text fill with configurable inter-field delay."""
+    if field_was_handled(page, log, label):
+        return
     try:
         await page.wait_for_selector(selector, state="visible", timeout=5000)
         
@@ -215,6 +219,8 @@ async def select_dropdown_with_delay(
     log, delay_ms: int = 30, source: Optional[str] = None
 ):
     """Standard <select> dropdown helper with 3-pass matching and configurable delay."""
+    if field_was_handled(page, log, label):
+        return
     try:
         await page.wait_for_selector(selector, state="visible", timeout=5000)
         res = await page.evaluate(_JS_SELECT, [selector, str(value)])
@@ -249,6 +255,8 @@ async def click_radio_with_delay(
     log, delay_ms: int = 30, source: Optional[str] = None
 ):
     """Click radio via label with delay."""
+    if field_was_handled(page, log, label):
+        return
     try:
         res = await page.evaluate(_JS_CLICK_RADIO, [name, value])
         if res and res.get("ok"):
@@ -367,6 +375,8 @@ async def click_primeng_radio(
     log, delay_ms: int = 30, source: Optional[str] = None
 ):
     """Click a PrimeNG radio button using multi-strategy locator matching."""
+    if field_was_handled(page, log, label):
+        return
     try:
         radio = page.locator(radio_selector).first
         await radio.wait_for(state="attached", timeout=5000)
@@ -410,6 +420,8 @@ async def select_primeng_dropdown(
     log, delay_ms: int = 80, source: Optional[str] = None
 ):
     """Select a value in a PrimeNG <p-dropdown> component."""
+    if field_was_handled(page, log, label):
+        return
     try:
         # Wait up to 10 seconds for the dropdown to be visible and enabled (not disabled by Angular/PrimeNG)
         try:
@@ -497,6 +509,8 @@ async def fill_primeng_inputnumber(
     log, delay_ms: int = 30, source: Optional[str] = None
 ):
     """Fill a PrimeNG <p-inputnumber> component (which nests an <input> inside)."""
+    if field_was_handled(page, log, label):
+        return
     try:
         # PrimeNG inputnumber has a nested <input> element
         inner_input = page.locator(f"{selector} input").first
@@ -575,6 +589,9 @@ async def fill_mui_datepicker(
     Returns:
         True if the date was successfully filled, False otherwise.
     """
+    decision = field_decision(page, log, label)
+    if decision is not None:
+        return decision == "fixed"
     formatted = format_date_for_mui(value)
     if not formatted:
         if isinstance(log, AutomationLogger):
@@ -649,6 +666,8 @@ async def fill_textarea_primeng(
       3. Dispatches input / change / blur events so the framework registers the
          change (same pattern as fill_input_with_delay for <input> elements).
     """
+    if field_was_handled(page, log, label):
+        return
     try:
         locator = page.locator(selector).first
         await locator.wait_for(state="visible", timeout=5000)
