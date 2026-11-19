@@ -1428,7 +1428,7 @@ async def _fill_survey_charges(page: Page, claim, defaults, log: AutomationLogge
         "Professional Fee":   getattr(claim, "professional_fee", "0"),
         "Daily Allowances":   getattr(claim, "daily_allowance", "0"),
         "Photo Charges":      getattr(claim, "photo_charges", "0"),
-        "Other Expenses":     getattr(claim, "surveyor_other_expenses", "0"),
+        "Other Expenses":     claim.surveyor_other_expenses,
     }
 
     desc_val = defaults.get("expense_description", "conveyance")
@@ -1436,7 +1436,7 @@ async def _fill_survey_charges(page: Page, claim, defaults, log: AutomationLogge
 
     for expense_name, raw_amt in exp_map.items():
         try:
-            amt = _parse_amount_for_total(raw_amt)
+            amt = raw_amt if expense_name == "Other Expenses" else _parse_amount_for_total(raw_amt)
         except ValueError:
             amt = 0
 
@@ -1462,8 +1462,9 @@ async def _fill_survey_charges(page: Page, claim, defaults, log: AutomationLogge
             await asyncio.sleep(0.3)  # Wait for dynamic section/accordion tab to render
 
             # Fill dynamic accordion section using portal label for the tab locator
-            await _fill_dynamic_expense_accordion(page, portal_label, str(amt), desc_val, log, delay)
-            expected_expenses.append((portal_label, str(amt)))
+            amount_text = format(amt, "f") if isinstance(amt, Decimal) else str(amt)
+            await _fill_dynamic_expense_accordion(page, portal_label, amount_text, desc_val, log, delay)
+            expected_expenses.append((portal_label, amount_text))
 
     if expected_expenses:
         await _verify_expense_rows(page, expected_expenses, str(desc_val), log, delay)

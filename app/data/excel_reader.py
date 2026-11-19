@@ -255,7 +255,8 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                   allow_literal_values: bool = False,
                   allow_text_values: bool = False,
                   stop_at_next_label: bool = False,
-                  exact_offset: bool = False) -> Tuple[Optional[str], Optional[str]]:
+                  exact_offset: bool = False,
+                  inline_amount: bool = False) -> Tuple[Optional[str], Optional[str]]:
     """
     Find label text anywhere in the sheet. Then:
       1. Move row_offset rows down.
@@ -266,13 +267,28 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
          any column; the value just needs to be to the right on the same row.
 
     Returns tuple (cleaned string value, coordinate info string) or (None, None).
-    If exact_offset is set, only the configured cell is considered.
+    If exact_offset is set, only the configured cell is considered. With
+    inline_amount and offsets (0, 0), read the amount following the label.
     """
     label_lower = " ".join(label.lower().split())  # normalize whitespace
+    same_cell_amount = None
+    if inline_amount and row_offset == col_offset == 0:
+        label_pattern = r"\s+".join(re.escape(word) for word in label.split())
+        same_cell_amount = re.compile(
+            rf"(?<![^\W_]){label_pattern}(?![^\W_])\s*(?:[:=–—]|-\s)?\s*"
+            r"(?:₹|Rs\.?|INR)?\s*(-?(?:\d+(?:,\d+)*(?:\.\d+)?|\.\d+))(?![\w.]|,\d|\s*%)",
+            re.IGNORECASE,
+        )
     all_rows = list(sheet.rows())
 
     for r_idx, row in enumerate(all_rows):
         for c_idx, cell in enumerate(row):
+            if same_cell_amount is not None:
+                match = same_cell_amount.search(str(cell))
+                if match:
+                    return match.group(1), f"R{r_idx+1}C{c_idx+1}"
+                continue
+
             cell_str = " ".join(str(cell).strip().lower().split())  # collapse \n, \t, multi-space
             if cell_str and label_lower in cell_str:
                 # Prevent matching "time of survey" on a combined date cell like "Date and Time of Survey"
@@ -761,6 +777,7 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
                             allow_literal_values, allow_text_values,
                             stop_at_next_label=(portal_id == "oic" and field_name == "policy_number"),
                             exact_offset=bool(cfg.get("exact_offset")),
+                            inline_amount=bool(cfg.get("inline_amount")),
                         )
                         if value:
                             sh_name = sh.name if hasattr(sh, 'name') else 'Sheet'
@@ -777,6 +794,7 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
                             allow_literal_values, allow_text_values,
                             stop_at_next_label=(portal_id == "oic" and field_name == "policy_number"),
                             exact_offset=bool(cfg.get("exact_offset")),
+                            inline_amount=bool(cfg.get("inline_amount")),
                         )
                         if value:
                             src_str = f"{coord} ({sheet_name})"

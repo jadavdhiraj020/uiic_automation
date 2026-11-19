@@ -292,7 +292,8 @@ class ClaimData:
     surveyor_license_number: str = ""
     surveyor_license_expiry_date: str = ""
     oicl_gst_number: str = ""
-    surveyor_other_expenses: str = "0"
+    re_inspection_charges: str = ""
+    misc_charge: str = ""
 
     # ── File Paths (from folder_scanner) ─────────────────────────────────────
     claim_doc_files: Dict[str, str] = field(default_factory=dict)
@@ -451,6 +452,20 @@ class ClaimData:
         """The name shown in OIC's single-line, 20-character driver field."""
         name = re.sub(r"[\r\n\t]+", " ", str(self.driver_name or "")).strip()
         return name[:20].rstrip()
+
+    @property
+    def surveyor_other_expenses(self) -> Decimal:
+        """The OIC Others charge derived from the two mapped Excel amounts."""
+        total = Decimal(0)
+        for value in (self.re_inspection_charges, self.misc_charge):
+            text = re.sub(r"^(?:₹|Rs\.?|INR)\s*", "", str(value or "").strip(), flags=re.I)
+            try:
+                amount = Decimal(text.replace(",", ""))
+            except InvalidOperation:
+                continue
+            if amount.is_finite():
+                total += amount
+        return total
 
     # Property aliases for backward compatibility and naming flexibility
     @property
@@ -1200,7 +1215,9 @@ class ClaimData:
             ("Surveyor License No",   self.surveyor_license_number, True, _src("surveyor_license_number")),
             ("License Expiry Date",   self.surveyor_license_expiry_date, True, _src("surveyor_license_expiry_date")),
             ("OICL GST Number",        self.oicl_gst_number,       False, _src("oicl_gst_number")),
-            ("Surveyor Other Exp (₹)", self.surveyor_other_expenses, False, _src("surveyor_other_expenses")),
+            ("Re Inspection Charges (₹)", self.re_inspection_charges, False, _src("re_inspection_charges")),
+            ("Misc Charge (₹)", self.misc_charge, False, _src("misc_charge")),
+            ("Others Total (₹)", format(self.surveyor_other_expenses, "f"), False, "Re Inspection Charges + Misc Charge"),
         ]
 
 

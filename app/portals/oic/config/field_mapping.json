@@ -1,5 +1,6 @@
 {
   "_comment": "field_mapping.json — Oriental Insurance Company portal. Maps ClaimData fields to Excel labels for OIC automation. search_labels lists fallback labels tried in order.",
+  "_derived_fields": ["surveyor_other_expenses"],
 
   "claim_no": {
     "sheet": "ALL",
@@ -608,10 +609,22 @@
     "row_offset": 0,
     "col_offset": 1
   },
-  "surveyor_other_expenses": {
+  "re_inspection_charges": {
     "sheet": "ALL",
-    "search_labels": ["other_expenses", "Other Expenses", "other expenses", "Others"],
+    "search_labels": ["Re Inspection Charges", "Re-inspection Charges", "Reinspection Charges", "Re Inspection Charge", "Re-inspection Charge", "Reinspection Charge"],
     "row_offset": 0,
-    "col_offset": 1
+    "col_offset": 0,
+    "exact_offset": true,
+    "inline_amount": true,
+    "excel_only": true
+  },
+  "misc_charge": {
+    "sheet": "ALL",
+    "search_labels": ["Misc Charge", "Misc Charges", "Misc. Charge", "Misc. Charges", "Miscellaneous Charge", "Miscellaneous Charges"],
+    "row_offset": 0,
+    "col_offset": 0,
+    "exact_offset": true,
+    "inline_amount": true,
+    "excel_only": true
   }
 }
