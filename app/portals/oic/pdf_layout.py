@@ -58,6 +58,73 @@ def _join_text(cell):
     return " ".join(str(cell or "").split())
 
 
+def _native_lines(page, number):
+    from pdfplumber.utils import extract_words
+
+    for row in page.extract_text_lines(x_tolerance=2, y_tolerance=3):
+        text = row["text"]
+        if not text.strip() or text.count("\ufffd") > len(text) / 20:
+            continue
+        words = extract_words(row["chars"], x_tolerance=2, y_tolerance=3)
+        cells = []
+        for word in words:
+            left, right = word["x0"], word["x1"]
+            if cells and left - cells[-1][1] < 12:
+                start, _, value = cells.pop()
+                cells.append((start, right, f'{value} {word["text"]}'))
+            else:
+                cells.append((left, right, word["text"]))
+        yield Line(number, (row["top"] + row["bottom"]) / 2,
+                   tuple(cells) or ((row["x0"], row["x1"], text),))
+
+
+def _scan_regions(page, lines):
+    """Find substantial raster areas which lack a usable native text layer."""
+    regions = []
+    page_area = page.width * page.height
+    for image in page.images:
+        left, top = max(0, image["x0"]), max(0, image["top"])
+        right, bottom = min(page.width, image["x1"]), min(page.height, image["bottom"])
+        if right <= left or bottom <= top:
+            continue
+        if (right - left) * (bottom - top) < page_area * .035:
+            continue
+        covered = [line for line in lines if top <= line.top <= bottom and any(
+            left <= (x0 + x1) / 2 <= right for x0, x1, _ in line.cells
+        )]
+        bands = {min(3, int(4 * (line.top - top) / (bottom - top))) for line in covered}
+        if len(covered) < 4 or len(bands) < 3:
+            regions.append((left, top, right, bottom))
+    areas = [(right - left) * (bottom - top) / page_area for left, top, right, bottom in regions]
+    return regions if areas and (max(areas) >= .14 or sum(areas) >= .24) else []
+
+
+def _merge_ocr_lines(native, recognized, regions):
+    """Keep native text and add OCR boxes from uncovered raster regions."""
+    merged = list(native)
+    for line in recognized:
+        cells = []
+        nearby = [i for i, other in enumerate(native) if abs(other.top - line.top) <= 4]
+        for x0, x1, text in line.cells:
+            center = (x0 + x1) / 2
+            if not any(left <= center <= right and top <= line.top <= bottom
+                       for left, top, right, bottom in regions):
+                continue
+            if any(x0 < right and x1 > left for i in nearby for left, right, _ in native[i].cells):
+                continue
+            cells.append((x0, x1, text))
+        if not cells:
+            continue
+        if len(nearby) == 1:
+            i = nearby[0]
+            original = merged[i]
+            merged[i] = replace(original, cells=tuple(sorted((*original.cells, *cells))),
+                                confidence=min(original.confidence, line.confidence))
+        else:
+            merged.append(replace(line, cells=tuple(cells)))
+    return tuple(sorted(merged, key=lambda line: line.top))
+
+
 def _ocr_page(page, number, image_path):
     from app.automation.ocr_engine import run_shared_ocr
 
@@ -160,36 +227,27 @@ def read_pages(path, *, stop_cb=None, max_pages=None):
             for index, page in enumerate(document.pages[:max_pages], 1):
                 if stop_cb and stop_cb():
                     raise InterruptedError("PDF reading cancelled")
-                native = page.extract_text_lines(x_tolerance=2, y_tolerance=3)
-                lines = tuple(Line(index, (row["top"] + row["bottom"]) / 2, ((row["x0"], row["x1"], row["text"]),)) for row in native)
-                visible = " ".join(line.text for line in lines)
-                page_area = page.width * page.height
-                # Ordinary logo images do not warrant OCR. A scanned page can
-                # still have a small native footer or a broken text layer.
-                image_coverage = sum(
-                    max(0, min(page.width, img["x1"]) - max(0, img["x0"]))
-                    * max(0, min(page.height, img["bottom"]) - max(0, img["top"]))
-                    for img in page.images
-                ) / page_area
-                poor_text = len(visible.strip()) < 120 or visible.count("\ufffd") > len(visible) / 20
-                use_ocr = (image_coverage >= .35 and poor_text) or (not lines and bool(page.chars or page.images or page.curves))
+                lines = tuple(_native_lines(page, index))
+                regions = _scan_regions(page, lines)
                 tables = []
-                if use_ocr:
+                if lines:
+                    for table in page.find_tables():
+                        rows = tuple(tuple(_join_text(cell) for cell in row) for row in table.extract(x_tolerance=2))
+                        if any(any(row) for row in rows):
+                            tables.append(Table(index, tuple(row.bbox[1] for row in table.rows), rows))
+                if regions or (not lines and bool(page.chars or page.images or page.curves)):
                     if renderer is None:
                         renderer = pypdfium2.PdfDocument(path)
                     rendered_page = renderer[index - 1]
                     try:
-                        recognized, tables = _ocr_page(rendered_page, index, Path(temp) / "page.png")
+                        recognized, scanned_tables = _ocr_page(rendered_page, index, Path(temp) / "page.png")
                     finally:
                         rendered_page.close()
-                    if recognized:
-                        lines = recognized
-
-                if lines and lines[0].confidence == 1:
-                    for table in page.find_tables():
-                        rows = tuple(tuple(_join_text(cell) for cell in row) for row in table.extract(x_tolerance=2))
-                        if rows:
-                            tables.append(Table(index, tuple(row.bbox[1] for row in table.rows), rows))
+                    if stop_cb and stop_cb():
+                        raise InterruptedError("PDF reading cancelled")
+                    lines = _merge_ocr_lines(lines, recognized, regions) if lines else recognized
+                    tables.extend(table for table in scanned_tables
+                                  if not any(_aligned(table, other) for other in tables))
                 pages.append(Page(lines, tuple(tables), page.width))
                 page.close()
             return _join_print_tiles(pages)

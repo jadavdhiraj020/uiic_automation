@@ -232,7 +232,7 @@ def _item_tables(tables, aliases, value_keys, kind):
         return None, ""
     if totals is None:
         raise ValueError(f"The {kind.lower()} subtotal is missing after the header on {header.source}.")
-    for key in value_keys:
+    for key in known_total_keys:
         expected = totals[key]
         actual = sum((values[key] for _, values, _ in details), ZERO)
         if expected is None or abs(actual - expected) > TOLERANCE:

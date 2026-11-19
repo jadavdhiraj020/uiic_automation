@@ -766,6 +766,8 @@ class ClaimData:
         """
         errors, warnings = [], []
 
+        from_pdf = str(self.source_report_path or "").lower().endswith(".pdf")
+        report_source = "the survey PDF" if from_pdf else "Excel"
         from app.portals.oic.automation.assessment_upload_excel import depreciation_errors
         errors.extend(getattr(self, "_oic_pdf_review_errors", ()))
         warnings.extend(getattr(self, "_oic_pdf_review_warnings", ()))
@@ -795,20 +797,20 @@ class ClaimData:
 
         # Optional Interim Report fields — warn so the user can investigate.
         if not self.cause_nature_of_accident or str(self.cause_nature_of_accident).strip() == "":
-            warnings.append("Cause and Nature of Accident not found in Excel — field will be skipped")
+            warnings.append(f"Cause and Nature of Accident not found in {report_source} — field will be skipped")
         if not self.mobile_no or str(self.mobile_no).strip() == "":
-            warnings.append("Claimant Mobile Number not found in Excel — optional field will be skipped")
+            warnings.append(f"Claimant Mobile Number not found in {report_source} — optional field will be skipped")
         if not self.email_id or str(self.email_id).strip() == "":
-            warnings.append("Claimant Email ID not found in Excel — optional field will be skipped")
+            warnings.append(f"Claimant Email ID not found in {report_source} — optional field will be skipped")
 
 
         # ── 3. Vehicle details ────────────────────────────────────────────────
         if not self.chassis_no:
-            warnings.append("Chassis Number not found in Excel")
+            warnings.append(f"Chassis Number not found in {report_source}")
         if not self.engine_no:
-            warnings.append("Engine Number not found in Excel")
+            warnings.append(f"Engine Number not found in {report_source}")
         if not self.cubic_capacity:
-            warnings.append("Cubic Capacity not found in Excel")
+            warnings.append(f"Cubic Capacity not found in {report_source}")
 
         # Validate year_of_manufacture if present
         if self.year_of_manufacture:
@@ -824,16 +826,16 @@ class ClaimData:
 
         # Driver mandatory fields
         if not self.oic_driver_name:
-            warnings.append("Driver Name not found in Excel")
+            warnings.append(f"Driver Name not found in {report_source}")
         if not self.driver_license_number:
-            warnings.append("Driver License Number not found in Excel")
+            warnings.append(f"Driver License Number not found in {report_source}")
 
         # ── 4. Workshop / estimate details ────────────────────────────────────
         if not self.workshop_name:
-            warnings.append("Workshop Name not found in Excel")
+            warnings.append(f"Workshop Name not found in {report_source}")
         if not self.workshop_estimate_amount:
-            warnings.append("Workshop Estimate Amount not found in Excel")
-        elif str(self.source_report_path or "").lower().endswith(".pdf"):
+            warnings.append(f"Workshop Estimate Amount not found in {report_source}")
+        elif from_pdf:
             try:
                 estimate = Decimal(str(self.workshop_estimate_amount).replace(",", ""))
                 if not estimate.is_finite() or not 1000 <= estimate <= 100000000:
@@ -851,16 +853,16 @@ class ClaimData:
                 errors.append(f"Workshop Estimate Amount '{self.workshop_estimate_amount}' is not a valid numeric amount")
 
         if not self.workshop_estimate_date:
-            warnings.append("Workshop Estimate Date not found in Excel")
+            warnings.append(f"Workshop Estimate Date not found in {report_source}")
         # Invoice file check — required for assessment
         invoice_file = self.assessment_files.get("invoice", "")
         if not invoice_file or invoice_file.strip() == "":
             errors.append("Invoice File is missing")
 
         if not self.workshop_invoice_no:
-            warnings.append("Workshop Invoice No not found in Excel")
+            warnings.append(f"Workshop Invoice No not found in {report_source}")
         if not self.workshop_invoice_date:
-            warnings.append("Workshop Invoice Date not found in Excel")
+            warnings.append(f"Workshop Invoice Date not found in {report_source}")
         if not self.claim_doc_files:
             warnings.append("No claim documents found in folder")
 

@@ -1,6 +1,7 @@
 """OIC PDF-only intake. Read the right section before interpreting a label."""
 
 from collections import defaultdict
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 import hashlib
@@ -11,6 +12,7 @@ from app.data.data_model import ClaimData
 from app.data.excel_reader import _initial_loss_75_percent
 from app.data.pdf_report_reader import DATE_RX, EMAIL_RX, MOBILE_RX, extract_time
 from app.utils import load_field_mapping
+from .license_type_mapping import resolve_license_type
 from .pdf_assessment import amount, read_assessment
 from .pdf_layout import Line, compact, read_pages
 
@@ -91,7 +93,7 @@ FIELDS = {
         "driver_name": ("Name of Driver", "Driver Name", "Name of the Driver"),
         "dob_of_driver": ("DOB", "Driver DOB", "Date of Birth"),
         "driver_license_number": ("DL No", "Driving Licence Number", "Driving License Number", "Licence No", "License No"),
-        "driver_license_issue_date": ("Date of Issue", "DL Issue Date", "Licence Issue Date"),
+        "driver_license_issue_date": ("Date of Issue", "Date of lssue", "DL Issue Date", "Licence Issue Date"),
         "driver_license_expiry_date": ("Valid Till", "Valid Up To", "DL Expiry Date", "Licence Expiry Date"),
         "license_type_of_driver": ("Type of Licence", "Type of License", "License Type"),
         "driver_address": ("Address of Driver", "Driver Address", "Address"),
@@ -170,18 +172,57 @@ def _text(value):
     return " ".join(value.replace("–", "-").replace("—", "-").split())
 
 
-def _after(text, aliases):
-    for alias in sorted(set(aliases), key=len, reverse=True):
-        if not alias or "_" in alias:
-            continue
-        words = re.findall(r"[\w%#]+", alias)
-        if not words:
-            continue
-        pattern = r"[\s.:/&(),'\-]*".join(map(re.escape, words))
+def _alias_patterns(aliases):
+    for alias in sorted(set(aliases), key=lambda label: (-len(label), label)):
+        if alias and "_" not in alias and (words := re.findall(r"[\w%#]+", alias)):
+            yield r"[\s.:/&(),'\-]*".join(map(re.escape, words))
+
+
+def _match_label(text, aliases):
+    for pattern in _alias_patterns(aliases):
         match = re.match(r"^(?:\d{1,2}[.)]?\s+)?" + pattern + r"(?![\w])", text, flags=re.I)
         if match:
-            return text[match.end():].lstrip(" .:/-")
-    return None
+            return match
+
+
+def _after(text, aliases):
+    match = _match_label(text, aliases)
+    return text[match.end():].lstrip(" .:=/-") if match else None
+
+
+def _label_rows(rows, aliases):
+    """Split side-by-side labels at column boundaries or explicit label separators."""
+    patterns = tuple(_alias_patterns(aliases))
+    if not patterns:
+        yield from rows
+        return
+    labels = "|".join(patterns)
+    cell_label = re.compile(rf"^(?:{labels})\s*\.?(?=[:=]|$)", re.I)
+    inline_label = re.compile(rf"(?<!\S)(?:{labels})\s*\.?(?=[:=])", re.I)
+    first_label = re.compile(rf"^(?:\d{{1,2}}[.)]?\s+)?(?:{labels})(?!\w)", re.I)
+    for row in rows:
+        if not isinstance(row, Line):
+            row = Line(row.page, row.line, ((0, 1, row.text),))
+        chunks = []
+        cells = []
+        for x0, x1, text in row.cells:
+            if cells and cell_label.match(text):
+                chunks.append(cells)
+                cells = []
+            cells.append((x0, x1, text))
+        chunks.append(cells)
+        for cells in chunks:
+            text = " ".join(cell[2] for cell in cells)
+            # Some OCR engines return the whole physical row as one box.
+            # A second explicit label may still identify an independent field.
+            first = first_label.match(text)
+            offsets = [match.start() for match in inline_label.finditer(text)
+                       if first and match.start() >= first.end()]
+            if not offsets:
+                yield replace(row, cells=tuple(cells))
+                continue
+            for start, end in zip([0, *offsets], [*offsets, len(text)]):
+                yield replace(row, cells=((cells[0][0], cells[-1][1], text[start:end].strip()),))
 
 
 def _date(value):
@@ -238,7 +279,7 @@ def _value(key, value):
         return value.upper() if re.fullmatch(r"\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]", value.upper()) else ""
     if key == "nil_depreciation":
         match = re.match(r"(yes|no|y|n|true|false|[01])\b", value, re.I)
-        return match[1] if match else ""
+        return ("Yes" if match[1].casefold() in {"yes", "y", "true", "1"} else "No") if match else ""
     if key == "payment_to":
         if re.match(r"(?:non[- ]?cashless|reimbursement|(?:the\s+)?insured|claimant)\b", value, re.I):
             return "INSURED"
@@ -278,7 +319,7 @@ def _split_sections(lines):
 
 def _read_field(claim, key, rows, aliases, *, warnings):
     candidates = {}
-    low_conf = set()
+    low_conf = {}
     for line in rows:
         if key == "workshop_name" and re.match(r"^workshop\s*(?:details|invoice|estimate|gst)\b", line.text, re.I):
             continue
@@ -288,56 +329,115 @@ def _read_field(claim, key, rows, aliases, *, warnings):
         value = _value(key, raw)
         if not value:
             continue
-        if line.confidence < MIN_FIELD_CONFIDENCE:
-            low_conf.add(line.source)
-            continue
         normalized = compact(value) if key in IDENTITY_KEYS else value.casefold()
+        if key in FEE_FIELDS or key.endswith(("_amount", "_excess", "_rate")):
+            number = amount(value)
+            if number is not None:
+                normalized = str(number.normalize())
+        if line.confidence < MIN_FIELD_CONFIDENCE:
+            low_conf.setdefault(normalized, line.source)
+            continue
         candidates.setdefault(normalized, (value, line.source))
-    if len(candidates) == 1:
+    contradicting_ocr = (low_conf.keys() - candidates.keys()) if key in REQUIRED or key in IDENTITY_KEYS else set()
+    if len(candidates) == 1 and not contradicting_ocr:
         _set(claim, key, *next(iter(candidates.values())))
-    elif len(candidates) > 1:
+    elif candidates:
         label = REQUIRED.get(key, key.replace("_", " ").title())
-        sources = ", ".join(dict.fromkeys(src for _, src in candidates.values()))
+        sources = ", ".join(dict.fromkeys([*(src for _, src in candidates.values()),
+                                          *(low_conf[value] for value in sorted(contradicting_ocr))]))
         warnings[key] = f"Conflicting values for {label} on {sources}."
     elif low_conf:
         label = REQUIRED.get(key, key.replace("_", " ").title())
-        warnings[key] = f"Check {label} on {', '.join(sorted(low_conf))}; the OCR reading is uncertain."
+        warnings[key] = f"Check {label} on {', '.join(sorted(set(low_conf.values())))}; the OCR reading is uncertain."
 
 
 def _values_in_summary(text):
     return [result for token in text.split() if (result := amount(token)) is not None]
 
 
+def _aligned_estimate(lines, index):
+    """Read the estimate side of a reconciled two-column assessment summary."""
+    net = lines[index]
+    summary = []
+    for line in reversed(lines[:index]):
+        if line.page != net.page:
+            return None
+        if compact(line.text) == "summaryofassessment":
+            break
+        summary.append(line)
+    else:
+        return None
+
+    columns = [(right, value) for _, right, text in net.cells if (value := amount(text)) is not None]
+    if len(columns) != 2:
+        return None
+    (estimate_x, estimate), (assessed_x, _) = columns
+
+    def at_column(line, column):
+        values = [value for _, right, text in line.cells
+                  if abs(right - column) <= 5 and (value := amount(text)) is not None]
+        return values[0] if len(values) == 1 else None
+
+    rows = {}
+    for line in summary:
+        label = compact(line.cells[0][2])
+        if label in rows:
+            return None
+        if label in {"parts", "labour", "labor", "towingcharges", "subtotal", "lessexcessclause"}:
+            rows[label] = line
+    parts = rows.get("parts")
+    labour = rows.get("labour") or rows.get("labor")
+    subtotal = rows.get("subtotal")
+    deduction = rows.get("lessexcessclause")
+    if not (parts and labour and subtotal and deduction):
+        return None
+    if any(row.confidence < MIN_FIELD_CONFIDENCE for row in (parts, labour, subtotal, deduction)):
+        return None
+    part_value, labour_value, subtotal_value = (at_column(row, estimate_x) for row in (parts, labour, subtotal))
+    towing = rows.get("towingcharges")
+    towing_value = at_column(towing, estimate_x) if towing else None
+    if (part_value is None or labour_value is None or subtotal_value != estimate
+            or at_column(deduction, estimate_x) is not None or at_column(deduction, assessed_x) is None):
+        return None
+    return estimate if abs(estimate - part_value - labour_value - (towing_value or 0)) <= amount("0.02") else None
+
+
 def _assessment_fields(claim, lines, labour, warnings):
     invoice_rows = []
+    estimate_rows = []
+    depreciation_rows = defaultdict(list)
     for index, line in enumerate(lines):
         raw = _after(line.text, ("Workshop Invoice No", "Workshop Invoice Number", "Repairer Invoice No", "Workshop Invoice Date"))
         if raw:
-            invoice, _, tail = raw.partition(" ")
+            # OCR can join the invoice number, date label, and date into one token.
+            date_label = re.search(r"(?:(?<=\d)|(?<!\w))dated?\s*[:.-]?\s*(?=\d)", raw, re.I)
+            invoice_date = _date(raw[date_label.end():]) if date_label else ""
+            invoice = raw[:date_label.start()].strip(" :;,-") if invoice_date else raw.split()[0]
             if _value("workshop_invoice_no", invoice) and not _date(invoice):
                 invoice_rows.append(Line(line.page, line.top, ((0, 1, f"Invoice ID {invoice}"),), line.confidence, line.extra_page))
-                date_label = re.search(r"\b(?:dated|date)\b\s*[:.-]?\s*(.*)", tail, re.I)
-                if date_label and _date(date_label[1]):
-                    invoice_rows.append(Line(line.page, line.top, ((0, 1, f"Invoice Date {_date(date_label[1])}"),), line.confidence, line.extra_page))
+                if invoice_date:
+                    invoice_rows.append(Line(line.page, line.top, ((0, 1, f"Invoice Date {invoice_date}"),), line.confidence, line.extra_page))
             elif _date(raw):
                 invoice_rows.append(Line(line.page, line.top, ((0, 1, f"Invoice Date {_date(raw)}"),), line.confidence, line.extra_page))
 
-        if not claim.workshop_estimate_amount and (raw := _after(line.text, ("Net Payable",))) and line.confidence >= MIN_FIELD_CONFIDENCE:
-            values = _values_in_summary(raw)
-            if len(values) == 2 and values[0] >= values[1]:
-                _set(claim, "workshop_estimate_amount", format(values[0], "f"), f"{line.source} · estimate column")
+        if (not claim.workshop_estimate_amount and "workshop_estimate_amount" not in warnings
+                and _after(line.text, ("Net Payable",)) and line.confidence >= MIN_FIELD_CONFIDENCE):
+            estimate = _aligned_estimate(lines, index)
+            if estimate is not None:
+                estimate_rows.append(replace(line, cells=((0, 1, f"Reconciled estimate {estimate:f}"),)))
 
         if match := re.search(r"\b(?:dep(?:reciation)?\.?\s+on\s+metal|metal\s+dep(?:reciation)?\.?)\s*(?:\(\s*in\s*%\s*\))?\s*[:=\-]?\s*(\d+(?:\.\d+)?)\s*%?", line.text, re.I):
-            if line.confidence >= MIN_FIELD_CONFIDENCE:
-                _set(claim, "metal_depreciation_rate", match[1], line.source)
+            depreciation_rows["metal_depreciation_rate"].append(
+                replace(line, cells=((0, 1, f"Rate {match[1]}"),))
+            )
         # A printed amount is not a percentage. A wrapped percentage is
         # accepted when it agrees with the deduction and verified paint total.
         if re.search(r"\bpaint(?:ing)?\s+dep(?:reciation)?\b|less cost of paint material", line.text, re.I):
-            if line.confidence < MIN_FIELD_CONFIDENCE:
-                continue
             rate = re.search(r"\b(\d+(?:\.\d+)?)\s*%\s*(?:$|[;,)])", line.text)
             if rate:
-                _set(claim, "paint_depreciation_rate", rate[1], line.source)
+                depreciation_rows["paint_depreciation_rate"].append(
+                    replace(line, cells=((0, 1, f"Rate {rate[1]}"),))
+                )
             elif index + 1 < len(lines):
                 next_line = lines[index + 1]
                 wrap = re.fullmatch(r"(\d+(?:\.\d+)?)\s*%?", next_line.text)
@@ -346,26 +446,35 @@ def _assessment_fields(claim, lines, labour, warnings):
                         and next_line.confidence >= MIN_FIELD_CONFIDENCE
                         and deduction and labour["painting"] > 0
                         and abs(labour["painting"] * amount(wrap[1]) / 100 - deduction[-1]) <= amount("0.02")):
-                    _set(claim, "paint_depreciation_rate", wrap[1], f"{line.source} · checked against paint deduction")
+                    depreciation_rows["paint_depreciation_rate"].append(
+                        replace(line, cells=((0, 1, f"Rate {wrap[1]}"),))
+                    )
 
     _read_field(claim, "workshop_invoice_no", invoice_rows, ("Invoice ID",), warnings=warnings)
     _read_field(claim, "workshop_invoice_date", invoice_rows, ("Invoice Date",), warnings=warnings)
-    if not claim.initial_loss_amount and claim.workshop_estimate_amount:
+    _read_field(claim, "workshop_estimate_amount", estimate_rows, ("Reconciled estimate",), warnings=warnings)
+    for key, rows in depreciation_rows.items():
+        _read_field(claim, key, rows, ("Rate",), warnings=warnings)
+    if not claim.initial_loss_amount and "initial_loss_amount" not in warnings and claim.workshop_estimate_amount:
         _set(claim, "initial_loss_amount", _initial_loss_75_percent(claim.workshop_estimate_amount),
              f"75% of Workshop Estimate · {claim._excel_coords['workshop_estimate_amount']}")
 
 
 def _document_identity(lines):
-    fields = {}
-    for line in lines:
+    fields = defaultdict(dict)
+    aliases = (*FIELDS["header"]["claim_no"], *FIELDS["header"]["policy_number"],
+               *FIELDS["vehicle"]["vehicle_registration_number"])
+    for line in _label_rows(lines, aliases):
+        if getattr(line, "confidence", 1) < MIN_FIELD_CONFIDENCE:
+            continue
         for key in ("claim_no", "policy_number"):
             configured = FIELDS["header"][key]
             if (raw := _after(line.text, configured)) and (value := _value(key, raw)):
-                fields.setdefault(key, value)
+                fields[key].setdefault(compact(value), value)
         if raw := _after(line.text, FIELDS["vehicle"]["vehicle_registration_number"]):
             if value := _registration(raw)[0]:
-                fields.setdefault("vehicle_registration_number", value)
-    return fields
+                fields["vehicle_registration_number"].setdefault(compact(value), value)
+    return {key: next(iter(values.values())) for key, values in fields.items() if len(values) == 1}
 
 
 def _report_evidence(lines):
@@ -393,7 +502,7 @@ def _is_supporting_report(lines):
 
 
 def find_oic_report(folder, *, preferred=None, stop_cb=None):
-    """Prefer a complete report by content. Use the name for scanned candidates."""
+    """Prefer a complete report by content, checking the cover with OCR when needed."""
     from app.data.pdf_report_reader import read_lines
 
     files = []
@@ -419,11 +528,26 @@ def find_oic_report(folder, *, preferred=None, stop_cb=None):
         if _is_supporting_report(sample):
             continue
         heading, sections, identity = _report_evidence(sample)
-        strong = bool(identity) and (heading or len({"vehicle", "driver", "survey", "assessment"} & sections.keys()) >= 2)
+        core = {"vehicle", "driver", "survey", "assessment"}
+        coverage = len(core & sections.keys())
+        strong = (heading and bool(identity or coverage >= 2)) or (bool(identity) and coverage >= 2)
         named = name in {"main", "report", "assessment"} or bool(
             re.search(r"survey.*report|final.*report|assessmentreport|printableassessment", name)
         )
-        if strong or (named and len(sample) < 12):
+        if not strong and (heading or len(sample) < 12):
+            try:
+                cover = [line for page in read_pages(path, stop_cb=stop_cb, max_pages=1) for line in page.lines]
+            except InterruptedError:
+                raise
+            except Exception:
+                cover = []
+            if _is_supporting_report(cover):
+                continue
+            if cover:
+                heading, sections, identity = _report_evidence(cover)
+                coverage = len(core & sections.keys())
+                strong = (heading and bool(identity or coverage >= 2)) or (bool(identity) and coverage >= 2)
+        if strong or (named and (heading or not sample)):
             with path.open("rb") as stream:
                 fingerprint = hashlib.sha256()
                 for block in iter(lambda: stream.read(1024 * 1024), b""):
@@ -432,7 +556,6 @@ def find_oic_report(folder, *, preferred=None, stop_cb=None):
             if digest in seen:
                 continue
             seen.add(digest)
-            coverage = sum(section in sections for section in ("vehicle", "driver", "survey", "assessment"))
             financial_sections = 0
             if strong:
                 try:
@@ -471,7 +594,7 @@ def find_oic_report(folder, *, preferred=None, stop_cb=None):
 def read_oic_pdf_report(path, *, stop_cb=None):
     pages = read_pages(path, stop_cb=stop_cb)
     lines = [
-        Line(line.page, line.top, ((0, 1, _text(line.text)),), line.confidence, line.extra_page)
+        replace(line, cells=tuple((left, right, _text(text)) for left, right, text in line.cells))
         for page in pages for line in page.lines
     ]
     if not lines:
@@ -479,7 +602,7 @@ def read_oic_pdf_report(path, *, stop_cb=None):
     if _is_supporting_report(lines):
         raise ValueError("This PDF is a supporting survey report. Select the final survey report and rescan.")
     heading, sections, identity = _report_evidence(lines)
-    if not identity or not (heading or {"vehicle", "driver", "survey"} & sections.keys()):
+    if not (heading or (identity and {"vehicle", "driver", "survey"} & sections.keys())):
         raise ValueError("This PDF does not have readable survey-report headings and claim or vehicle identifiers. Select the final survey report and rescan.")
 
     claim = ClaimData(
@@ -492,6 +615,7 @@ def read_oic_pdf_report(path, *, stop_cb=None):
     mapping = load_field_mapping(portal_id="oic")
     header = sections["header"]
     for group, fields in FIELDS.items():
+        configured = {}
         for key, aliases in fields.items():
             custom = mapping.get(key, {}).get("search_labels", [])
             if isinstance(custom, str):
@@ -502,13 +626,27 @@ def read_oic_pdf_report(path, *, stop_cb=None):
                 "address", "date", "time", "gst", "route", "insurer", "insured", "netpayable", "totalnetforparts",
                 "lessdepreciation", "gstsummaryspares", "gstsummarylabour",
             })
-            rows = sections[group]
-            if group in {"vehicle", "driver", "workshop", "survey"} and not rows:
-                rows = lines
+            configured[key] = (*aliases, *extra)
+        rows = sections[group]
+        if group in {"vehicle", "driver", "workshop", "survey"} and not rows:
+            rows = lines
+            for key, aliases in configured.items():
                 scoped_aliases = {"address", "datestart", "dateofissue", "licenceno", "licenseno", "validtill", "validupto", "gstin", "dateofbirth", "dob"}
-                aliases = tuple(alias for alias in (*aliases, *extra) if compact(alias) not in scoped_aliases)
-                extra = ()
-            _read_field(claim, key, rows, (*aliases, *extra), warnings=warnings)
+                configured[key] = tuple(alias for alias in aliases if compact(alias) not in scoped_aliases)
+        label_rows = tuple(_label_rows(rows, (alias for aliases in configured.values() for alias in aliases)))
+        rows_by_field = defaultdict(list)
+        for row in label_rows:
+            specificity = {
+                key: match.end() for key, aliases in configured.items()
+                if (match := _match_label(row.text, aliases))
+            }
+            if specificity:
+                longest = max(specificity.values())
+                for key, length in specificity.items():
+                    if length == longest:
+                        rows_by_field[key].append(row)
+        for key, aliases in configured.items():
+            _read_field(claim, key, rows_by_field[key], aliases, warnings=warnings)
 
     for line in lines:
         narrative = _after(line.text, ("Cause and Nature of Accident", "Cause & Nature of Accident", "Nature of Accident"))
@@ -520,12 +658,14 @@ def read_oic_pdf_report(path, *, stop_cb=None):
             break
     for line in header:
         report_date = re.search(r"\bDate\s*:\s*(.*)", line.text, re.I)
-        if (report_date and not claim.expected_completion_date
+        if (report_date and not claim.expected_completion_date and "expected_completion_date" not in warnings
                 and (REPORT_HEADING.search(line.text) or "finalsurveyreport" in compact(line.text))
                 and line.confidence >= MIN_FIELD_CONFIDENCE):
             _set(claim, "expected_completion_date", _date(report_date[1]), line.source)
         expiry = SURVEYOR_EXPIRY_LABEL.search(line.text)
-        if expiry and _after(line.text, FIELDS["header"]["surveyor_license_number"]) is not None and line.confidence >= MIN_FIELD_CONFIDENCE:
+        if (expiry and not claim.surveyor_license_expiry_date and "surveyor_license_expiry_date" not in warnings
+                and _after(line.text, FIELDS["header"]["surveyor_license_number"]) is not None
+                and line.confidence >= MIN_FIELD_CONFIDENCE):
             _set(claim, "surveyor_license_expiry_date", _date(line.text[expiry.end():]), line.source)
     if header and not claim.surveyor_name:
         for previous, line in zip(header, header[1:]):
@@ -537,7 +677,7 @@ def read_oic_pdf_report(path, *, stop_cb=None):
     for line in sections["driver"]:
         if _after(line.text, FIELDS["driver"]["driver_name"]) is not None:
             dob = re.search(r"\b(?:DOB|Date\s+of\s+Birth)\s*[:.-]?\s*(.*)", line.text, re.I)
-            if dob and not claim.dob_of_driver and line.confidence >= MIN_FIELD_CONFIDENCE:
+            if dob and not claim.dob_of_driver and "dob_of_driver" not in warnings and line.confidence >= MIN_FIELD_CONFIDENCE:
                 _set(claim, "dob_of_driver", _date(dob[1]), line.source)
         if claim.driver_address and not claim.driver_pin_code:
             if pin := re.search(r"\b([1-9]\d{5})\b", claim.driver_address):
@@ -545,7 +685,9 @@ def read_oic_pdf_report(path, *, stop_cb=None):
     for line in sections["vehicle"]:
         if raw := _after(line.text, FIELDS["vehicle"]["vehicle_registration_number"]):
             registration, office = _registration(raw)
-            if registration == claim.vehicle_registration_number and office and not claim.rto_name and line.confidence >= MIN_FIELD_CONFIDENCE:
+            if (registration == claim.vehicle_registration_number and office
+                    and not claim.rto_name and "rto_name" not in warnings
+                    and line.confidence >= MIN_FIELD_CONFIDENCE):
                 _set(claim, "rto_name", office, line.source)
     for line in sections["survey"]:
         if _after(line.text, FIELDS["survey"]["date_of_survey"]) is not None and line.confidence >= MIN_FIELD_CONFIDENCE:
@@ -554,10 +696,15 @@ def read_oic_pdf_report(path, *, stop_cb=None):
                 claim.time_hh, claim.time_mm = hh, mm
                 _set(claim, "time_of_survey", f"{hh}:{mm}", line.source)
                 break
-    if not claim.place_of_survey and claim.workshop_name:
-        _set(claim, "place_of_survey", claim.workshop_name, claim._excel_coords["workshop_name"])
-    if not claim.workshop_name and claim.place_of_survey and not warnings.get("workshop_name"):
-        _set(claim, "workshop_name", claim.place_of_survey, claim._excel_coords["place_of_survey"])
+    if not claim.place_of_survey and "place_of_survey" not in warnings:
+        _read_field(claim, "place_of_survey", sections["workshop"], FIELDS["survey"]["place_of_survey"],
+                    warnings=warnings)
+        # In the original survey layout the Workshop Name is printed inside a
+        # section explicitly titled Place of Survey.
+        if (not claim.place_of_survey and claim.workshop_name and "place_of_survey" not in warnings
+                and any(re.fullmatch(r"(?:\d{1,2})?placeofsurvey", compact(row.text))
+                        for row in sections["workshop"])):
+            _set(claim, "place_of_survey", claim.workshop_name, claim._excel_coords["workshop_name"])
     _read_field(claim, "payment_to", lines, (
         "The payment to be made in favour of", "Payment to be made in favour of",
         "Payment to be made to", "Payment in favour of", "Payment To", "Payable To",
@@ -578,6 +725,21 @@ def read_oic_pdf_report(path, *, stop_cb=None):
             if claim._excel_coords.get(key):
                 claim._excel_coords[key] += " · " + ", ".join(dict.fromkeys(src for _, src in taxes.values()))
     _assessment_fields(claim, sections["assessment"], labour, warnings)
+    _, licence_type_source = resolve_license_type(claim.class_of_vehicle, claim.license_type_of_driver)
+    if licence_type_source in {"ambiguous", "missing"}:
+        review.append("Licence Type could not be determined from the survey PDF. Review the vehicle class and licence type.")
+    if claim.driver_license_number:
+        from .automation.basic_details_module import _split_license_number
+
+        licence = _split_license_number(claim.driver_license_number)
+        if licence is None:
+            warnings["driver_licence_format"] = "Review Driving Licence Number. The PDF value cannot fill OIC's two-letter code and two six-digit fields."
+        elif licence[3]:
+            warnings["driver_licence_format"] = "Review Driving Licence Number. OIC requires confirmation before omitting extra digits."
+    if claim.nil_depreciation == "No":
+        for key in ("metal_depreciation_rate", "paint_depreciation_rate"):
+            if key in warnings:
+                review.append(warnings.pop(key))
     for first, second in (
         ("dob_of_driver", "driver_license_issue_date"),
         ("driver_license_issue_date", "driver_license_expiry_date"),
