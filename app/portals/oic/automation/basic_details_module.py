@@ -22,6 +22,7 @@ from typing import Callable, Optional
 from playwright.async_api import Error as PlaywrightError, Page
 
 from app.automation.automation_logger import AutomationLogger
+from app.utils import load_automation_defaults
 from app.portals.oic.automation.selectors import (
     # Vehicle
     SEL_REG_NUMBER, SEL_MAKE, SEL_VARIANT,
@@ -140,8 +141,7 @@ async def fill_basic_details(
     # load_automation_defaults() does raw JSON I/O on every call (no caching).
     # Calling it once at the entry point avoids redundant file reads during the
     # per-claim hot path, even when automation runs across multiple claims.
-    from app.utils import load_automation_defaults as _load_defaults
-    _automation_defaults: dict = _load_defaults(
+    _automation_defaults: dict = load_automation_defaults(
         portal_id=getattr(claim, "portal_id", "oic")
     )
 
@@ -676,27 +676,20 @@ async def _fill_driver_details(page: Page, claim, log, delay: int, automation_de
         await click_primeng_radio(page, SEL_OWNER_DRIVER_YES, "Owner Driver → YES", log, delay)
     else:
         await click_primeng_radio(page, SEL_OWNER_DRIVER_NO, "Owner Driver → NO", log, delay)
-        # Wait briefly for the portal to reveal the "Relation of Driver" field
-        await asyncio.sleep(0.4)
-        # Fill "Relation of Driver" with the configurable hardcoded default.
-        # Prefer the pre-loaded defaults dict passed from fill_basic_details();
-        # fall back to a fresh load only if called standalone (e.g. from tests).
-        _defaults = automation_defaults or {}
-        _relation = str(
-            _defaults.get("driver_relation_default", "Self") or "Self"
-        ).strip()
+        defaults = automation_defaults
+        if defaults is None:
+            defaults = load_automation_defaults(portal_id="oic")
+        relation = str(defaults.get("driver_relation_default") or "").strip() or "other"
+        relation_input = page.locator(SEL_RELATION_OF_DRIVER).first
         try:
-            rel_loc = page.locator(SEL_RELATION_OF_DRIVER).first
-            rel_visible = await rel_loc.is_visible(timeout=3000)
-            if rel_visible:
-                await fill_input_with_delay(
-                    page, SEL_RELATION_OF_DRIVER, _relation,
-                    "Relation of Driver", log, delay
-                )
-            else:
-                log.info(f"  ℹ️ [Relation of Driver] field not visible — skipped")
-        except Exception:
-            log.info(f"  ℹ️ [Relation of Driver] field not found — skipped")
+            await relation_input.wait_for(state="visible", timeout=3000)
+        except PlaywrightError:
+            log.info("Relationship with Driver is unavailable on this form.")
+        else:
+            await fill_input_with_delay(
+                page, SEL_RELATION_OF_DRIVER, relation, "Relationship with Driver", log, delay,
+                source="Automation Defaults",
+            )
 
     # 12. Qualification (optional)
     if claim.driver_qualification:

@@ -181,7 +181,7 @@ class SettingsPage(QWidget):
             ] + _printable_rows,
             "oic": [
                 ("unknown_claim_type_default", "Unknown Payment Default", "Claim Search claim type fallback", "claimtype"),
-                ("driver_relation_default",    "Relation of Driver",      "Driver Details — filled when Is Owner Driver = NO", "text"),
+                ("driver_relation_default", "Relationship with Driver", "Value entered when Is Owner Driver is No", "text"),
                 ("gst_type", "GST Type", "Invoice Section GST dropdown fallback", "gsttype"),
                 ("survey_gst_applicable", "Survey GST Applicable", "Survey Charges GST dropdown fallback", "yesno"),
                 ("expense_description", "Expense Description", "Default description for all expense types", "text"),

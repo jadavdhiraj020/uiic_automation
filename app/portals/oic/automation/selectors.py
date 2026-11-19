@@ -130,7 +130,7 @@ SEL_BADGE_ISSUE_DATE_LABEL = "Badge Issue Date"
 SEL_OWNER_DRIVER_YES = "#ownerDriver1"
 SEL_OWNER_DRIVER_NO = "#ownerDriver2"
 # Relation of Driver: appears only when Is Owner Driver = NO.
-# Hardcoded default is "Self" (see automation_defaults.json → driver_relation_default).
+# The value comes from the driver_relation_default automation setting.
 # NOTE: The OIC portal has a typo in the id attribute ("Ralationship" instead of "Relationship").
 SEL_RELATION_OF_DRIVER = "#driverRalationship"
 SEL_QUALIFICATION = "#qualification"
