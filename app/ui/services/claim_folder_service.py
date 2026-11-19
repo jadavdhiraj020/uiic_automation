@@ -514,7 +514,7 @@ class ClaimFolderService:
                     getattr(scan_result, "policy_events", []) or []
                 )
 
-            report_source = find_main_report_source(folder, scan_result)
+            report_source = find_main_report_source(folder, scan_result, self.portal_id, stop_cb=stop_cb)
             if not report_source:
                 logs.append("Warning: No supported survey report found (Excel or PDF)!")
                 return ClaimFolderProcessResult(
@@ -538,7 +538,7 @@ class ClaimFolderService:
                 scan_result.report_pdf_path = report_source
 
             claim = extract_claim_data_from_report(
-                report_source, portal_id=self.portal_id
+                report_source, portal_id=self.portal_id, stop_cb=stop_cb,
             )
             claim.portal_id = self.portal_id
             claim._scan_context = scan_context
@@ -548,6 +548,13 @@ class ClaimFolderService:
             claim._scan_result = scan_result
             claim.source_excel_path = scan_result.excel_path or ""
             claim.source_report_path = report_source
+            if self.portal_id == "oic" and source_ext == ".pdf":
+                from app.portals.oic.pdf_report import supplement_oic_pdf_fees
+
+                supplement_oic_pdf_fees(claim, folder, stop_cb=stop_cb)
+                claim.assessment_files["survey_report"] = report_source
+                claim.assessment_files["assessment_report"] = report_source
+                logs.extend(f"OIC PDF review: {issue}" for issue in claim._oic_pdf_review_errors)
 
             # UIIC PDF-only cases may keep the fee bill / assessment summary in
             # another PDF in the same case folder. Supplement only from PDFs
@@ -796,6 +803,8 @@ class ClaimFolderService:
             # Logging block moved and initialized earlier before background thread launch
 
             return ClaimFolderProcessResult(True, scan_result, claim, logs)
+        except InterruptedError:
+            return ClaimFolderProcessResult(False, None, None, ["Warning: Scan cancelled."], error="Cancelled")
         except Exception as exc:
             logs.append(f"ERROR: Failed to read selected folder: {exc}")
             return ClaimFolderProcessResult(False, None, None, logs, error=str(exc))

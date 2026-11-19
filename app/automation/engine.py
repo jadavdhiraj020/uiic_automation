@@ -667,6 +667,11 @@ class AutomationEngine:
         # Check before opening a browser, including non-UI entry points.
         if self.portal_id == "oic":
             from app.portals.oic.automation.assessment_upload_excel import depreciation_errors, prepared_upload_error
+            pdf_errors = getattr(claim, "_oic_pdf_review_errors", [])
+            if pdf_errors:
+                message = "\n".join(pdf_errors)
+                self.log.error(f"OIC survey PDF needs review: {message}")
+                return AutomationRunResult(False, message)
             rate_errors = depreciation_errors(claim)
             if rate_errors:
                 message = "; ".join(rate_errors)

@@ -669,7 +669,16 @@ class MainWindow(QMainWindow):
                     f"({self._scan_context.portal_id})."
                 )
             self.workspace_page.update_data(self._claim, self._scan_result)
-            self._set_status("ready", "Ready")
+            pdf_needs_review = (
+                current_portal_id == "oic"
+                and str(getattr(self._claim, "source_report_path", "")).lower().endswith(".pdf")
+                and (getattr(self._claim, "_oic_pdf_review_errors", []) or getattr(self._claim, "_oic_upload_error", ""))
+            )
+            if pdf_needs_review:
+                self.workspace_page.set_stage(1)
+                self._set_status("error", "PDF needs review")
+            else:
+                self._set_status("ready", "Ready")
         else:
             self._scan_result = result.scan_result
             self._claim = None
@@ -684,7 +693,7 @@ class MainWindow(QMainWindow):
                 f"folder={getattr(result, 'scan_folder', '')} | reason={scan_error}"
             )
             self.workspace_page.doc_status_label.setText(
-                "❌ No valid Excel data source found."
+                "No supported survey report could be read."
             )
             self.workspace_page.set_scan_failed()
             self._set_status("error", "Scan Failed")
@@ -791,6 +800,13 @@ class MainWindow(QMainWindow):
         portal_display = getattr(scan_context, "portal_display_name", "") or portal_id.upper()
         if portal_id == "oic":
             from app.portals.oic.automation.assessment_upload_excel import depreciation_errors, prepared_upload_error
+            pdf_errors = getattr(self._claim, "_oic_pdf_review_errors", [])
+            if pdf_errors:
+                message = "\n".join(pdf_errors)
+                self._set_status("error", "OIC survey PDF needs review")
+                self.workspace_page.set_stage(1)
+                _warn("OIC Survey PDF Needs Review", message)
+                return
             rate_errors = depreciation_errors(self._claim)
             if rate_errors:
                 message = "\n".join(rate_errors)

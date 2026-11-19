@@ -50,9 +50,11 @@ def _nil_depreciation(claim):
 
 def depreciation_errors(claim):
     """Return specific OIC upload blockers before launching the browser."""
+    from_pdf = Path(str(getattr(claim, "source_report_path", "") or "")).suffix.lower() == ".pdf"
+    review = "check the survey PDF and rescan the folder" if from_pdf else "check OIC Field Mapping and rescan the folder"
     nil_depreciation = _nil_depreciation(claim)
     if nil_depreciation is None:
-        return ["Nil Depreciation must be Yes or No; check OIC Field Mapping and rescan the folder"]
+        return [f"Nil Depreciation must be Yes or No; {review}"]
     if nil_depreciation:
         return []
     errors = []
@@ -60,18 +62,21 @@ def depreciation_errors(claim):
         try:
             rate = _number(getattr(claim, field, ""), f"{label} depreciation rate")
         except ValueError as exc:
-            errors.append(str(exc) + "; check OIC Field Mapping and rescan the folder")
+            errors.append(f"{exc}; {review}")
             continue
         if rate not in SUPPORTED_DEPRECIATION and not (field == "paint_depreciation_rate" and rate == PAINT_SPLIT_RATE):
             allowed = "0, 5, 10, 15, 20, 25, 30, 35, 40, 50"
             if field == "paint_depreciation_rate":
                 allowed += ", 12.5 (split into material and labour)"
-            errors.append(f"{label} depreciation rate {rate}% is not supported by the OIC upload template (allowed: {allowed}). Check the source Excel and mapping.")
+            errors.append(f"{label} depreciation rate {rate}% is not supported by the OIC upload template (allowed: {allowed}); {review}.")
     return errors
 
 
 def prepared_upload_error(claim):
     """Require the workbook produced for the current folder scan."""
+    pdf_errors = getattr(claim, "_oic_pdf_review_errors", [])
+    if pdf_errors:
+        return "\n".join(pdf_errors)
     error = str(getattr(claim, "_oic_upload_error", "") or "").strip()
     if error:
         return f"OIC upload Excel could not be prepared: {error}"
@@ -130,11 +135,14 @@ def _date(value):
 
 def build_upload_workbook(claim, defaults, output_folder=None):
     """Create a fresh OIC import workbook and return its path and item names."""
+    if getattr(claim, "_oic_pdf_review_errors", []):
+        raise ValueError("Review the PDF fields listed in Extraction Review and rescan the folder.")
     errors = depreciation_errors(claim)
     if errors:
         raise ValueError("; ".join(errors))
+    pdf_assessment = getattr(claim, "_oic_pdf_assessment", None)
     source = Path(str(getattr(claim, "source_excel_path", "") or ""))
-    if not source.is_file():
+    if pdf_assessment is None and not source.is_file():
         raise ValueError("Source survey Excel is missing; rescan the claim folder")
     invoice = str(getattr(claim, "workshop_invoice_no", "") or getattr(claim, "invoice_no", "") or "").strip()
     if not invoice:
@@ -147,11 +155,14 @@ def build_upload_workbook(claim, defaults, output_folder=None):
     nil_depreciation = _nil_depreciation(claim)
     metal_rate = Decimal(0) if nil_depreciation else _number(claim.metal_depreciation_rate, "Metal depreciation rate")
     paint_rate = Decimal(0) if nil_depreciation else _number(claim.paint_depreciation_rate, "Paint depreciation rate")
-    boundary = defaults.get("table_boundary_keyword", "sub total|total|grand total")
-    parts, _, _ = extract_parts_and_labour(str(source), boundary_keyword=boundary, oic_flexible_parts=True)
-    totals = _labour_totals(str(source), boundary)
+    if pdf_assessment is None:
+        boundary = defaults.get("table_boundary_keyword", "sub total|total|grand total")
+        parts, _, _ = extract_parts_and_labour(str(source), boundary_keyword=boundary, oic_flexible_parts=True)
+        totals = _labour_totals(str(source), boundary)
+    else:
+        parts, totals = pdf_assessment
     if not parts and not any(totals.values()):
-        raise ValueError("No non-zero OIC spare parts or labour amounts were found in the source Excel")
+        raise ValueError("No non-zero OIC spare parts or labour amounts were found in the survey report")
     part_hsn = str(defaults.get("item_hsn_code") or "8512").strip()
     labour_hsn = str(defaults.get("labour_hsn_code") or "8729").strip()
     rows = []
@@ -173,6 +184,17 @@ def build_upload_workbook(claim, defaults, output_folder=None):
         labour_rows.append(("Labour Charge", "PAINT", paint_total, paint_rate, paint_total, labour_hsn))
     rows.extend(row for row in labour_rows if row[2] != 0)
 
+    if pdf_assessment is not None:
+        for section, items in (("spares", rows[:len(parts)]), ("labour", rows[len(parts):])):
+            expected = _number(getattr(claim, f"{section}_taxable_amount"), f"{section.title()} taxable amount")
+            actual = sum((row[2] * (1 - row[3] / 100) for row in items), Decimal(0))
+            if abs(actual - expected) > Decimal(".02"):
+                source = claim._excel_coords[f"{section}_taxable_amount"]
+                raise ValueError(
+                    f"{section.title()} items after depreciation total {actual:.2f}, "
+                    f"but the GST summary on {source} says {expected:.2f}. Check the survey PDF."
+                )
+
     # OIC compares this field against the sum of the uploaded item amounts.
     # Derive it from the same rows rather than from the separate GST summary.
     invoice_amount = sum((row[2] for row in rows), Decimal(0))
@@ -181,11 +203,14 @@ def build_upload_workbook(claim, defaults, output_folder=None):
     inv.title = "Invoice"
     inv.append(INVOICE_HEADERS)
     inv.append((invoice, invoice_date, gst_type, float(invoice_amount), float(invoice_gst)))
+    inv["A2"].data_type = "s"
     ws = wb.create_sheet("Items")
     ws.append(ITEM_HEADERS)
     cached = {}
     for r, (category, name, amount, rate, estimate, hsn) in enumerate(rows, 2):
         ws.append((invoice, category, name, "Front", float(amount), float(rate), 18, float(estimate), None, hsn, f"=ROUND((E{r}-(E{r}*F{r}/100))*(G{r}/100),2)"))
+        for column in ("A", "C", "J"):
+            ws[f"{column}{r}"].data_type = "s"
         cached[f"K{r}"] = (amount * (1 - rate / 100) * Decimal("0.18")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     for sheet, target, options in (
         (inv, "C2:C1048576", "IGST,CGST/SGST"),

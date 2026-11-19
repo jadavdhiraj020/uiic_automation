@@ -4,8 +4,8 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtCore import Qt, QUrl, pyqtSignal
+from PyQt6.QtGui import QColor, QDesktopServices, QFont
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -479,7 +479,14 @@ class DataReviewPanel(QWidget):
 
         header = QLabel("Extraction Review")
         header.setObjectName("workspaceHeading")
-        self.lay.addWidget(header)
+        heading = QHBoxLayout()
+        heading.addWidget(header, 1)
+        self.open_pdf_button = QPushButton("Open survey PDF")
+        self.open_pdf_button.hide()
+        self.open_pdf_button.clicked.connect(self._open_survey_pdf)
+        self._source_report_path = ""
+        heading.addWidget(self.open_pdf_button)
+        self.lay.addLayout(heading)
 
         self.validation_bar = QLabel("")
         self.validation_bar.setWordWrap(True)
@@ -504,10 +511,17 @@ class DataReviewPanel(QWidget):
     def reset(self):
         self.update_data(None, None)
 
+    def _open_survey_pdf(self):
+        if self._source_report_path:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(self._source_report_path))
+
     def update_data(self, claim, portal_id):
         self._clear_dynamic()
         self._rows = []
         self._metadata = get_portal_ui_metadata(portal_id)
+        self._source_report_path = str(getattr(claim, "source_report_path", "") or "")
+        oic_pdf = portal_id == "oic" and self._source_report_path.lower().endswith(".pdf")
+        self.open_pdf_button.setVisible(oic_pdf)
 
         if not claim:
             self.validation_bar.setVisible(False)
@@ -520,7 +534,8 @@ class DataReviewPanel(QWidget):
         errors, warnings = claim.validate()
         upload_warning = getattr(claim, "_oic_upload_warning", "") if portal_id == "oic" else ""
         if errors:
-            message = "MISSING FIELDS - Review before starting:\n" + "\n".join(f"  - {e}" for e in errors)
+            title = "Review the survey PDF before starting" if oic_pdf else "MISSING FIELDS - Review before starting"
+            message = title + "\n" + "\n".join(f"  - {e}" for e in errors)
             if upload_warning:
                 message += "\n\n" + upload_warning
             self.validation_bar.setText(message)

@@ -531,3 +531,83 @@ def test_uiic_ajay_sharma_single_pdf_format_end_to_end(monkeypatch):
     assert claim.payment_to == "REPAIRER"
     assert claim.bank_payment_to == "Dealer"
 
+
+def test_oic_final_report_wins_over_renamed_reinspection(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from app.data.pdf_report_reader import PdfLine
+    from app.portals.oic.pdf_report import find_oic_report
+
+    main = tmp_path / "Main.pdf"
+    main.write_bytes(b"final")
+    secondary = tmp_path / "Claim attachment.pdf"
+    secondary.write_bytes(b"reinspection")
+
+    def read(path, max_pages=None):
+        if Path(path) == main:
+            rows = ["Motor OD Final Survey Report", "Claim No: DEMO1234", "Reinspection Survey Report"]
+        else:
+            rows = [
+                "PRIVATE & CONFIDENTIAL MOTOR RE-INSPECTION SURVEY REPORT",
+                "Policy Number: OTHER1234",
+                "The repairs follow our final survey report.",
+            ]
+        return [PdfLine(1, i, row) for i, row in enumerate(rows, 1)]
+
+    monkeypatch.setattr("app.data.pdf_report_reader.read_lines", read)
+    assert find_oic_report(tmp_path) == str(main)
+
+
+def test_oic_corrupt_optional_fee_bill_warns_without_failing_scan(tmp_path):
+    from app.data.data_model import ClaimData
+    from app.portals.oic.pdf_report import supplement_oic_pdf_fees
+
+    (tmp_path / "Survey Fee Bill.pdf").write_bytes(b"%PDF-1.7 corrupt")
+    claim = ClaimData(portal_id="oic", claim_no="DEMO1234")
+    claim._oic_pdf_review_warnings = []
+
+    supplement_oic_pdf_fees(claim, tmp_path)
+
+    assert not claim._excel_coords.get("professional_fee")
+    assert any("Could not read optional fee bill Survey Fee Bill.pdf" in warning
+               for warning in claim._oic_pdf_review_warnings)
+
+
+def test_oic_ocr_separates_surveyor_licence_and_expiry(monkeypatch):
+    from app.portals.oic import pdf_report
+    from app.portals.oic.pdf_layout import Line, Page
+
+    values = (
+        "Motor OD Final Survey Report",
+        "LicenseNo.SLA-7777Expirey:26/10/2027 Mob:98140",
+        "Claim No: DEMO1234",
+    )
+    lines = tuple(Line(1, index * 10, ((0, 120, text),), 0.98)
+                  for index, text in enumerate(values))
+    monkeypatch.setattr(pdf_report, "read_pages", lambda *_args, **_kwargs: [Page(lines, (), 612)])
+
+    claim = pdf_report.read_oic_pdf_report("Main.pdf")
+
+    assert claim.surveyor_license_number == "SLA-7777"
+    assert claim.surveyor_license_expiry_date == "26/10/2027"
+
+
+def test_oic_native_overflow_completes_partial_ocr_value_without_duplication():
+    from app.portals.oic.pdf_layout import Line, Page, _join_print_tiles
+
+    left = Page((
+        Line(1, 40, ((20, 95, "Make & Model"), (200, 581, "SAMPLEMOTORSBLUE")), 0.98),
+        Line(1, 200, ((0, 110, "Parts Name Estimated"),)),
+    ), (), 612)
+    labour = Page((Line(2, 200, ((0, 110, "R/R DENTING C/W"),)),), (), 612)
+    continuation = Page((
+        Line(3, 41, ((-115, 141, "SAMPLE MOTORS BLUE SUV 2.0D"),)),
+        Line(3, 200, ((0, 110, "Sr. No. GST"),)),
+    ), (), 612)
+    paint = Page((Line(4, 200, ((0, 110, "PAINT GST"),)),), (), 612)
+
+    joined = _join_print_tiles([left, labour, continuation, paint])
+
+    assert joined[0].lines[0].text == "Make & Model SAMPLE MOTORS BLUE SUV 2.0D"
+    assert joined[0].lines[0].extra_page == 3
+

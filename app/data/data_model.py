@@ -767,6 +767,8 @@ class ClaimData:
         errors, warnings = [], []
 
         from app.portals.oic.automation.assessment_upload_excel import depreciation_errors
+        errors.extend(getattr(self, "_oic_pdf_review_errors", ()))
+        warnings.extend(getattr(self, "_oic_pdf_review_warnings", ()))
         errors.extend(depreciation_errors(self))
         upload_error = getattr(self, "_oic_upload_error", "")
         if upload_error and not errors:
@@ -831,6 +833,13 @@ class ClaimData:
             warnings.append("Workshop Name not found in Excel")
         if not self.workshop_estimate_amount:
             warnings.append("Workshop Estimate Amount not found in Excel")
+        elif str(self.source_report_path or "").lower().endswith(".pdf"):
+            try:
+                estimate = Decimal(str(self.workshop_estimate_amount).replace(",", ""))
+                if not estimate.is_finite() or not 1000 <= estimate <= 100000000:
+                    errors.append("Workshop Estimate Amount in the survey PDF must be between ₹1,000 and ₹10 crore.")
+            except InvalidOperation:
+                errors.append("Workshop Estimate Amount in the survey PDF must be numeric.")
         else:
             amt_str = re.sub(r'[^\d]', '', str(self.workshop_estimate_amount))
             if amt_str:
@@ -883,7 +892,9 @@ class ClaimData:
         if not self.surveyor_license_expiry_date or str(self.surveyor_license_expiry_date).strip() == "":
             errors.append("Surveyor License Expiry Date is missing")
 
-        return errors, warnings
+        if str(self.source_report_path or "").lower().endswith(".pdf"):
+            warnings = [warning.replace("not found in Excel", "not found in the survey PDF") for warning in warnings]
+        return list(dict.fromkeys(errors)), list(dict.fromkeys(warnings))
 
 
     def _validate_uiic(self) -> Tuple[List[str], List[str]]:
@@ -1055,6 +1066,7 @@ class ClaimData:
 
     def _preview_oic(self) -> List[Tuple[str, str, bool, str]]:
         """OIC preview — Claim, Vehicle, Driver, Workshop details."""
+        is_pdf = str(self.source_report_path or "").lower().endswith(".pdf")
         def _src(key: str) -> str:
             return self._excel_coords.get(key, "")
 
@@ -1079,6 +1091,11 @@ class ClaimData:
         rto_choice = resolve_rto_choice(self.vehicle_registration_number, self.rto_name)
         rto_match = rto_choice.name
         rto_preview_source = f"{rto_choice.source} (saved portal list; review on portal)" if rto_choice.source else ""
+        if is_pdf:
+            rto_preview_source = rto_preview_source.replace("Excel RTO name", "PDF RTO name")
+            if rto_choice.source == "first available option" or rto_choice.possible_mismatch:
+                rto_match = ""
+                rto_preview_source = "Check the registration and RTO on the survey PDF"
         if rto_choice.possible_mismatch:
             rto_preview_source += "; possible mismatch with registration code"
 
@@ -1093,9 +1110,9 @@ class ClaimData:
         # Close Proximity and Nil Dep Cover derived/keyword
         from app.portals.oic.automation.basic_details_module import _resolve_loss_proximity, _resolve_nil_depreciation
         close_prox = "YES" if _resolve_loss_proximity(self.date_of_accident, self.date_of_allotment) else "NO"
-        nil_dep = "YES" if _resolve_nil_depreciation(self.nil_depreciation) else "NO"
+        nil_dep = "" if is_pdf and not self.nil_depreciation else ("YES" if _resolve_nil_depreciation(self.nil_depreciation) else "NO")
 
-        return [
+        rows = [
             # Claim Details
             ("Policy Number",         self.policy_number,        not bool(str(self.claim_no or "").strip()), _src("policy_number")),
             ("Claim No",              self.claim_no,              not bool(str(self.policy_number or "").strip()), _src("claim_no")),
@@ -1162,7 +1179,8 @@ class ClaimData:
             ("Country",               "INDIA",                    True,  "Hardcoded"),
             ("State",                 state_fallback,             True,  _src("driver_license_number") if state_fallback else ""),
             ("City",                  city_fallback,              True,  _src("driver_license_number") if city_fallback else ""),
-            ("Pincode",               "First available in portal", True, "Selected after city"),
+            ("Pincode",               self.driver_pin_code if is_pdf else "First available in portal", True,
+                                      _src("driver_pin_code") if is_pdf else "Selected after city"),
             ("Address",               self.driver_address,        True,  _src("driver_address")),
             ("Charges Filed",         self.charges_filed,         False, _src("charges_filed")),
 
@@ -1219,6 +1237,16 @@ class ClaimData:
             ("Misc Charge (₹)", self.misc_charge, False, _src("misc_charge")),
             ("Others Total (₹)", format(self.surveyor_other_expenses, "f"), False, "Re Inspection Charges + Misc Charge"),
         ]
+        assessment = getattr(self, "_oic_pdf_assessment", None)
+        if is_pdf and assessment is not None:
+            parts, labour = assessment
+            sources = self._oic_pdf_item_sources
+            spare_source = sources.get("spares", "")
+            labour_source = sources.get("labour", "")
+            rows.append(("Spares items for upload", str(len(parts)) if spare_source else "", False, spare_source))
+            for name, label in (("rr", "R/R"), ("denting", "Denting"), ("cw", "C/W"), ("painting", "Paint")):
+                rows.append((f"Labour {label} (₹)", format(labour[name], "f") if labour_source else "", False, labour_source))
+        return rows
 
 
     def _preview_uiic(self) -> List[Tuple[str, str, bool, str]]:

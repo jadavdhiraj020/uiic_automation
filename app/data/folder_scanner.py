@@ -1096,7 +1096,7 @@ def scan_folder(
             logger.warning("Could not auto-generate survey_report.pdf from Excel: %s", gen_err)
 
     # ── Survey Report → Assessment Report Copy ────────────────────────────────
-    if "survey_report" in result.assessment_files:
+    if "survey_report" in result.assessment_files and (portal_id != "oic" or result.excel_path):
         if _cancel_checkpoint("before_survey_report_copy"):
             return result
         survey_path = result.assessment_files["survey_report"]

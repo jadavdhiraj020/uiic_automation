@@ -86,30 +86,36 @@ from app.portals.oic.automation.recovery import (
 )
 
 
-async def _select_rto(page: Page, registration_number: str, excel_value: str, log: AutomationLogger, delay: int) -> None:
+async def _select_rto(page: Page, registration_number: str, report_value: str, log: AutomationLogger, delay: int, *, from_pdf=False) -> None:
     """Select an RTO using registration, Excel RTO, then the first portal option."""
     if field_was_handled(page, log, "RTO"):
         return
-    choice = resolve_rto_choice(registration_number, excel_value, ())
-    mapped_choice = resolve_rto_choice(registration_number, excel_value, (choice.mapped_location,))
+    choice = resolve_rto_choice(registration_number, report_value, ())
+    if from_pdf and choice.possible_mismatch:
+        await field_problem(page, log, "RTO", "The registration code and the RTO name in the PDF point to different places. Select the correct RTO in Chrome.")
+        return
+    mapped_choice = resolve_rto_choice(registration_number, report_value, (choice.mapped_location,))
     expected = ""
     if mapped_choice.source == "registration code":
         choice, expected = mapped_choice, mapped_choice.name
 
     def choose(options):
         nonlocal choice
-        choice = resolve_rto_choice(registration_number, excel_value, options)
+        choice = resolve_rto_choice(registration_number, report_value, options)
+        if from_pdf and (choice.possible_mismatch or choice.source == "first available option"):
+            return ""
         return choice.name
 
     try:
         selected = await select_dropdown_option(page, SEL_RTO_DROPDOWN, choose, expected=expected, allow_duplicate=True)
         if choice.source == "first available option":
-            log.warning(f"RTO registration code '{choice.registration_code or 'unavailable'}' and Excel RTO '{excel_value}' did not match; selected the first option '{selected}'. Review the selected office.")
+            log.warning(f"RTO registration code '{choice.registration_code or 'unavailable'}' and Excel RTO '{report_value}' did not match; selected the first option '{selected}'. Review the selected office.")
         elif choice.source == "Excel RTO name":
-            log.warning(f"RTO registration code '{choice.registration_code or 'unavailable'}' did not match a portal option; using Excel RTO '{excel_value}' → '{selected}'.")
+            source = "PDF" if from_pdf else "Excel"
+            log.warning(f"RTO registration code '{choice.registration_code or 'unavailable'}' did not match a portal option; using {source} RTO '{report_value}' → '{selected}'.")
         if choice.possible_mismatch:
-            log.warning(f"RTO registration code '{choice.registration_code}' maps to '{choice.mapped_location}', which may differ from Excel RTO '{excel_value}'.")
-        log.field_selected("RTO", selected, source=choice.source)
+            log.warning(f"RTO registration code '{choice.registration_code}' maps to '{choice.mapped_location}', which may differ from Excel RTO '{report_value}'.")
+        log.field_selected("RTO", selected, source=choice.source.replace("Excel", "PDF") if from_pdf else choice.source)
     except Exception as exc:
         log.field_failed("RTO", str(exc))
         await field_problem(page, log, "RTO", str(exc))
@@ -323,7 +329,10 @@ async def _fill_vehicle_details(page: Page, claim, log, delay: int):
 
     # 15. Resolve the RTO using the registration code and Excel RTO fallback.
     rto = str(claim.rto_name or "").strip()
-    await _select_rto(page, str(claim.vehicle_registration_number or ""), rto, log, delay)
+    await _select_rto(
+        page, str(claim.vehicle_registration_number or ""), rto, log, delay,
+        from_pdf=str(getattr(claim, "source_report_path", "") or "").lower().endswith(".pdf"),
+    )
 
     # 16. Optional: Registered Laden Weight — PrimeNG InputNumber
     if claim.registered_laden_weight:
@@ -736,7 +745,10 @@ async def _fill_driver_details(page: Page, claim, log, delay: int, automation_de
 
         if field_decision(page, log, "City") == "skip" and not await dropdown_is_available(page, SEL_PINCODE_DROPDOWN):
             log.info("Pincode is unavailable until a City is selected.")
-        elif not await _select_pincode_dropdown(page, log, delay):
+        elif not await _select_pincode_dropdown(
+            page, log, delay,
+            pdf_pin=str(claim.driver_pin_code or "") if str(getattr(claim, "source_report_path", "") or "").lower().endswith(".pdf") else None,
+        ):
             return False
 
     # 18. Address * (mandatory) — textarea
@@ -838,17 +850,24 @@ async def _click_next_button(page: Page, log, stop_cb) -> bool:
 # PRIVATE — PINCODE DROPDOWN HELPER
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def _select_pincode_dropdown(page: Page, log, delay: int) -> bool:
-    """Select the first available six-digit PIN for the selected city."""
+async def _select_pincode_dropdown(page: Page, log, delay: int, *, pdf_pin=None) -> bool:
+    """Match the driver's PDF postcode, or use the existing Excel flow."""
     if field_was_handled(page, log, "Pincode"):
         return True
 
-    def first_pincode(options):
-        return next((value for value in options if re.match(r"^\d{6}(?!\d)", value)), "")
+    if pdf_pin is not None and not re.fullmatch(r"[1-9]\d{5}", pdf_pin):
+        return await field_problem(page, log, "Pincode", "The survey PDF does not contain a reliable driver pincode. Select the correct pincode in Chrome.")
+
+    def choose(options):
+        pattern = r"^\d{6}(?!\d)" if pdf_pin is None else rf"^{pdf_pin}(?!\d)"
+        matches = [value for value in options if re.match(pattern, value)]
+        return matches[0] if matches and (pdf_pin is None or len(set(matches)) == 1) else ""
 
     try:
-        pin = await select_dropdown_option(page, SEL_PINCODE_DROPDOWN, first_pincode, allow_duplicate=True)
-        log.field_selected("Pincode", pin, source="First available portal option")
+        pin = await select_dropdown_option(
+            page, SEL_PINCODE_DROPDOWN, choose, expected=pdf_pin or "", allow_duplicate=True,
+        )
+        log.field_selected("Pincode", pin, source="Survey PDF" if pdf_pin else "First available portal option")
         return True
     except Exception as exc:
         log.field_failed("Pincode", str(exc))
