@@ -146,7 +146,7 @@
   },
   "fitness_valid_upto": {
     "sheet": "ALL",
-    "search_labels": ["Fitness Valid Upto", "Fitness Upto", "Fitness Validity", "Fitness Certificate"],
+    "search_labels": ["Fitness Valid Upto", "Fitness Upto", "Fitness Validity", "Fitness Certificate", "Fitness Cert. Valid Upto", "Fitness Valid Up To", "Fitness Expiry Date"],
     "row_offset": 0,
     "col_offset": 1,
     "_mandatory": false

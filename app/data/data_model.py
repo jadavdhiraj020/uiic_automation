@@ -1071,8 +1071,9 @@ class ClaimData:
             return self._excel_coords.get(key, "")
 
         # Match the value sent to the OIC Variant field.
-        from app.portals.oic.automation.basic_details_module import _extract_variant
+        from app.portals.oic.automation.basic_details_module import _extract_variant, _resolve_charges_filed
         variant = _extract_variant(self.vehicle_make)
+        charges_filed, charges_source = _resolve_charges_filed(self.charges_filed)
 
         from app.portals.oic.license_type_mapping import resolve_license_type
         licence_type, licence_source = resolve_license_type(
@@ -1090,10 +1091,14 @@ class ClaimData:
         from app.portals.oic.rto_mapping import resolve_rto_choice
         rto_choice = resolve_rto_choice(self.vehicle_registration_number, self.rto_name)
         rto_match = rto_choice.name
-        rto_preview_source = f"{rto_choice.source} (saved portal list; review on portal)" if rto_choice.source else ""
+        rto_preview_source = f"{rto_choice.source} (saved OIC list)" if rto_choice.source else ""
+        if rto_choice.source in ("same-state fallback", "district fallback"):
+            rto_preview_source = f"{rto_choice.registration_code} · {rto_choice.source} ({rto_choice.state_code}) · review"
+        elif not rto_match and rto_choice.registration_code:
+            rto_preview_source = f"No compatible office for {rto_choice.registration_code} in saved OIC list"
         if is_pdf:
             rto_preview_source = rto_preview_source.replace("Excel RTO name", "PDF RTO name")
-            if rto_choice.source == "first available option" or rto_choice.possible_mismatch:
+            if rto_choice.possible_mismatch:
                 rto_match = ""
                 rto_preview_source = "Check the registration and RTO on the survey PDF"
         if rto_choice.possible_mismatch:
@@ -1182,7 +1187,7 @@ class ClaimData:
             ("Pincode",               self.driver_pin_code if is_pdf else "First available in portal", True,
                                       _src("driver_pin_code") if is_pdf else "Selected after city"),
             ("Address",               self.driver_address,        True,  _src("driver_address")),
-            ("Charges Filed",         self.charges_filed,         False, _src("charges_filed")),
+            ("Charges Filed",         charges_filed,              False, charges_source or _src("charges_filed")),
 
             # Workshop Details
             ("Workshop Name",         self.workshop_name,              True,  _src("workshop_name")),

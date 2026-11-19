@@ -1,4 +1,4 @@
-"""Match an Excel RTO name to the names offered by the OIC portal."""
+"""Resolve vehicle registration codes and report RTO names against OIC options."""
 
 import json
 import re
@@ -64,6 +64,51 @@ def match_rto_name(value: str, options: Iterable[str] | None = None) -> str:
 _DIRECTION_WORDS = frozenset({"north", "south", "east", "west", "central", "new", "old", "city", "district", "zone", "rla", "sta"})
 _PLACEHOLDERS = frozenset({"select", "select rto", "select an rto", "choose", "choose rto", "loading", "loading...", "fetching...", "no results found", "no records found", "--", "-"})
 
+_STATE_CODE_ALIASES = {"DN": "DD", "OR": "OD", "TS": "TG", "UA": "UK"}
+
+# Office labels that differ from the district labels used in Driver Details.
+# Punjab offices: Punjab Transport Department RFP final.pdf, Annexure A, and
+# the NIC Sarathi Punjab office directory (28 September 2021).
+_REGISTRATION_OFFICES = {
+    "PB01": ("STA Punjab", "Punjab STA", "State Transport Authority Punjab"),
+    "PB12": ("Ropar", "Rupnagar"),
+    "PB18": ("Batala",),
+    "PB26": ("Khanna",),
+    "PB34": ("Nabha",),
+    "PB36": ("Phagwara",),
+    "PB39": ("Rajpura",),
+    "PB65": ("SASNAGAR", "S.A.S. Nagar", "Mohali"),
+    "PB74": ("Nangal",),
+    "PB93": ("Lopoke",),
+    "PB94": ("Adampur",),
+    "PB99": ("Dinanagar",),
+    "DL01": ("North Delhi",),
+    "DL06": ("Central Delhi",),
+    "DL07": ("East Delhi",),
+    "AN01": ("Port Blair", "Sri Vijaya Puram", "South Andaman"),
+}
+
+# Additional OIC labels with known geography, including names used before
+# district or state renames. Used only for validating a same-state fallback.
+_STATE_OFFICE_ALIASES = {
+    "AN": ("Port Blair", "Sri Vijaya Puram", "South Andaman", "Nicobar"),
+    "CH": ("Chandigarh",),
+    "DD": ("Dadra & Nagar Haveli", "Silvassa", "Daman", "Diu"),
+    "DL": ("Delhi", "North Delhi", "South Delhi", "East Delhi", "West Delhi",
+           "Central Delhi", "New Delhi", "Dwarka, Delhi", "Sarai Kale Khan, Delhi"),
+    "GA": ("Panaji", "Goa"),
+    "GJ": ("Gandhinagar", "Surendranagar", "Ahmedabad"),
+    "KA": ("Bangalore", "Bengaluru", "Gulbarga", "Kalaburagi"),
+    "LD": ("Kavaratti", "Lakshadweep"),
+    "OD": ("Cuttack", "Bhubaneswar", "Balasore", "Odisha", "Orissa"),
+    "PB": ("Punjab", "Mohali", "SASNAGAR", "Ropar", "Bathinda", "Bhatinda"),
+    "PY": ("Puducherry", "Pondicherry"),
+    "SK": ("North Sikkim", "South Sikkim", "East Sikkim", "West Sikkim", "Sikkim"),
+    "TG": ("Hyderabad", "Karimnagar", "Telangana"),
+}
+
+_OFFICE_CODE_TOKEN = re.compile(r"(?<![A-Z0-9])([A-Z]{2})[ ./-]*(\d{1,2})(?![A-Z0-9])", re.I)
+
 
 class RtoChoice(NamedTuple):
     name: str
@@ -71,6 +116,7 @@ class RtoChoice(NamedTuple):
     registration_code: str
     mapped_location: str
     possible_mismatch: bool
+    state_code: str
 
 
 def _distinctive_words(value: str) -> set[str]:
@@ -86,44 +132,96 @@ def _is_real_option(value: str) -> bool:
 
 
 def registration_rto_code(registration_number: str) -> str:
-    """Extract a two-letter state and one- or two-digit office prefix."""
+    """Recognize a bare code, a registration with a letter series, or a legacy number."""
     compact = re.sub(r"[\s./-]+", "", str(registration_number or "")).upper()
-    match = re.match(r"^([A-Z]{2})(\d{1,2})(?=[A-Z]|$)", compact)
+    match = re.fullmatch(r"([A-Z]{2})(\d{1,2})(?:[A-Z]{1,3}\d{0,4})?", compact)
+    if not match:
+        match = re.fullmatch(r"([A-Z]{2})(\d{2})\d{4}", compact)
     return match.group(1) + match.group(2).zfill(2) if match else ""
 
 
+def _state_code(code: str) -> str:
+    return _STATE_CODE_ALIASES.get(code[:2], code[:2])
+
+
+def _office_key(name: str) -> tuple[str, ...]:
+    return tuple(word for word in _words(name) if word not in _GENERIC_WORDS)
+
+
+@lru_cache(maxsize=1)
+def _office_states() -> dict[tuple[str, ...], set[str]]:
+    states: dict[tuple[str, ...], set[str]] = {}
+    for code, district in _licence_cities().items():
+        if _distinctive_words(district):
+            states.setdefault(_office_key(district), set()).add(_state_code(code))
+    for code, offices in _REGISTRATION_OFFICES.items():
+        for office in offices:
+            states.setdefault(_office_key(office), set()).add(_state_code(code))
+    for state, aliases in _STATE_OFFICE_ALIASES.items():
+        for office in aliases:
+            states.setdefault(_office_key(office), set()).add(state)
+    return states
+
+
+def _option_state(name: str) -> str:
+    codes = {_state_code(match.group(1).upper()) for match in _OFFICE_CODE_TOKEN.finditer(name)}
+    states = codes or _office_states().get(_office_key(name), set())
+    return next(iter(states)) if len(states) == 1 else ""
+
+
+def _match_office_labels(labels: Iterable[str], names: list[str], *, district=False) -> str:
+    key_for_name = _office_key if district else lambda name: tuple(_words(name))
+    by_key = {}
+    for name in names:
+        by_key.setdefault(key_for_name(name), name)
+    return next((by_key[key] for label in labels if (key := key_for_name(label)) in by_key), "")
+
+
 def resolve_rto_choice(registration_number: str, excel_rto: str, options: Iterable[str] | None = None) -> RtoChoice:
-    """Prefer the registration code, then the mapped Excel RTO, then first option."""
+    """Prefer a coded office or report name, then a confirmed same-state option."""
     names = [str(name).strip() for name in (portal_rto_options() if options is None else options)
              if _is_real_option(name)]
-    code = registration_rto_code(registration_number)
-    location = _licence_cities().get(code, "") if code else ""
+    report_code = registration_rto_code(excel_rto)
+    registration_code = registration_rto_code(registration_number)
+    code = registration_code or report_code
+    state = _state_code(code)
+    district = _licence_cities().get(code, "")
+    offices = _REGISTRATION_OFFICES.get(code, ())
+    location = (offices or (district,))[0]
+    compatible_names = [name for name in names if not state or _option_state(name) in ("", state)]
+    same_state = [name for name in compatible_names if state and _option_state(name) == state]
 
-    # The existing directory contains broad entries such as DL01=NORTH.
-    # Never use those as a location match: NORTH PAROOR is not North Delhi.
-    name = ""
-    source = ""
-    if location and _distinctive_words(location):
-        name = next((item for item in names if _words(item) == _words(location)), "")
-        if name:
-            source = "registration code"
+    coded_option = next((name for name in names if code and any(
+        registration_rto_code(match.group()) == code for match in _OFFICE_CODE_TOKEN.finditer(name)
+    )), "")
+    exact_office = coded_option or _match_office_labels(offices, compatible_names)
+    district_option = (
+        _match_office_labels((district,), compatible_names, district=True) if _distinctive_words(district) else ""
+    )
+    name = exact_office or (district_option if not offices else "")
+    source = ("registration code" if registration_code else "report RTO code") if name else ""
 
-    if not name and excel_rto:
-        candidate = match_rto_name(excel_rto, names)
-        # Shared generic words such as CENTRAL must not match Bengaluru to
-        # Madurai Central. A specific place word must occur in both values.
+    if not name and excel_rto and not report_code:
+        candidate = match_rto_name(excel_rto, compatible_names)
         if candidate and _distinctive_words(excel_rto) & _distinctive_words(candidate):
             name, source = candidate, "Excel RTO name"
 
-    if not name and names:
-        name, source = names[0], "first available option"
+    if not name and district_option:
+        name, source = district_option, "district fallback"
+    if not name and same_state:
+        name, source = same_state[0], "same-state fallback"
 
-    excel_words = _distinctive_words(excel_rto)
-    location_words = _distinctive_words(location)
-    mismatch = bool(location_words and excel_words and not (excel_words & location_words))
+    report_words = _distinctive_words(excel_rto) if not report_code else set()
+    place_words = _distinctive_words(" ".join((*offices, district)))
+    report_state = _option_state(excel_rto)
+    mismatch = bool(registration_code and report_code and registration_code != report_code)
+    if registration_code and state and report_state and state != report_state:
+        mismatch = True
+    if place_words and report_words and place_words.isdisjoint(report_words):
+        mismatch = True
     directions = {"north", "south", "east", "west", "central"}
     mapped_directions = set(_words(location)) & directions
     selected_directions = set(_words(name)) & directions
     if mapped_directions and selected_directions and mapped_directions.isdisjoint(selected_directions):
         mismatch = True
-    return RtoChoice(name, source, code, location, mismatch)
+    return RtoChoice(name, source, code, location, mismatch, state)

@@ -7,6 +7,7 @@
 
   "_comment_basic": "Hardcoded defaults for Basic Details (Step 2). Surveyors can change these via Settings UI.",
   "driver_relation_default": "other",
+  "charges_filed_default": "",
 
   "_comment_interim": "Hardcoded defaults for Interim Report (Step 3). Surveyors can change these via Settings UI.",
   "whether_vehicle_inspected": "YES",

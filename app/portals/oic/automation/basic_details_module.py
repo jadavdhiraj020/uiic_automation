@@ -87,29 +87,32 @@ from app.portals.oic.automation.recovery import (
 
 
 async def _select_rto(page: Page, registration_number: str, report_value: str, log: AutomationLogger, delay: int, *, from_pdf=False) -> None:
-    """Select an RTO using registration, Excel RTO, then the first portal option."""
+    """Select an RTO using the registration, report, or a known same-state office."""
     if field_was_handled(page, log, "RTO"):
         return
     choice = resolve_rto_choice(registration_number, report_value, ())
     if from_pdf and choice.possible_mismatch:
         await field_problem(page, log, "RTO", "The registration code and the RTO name in the PDF point to different places. Select the correct RTO in Chrome.")
         return
-    mapped_choice = resolve_rto_choice(registration_number, report_value, (choice.mapped_location,))
-    expected = ""
-    if mapped_choice.source == "registration code":
-        choice, expected = mapped_choice, mapped_choice.name
+    preview = resolve_rto_choice(registration_number, report_value)
+    expected = preview.name if preview.source == "registration code" else ""
+    if expected:
+        choice = preview
 
     def choose(options):
         nonlocal choice
         choice = resolve_rto_choice(registration_number, report_value, options)
-        if from_pdf and (choice.possible_mismatch or choice.source == "first available option"):
+        if from_pdf and choice.possible_mismatch:
             return ""
         return choice.name
 
     try:
         selected = await select_dropdown_option(page, SEL_RTO_DROPDOWN, choose, expected=expected, allow_duplicate=True)
-        if choice.source == "first available option":
-            log.warning(f"RTO registration code '{choice.registration_code or 'unavailable'}' and Excel RTO '{report_value}' did not match; selected the first option '{selected}'. Review the selected office.")
+        if choice.source in ("same-state fallback", "district fallback"):
+            log.warning(
+                f"OIC did not offer the exact RTO for {choice.registration_code}. "
+                f"Selected '{selected}' using the {choice.source} ({choice.state_code}). Review the selected office."
+            )
         elif choice.source == "Excel RTO name":
             source = "PDF" if from_pdf else "Excel"
             log.warning(f"RTO registration code '{choice.registration_code or 'unavailable'}' did not match a portal option; using {source} RTO '{report_value}' → '{selected}'.")
@@ -117,8 +120,11 @@ async def _select_rto(page: Page, registration_number: str, report_value: str, l
             log.warning(f"RTO registration code '{choice.registration_code}' maps to '{choice.mapped_location}', which may differ from Excel RTO '{report_value}'.")
         log.field_selected("RTO", selected, source=choice.source.replace("Excel", "PDF") if from_pdf else choice.source)
     except Exception as exc:
-        log.field_failed("RTO", str(exc))
-        await field_problem(page, log, "RTO", str(exc))
+        reason = str(exc)
+        if not choice.name and choice.registration_code:
+            reason = f"No compatible RTO found in OIC for {choice.registration_code}. Select the correct office in Chrome."
+        log.field_failed("RTO", reason)
+        await field_problem(page, log, "RTO", reason)
     finally:
         await asyncio.sleep(delay / 1000.0)
 
@@ -789,14 +795,23 @@ async def _fill_driver_details(page: Page, claim, log, delay: int, automation_de
     # Row 6 ─────────────────────────────────────────────────────────────────
 
     # 19. Charges Filed (optional) — textarea
-    if claim.charges_filed:
+    charges_filed, source = _resolve_charges_filed(claim.charges_filed, automation_defaults)
+    if charges_filed:
         await fill_input_with_delay(
-            page, SEL_CHARGES_FILED, claim.charges_filed,
-            "Charges Filed", log, delay
+            page, SEL_CHARGES_FILED, charges_filed, "Charges Filed", log, delay, source=source
         )
 
     log.success("  ✅ Driver Details subsection done.")
     return True
+
+
+def _resolve_charges_filed(value, automation_defaults=None):
+    report_value = str(value or "").strip()
+    if report_value:
+        return report_value, ""
+    defaults = load_automation_defaults(portal_id="oic") if automation_defaults is None else automation_defaults
+    default_value = str(defaults.get("charges_filed_default") or "").strip()
+    return default_value, "Automation Defaults" if default_value else ""
 
 
 # ══════════════════════════════════════════════════════════════════════════════

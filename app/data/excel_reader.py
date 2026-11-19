@@ -250,13 +250,20 @@ def _is_junk(val: Any) -> bool:
 
 # ── Core search — position-independent ───────────────────────────────────────
 
+def _punctuation_flexible_label(label: str) -> str:
+    words = [word.rstrip(".:") or word for word in label.split()]
+    return r"[.:]*\s+".join(re.escape(word) for word in words)
+
+
 def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                   is_date: bool = False,
                   allow_literal_values: bool = False,
                   allow_text_values: bool = False,
                   stop_at_next_label: bool = False,
                   exact_offset: bool = False,
-                  inline_amount: bool = False) -> Tuple[Optional[str], Optional[str]]:
+                  inline_amount: bool = False,
+                  oic_labels: bool = False,
+                  relaxed_punctuation: bool = False) -> Tuple[Optional[str], Optional[str]]:
     """
     Find label text anywhere in the sheet. Then:
       1. Move row_offset rows down.
@@ -271,11 +278,14 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
     inline_amount and offsets (0, 0), read the amount following the label.
     """
     label_lower = " ".join(label.lower().split())  # normalize whitespace
+    flexible_label = _punctuation_flexible_label(label) if relaxed_punctuation else None
+    label_matcher = re.compile(rf"(?<![^\W_]){flexible_label}(?![^\W_])", re.IGNORECASE) if flexible_label else None
     same_cell_amount = None
     if inline_amount and row_offset == col_offset == 0:
-        label_pattern = r"\s+".join(re.escape(word) for word in label.split())
+        label_pattern = flexible_label or r"\s+".join(re.escape(word) for word in label.split())
+        separator = r"(?:[:=–—]|-\s|\.(?=\s))?" if relaxed_punctuation else r"(?:[:=–—]|-\s)?"
         same_cell_amount = re.compile(
-            rf"(?<![^\W_]){label_pattern}(?![^\W_])\s*(?:[:=–—]|-\s)?\s*"
+            rf"(?<![^\W_]){label_pattern}(?![^\W_])\s*{separator}\s*"
             r"(?:₹|Rs\.?|INR)?\s*(-?(?:\d+(?:,\d+)*(?:\.\d+)?|\.\d+))(?![\w.]|,\d|\s*%)",
             re.IGNORECASE,
         )
@@ -289,8 +299,10 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                     return match.group(1), f"R{r_idx+1}C{c_idx+1}"
                 continue
 
-            cell_str = " ".join(str(cell).strip().lower().split())  # collapse \n, \t, multi-space
-            if cell_str and label_lower in cell_str:
+            compact_cell = " ".join(str(cell).split())
+            cell_str = compact_cell.lower()
+            match = label_matcher.search(compact_cell) if label_matcher else None
+            if cell_str and (bool(match) if label_matcher else label_lower in cell_str):
                 # Prevent matching "time of survey" on a combined date cell like "Date and Time of Survey"
                 if "date" in cell_str and "date" not in label_lower:
                     continue
@@ -299,23 +311,33 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                     continue
 
                 # Word-boundary check: prevent "TOTAL" matching "SUBTOTAL"
-                idx = cell_str.find(label_lower)
+                idx = match.start() if match else cell_str.find(label_lower)
                 before_ok = (idx == 0) or not cell_str[idx - 1].isalnum()
-                after_end = idx + len(label_lower)
+                after_end = match.end() if match else idx + len(label_lower)
                 after_ok = (after_end >= len(cell_str)) or not cell_str[after_end].isalnum()
                 if not (before_ok and after_ok):
                     continue
+                plain_label = label_lower.rstrip(".:")
+                if oic_labels and (
+                    plain_label == "charges"
+                    or (plain_label == "date" and (label_lower == "date" or match))
+                ):
+                    # Generic aliases must not pick up a different field's heading.
+                    tail = cell_str[after_end:].lstrip()
+                    label_consumed_separator = not match and label_lower.endswith((".", ":"))
+                    if idx or (tail and not label_consumed_separator and not re.match(r"^[:.\d]", tail)):
+                        continue
                 # Found the label at (r_idx, c_idx)
                 
                 # ── Strategy 0: Inline value (e.g., "Mobile: 098761-35253" in one cell)
                 # Only check inline if:
                 # 1) User specified col_offset == 0 (explicitly in the same cell), OR
                 # 2) Cell starts with label (e.g. "Ref: XYZ") and is concise, NOT a huge multi-sentence paragraph.
-                inline_content = cell_str.replace(label_lower, "").strip(" :-\n\t")
+                inline_content = (compact_cell[after_end:] if match else cell_str.replace(label_lower, "")).strip(" :-\n\t")
                 is_concise_inline = 0 < len(inline_content) <= 120 and len(inline_content.split()) <= 15
                 can_try_inline = (col_offset == 0) or (
                     is_concise_inline and (
-                        cell_str.startswith(label_lower)
+                        idx == 0
                         or ":" in str(cell)
                     )
                 )
@@ -323,10 +345,15 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                 if not exact_offset and can_try_inline and len(inline_content) >= 1:
                     orig_cell = str(cell)
                     # Try splitting by colon or just removing the label text
-                    if ":" in orig_cell and not allow_text_values:
+                    if match:
+                        val = inline_content
+                    elif ":" in orig_cell and not allow_text_values:
                         val = orig_cell.split(":", 1)[-1].strip(" -\n\t")
                     else:
                         val = re.sub(re.escape(label), "", orig_cell, flags=re.IGNORECASE).strip(" -:\n\t")
+
+                    if oic_labels:
+                        val = re.sub(r"^[.:]+(?=\s|$)", "", val).strip()
 
                     if stop_at_next_label:
                         # A policy and claim/period can share one cell. Do not
@@ -588,9 +615,11 @@ def _parse_time_string(val: str) -> Optional[Tuple[str, str]]:
     return None
 
 
-def _extract_time_from_adjacent_cells(wb, sheet_name, found_label, cfg, claim) -> bool:
+def _extract_time_from_adjacent_cells(wb, sheet_name, found_label, cfg, claim, relaxed_punctuation=False) -> bool:
     """Helper to scan adjacent cells for survey time if missing from main cell."""
     try:
+        flexible_label = _punctuation_flexible_label(found_label)
+        matcher = re.compile(rf"(?<![^\W_]){flexible_label}(?![^\W_])", re.IGNORECASE) if relaxed_punctuation else None
         all_sheets = wb.all_sheets() if sheet_name == "ALL" else [wb.get_sheet(sheet_name)]
         for sh in all_sheets:
             if sh is None:
@@ -599,7 +628,8 @@ def _extract_time_from_adjacent_cells(wb, sheet_name, found_label, cfg, claim) -
             for r_idx, row in enumerate(sh.rows()):
                 for c_idx, cell in enumerate(row):
                     cell_lower = str(cell).strip().lower()
-                    if found_label.lower() in cell_lower and cell_lower:
+                    matches = matcher.search(cell_lower) if matcher else found_label.lower() in cell_lower
+                    if cell_lower and matches:
                         target_r = r_idx + cfg.get("row_offset", 0)
                         all_row_data = list(sh.rows())
                         if 0 <= target_r < len(all_row_data):
@@ -747,12 +777,15 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
 
         row_off    = cfg.get("row_offset", 0)
         col_off    = cfg.get("col_offset", 1)
-        is_date    = "date" in field_name or "dob" in field_name
+        is_date    = "date" in field_name or "dob" in field_name or (
+            portal_id == "oic" and field_name == "fitness_valid_upto"
+        )
         allow_literal_values = bool(cfg.get("allow_literal_values"))
         allow_text_values    = bool(cfg.get("allow_text_values"))
 
         value = None
         found_label = ""
+        relaxed_punctuation = False
 
         # ── Priority 0 for email_id: Regex .com discovery on Sheet1 ──────────
         if field_name == "email_id":
@@ -766,47 +799,35 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
                 logger.info(f"  [REGEX FOUND] email_id = {value} at {regex_coord}")
 
         if not value:
-            for current_label in labels:
-                if not current_label:
-                    continue
-                
-                if sheet_name == "ALL":
-                    for sh in wb.all_sheets():
+            sheets = wb.all_sheets() if sheet_name == "ALL" else [wb.get_sheet(sheet_name)]
+            sheets = [sheet for sheet in sheets if sheet is not None]
+            if not sheets and labels and sheet_name != "ALL":
+                logger.warning(f"  [{field_name}] Sheet '{sheet_name}' not found in workbook")
+
+            # Give existing label matches priority across aliases and sheets.
+            for relaxed_punctuation in ((False, True) if portal_id == "oic" else (False,)):
+                for current_label in filter(None, labels):
+                    for sh in sheets:
                         value, coord = _search_label(
                             sh, current_label, row_off, col_off, is_date,
                             allow_literal_values, allow_text_values,
                             stop_at_next_label=(portal_id == "oic" and field_name == "policy_number"),
                             exact_offset=bool(cfg.get("exact_offset")),
                             inline_amount=bool(cfg.get("inline_amount")),
+                            oic_labels=portal_id == "oic",
+                            relaxed_punctuation=relaxed_punctuation,
                         )
                         if value:
-                            sh_name = sh.name if hasattr(sh, 'name') else 'Sheet'
+                            sh_name = getattr(sh, "name", "Sheet") if sheet_name == "ALL" else sheet_name
                             src_str = f"{coord} ({sh_name})"
                             claim._excel_coords[field_name] = src_str
                             claim._excel_logs.append(f"  📊 {field_name}: '{value}' (Source: {src_str})")
                             found_label = current_label
                             break
-                else:
-                    sh = wb.get_sheet(sheet_name)
-                    if sh:
-                        value, coord = _search_label(
-                            sh, current_label, row_off, col_off, is_date,
-                            allow_literal_values, allow_text_values,
-                            stop_at_next_label=(portal_id == "oic" and field_name == "policy_number"),
-                            exact_offset=bool(cfg.get("exact_offset")),
-                            inline_amount=bool(cfg.get("inline_amount")),
-                        )
-                        if value:
-                            src_str = f"{coord} ({sheet_name})"
-                            claim._excel_coords[field_name] = src_str
-                            claim._excel_logs.append(f"  📊 {field_name}: '{value}' (Source: {src_str})")
-                            found_label = current_label
-                    else:
-                        if current_label == labels[-1]: # Only warn on the last fallback try
-                            logger.warning(f"  [{field_name}] Sheet '{sheet_name}' not found in workbook")
-
+                    if value:
+                        break
                 if value:
-                    break  # Found it, stop trying fallback labels
+                    break
 
         if value:
             if field_name == "date_of_survey":
@@ -826,7 +847,9 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
 
                 # 2. If no time in value, scan adjacent cells in the row
                 if not time_found:
-                    time_found = _extract_time_from_adjacent_cells(wb, sheet_name, found_label, cfg, claim)
+                    time_found = _extract_time_from_adjacent_cells(
+                        wb, sheet_name, found_label, cfg, claim, relaxed_punctuation
+                    )
 
                 # 3. Direct fallback for UIIC: If not found in date or adjacent cells, default to 11 HH and 00 MM
                 if not time_found and (portal_id == "uiic" or "date_of_survey" in mapping):
