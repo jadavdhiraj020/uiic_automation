@@ -20,6 +20,7 @@ Architecture mirrors basic_details_module.py:
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Callable
 
 from playwright.async_api import Page
@@ -55,7 +56,7 @@ async def fill_interim_report(
 
     Three subsections on a single page:
       1. Survey Details         → 2 hardcoded radios + 3 Excel fields + 1 skip
-      2. Documentation Verification → 3 hardcoded radios + 2 configurable textareas
+      2. Documentation Verification → radio choices and configurable remarks
       3. Claim Assessment & Contact → 4 Excel fields + 2 hardcoded + 1 optional
 
     Then clicks "Next" to advance to Assessment of Loss (Step 4).
@@ -178,6 +179,19 @@ async def _fill_survey_details(page, claim, defaults, log, delay):
 # ── Subsection 2: Documentation Verification ─────────────────────────────────
 
 
+def _spot_survey_file(claim) -> Path | None:
+    context = getattr(claim, "_scan_context", None)
+    folder = getattr(context, "claim_folder_path", "")
+    if not folder:
+        report = getattr(claim, "source_report_path", "") or getattr(claim, "source_excel_path", "")
+        if not report:
+            return None
+        folder = Path(report).parent
+
+    pattern = re.compile(r"(?<![^\W_])spot[\s_-]+survey(?![^\W_])", re.IGNORECASE)
+    return next((path for path in Path(folder).iterdir() if pattern.search(path.stem) and path.is_file()), None)
+
+
 async def _fill_documentation_verification(page, claim, defaults, log, delay):
     log._section = "Documentation Verification"
     """Fill the Documentation Verification subsection.
@@ -186,7 +200,7 @@ async def _fill_documentation_verification(page, claim, defaults, log, delay):
       1. Is Driving License Applicable                            → hardcoded radio (YES)
       2. Are DL, RC Book and Other Vehicular Documents Verified?   → hardcoded radio (YES)
       3. Remarks (for docs verified)                               → configurable textarea
-      4. Is Spot Survey Done?                                      → hardcoded radio (YES)
+      4. Is Spot Survey Done?                                      → check claim-folder filenames
       5. Remarks (for spot survey)                                 → configurable textarea
     """
     log.info("▸ Filling Documentation Verification subsection")
@@ -216,17 +230,25 @@ async def _fill_documentation_verification(page, claim, defaults, log, delay):
     )
 
     # 4. Is Spot Survey Done?
-    spot_survey = defaults.get("spot_survey_done", "YES").upper()
-    sel = S.SEL_SPOT_SURVEY_YES if spot_survey == "YES" else S.SEL_SPOT_SURVEY_NO
-    await click_primeng_radio(
-        page, sel, "Spot Survey Done", log, delay_ms=delay
-    )
+    try:
+        spot_file = _spot_survey_file(claim)
+    except OSError as exc:
+        log.warning(f"Could not check filenames for Spot Survey: {exc}")
+        if not await field_problem(
+            page, log, "Spot Survey Done", "App3 could not read the claim folder. Check the folder and select Yes or No in Chrome.",
+        ):
+            raise
+    else:
+        sel = S.SEL_SPOT_SURVEY_YES if spot_file else S.SEL_SPOT_SURVEY_NO
+        source = spot_file.name if spot_file else "No spot-survey filename in the claim folder"
+        await click_primeng_radio(page, sel, "Spot Survey Done", log, delay_ms=delay, source=source)
 
     # 5. Remarks (for Spot Survey)
-    await fill_textarea_primeng(
-        page, S.SEL_SPOT_SURVEY_REMARKS, spot_remarks,
-        "Spot Survey Remarks", log, delay_ms=delay
-    )
+    if await page.locator(S.SEL_SPOT_SURVEY_REMARKS).first.is_visible():
+        await fill_textarea_primeng(
+            page, S.SEL_SPOT_SURVEY_REMARKS, spot_remarks,
+            "Spot Survey Remarks", log, delay_ms=delay
+        )
 
 
 # ── Subsection 3: Claim Assessment & Contact ─────────────────────────────────

@@ -13,7 +13,6 @@
   "is_survey_completed": "YES",
   "is_driving_license_applicable": "YES",
   "documents_verified": "YES",
-  "spot_survey_done": "YES",
   "docs_verified_remarks": "okay",
   "spot_survey_remarks": "okay",
   "surveyor_observation_default": "okay",
