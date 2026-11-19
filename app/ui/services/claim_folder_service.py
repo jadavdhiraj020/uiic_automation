@@ -595,12 +595,18 @@ class ClaimFolderService:
                     output_path, invoice, items = build_upload_workbook(
                         claim, _portal_defaults, output_folder=folder,
                     )
-                    if not upload_was_present:
+                    claim_folder_copy = Path(output_path).parent == Path(folder).absolute()
+                    if claim_folder_copy and not upload_was_present:
                         _mark_generated_file(output_path)
                     claim._oic_upload_path = output_path
                     claim._oic_upload_invoice = invoice
                     claim._oic_upload_items = items
                     claim._oic_upload_warning = upload_amount_warning(output_path)
+                    if not claim_folder_copy:
+                        claim._oic_upload_warning = "\n".join(filter(None, (
+                            claim._oic_upload_warning,
+                            "App3 saved the new upload workbook in its own storage because the claim-folder copy could not be saved.",
+                        )))
                     claim.assessment_files["oic_upload_excel"] = output_path
                     logs.append(f"OIC upload Excel prepared: {output_path} ({len(items)} items)")
                     logs.append(f"OIC upload invoice amount: {claim._oic_upload_invoice_amount} (sum of item amounts)")

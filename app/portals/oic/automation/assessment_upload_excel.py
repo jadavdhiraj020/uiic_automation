@@ -2,6 +2,8 @@
 
 from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+import errno
+from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
 import os
@@ -133,6 +135,45 @@ def _date(value):
     raise ValueError("Workshop invoice date is missing or invalid")
 
 
+def _write_upload_workbook(data, output_dir):
+    output = os.path.join(ensure_dir(output_dir), "auto_oic_upload_current.xlsx")
+    fd, staged = tempfile.mkstemp(prefix=".oic-upload-", suffix=".tmp", dir=output_dir)
+    try:
+        with os.fdopen(fd, "wb") as output_file:
+            output_file.write(data)
+        return publish_generated(staged, output)
+    finally:
+        if os.path.exists(staged):
+            os.remove(staged)
+
+
+def _save_upload_workbook(data, output_folder):
+    cache_dir = user_data_dir("oic", "assessment_uploads")
+    if not output_folder:
+        return _write_upload_workbook(data, cache_dir)
+
+    try:
+        return _write_upload_workbook(data, str(output_folder))
+    except OSError as claim_error:
+        if not (
+            isinstance(claim_error, (PermissionError, FileExistsError))
+            or claim_error.errno == errno.EROFS
+            or getattr(claim_error, "winerror", None) in {5, 32, 33, 1224}
+        ):
+            raise
+        # One writable copy per claim folder. An open or unverified file in
+        # the claim folder stays available for the surveyor to inspect.
+        folder = os.path.normcase(os.path.abspath(output_folder))
+        claim_key = sha256(os.fsencode(folder)).hexdigest()
+        try:
+            return _write_upload_workbook(data, os.path.join(cache_dir, claim_key))
+        except OSError as cache_error:
+            raise OSError(
+                "Could not save the OIC workbook in the claim folder or App3 storage. "
+                f"Close any open upload workbook and rescan. App3 storage error: {cache_error}"
+            ) from claim_error
+
+
 def build_upload_workbook(claim, defaults, output_folder=None):
     """Create a fresh OIC import workbook and return its path and item names."""
     if getattr(claim, "_oic_pdf_review_errors", []):
@@ -226,30 +267,23 @@ def build_upload_workbook(claim, defaults, output_folder=None):
     buffer = BytesIO()
     wb.save(buffer)
     wb.close()
-    # A scan may request the claim folder; the scanner excludes these generated
-    # workbooks from source and document selection on subsequent scans.
-    output_dir = ensure_dir(str(output_folder or user_data_dir("oic", "assessment_uploads")))
-    output = os.path.join(output_dir, "auto_oic_upload_current.xlsx")
+    prepared = BytesIO()
     buffer.seek(0)
-    fd, staged = tempfile.mkstemp(prefix=".oic-upload-", suffix=".tmp", dir=output_dir)
-    try:
-        with os.fdopen(fd, "wb") as output_file:
-            with ZipFile(buffer, "r") as src, ZipFile(output_file, "w") as dest:
-                for info in src.infolist():
-                    data = src.read(info.filename)
-                    if info.filename == "xl/worksheets/sheet2.xml":
-                        xml = data.decode("utf-8")
-                        for cell, value in cached.items():
-                            pattern = rf'(<c r="{cell}"[^>]*>\s*<f[^>]*>.*?</f>\s*<v>).*?(</v>)'
-                            xml, count = re.subn(pattern, lambda m: m.group(1) + str(value) + m.group(2), xml, count=1)
-                            if count != 1:
-                                raise ValueError(f"Unable to cache GST formula in {cell}")
-                        data = xml.encode("utf-8")
-                    dest.writestr(info, data)
-        publish_generated(staged, output)
-    finally:
-        if os.path.exists(staged):
-            os.remove(staged)
+    with ZipFile(buffer, "r") as src, ZipFile(prepared, "w") as dest:
+        for info in src.infolist():
+            data = src.read(info.filename)
+            if info.filename == "xl/worksheets/sheet2.xml":
+                xml = data.decode("utf-8")
+                for cell, value in cached.items():
+                    pattern = rf'(<c r="{cell}"[^>]*>\s*<f[^>]*>.*?</f>\s*<v>).*?(</v>)'
+                    xml, count = re.subn(pattern, lambda m: m.group(1) + str(value) + m.group(2), xml, count=1)
+                    if count != 1:
+                        raise ValueError(f"Unable to cache GST formula in {cell}")
+                data = xml.encode("utf-8")
+            dest.writestr(info, data)
+    workbook = prepared.getvalue()
+    output = _save_upload_workbook(workbook, output_folder)
+    claim._oic_upload_digest = sha256(workbook).hexdigest()
     claim._oic_upload_invoice_amount = format(invoice_amount, "f")
     return output, invoice, [row[1] for row in rows]
 

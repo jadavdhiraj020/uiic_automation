@@ -39,8 +39,9 @@ from app.portals.oic.automation.ui_utils import (
     _get_oic_fill_settings,
 )
 from app.portals.oic.automation import selectors as S
+from app.portals.oic.automation.invoice_upload import import_invoice_workbook, invoice_import_is_ready
 from app.portals.oic.automation.recovery import (
-    action_problem, field_decision, field_problem, field_was_handled, form_step_is_open, run_field,
+    action_problem, field_decision, field_problem, field_was_handled, run_field,
 )
 
 
@@ -81,12 +82,15 @@ async def fill_assessment_of_loss(
             log.warning("Stop requested before Invoice Section.")
             return False
         try:
-            await _fill_invoice_section(page, claim, defaults, log, delay, stop_cb)
+            await import_invoice_workbook(page, claim, log, stop_cb)
         except Exception as exc:
             claim._oic_upload_failed = True
+            if stop_cb():
+                return False
+            await capture_error_screenshot(page, "invoice_excel_upload", log)
             if not await action_problem(
                 page, log, "Import invoice workbook", str(exc),
-                lambda: _manual_invoice_is_open(page, claim._oic_upload_invoice),
+                lambda: invoice_import_is_ready(page, claim._oic_upload_invoice, claim._oic_upload_items),
                 "Finish importing the expected invoice in Chrome and leave Assessment of Loss open.",
             ):
                 raise
@@ -133,109 +137,6 @@ async def fill_assessment_of_loss(
 
 
 # ── Private Subsection Handlers ──────────────────────────────────────────────
-
-
-async def _manual_invoice_is_open(page, invoice):
-    if not invoice or not await form_step_is_open(page, "loss"):
-        return False
-    errors = page.get_by_role("button", name="View Validation Errors", exact=True)
-    if await errors.count() and await errors.is_enabled():
-        return False
-    headings = page.locator(".p-accordion-header h6:visible")
-    return await headings.evaluate_all(
-        """(nodes, invoice) => nodes.some(node =>
-            /invoice number/i.test(node.textContent) &&
-            node.querySelector('b')?.textContent.trim().toLowerCase() === invoice.trim().toLowerCase())""",
-        invoice,
-    )
-
-
-async def _fill_invoice_section(page: Page, claim, defaults, log: AutomationLogger, delay: int, stop_cb):
-    from app.portals.oic.automation.assessment_upload_excel import prepared_upload_error
-
-    log._section = "Invoice Excel Upload"
-    review_error = getattr(claim, "_oic_parts_review_error", "")
-    if review_error:
-        raise ValueError(f"OIC parts need review: {review_error}")
-    upload_error = prepared_upload_error(claim)
-    if upload_error:
-        raise ValueError(upload_error)
-    path = claim._oic_upload_path
-    invoice = claim._oic_upload_invoice
-    items = claim._oic_upload_items
-    log.info(f"Using OIC invoice upload prepared during scan: {path} ({len(items)} items)")
-    file_input = page.locator('input[type="file"]#fileInput[name="excel"]')
-    submit = page.get_by_role("button", name="Submit", exact=True)
-    validation = page.get_by_role("button", name="View Validation Errors", exact=True)
-    await submit.scroll_into_view_if_needed()
-    await file_input.set_input_files(path)
-    log.info("Selected invoice workbook; waiting for portal upload and Submit")
-    state = {"invoice": False, "missing": items, "unexpected": []}
-    for _ in range(120):
-        if stop_cb():
-            raise RuntimeError("Automation stopped during invoice upload")
-        if await validation.is_enabled():
-            await validation.click()
-            raise RuntimeError("OIC reported validation errors for the uploaded workbook")
-        # The portal places the filename as a text node in the same span as
-        # the nested success message. An exact get_by_text(filename) therefore
-        # also sees the message and never matches the filename on its own.
-        uploaded = await page.evaluate("""filename =>
-            Array.from(document.querySelectorAll('span.fileSpan')).some(row => {
-                const name = Array.from(row.childNodes)
-                    .filter(node => node.nodeType === Node.TEXT_NODE)
-                    .map(node => node.textContent).join('').trim();
-                const status = row.querySelector('p.fileGreen');
-                return name === filename && status &&
-                    status.textContent.trim() === 'File Uploaded Successfully' &&
-                    row.getClientRects().length > 0 && status.getClientRects().length > 0;
-            })
-        """, os.path.basename(path))
-        if uploaded and await submit.is_enabled():
-            break
-        await asyncio.sleep(0.5)
-    else:
-        raise RuntimeError("OIC did not confirm the selected Excel upload and enable Submit")
-    await submit.click()
-    log.info("Submitted invoice workbook; waiting for imported invoice and items")
-    for _ in range(120):
-        if stop_cb():
-            raise RuntimeError("Automation stopped during invoice import")
-        if await validation.is_enabled():
-            await validation.click()
-            raise RuntimeError("OIC rejected the invoice workbook; validation errors are displayed")
-        state = await page.evaluate("""({ invoice, items }) => {
-            const norm = s => (s || '').trim().toLowerCase();
-            const tabs = Array.from(document.querySelectorAll('.p-accordion-tab'));
-            const invoiceTab = tabs.find(tab => {
-                const heading = tab.querySelector(':scope > .p-accordion-header h6');
-                return heading && /invoice number/i.test(heading.textContent) &&
-                    norm(heading.querySelector('b')?.textContent) === norm(invoice);
-            });
-            if (!invoiceTab) return {invoice: false, expanded: false, missing: items, unexpected: []};
-            const header = invoiceTab.querySelector(':scope > .p-accordion-header .p-accordion-header-link');
-            const actual = Array.from(invoiceTab.querySelectorAll('.p-accordion-tab')).map(tab => {
-                const headings = tab.querySelectorAll(':scope > .p-accordion-header h6');
-                const subtype = Array.from(headings).find(h => /item sub type/i.test(h.textContent));
-                return (subtype?.querySelector('b')?.textContent || '').trim();
-            }).filter(Boolean);
-            const remaining = actual.map(norm);
-            const missing = [];
-            for (const item of items) {
-                const index = remaining.indexOf(norm(item));
-                if (index < 0) missing.push(item); else remaining.splice(index, 1);
-            }
-            return {invoice: true, expanded: header?.getAttribute('aria-expanded') === 'true', missing, unexpected: remaining};
-        }""", {"invoice": invoice, "items": items})
-        if state["invoice"] and not state["expanded"]:
-            await page.locator(".p-accordion-header-link").filter(has_text=invoice).first.click()
-            await asyncio.sleep(0.5)
-            continue
-        if state["invoice"] and not state["missing"] and not state["unexpected"]:
-            log.info(f"OIC confirmed invoice and all {len(items)} imported items")
-            return
-        await asyncio.sleep(0.5)
-    raise RuntimeError(f"OIC did not confirm all imported items; missing: {state['missing']}, unexpected: {state['unexpected']}. Review the invoice before continuing")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
