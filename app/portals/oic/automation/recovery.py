@@ -113,6 +113,7 @@ class RecoveryPrompt:
     can_skip: bool
     instruction: str = ""
     stop_only: bool = False
+    confirmation_button: str = ""
 
 
 class FormAdvanced(BaseException):
@@ -151,6 +152,7 @@ class OperatorRecovery:
 
     async def pause(
         self, page, log, action, reason, *, ready=None, instruction=None, describe=None, section=None, stop_only=False,
+        confirmation_button="",
     ):
         section = section or getattr(log, "_section", None) or "OIC"
         marker = None
@@ -188,7 +190,11 @@ class OperatorRecovery:
             if page and not page.is_closed():
                 with suppress(Exception):
                     await asyncio.wait_for(page.bring_to_front(), timeout=2)
-            prompt = RecoveryPrompt(uuid4().hex, section, title, detail, ready is None and not stop_only, guidance, stop_only)
+            prompt = RecoveryPrompt(
+                uuid4().hex, section, title, detail,
+                ready is None and not stop_only and not confirmation_button,
+                guidance, stop_only, confirmation_button,
+            )
             loop = asyncio.get_running_loop()
             result = loop.create_future()
             self.pending = (prompt, loop, result)
@@ -227,8 +233,11 @@ class OperatorRecovery:
                 self.notify(None)
                 raise FormAdvanced
             if state == "same":
-                self.handled[self.field_key(page, section, action)] = decision
-                label = "handled manually" if decision == "fixed" else "skipped by operator"
+                if confirmation_button:
+                    label = "confirmed by operator"
+                else:
+                    self.handled[self.field_key(page, section, action)] = decision
+                    label = "handled manually" if decision == "fixed" else "skipped by operator"
                 log.info(f"OIC manual recovery: {section} / {action} {label}.")
                 self.notify(None)
                 return True
@@ -275,6 +284,17 @@ async def field_problem(page, log, label, reason):
         return True
     detail = operator_reason(reason, "App3 could not fill this field in OIC.")
     return await recovery.pause(page, log, label, detail)
+
+
+async def confirm_field_values(page, log, label, reason, instruction):
+    """Require the operator's approval before filling values that need review."""
+    recovery = current_recovery.get()
+    if recovery is None:
+        return False
+    return await recovery.pause(
+        page, log, label, reason, instruction=instruction,
+        confirmation_button="Continue with these values",
+    )
 
 
 def field_was_handled(page, log, label):

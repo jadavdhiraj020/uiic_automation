@@ -912,11 +912,13 @@ class MainWindow(QMainWindow):
             worker.resume_oic(prompt.id, decision)
             self._set_status("running", "Checking Chrome…")
 
-        if prompt.stop_only:
+        confirmation = getattr(prompt, "confirmation_button", "")
+        if prompt.stop_only or confirmation:
             stop = dialog.addButton("Stop automation", QMessageBox.ButtonRole.ActionRole)
             stop.clicked.connect(self._stop_automation)
-        else:
-            fixed = dialog.addButton("I fixed it — continue" if prompt.can_skip else "Continue", QMessageBox.ButtonRole.AcceptRole)
+        if not prompt.stop_only:
+            label = confirmation or ("I fixed it — continue" if prompt.can_skip else "Continue")
+            fixed = dialog.addButton(label, QMessageBox.ButtonRole.AcceptRole)
             dialog.setDefaultButton(fixed)
             fixed.clicked.connect(lambda: respond("fixed"))
         if prompt.can_skip:

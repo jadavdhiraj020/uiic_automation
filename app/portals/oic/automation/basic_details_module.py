@@ -82,7 +82,7 @@ from app.portals.oic.license_type_mapping import resolve_license_type
 from app.portals.oic.rto_mapping import resolve_rto_choice
 from app.portals.oic.automation.dropdowns import dropdown_is_available, select_dropdown_option
 from app.portals.oic.automation.recovery import (
-    field_decision, field_problem, field_was_handled, run_field, wait_until_ready,
+    confirm_field_values, field_decision, field_problem, field_was_handled, run_field, wait_until_ready,
 )
 
 
@@ -575,6 +575,47 @@ async def _fill_driver_name(page: Page, name: str, log, delay: int) -> None:
     await asyncio.sleep(delay / 1000.0)
 
 
+async def _fill_driver_license_number(page: Page, number: str, log, delay: int) -> None:
+    parts = _split_license_number(number)
+    if parts is None:
+        await field_problem(
+            page, log, "Driving Licence Number",
+            "The licence needs a two-letter code and two groups of six digits. Enter the correct values in Chrome.",
+        )
+        return
+
+    prefix, first_six, last_six, excess = parts
+    if excess:
+        omitted = excess if len(excess) <= 12 else f"{excess[:12]}…"
+        confirmed = await confirm_field_values(
+            page, log, "Review Driving Licence Number",
+            f"The licence has {12 + len(excess)} digits after {prefix}. OIC uses 12 digits.",
+            f"Continue will fill {prefix} / {first_six} / {last_six}. "
+            f"It will omit the digits in between ({omitted}).",
+        )
+        if not confirmed:
+            return
+
+    prefix_label = "License No. Field 1"
+    selected = await select_primeng_dropdown(page, SEL_LICENSE_NO_1, prefix, prefix_label, log, delay, exact=True)
+    if not selected or field_decision(page, log, prefix_label) == "skip":
+        return
+
+    for selector, label, value in (
+        (SEL_LICENSE_NO_2, "License No. Field 2", first_six),
+        (SEL_LICENSE_NO_3, "License No. Field 3", last_six),
+    ):
+        await fill_input_with_delay(page, selector, value, label, log, delay)
+        if field_was_handled(page, log, label):
+            continue
+
+        async def matches():
+            return await page.locator(selector).first.input_value(timeout=1000) == value
+
+        if not await wait_until_ready(matches, seconds=2):
+            await field_problem(page, log, label, f"OIC did not keep the six digits {value}. Verify the field in Chrome.")
+
+
 async def _fill_driver_details(page: Page, claim, log, delay: int, automation_defaults: dict | None = None):
     """Fill Driver Details subsection — all 19 fields."""
     log._section = "Driver Details"
@@ -634,23 +675,7 @@ async def _fill_driver_details(page: Page, claim, log, delay: int, automation_de
         await field_problem(page, log, "Valid Up To (DL Expiry Date)", "No usable licence expiry date was found.")
 
     # 6-8. License Number * (mandatory) — split into 3 parts
-    if claim.driver_license_number:
-        parts = _split_license_number(claim.driver_license_number)
-        if parts[0]:
-            await select_primeng_dropdown(
-                page, SEL_LICENSE_NO_1, parts[0],
-                "License No. Field 1", log, delay
-            )
-        if parts[1]:
-            await fill_input_with_delay(
-                page, SEL_LICENSE_NO_2, parts[1],
-                "License No. Field 2", log, delay
-            )
-        if parts[2]:
-            await fill_input_with_delay(
-                page, SEL_LICENSE_NO_3, parts[2],
-                "License No. Field 3", log, delay
-            )
+    await _fill_driver_license_number(page, claim.driver_license_number, log, delay)
 
     # Row 3 ─────────────────────────────────────────────────────────────────
 
@@ -942,48 +967,14 @@ def _is_owner_driver(driver_name: str, owner_name: str) -> bool:
     return len(common) >= 2 or (len(common) >= 1 and len(d_words) == 1)
 
 
-def _split_license_number(license_no: str) -> tuple:
-    """
-    Split license number into 3 parts for the OIC form.
-
-    Examples:
-      "HR49 2016 0000013"       → ("HR49", "2016", "0000013")
-      "HR49/PDL/0000013/2016"   → ("HR49", "PDL", "0000013")
-      "DL1420110001234"         → ("DL14", "2011", "0001234")
-      "HR49 20160000013"        → ("HR49", "2016", "0000013")
-    """
-    if not license_no:
-        return ("", "", "")
-
-    raw = str(license_no).strip()
-
-    # Strategy 1: Space-separated (e.g., "HR49 2016 0000013")
-    parts = raw.split()
-    if len(parts) >= 3:
-        return (parts[0], parts[1], parts[2])
-    if len(parts) == 2:
-        # Split second part if it's long enough
-        p2 = parts[1]
-        if len(p2) > 4:
-            return (parts[0], p2[:4], p2[4:])
-        return (parts[0], p2, "")
-
-    # Strategy 2: Slash-separated (e.g., "HR49/PDL/0000013/2016")
-    if "/" in raw:
-        slash_parts = [p for p in raw.split("/") if p]
-        if len(slash_parts) >= 3:
-            return (slash_parts[0], slash_parts[1], slash_parts[2])
-
-    # Strategy 3: Regex — state code + year + number
-    m = re.match(r'^([A-Z]{2}\d{1,2})\s*(\d{4})\s*(\d+)$', raw, re.IGNORECASE)
-    if m:
-        return (m.group(1).upper(), m.group(2), m.group(3))
-
-    # Fallback: first 4 chars, next 4 chars, rest
-    if len(raw) > 8:
-        return (raw[:4], raw[4:8], raw[8:])
-
-    return (raw, "", "")
+def _split_license_number(license_no: str) -> tuple[str, str, str, str] | None:
+    """Return the 2/6/6 fields plus any intervening digits that require review."""
+    normalized = re.sub(r"[\s/-]+", "", str(license_no or "")).upper()
+    match = re.fullmatch(r"([A-Z]{2})([0-9]{6})([0-9]*)([0-9]{6})", normalized)
+    if match:
+        prefix, first_six, excess, last_six = match.groups()
+        return prefix, first_six, last_six, excess
+    return None
 
 
 # Values match the state labels observed in the OIC portal dropdown.
