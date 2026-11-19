@@ -47,11 +47,10 @@ async def navigate_to_claim(
             lambda u: any(x in u.lower() for x in ("/dashboard", "/workspace", "/home", "/assessment")),
             timeout=15000
         )
-        url = page.url
         if isinstance(log, AutomationLogger):
-            log.info(f"OIC Workspace URL reached: {url}")
+            log.info("OIC Workspace is open.")
         else:
-            log(f"[{_ts()}]   ℹ️ OIC Workspace URL reached: {url}")
+            log(f"[{_ts()}] OIC Workspace is open.")
     except Exception as e:
         current_url = page.url
         if "dashboard" in current_url.lower() or "workspace" in current_url.lower() or "home" in current_url.lower():
@@ -61,9 +60,9 @@ async def navigate_to_claim(
                 log(f"[{_ts()}]   ✅ OIC Workspace verified by active URL.")
         else:
             if isinstance(log, AutomationLogger):
-                log.warning(f"Timeout waiting for OIC dashboard URL: {e}")
+                log.warning("The OIC dashboard did not open in time.")
             else:
-                log(f"[{_ts()}]   ⚠️ Timeout waiting for OIC dashboard URL: {e}")
+                log(f"[{_ts()}] The OIC dashboard did not open in time.")
 
     if stop_cb():
         if isinstance(log, AutomationLogger): log.outdent()

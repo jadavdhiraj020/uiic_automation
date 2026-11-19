@@ -21,6 +21,10 @@ STEP_MARKERS = {
     "loss": ("Assessment of Loss", f"{S.SEL_LOSS_INV_NO}, {S.SEL_LOSS_SALVAGE_AMT_INPUT}"),
     "upload": ("Document Upload", S.SEL_UPLOAD_REMARKS),
 }
+VISIBLE_STEP_MARKERS = {
+    step: ", ".join(f"{selector.strip()}:visible" for selector in markers.split(","))
+    for step, (_, markers) in STEP_MARKERS.items()
+}
 
 ACTIVE_STEP = (
     '.p-steps-item.p-highlight:visible, '
@@ -46,10 +50,11 @@ async def form_step_is_open(page, step):
     active = await active_form_step(page)
     if active is not None and active != step:
         return False
-    _, markers = STEP_MARKERS[step]
-    visible_markers = ", ".join(f"{selector.strip()}:visible" for selector in markers.split(","))
-    if await page.locator(visible_markers).count():
-        return True
+    if await page.locator(VISIBLE_STEP_MARKERS[step]).count():
+        if active is not None:
+            return True
+        others = ", ".join(markers for other, markers in VISIBLE_STEP_MARKERS.items() if other != step)
+        return not await page.locator(others).count()
     if active != step:
         return False
     if step == "loss":
@@ -57,16 +62,17 @@ async def form_step_is_open(page, step):
     return step == "upload" and bool(await page.locator(f"input[type=file]{S.SEL_UPLOAD_WORKSHOP_ESTIMATE}").count())
 
 
-async def assessment_claim_mismatch(page, expected):
+async def assessment_claim_mismatch(page, expected, policy_number=None):
     identifier = lambda value: re.sub(r"[\W_]", "", str(value or "")).casefold()
-    expected = identifier(expected)
-    if not expected:
-        return False
-    control = page.locator('input#claimNumber:is([readonly], [disabled]):visible').first
-    if not await control.is_visible():
-        return False
-    shown = identifier(await control.input_value(timeout=1000))
-    return bool(shown and shown != expected)
+    for selector, wanted in ((S.SEL_CLAIM_NUMBER_INPUT, expected), (S.SEL_POLICY_NUMBER_INPUT, policy_number)):
+        wanted = identifier(wanted)
+        if wanted:
+            control = page.locator(f'{selector}:is([readonly], [disabled]):visible').first
+            if await control.is_visible():
+                shown = identifier(await control.input_value(timeout=1000))
+                if shown and shown != wanted:
+                    return True
+    return False
 
 
 async def wait_until_ready(ready, *, seconds, stopped=lambda: False):
@@ -95,13 +101,23 @@ async def portal_messages(page):
 
 def operator_reason(reason, fallback):
     text = " ".join(str(reason or "").split())
-    if not text or re.search(r"(?:Call log:|Timeout \d+ms|^Locator\.|^Page\.|^Browser|Traceback|\[WinError|\[Errno)", text, re.I):
-        return fallback
-    if len(text) > 180:
-        return fallback
-    if text.casefold().startswith("empty"):
+    if re.search(r"\b(?:required|mandatory|requires a value)\b", text, re.I):
+        return "OIC requires a value here."
+    if re.search(r"\b(?:empty|no usable value|no file|file not found)\b", text, re.I):
         return "No usable value was found for this field."
-    return text
+    if re.search(r"\b(?:file size|too large|maximum size|exceeds the limit)\b", text, re.I):
+        return "File size too large"
+    if re.search(r"\b(?:unsupported|file type|file format|did not accept this format)\b", text, re.I):
+        return "OIC did not accept this format."
+    if re.search(r"\b(?:invalid|validation errors|rejected)\b", text, re.I):
+        return "OIC rejected the value. Check the portal message in Chrome."
+    if re.search(r"\b(?:did not keep|did not stay|did not retain|did not persist)\b", text, re.I):
+        return "The value did not stay in the field after entry."
+    if re.search(r"\b(?:no match|could not match|did not offer|no .{1,20} mapping|not available in the picker)\b", text, re.I):
+        return "App3 could not match this value to an OIC option."
+    if re.search(r"\b(?:timeout|timed out|did not respond in time)\b", text, re.I):
+        return "OIC did not respond in time."
+    return fallback
 
 
 @dataclass(frozen=True)
@@ -116,10 +132,6 @@ class RecoveryPrompt:
     confirmation_button: str = ""
 
 
-class FormAdvanced(BaseException):
-    """Unwind the old form handler when the operator already opened the next step."""
-
-
 class OperatorRecovery:
     def __init__(self, notify, stopped):
         self.notify = notify
@@ -127,8 +139,35 @@ class OperatorRecovery:
         self.pending = None
         self.handled = {}
         self.form_step = None
-        self.next_step_ready = None
+        self.form_marker = None
+        self.transition_started = False
         self.claim_number = None
+        self.policy_number = None
+
+    async def bind_form(self, page, step):
+        """Remember this document before editing the form."""
+        marker = uuid4().hex
+        await page.evaluate("""marker => {
+            window.__oicManualRecovery = {
+                marker, route: location.origin + location.pathname + location.search
+            };
+        }""", marker)
+        self.form_step = step
+        self.form_marker = marker
+        self.transition_started = False
+        if step == "basic" and not self.claim_number:
+            control = page.locator(f'{S.SEL_CLAIM_NUMBER_INPUT}:is([readonly], [disabled]):visible').first
+            if await control.is_visible():
+                self.claim_number = await control.input_value(timeout=1000)
+
+    async def is_original_document(self, page):
+        if page.is_closed() or not self.form_marker:
+            return False
+        return await page.evaluate("""marker => {
+            const saved = window.__oicManualRecovery;
+            return saved?.marker === marker &&
+                saved.route === location.origin + location.pathname + location.search;
+        }""", self.form_marker)
 
     def field_key(self, page, section, action):
         return (id(page), self.form_step, section, action)
@@ -152,46 +191,29 @@ class OperatorRecovery:
 
     async def pause(
         self, page, log, action, reason, *, ready=None, instruction=None, describe=None, section=None, stop_only=False,
-        confirmation_button="",
+        confirmation_button="", require_original=False,
     ):
         section = section or getattr(log, "_section", None) or "OIC"
-        marker = None
-        if ready is None and not stop_only and page and not page.is_closed():
-            candidate = uuid4().hex
-
-            async def record_document():
-                return await page.evaluate("""marker => {
-                    window.__oicManualRecovery = {
-                        marker, route: location.origin + location.pathname + location.search
-                    };
-                    return true;
-                }""", candidate)
-
-            if await wait_until_ready(record_document, seconds=3, stopped=self.stopped):
-                marker = candidate
-        detail = operator_reason(reason, "")
+        detail = reason or "OIC did not confirm that this action finished."
         guidance = instruction or ""
         title = action
-        if ready is None and not stop_only and marker is None:
-            title, detail = "Chrome is unavailable", "App3 couldn’t confirm where it paused."
-            guidance = "Stop this run. Any open Chrome tab stays available for review."
-            stop_only = True
+        prompt_id = uuid4().hex
+        first_prompt = True
         while not self.stopped():
             if describe:
                 with suppress(Exception):
                     description = await asyncio.wait_for(describe(), timeout=2)
                     if description:
-                        title, detail = description
-            if ready is not None and await wait_until_ready(ready, seconds=0.4, stopped=self.stopped):
-                self.notify(None)
+                        _, detail = description
+            if first_prompt and ready is not None and await wait_until_ready(ready, seconds=0.4, stopped=self.stopped):
                 return True
             if self.stopped():
                 break
-            if page and not page.is_closed():
+            if first_prompt and page and not page.is_closed():
                 with suppress(Exception):
                     await asyncio.wait_for(page.bring_to_front(), timeout=2)
             prompt = RecoveryPrompt(
-                uuid4().hex, section, title, detail,
+                prompt_id, section, title, detail,
                 ready is None and not stop_only and not confirmation_button,
                 guidance, stop_only, confirmation_button,
             )
@@ -199,7 +221,9 @@ class OperatorRecovery:
             result = loop.create_future()
             self.pending = (prompt, loop, result)
             try:
-                log.warning(f"OIC paused at {section} / {title}. {detail}")
+                if first_prompt:
+                    log.warning(f"OIC paused at {section} — {action}. {detail}")
+                first_prompt = False
                 self.notify(prompt)
                 while not self.stopped() and not result.done():
                     await asyncio.wait({result}, timeout=0.2)
@@ -213,66 +237,66 @@ class OperatorRecovery:
 
             if ready is not None:
                 if await wait_until_ready(ready, seconds=3, stopped=self.stopped):
-                    log.info(f"OIC manual recovery: {action} completed by operator.")
+                    log.info(f"OIC resumed at {section} after confirming {action} in Chrome.")
                     self.notify(None)
                     return True
-                title, detail = action, "The expected page hasn’t opened yet."
+                same_document = True
+                if require_original:
+                    with suppress(Exception):
+                        same_document = await self.is_original_document(page)
+                detail = "OIC has not confirmed this action yet."
+                if not same_document:
+                    detail = "The original tab was closed or reloaded."
+                    guidance = "Stop this run and review Chrome."
+                    stop_only = True
+                    describe = None
+                log.warning(f"OIC is still paused at {section} — {action}. {detail}")
                 continue
             state = "unconfirmed"
 
             async def check_form():
                 nonlocal state
-                state = await self._field_resume_state(page, marker, decision)
-                return state in ("same", "advanced", "closed", "reloaded")
+                state = await self._field_resume_state(page)
+                return state in ("same", "closed", "reloaded", "different_step", "different_claim")
 
             await wait_until_ready(check_form, seconds=4, stopped=self.stopped)
             if self.stopped():
                 break
-            if state == "advanced":
-                log.info(f"OIC manual recovery: {section} already completed in Chrome.")
-                self.notify(None)
-                raise FormAdvanced
             if state == "same":
                 if confirmation_button:
                     label = "confirmed by operator"
                 else:
                     self.handled[self.field_key(page, section, action)] = decision
                     label = "handled manually" if decision == "fixed" else "skipped by operator"
-                log.info(f"OIC manual recovery: {section} / {action} {label}.")
+                log.info(f"OIC resumed at {section} — {action} was {label}.")
                 self.notify(None)
                 return True
             if state in ("closed", "reloaded"):
-                title = "The OIC tab changed"
                 detail = "The tab was closed or reloaded. App3 couldn’t verify the original form."
                 guidance = "Stop this run. Any open Chrome tab stays available for review."
                 stop_only = True
             elif state == "different_claim":
-                title = action
                 detail = "Chrome is showing a different claim."
                 guidance = "Open the original claim and step in Chrome, then click Continue."
             else:
-                title = action
-                detail = "App3 is still waiting for the original OIC step."
-                guidance = "Return to that step in Chrome and close any portal messages, then click Continue."
+                detail = "App3 needs the original OIC step to finish the remaining fields."
+                guidance = "Return to the original step in Chrome, close any portal messages, then click Continue."
+            log.warning(f"OIC is still paused at {section} — {action}. {detail}")
+        log.info(f"OIC stopped while paused at {section} — {action}.")
         raise asyncio.CancelledError
 
-    async def _field_resume_state(self, page, marker, decision):
+    async def _field_resume_state(self, page):
         if page.is_closed():
             return "closed"
-        route = await page.evaluate("""marker => {
-            const saved = window.__oicManualRecovery;
-            if (saved?.marker !== marker) return null;
-            return saved.route === location.origin + location.pathname + location.search;
-        }""", marker)
-        if route is None:
+        if not await self.is_original_document(page):
             return "reloaded"
-        if await assessment_claim_mismatch(page, self.claim_number):
+        if await assessment_claim_mismatch(page, self.claim_number, self.policy_number):
             return "different_claim"
-        original_step_open = route and (self.form_step is None or await form_step_is_open(page, self.form_step))
-        if decision == "fixed" and self.next_step_ready and await self.next_step_ready():
-            return "unconfirmed" if original_step_open else "advanced"
-        if original_step_open:
+        if self.form_step and await form_step_is_open(page, self.form_step):
             return "same"
+        active = await active_form_step(page)
+        if active and active != self.form_step:
+            return "different_step"
         return "unconfirmed"
 
 
@@ -319,8 +343,19 @@ async def run_field(page, log, label, operation):
         return None
 
 
-async def action_problem(page, log, label, reason, ready, instruction=None, *, describe=None):
+async def action_problem(page, log, label, reason, ready, instruction=None, *, describe=None, final=False):
     recovery = current_recovery.get()
     if recovery is None:
         return False
-    return await recovery.pause(page, log, label, reason, ready=ready, instruction=instruction, describe=describe)
+    origin = page.url
+
+    async def verified():
+        if final:
+            return (same_origin(page, origin) and not await assessment_claim_mismatch(
+                page, recovery.claim_number, recovery.policy_number,
+            ) and await ready())
+        return await recovery._field_resume_state(page) == "same" and await ready()
+
+    detail = operator_reason(reason, "OIC did not confirm that this action finished. Check Chrome.")
+    return await recovery.pause(page, log, label, detail, ready=verified, instruction=instruction,
+                                describe=describe, require_original=not final)

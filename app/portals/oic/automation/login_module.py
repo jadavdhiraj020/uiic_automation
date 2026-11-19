@@ -391,7 +391,7 @@ async def do_login(
             else:
                 log(f"[{_ts()}]   ℹ️ Selected English on the OIC welcome dialog.")
         except Exception as exc:
-            message = f"Could not select English on the OIC welcome dialog: {exc}"
+            message = "App3 could not select English on the OIC welcome dialog."
             if isinstance(log, AutomationLogger):
                 log.error(message)
                 log.outdent()
@@ -427,9 +427,9 @@ async def do_login(
         await asyncio.sleep(1.0)
     except Exception as click_exc:
         if isinstance(log, AutomationLogger):
-            log.warning(f"Could not click header Login button (might already be open): {click_exc}")
+            log.warning("App3 could not open the Login panel. It will check for the login form.")
         else:
-            log(f"[{_ts()}]   ⚠️ Could not click header Login button: {click_exc}")
+            log(f"[{_ts()}] App3 could not open the Login panel. It will check for the login form.")
 
     # Wait for the login form container (.login-formno) to appear first,
     # THEN wait for the username input inside it.
@@ -454,10 +454,10 @@ async def do_login(
     except Exception as exc:
         await capture_error_screenshot(page, "login_inputs_missing", log)
         if isinstance(log, AutomationLogger):
-            log.error(f"Failed to find login inputs on page: {exc}")
+            log.error("App3 could not find the OIC login fields.")
             log.outdent()
         else:
-            log(f"[{_ts()}]   ❌ Failed to find login inputs on page: {exc}")
+            log(f"[{_ts()}] App3 could not find the OIC login fields.")
         return False
 
     for attempt in range(1, max_retries + 1):
@@ -479,9 +479,9 @@ async def do_login(
             captcha_text = _solve_captcha_best_of_n(img_bytes, log)
         except Exception as exc:
             if isinstance(log, AutomationLogger):
-                log.error(f"Error reading CAPTCHA: {exc}")
+                log.error("App3 could not read the login CAPTCHA.")
             else:
-                log(f"[{_ts()}]   ⚠️ Error reading CAPTCHA: {exc}")
+                log(f"[{_ts()}] App3 could not read the login CAPTCHA.")
             await _refresh_captcha(page)
             if isinstance(log, AutomationLogger): log.outdent()
             continue
@@ -496,9 +496,9 @@ async def do_login(
             continue
 
         if isinstance(log, AutomationLogger):
-            log.info(f"Solved CAPTCHA text: '{captcha_text}'")
+            log.info("Read the login CAPTCHA.")
         else:
-            log(f"[{_ts()}]   🔑 Solved CAPTCHA text: '{captcha_text}'")
+            log(f"[{_ts()}] Read the login CAPTCHA.")
 
         if stop_cb():
             if isinstance(log, AutomationLogger):
@@ -550,9 +550,9 @@ async def do_login(
             if await err_el.is_visible(timeout=500):
                 err_txt = (await err_el.inner_text()).strip()
                 if isinstance(log, AutomationLogger):
-                    log.error(f"Login error text: {err_txt}")
+                    log.error("OIC did not accept the login attempt. Check the message in Chrome.")
                 else:
-                    log(f"[{_ts()}]   ❌ Login error text: {err_txt}")
+                    log(f"[{_ts()}] OIC did not accept the login attempt. Check the message in Chrome.")
         except Exception:
             pass
 

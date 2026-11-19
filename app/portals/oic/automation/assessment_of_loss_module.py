@@ -18,6 +18,7 @@ import asyncio
 import logging
 import os
 import re
+from contextlib import suppress
 from decimal import Decimal, InvalidOperation
 from typing import Callable, List
 
@@ -41,7 +42,7 @@ from app.portals.oic.automation.ui_utils import (
 from app.portals.oic.automation import selectors as S
 from app.portals.oic.automation.invoice_upload import import_invoice_workbook, invoice_import_is_ready
 from app.portals.oic.automation.recovery import (
-    action_problem, field_decision, field_problem, field_was_handled, run_field,
+    action_problem, current_recovery, field_decision, field_problem, field_was_handled, run_field, wait_until_ready,
 )
 
 
@@ -130,8 +131,8 @@ async def fill_assessment_of_loss(
         log.section_done("Assessment of Loss")
         return True
 
-    except Exception as exc:
-        log.error(f"Assessment of Loss failed: {exc}")
+    except Exception:
+        log.error("OIC could not complete Assessment of Loss.")
         await capture_error_screenshot(page, "assessment_of_loss", log)
         return False
 
@@ -1355,12 +1356,7 @@ async def _fill_survey_charges(page: Page, claim, defaults, log: AutomationLogge
                 continue
 
             # Click Add Expenses +
-            add_label = f"Add {portal_label} expense"
-            await run_field(page, log, add_label,
-                            lambda: page.locator(S.SEL_LOSS_ADD_EXPENSES_BTN).click(timeout=8000))
-            if field_decision(page, log, add_label) == "skip":
-                continue
-            await asyncio.sleep(0.3)  # Wait for dynamic section/accordion tab to render
+            await _ensure_expense_row(page, portal_label, log)
 
             # Fill dynamic accordion section using portal label for the tab locator
             amount_text = format(amt, "f") if isinstance(amt, Decimal) else str(amt)
@@ -1372,14 +1368,42 @@ async def _fill_survey_charges(page: Page, claim, defaults, log: AutomationLogge
     return bool(expected_expenses)
 
 
-async def _open_expense_inputs(page: Page, portal_label: str):
-    """Open one expense accordion and return its description and amount inputs."""
-    # Locate the accordion tab by its portal header text.
-    # Use .last because new tabs are appended — the last one is the one just added.
-    tab_locator = page.locator(
+def _expense_tabs(page, portal_label):
+    return page.locator(
         ".p-accordion-tab",
         has=page.locator(".p-accordion-header", has_text=portal_label),
-    ).last
+    )
+
+
+async def _ensure_expense_row(page, portal_label, log):
+    tabs = _expense_tabs(page, portal_label)
+
+    async def ready():
+        return await tabs.count() == 1
+
+    if await ready():
+        return
+    if not await tabs.count():
+        with suppress(Exception):
+            await page.locator(S.SEL_LOSS_ADD_EXPENSES_BTN).click(timeout=8000)
+        if await wait_until_ready(ready, seconds=3):
+            return
+    if not await action_problem(
+        page, log, f"Add {portal_label} expense", "OIC did not confirm a single expense row.", ready,
+        "Leave one row for this expense in Chrome, then click Continue.",
+    ):
+        raise RuntimeError("OIC could not confirm the expense row.")
+
+
+def _expense_inputs(page, portal_label):
+    content = _expense_tabs(page, portal_label).first.locator(".p-accordion-content").first
+    return (content.locator("input#description, input[name='itemDesc']").first,
+            content.locator("input[name='amount'], input[name='itemAmount'], #itemAmount input").first)
+
+
+async def _open_expense_inputs(page: Page, portal_label: str):
+    """Open one expense accordion and return its description and amount inputs."""
+    tab_locator = _expense_tabs(page, portal_label).first
     await tab_locator.wait_for(state="visible", timeout=5000)
 
     # Expand tab if collapsed
@@ -1389,11 +1413,7 @@ async def _open_expense_inputs(page: Page, portal_label: str):
         await asyncio.sleep(0.2)  # Wait for expand animation
 
     # Locate description and amount inputs inside the expanded tab content
-    content = tab_locator.locator(".p-accordion-content").first
-    await content.wait_for(state="visible", timeout=5000)
-
-    desc_input = content.locator("input#description, input[name='itemDesc']").first
-    amt_input = content.locator("input[name='amount'], input[name='itemAmount'], #itemAmount input").first
+    desc_input, amt_input = _expense_inputs(page, portal_label)
     await desc_input.wait_for(state="visible", timeout=5000)
     await amt_input.wait_for(state="visible", timeout=5000)
     return desc_input, amt_input
@@ -1424,13 +1444,26 @@ async def _fill_dynamic_expense_accordion(
     desc_val: str,
     log: AutomationLogger,
     delay: int,
+    *,
+    repair_description=True,
+    repair_amount=True,
 ):
     log.info(f"   Expanding and filling dynamic subsection for: {portal_label}")
     section = f"{portal_label} expense row"
-    inputs = await run_field(page, log, section, lambda: _open_expense_inputs(page, portal_label))
-    if inputs is None:
-        return
-    desc_input, amt_input = inputs
+    try:
+        desc_input, amt_input = await _open_expense_inputs(page, portal_label)
+    except Exception:
+        desc_input, amt_input = _expense_inputs(page, portal_label)
+
+        async def ready():
+            return (await _expense_tabs(page, portal_label).count() == 1
+                    and await desc_input.is_visible() and await amt_input.is_visible())
+
+        if not await action_problem(
+            page, log, section, "OIC did not open the expense row.", ready,
+            "Expand this expense in Chrome, then click Continue.",
+        ):
+            raise
     description_label = f"{portal_label} Description"
     amount_label = f"{portal_label} Amount"
 
@@ -1471,9 +1504,9 @@ async def _fill_dynamic_expense_accordion(
 
         await asyncio.sleep(0.1)
 
-    if not field_was_handled(page, log, description_label):
+    if repair_description and not field_was_handled(page, log, description_label):
         await run_field(page, log, description_label, fill_description)
-    if not field_was_handled(page, log, amount_label):
+    if repair_amount and not field_was_handled(page, log, amount_label):
         await run_field(page, log, amount_label, fill_amount)
 
 
@@ -1503,7 +1536,7 @@ async def _verify_expense_rows(page, expenses, description, log, delay):
             if not desc_ok or not amount_ok:
                 failed_fields = ", ".join(name for name, ok in (("description", desc_ok), ("amount", amount_ok)) if not ok)
                 log.warning(f"   {portal_label} {failed_fields} did not persist on review {round_number}")
-                needs_repair.append((portal_label, amount))
+                needs_repair.append((portal_label, amount, not desc_ok, not amount_ok))
 
         # The portal's read-only total must also reflect a committed amount.
         # Do not guess its exact tax/deduction calculation for different cases.
@@ -1528,7 +1561,11 @@ async def _verify_expense_rows(page, expenses, description, log, delay):
                 await asyncio.sleep(0.25)
             if not total_matches:
                 log.warning("   Surveyor claimed total was not committed; retrying the expense rows")
-                needs_repair = list(expenses)
+                if current_recovery.get() is not None:
+                    await field_problem(page, log, "Surveyor Claimed Total",
+                                        "The total did not stay committed after the expense rows were saved.")
+                    return
+                needs_repair = [(label, amount, True, True) for label, amount in expenses]
                 failed_checks.append("Surveyor Claimed Total")
 
         if not needs_repair:
@@ -1539,9 +1576,12 @@ async def _verify_expense_rows(page, expenses, description, log, delay):
             continue
 
         clean_rounds = 0
-        for portal_label, amount in needs_repair:
+        for portal_label, amount, repair_description, repair_amount in needs_repair:
             log.warning(f"   {portal_label} did not persist on review {round_number}; refilling")
-            await _fill_dynamic_expense_accordion(page, portal_label, amount, description, log, delay)
+            await _fill_dynamic_expense_accordion(
+                page, portal_label, amount, description, log, delay,
+                repair_description=repair_description, repair_amount=repair_amount,
+            )
 
     for label in failed_checks or ["Surveyor Claimed Total"]:
         if not await field_problem(page, log, label, "The value did not stay committed after reopening the expense rows."):
@@ -1631,76 +1671,7 @@ async def _fill_recommendation_declaration(
 
 
 async def _click_save_and_next_button(page: Page, log: AutomationLogger, stop_cb) -> bool:
-    advanced = await advance_form(
+    return await advance_form(
         page, log, S.SEL_LOSS_SAVE_AND_NEXT_BTN, "Save and Next", "upload", stop_cb,
         "assessment_next_no_transition",
     )
-    if not advanced and not stop_cb():
-        await _log_assessment_transition_blockers(page, log)
-    return advanced
-
-
-async def _collect_visible_validation_messages(page: Page, limit: int = 12) -> list[str]:
-    messages: list[str] = []
-    seen: set[str] = set()
-    selectors = (
-        ".error-message:visible, "
-        ".error-messageSeverity:visible, "
-        ".p-error:visible, "
-        ".p-message-error:visible, "
-        ".p-toast-message-error:visible, "
-        "[role='alert']:visible"
-    )
-    try:
-        locs = page.locator(selectors)
-        count = await locs.count()
-        for i in range(min(count, limit)):
-            txt = (await locs.nth(i).inner_text()).strip()
-            txt = re.sub(r"\s+", " ", txt)
-            if txt and txt not in seen:
-                messages.append(txt)
-                seen.add(txt)
-    except Exception:
-        pass
-    return messages
-
-
-async def _log_assessment_transition_blockers(page: Page, log: AutomationLogger) -> None:
-    messages = await _collect_visible_validation_messages(page)
-    if messages:
-        log.warning(f"   Assessment validation messages after Save and Next ({len(messages)}):")
-        for msg in messages:
-            log.warning(f"     - {msg}")
-    else:
-        log.warning("   No visible validation message found after Save and Next.")
-
-    try:
-        glass_tab = page.locator(
-            ".p-accordion-tab",
-            has=page.locator(".p-accordion-header", has_text="Glass"),
-        ).last
-        igst_dropdown = glass_tab.locator("#igstRate.p-dropdown, div#igstRate").first
-        if await igst_dropdown.count():
-            state = await _dropdown_state(igst_dropdown)
-            log.warning(f"   IGST Rate at Save/Next failure -> {_dropdown_state_summary(state)}")
-    except Exception:
-        pass
-
-    try:
-        excess_snapshot = await page.evaluate(
-            """() => {
-                const rows = [];
-                for (const label of Array.from(document.querySelectorAll('label'))) {
-                    const text = (label.textContent || '').trim();
-                    if (!/excess amount/i.test(text)) continue;
-                    const root = label.closest('.input-section') || label.closest('.p-float-label') || label.parentElement;
-                    const input = root && root.querySelector('input');
-                    rows.push(`${text}: ${input && input.value ? input.value : ''}`.trim());
-                }
-                return rows;
-            }"""
-        )
-        if excess_snapshot:
-            log.warning(f"   Excess amount snapshot -> {'; '.join(excess_snapshot)}")
-    except Exception:
-        pass

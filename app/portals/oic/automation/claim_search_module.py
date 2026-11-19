@@ -126,7 +126,7 @@ async def fill_claim_search(
             _log_success(f"{field_name} filled → '{search_value}'")
     except Exception as exc:
         await capture_error_screenshot(page, "search_number_fill_failed", log)
-        _log_error(f"Failed to fill {field_name}: {exc}")
+        _log_error(f"App3 could not enter {field_name}.")
         if not await field_problem(page, log, field_name, str(exc)):
             if isinstance(log, AutomationLogger): log.outdent()
             return False

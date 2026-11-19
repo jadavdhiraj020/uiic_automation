@@ -85,17 +85,16 @@ async def portal_validation_summary(page, button):
         message = operator_reason(message, "")
         if not message:
             continue
-        line = f"{label}: {message}" if label and label.casefold() not in message.casefold() else message
+        safe_label = label if re.fullmatch(r"[A-Za-z][A-Za-z .()'/&-]{1,59}", label or "") else ""
+        line = f"{safe_label}. {message}" if safe_label else message
         if line not in lines:
             lines.append(line)
     if lines:
         detail = "\n".join(lines[:3])
         if len(lines) > 3:
             detail += "\nSee Chrome for the remaining messages."
-        return "Check the OIC form", f"{detail}\n\nFix these in Chrome, then click {button}."
+        return "Check the OIC form", detail
     dialog = page.locator(BLOCKING_DIALOG).first
     if await dialog.is_visible():
-        heading = dialog.locator('.p-dialog-title:visible, .swal2-title:visible, .modal-title:visible, h2:visible').first
-        title = await heading.inner_text(timeout=500) if await heading.is_visible() else "Check the OIC message"
-        return operator_reason(title, "Check the OIC message"), "Respond to the message in Chrome."
+        return "Check the OIC message", "OIC is showing a dialog. Respond to it in Chrome."
     return None

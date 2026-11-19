@@ -208,7 +208,7 @@ async def fill_basic_details(
         return True
 
     except Exception as exc:
-        log.error(f"❌ Basic Details failed: {exc}")
+        log.error("OIC could not complete Basic Details.")
         return False
 
 
@@ -619,7 +619,7 @@ async def _fill_driver_license_number(page: Page, number: str, log, delay: int) 
             return await page.locator(selector).first.input_value(timeout=1000) == value
 
         if not await wait_until_ready(matches, seconds=2):
-            await field_problem(page, log, label, f"OIC did not keep the six digits {value}. Verify the field in Chrome.")
+            await field_problem(page, log, label, "OIC did not keep the entered digits. Verify the field in Chrome.")
 
 
 async def _fill_driver_details(page: Page, claim, log, delay: int, automation_defaults: dict | None = None):

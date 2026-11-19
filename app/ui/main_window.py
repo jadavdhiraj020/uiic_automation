@@ -62,6 +62,10 @@ CONFIG_DIR = resource_path("app", "config")
 
 
 class _OicRecoveryMessage(QMessageBox):
+    def done(self, _result):
+        # Buttons request a check in the worker. The worker closes the prompt.
+        pass
+
     def reject(self):
         # Keep the prompt available until a response or Stop ends the pause.
         pass
@@ -881,19 +885,42 @@ class MainWindow(QMainWindow):
         worker = self._worker
         if not worker or self._automation_stopping or self._close_requested:
             return
-        self._dismiss_oic_recovery()
         if prompt is None:
+            self._dismiss_oic_recovery()
             self._set_status("running", "Running")
             return
         self._set_status("running", "Paused for review")
-        dialog = _OicRecoveryMessage(self)
-        self._oic_recovery_dialog = dialog
-        dialog.setWindowTitle("OIC automation paused")
-        dialog.setWindowModality(Qt.WindowModality.NonModal)
-        dialog.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
-        dialog.setIcon(QMessageBox.Icon.Warning)
-        dialog.setTextFormat(Qt.TextFormat.PlainText)
-        title = f"Check {prompt.action}" if prompt.can_skip else prompt.action
+        dialog = getattr(self, "_oic_recovery_dialog", None)
+        if dialog is None or dialog.prompt_id != prompt.id:
+            self._dismiss_oic_recovery()
+            dialog = _OicRecoveryMessage(self)
+            self._oic_recovery_dialog = dialog
+            dialog.prompt_id = prompt.id
+            dialog.setWindowTitle("OIC automation paused")
+            dialog.setWindowModality(Qt.WindowModality.NonModal)
+            dialog.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
+            dialog.setIcon(QMessageBox.Icon.Warning)
+            dialog.setTextFormat(Qt.TextFormat.PlainText)
+            dialog.fixed_button = dialog.addButton("Continue", QMessageBox.ButtonRole.ActionRole)
+            dialog.skip_button = dialog.addButton("Skip this field", QMessageBox.ButtonRole.ActionRole)
+            stop = dialog.addButton("Stop automation", QMessageBox.ButtonRole.ActionRole)
+            stop.clicked.connect(self._stop_automation)
+
+            def respond(decision):
+                if self._worker is not worker or self._oic_recovery_dialog is not dialog:
+                    return
+                if not dialog.fixed_button.isEnabled():
+                    return
+                dialog.fixed_button.setEnabled(False)
+                dialog.fixed_button.setText("Checking Chrome…")
+                dialog.skip_button.setEnabled(False)
+                self._set_status("running", "Checking Chrome…")
+                worker.resume_oic(dialog.prompt_id, decision)
+
+            dialog.fixed_button.clicked.connect(lambda: respond("fixed"))
+            dialog.skip_button.clicked.connect(lambda: respond("skip"))
+
+        title = prompt.action
         dialog.setText(title)
         instructions = prompt.instruction or (
             "Fix the field in Chrome, then click Continue."
@@ -905,25 +932,11 @@ class MainWindow(QMainWindow):
             details.insert(0, prompt.section)
         dialog.setInformativeText("\n\n".join(text for text in details if text))
 
-        def respond(decision):
-            if self._worker is not worker or self._oic_recovery_dialog is not dialog:
-                return
-            self._dismiss_oic_recovery()
-            worker.resume_oic(prompt.id, decision)
-            self._set_status("running", "Checking Chrome…")
-
-        confirmation = getattr(prompt, "confirmation_button", "")
-        if prompt.stop_only or confirmation:
-            stop = dialog.addButton("Stop automation", QMessageBox.ButtonRole.ActionRole)
-            stop.clicked.connect(self._stop_automation)
-        if not prompt.stop_only:
-            label = confirmation or ("I fixed it — continue" if prompt.can_skip else "Continue")
-            fixed = dialog.addButton(label, QMessageBox.ButtonRole.AcceptRole)
-            dialog.setDefaultButton(fixed)
-            fixed.clicked.connect(lambda: respond("fixed"))
-        if prompt.can_skip:
-            skip = dialog.addButton("Skip this field", QMessageBox.ButtonRole.ActionRole)
-            skip.clicked.connect(lambda: respond("skip"))
+        dialog.fixed_button.setText(prompt.confirmation_button or ("I fixed it — continue" if prompt.can_skip else "Continue"))
+        dialog.fixed_button.setVisible(not prompt.stop_only)
+        dialog.fixed_button.setEnabled(not prompt.stop_only)
+        dialog.skip_button.setVisible(prompt.can_skip)
+        dialog.skip_button.setEnabled(prompt.can_skip)
         self._review_oic_button.show()
         self._raise_oic_recovery()
         if not dialog.isActiveWindow():

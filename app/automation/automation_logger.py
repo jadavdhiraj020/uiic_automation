@@ -490,7 +490,10 @@ class AutomationLogger:
     def field_failed(self, label: str, error: str, indent: Optional[int] = None):
         """Log a failed field action."""
         if self._portal_id == "oic":
-            msg = f"[{self._portal_tag}][{self._section}] — {label} failed\n    • Reason: {error}"
+            from app.portals.oic.automation.recovery import operator_reason
+
+            error = operator_reason(error, "App3 could not complete this field. Check Chrome.")
+            msg = f"{label} failed. {error}"
             extra = {"field": label, "error": error}
             self._emit(
                 LogLevel.WARNING,
@@ -697,6 +700,9 @@ class AutomationLogger:
 
     def upload_failed(self, doc_type: str, reason: str, indent: Optional[int] = None):
         if self._portal_id == "oic":
+            from app.portals.oic.automation.recovery import operator_reason
+
+            reason = operator_reason(reason, "OIC did not confirm the attachment.")
             msg = f"[{self._portal_tag}][Document Upload] — Uploading {doc_type}\n    • File:   N/A\n    • Status: Failed\n    • Reason: {reason}"
             extra = {"doc_type": doc_type, "status": "Failed", "reason": reason}
             self._emit(

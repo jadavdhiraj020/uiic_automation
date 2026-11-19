@@ -146,7 +146,7 @@ def _compress_if_needed(
             return file_path
 
     except Exception as exc:
-        log.warning(f"{label}: compression error ({exc}) — using original file")
+        log.warning(f"App3 could not compress {label}. It will use the original file.")
         return file_path
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -164,8 +164,38 @@ async def _submission_confirmed(page):
     return any(confirms_submission(message) for message in await portal_messages(page))
 
 
+async def _attachment_receipt(page, selector):
+    """Read the success receipt beside one specific upload control."""
+    control = page.locator(selector)
+    if await control.count() != 1:
+        return ""
+    return await control.evaluate(r"""input => {
+        const uploaded = /\bfile (?:uploaded successfully|attached successfully for upload)\b/i;
+        for (let scope = input.parentElement; scope && scope !== document.body; scope = scope.parentElement) {
+            if (scope.querySelectorAll('input[type=file]').length !== 1) break;
+            const lines = (scope.innerText || '').split(/\n/).map(s => s.trim()).filter(Boolean);
+            const index = lines.findIndex(line => uploaded.test(line));
+            if (index >= 0) return lines.slice(Math.max(0, index - 1), index + 1).join('\n');
+        }
+        return '';
+    }""", timeout=1000)
+
+
+async def _recover_attachment(page, log, selector, label, reason, *, before=""):
+    async def ready():
+        receipt = await _attachment_receipt(page, selector)
+        return bool(receipt and receipt != before)
+
+    return await action_problem(
+        page, log, label, reason, ready,
+        "Attach the file in this slot in Chrome. Click Continue after OIC shows it was attached.",
+    )
+
+
 async def _attach_document(page, *, file_input_selector, file_path, label, log):
-    before = set(await portal_messages(page)) if current_recovery.get() else set()
+    recovery = current_recovery.get()
+    before = set(await portal_messages(page)) if recovery else set()
+    before_receipt = await _attachment_receipt(page, file_input_selector) if recovery else ""
     attached = await upload_file_via_input(
         page, file_input_selector=file_input_selector, file_path=file_path, label=label, log=log,
     )
@@ -178,12 +208,14 @@ async def _attach_document(page, *, file_input_selector, file_path, label, log):
                 if message in before:
                     continue
                 if re.search(r"\b(error|failed|invalid|unsupported|rejected|exceeds?|maximum file size|cannot|unable)\b", message, re.I):
-                    await field_problem(page, log, label, message)
-                    return False
+                    return await _recover_attachment(
+                        page, log, file_input_selector, label, message, before=before_receipt,
+                    )
             await asyncio.sleep(0.25)
         return True
-    await field_problem(page, log, label, reason)
-    return False
+    return await _recover_attachment(
+        page, log, file_input_selector, label, reason, before=before_receipt,
+    )
 
 
 async def _upload_section(
@@ -203,8 +235,8 @@ async def _upload_section(
 
     if not file_path:
         if required:
-            log.warning(f"  Section {section_num} ({label}): REQUIRED but no file found — skipping")
-            await field_problem(page, log, slot, "No file was found for this upload slot.")
+            log.warning(f"No local file was found for {slot}.")
+            return await _recover_attachment(page, log, selector, slot, "No file was found for this upload slot.")
         else:
             log.info(f"  Section {section_num} ({label}): Optional, no file found — skipping")
         return False
@@ -236,10 +268,9 @@ async def _upload_section(
 
         return success
 
-    except Exception as exc:
-        log.error(f"  Section {section_num} ({label}): upload error: {exc}")
-        await field_problem(page, log, slot, str(exc))
-        return False
+    except Exception:
+        log.error(f"OIC could not attach the file for {slot}.")
+        return await _recover_attachment(page, log, selector, slot, "OIC did not accept the attachment.")
 
 
 async def _upload_driving_license(
@@ -279,8 +310,9 @@ async def _upload_driving_license(
         else:
             log.warning("  DL Front Side: upload failed")
     except Exception as exc:
-        log.warning(f"  DL Front Side: error: {exc}")
-        await field_problem(page, log, "DL Front Side", str(exc))
+        log.warning("OIC could not attach the driving licence.")
+        front_ok = await _recover_attachment(page, log, S.SEL_UPLOAD_DL_FRONT, "DL Front Side", str(exc))
+        uploaded_any = uploaded_any or front_ok
 
     if front_ok:
         await dismiss_portal_popup(page, log, max_wait_s=1.5, context="DL Front")
@@ -309,8 +341,9 @@ async def _upload_driving_license(
         else:
             log.warning("  RC in DL Back Side: upload failed")
     except Exception as exc:
-        log.warning(f"  RC in DL Back Side: error: {exc}")
-        await field_problem(page, log, "RC in DL Back Side", str(exc))
+        log.warning("OIC could not attach the registration certificate.")
+        back_ok = await _recover_attachment(page, log, S.SEL_UPLOAD_DL_BACK, "RC in DL Back Side", str(exc))
+        uploaded_any = uploaded_any or back_ok
 
     if back_ok:
         await dismiss_portal_popup(page, log, max_wait_s=1.5, context="DL Back")
@@ -339,8 +372,9 @@ async def _upload_photographs(
     photos = photo_sources(folder, mapped_photo)
     if not photos:
         log.warning("  Section 6 (Photographs): REQUIRED but no photo file found — skipping")
-        await field_problem(page, log, "Section 6 (Photographs)", "No vehicle photograph was found.")
-        return False
+        return await _recover_attachment(
+            page, log, S.SEL_UPLOAD_PHOTOGRAPHS, "Section 6 (Photographs)", "No file was found for this upload slot.",
+        )
     photo_path = photos[0]
     temporary_photo = None
     try:
@@ -368,10 +402,11 @@ async def _upload_photographs(
             await dismiss_portal_popup(page, log, max_wait_s=2.0, context="Photographs")
         return success
 
-    except Exception as exc:
-        log.error(f"  Section 6 (Photographs): upload error: {exc}")
-        await field_problem(page, log, "Section 6 (Photographs)", str(exc))
-        return False
+    except Exception:
+        log.error("OIC could not attach the vehicle photograph.")
+        return await _recover_attachment(
+            page, log, S.SEL_UPLOAD_PHOTOGRAPHS, "Section 6 (Photographs)", "OIC did not accept the attachment.",
+        )
     finally:
         if temporary_photo:
             try:
@@ -451,7 +486,7 @@ async def _upload_other_documents(
                 await dismiss_portal_popup(page, log, max_wait_s=2.0, context="Other Documents")
             return success
         except Exception as exc:
-            log.error(f"  Section 7 (Other Documents): upload error: {exc}")
+            log.error("OIC could not attach Other Documents.")
             await field_problem(page, log, "Section 7 (Other Documents)", str(exc))
             return False
 
@@ -519,7 +554,7 @@ async def _upload_other_documents(
         return success
 
     except Exception as exc:
-        log.error(f"  Section 7 (Other Documents): upload error: {exc}")
+        log.error("OIC could not attach Other Documents.")
         await field_problem(page, log, "Section 7 (Other Documents)", str(exc))
         return False
     finally:
@@ -560,7 +595,7 @@ async def _fill_remarks(
         return True
 
     except Exception as exc:
-        log.error(f"Remarks fill failed: {exc}")
+        log.error("OIC could not enter the document remarks.")
         return False
 
 
@@ -607,7 +642,7 @@ async def _click_submit(
         return True
 
     except Exception as exc:
-        log.error(f"Submit button error: {exc}")
+        log.error("App3 could not confirm the Submit button was clicked.")
         return False
 
 
@@ -728,6 +763,7 @@ async def fill_document_upload_section(
                         lambda: _submission_confirmed(page),
                         "Click Continue here after OIC confirms the submission in Chrome.",
                         describe=lambda: portal_validation_summary(page, "Submit"),
+                        final=True,
                     )
         else:
             log.info("auto_submit_documents is disabled — stopping before Submit for manual review")
@@ -736,7 +772,7 @@ async def fill_document_upload_section(
         return True
 
     except Exception as exc:
-        log.error(f"Document Upload failed: {exc}")
+        log.error("OIC could not complete Document Upload.")
         await capture_error_screenshot(page, "document_upload", log)
         return False
 

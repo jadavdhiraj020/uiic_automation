@@ -125,18 +125,28 @@ _JS_CLICK_RADIO = r"""
 # ── Python Helpers ────────────────────────────────────────────────────────────
 
 async def advance_form(page, log, selector, button_name, destination, stop_cb, screenshot_name):
+    recovery = current_recovery.get()
+
     async def ready():
+        if recovery is not None and not await recovery.is_original_document(page):
+            return False
         return await form_step_is_open(page, destination)
 
     if stop_cb():
         return False
     try:
+        if recovery is not None:
+            if not await recovery.is_original_document(page):
+                return False
+            recovery.transition_started = True
         if await ready():
             return True
+        if recovery is not None and await recovery._field_resume_state(page) != "same":
+            return False
         visible_buttons = ", ".join(f"{part.strip()}:visible" for part in selector.split(","))
         await page.locator(visible_buttons).first.click(timeout=6000)
-    except Exception as exc:
-        message = f"Could not click {button_name}: {exc}"
+    except Exception:
+        message = f"App3 could not confirm that {button_name} was clicked."
         log.warning(message) if isinstance(log, AutomationLogger) else log(message)
     else:
         message = f"Clicked {button_name}. Waiting for OIC to open the next step."
@@ -353,14 +363,14 @@ async def capture_error_screenshot(page: Page, context_name: str, log) -> Option
         
         await page.screenshot(path=filepath, full_page=False)
         
-        msg = f"📸 Captured error screenshot: {filepath}"
+        msg = f"Captured a screenshot for {context_name.replace('_', ' ')}."
         if isinstance(log, AutomationLogger):
             log.warning(msg)
         elif callable(log):
             log(f"[{_ts()}]   ⚠️ {msg}")
         return filepath
-    except Exception as exc:
-        msg = f"Failed to capture error screenshot: {exc}"
+    except Exception:
+        msg = "App3 could not capture a screenshot."
         if isinstance(log, AutomationLogger):
             log.warning(msg)
         elif callable(log):

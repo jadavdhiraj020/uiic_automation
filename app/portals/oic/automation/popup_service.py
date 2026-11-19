@@ -15,105 +15,40 @@ from app.automation.automation_logger import AutomationLogger
 
 logger = logging.getLogger(__name__)
 
-# Detect visible SweetAlert, Angular-UI modals, or standard dialogs
-_JS_DETECT_POPUP = r"""
-() => {
-    // 1. Angular modal or general display block modal
-    const modal = document.querySelector(
-        '.modal.in, .modal[style*="display: block"], .modal[style*="display:block"]'
+# Only a visible portal dialog can supply a dismissal button.
+_JS_POPUP_SCOPE = r"""
+    const visible = node => node.getClientRects().length && getComputedStyle(node).visibility === 'visible';
+    const dialogs = document.querySelectorAll(
+        '.modal.in, .modal[style*="display"], .swal2-popup, .sweet-alert, .swal-modal, ' +
+        '.ngdialog.ngdialog-open, .popup-container, .p-dialog, .p-dynamicdialog, p-dialog'
     );
-    if (modal) {
-        const body = modal.querySelector('.modal-body, p');
-        return {
-            found: true,
-            type:  'modal',
-            body:  body ? body.innerText.trim().substring(0, 200) : ''
-        };
-    }
-    // 2. SweetAlert overlay
-    const swal = document.querySelector('.swal2-container, .sweet-overlay, .swal-overlay');
-    if (swal) {
-        const body = swal.querySelector('.swal2-html-container, .swal-text');
-        return {
-            found: true,
-            type: 'swal',
-            body: body ? body.innerText.trim().substring(0, 200) : ''
-        };
-    }
-    // 3. ng-dialog or other active popup overlay
-    const ngd = document.querySelector('.ngdialog.ngdialog-open, .popup-container');
-    if (ngd) {
-        return {
-            found: true,
-            type: 'ngdialog',
-            body: ngd.innerText.trim().substring(0, 200)
-        };
-    }
-    // 4. PrimeNG dialog / modal popup covers
-    //    IMPORTANT: Skip PrimeNG containers that hold the login form — those are NOT popups.
-    const prime = document.querySelector('.p-dialog, .p-dynamicdialog, p-dialog');
-    if (prime) {
-        const isLoginForm = prime.querySelector('.login-formno, #username, #password, .login-wthmobile-box');
-        if (!isLoginForm) {
-            const body = prime.querySelector('.p-dialog-content');
-            return {
-                found: true,
-                type: 'primeng',
-                body: body ? body.innerText.trim().substring(0, 200) : ''
-            };
-        }
-    }
-    return { found: false };
-}
+    const popup = [...dialogs].reverse().find(node => visible(node) &&
+        !node.querySelector('.login-formno, #username, #password, .login-wthmobile-box'));
 """
 
-# Dismiss the modal by clicking the best available confirm/OK button
-_JS_DISMISS_POPUP = r"""
-() => {
-    // Priority 1: Common confirmation / generic Close / OK buttons in active dialogs
-    const selectors = [
-        'button.p-dialog-header-close',
-        'button[aria-label="Close"]',
-        '.p-dialog-header-close-icon',
-        '.modal.in button[data-ng-click*="ok"]',
-        '.modal.in button[ng-click*="ok"]',
-        '.modal.in button[data-ng-click*="close"]',
-        '.modal.in button[ng-click*="close"]',
-        '.modal.in .modal-footer button',
-        '.modal[style*="display: block"] .modal-footer button',
-        '.modal[style*="display:block"] .modal-footer button',
-        '.swal2-container button.swal2-confirm',
-        '.sweet-alert button.confirm',
-        '.swal-overlay button.swal-button--confirm',
-        '.ngdialog.ngdialog-open button',
-        'button.confirm',
-        'button.swal2-confirm',
-        'button.close, .close',
-    ];
-    for (const sel of selectors) {
-        const btn = document.querySelector(sel);
-        if (btn && btn.offsetParent !== null) {
-            btn.click();
-            return { ok: true, via: sel };
-        }
-    }
+_JS_DETECT_POPUP = r"() => {" + _JS_POPUP_SCOPE + r"""
+    if (!popup) return { found: false };
+    return {found: true, body: popup.innerText || ''};
+}"""
 
-    // Priority 2: Text search fallback on active popup buttons
-    const allBtns = document.querySelectorAll(
-        '.modal button, .swal2-container button, .sweet-alert button, .swal-overlay button, .ngdialog button, button'
-    );
-    for (const btn of allBtns) {
-        const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
-        if ((text === 'ok' || text === 'yes' || text === 'close' || text === 'submit' || text === 'proceed' || text === 'accept') &&
-            btn.offsetParent !== null) {
-            btn.click();
-            return { ok: true, via: 'genericTextFallback' };
-        }
+_JS_DISMISS_POPUP = r"() => {" + _JS_POPUP_SCOPE + r"""
+    if (!popup) return { ok: false };
+    const text = popup.innerText || '';
+    // The operator owns the final submission and its confirmation.
+    if (/\b(?:are you sure|do you want)\b/i.test(text) ||
+        (/\b(?:submit|submission)\b/i.test(text) && /\?|\bconfirm\b/i.test(text))) {
+        return { ok: false };
     }
+    const buttons = [...popup.querySelectorAll('button, [role=button], a.close, input[type=button]')].filter(visible);
+    const label = btn => (btn.getAttribute('aria-label') || btn.innerText || btn.value || '').trim();
+    const safe = buttons.filter(btn => !/\bsubmit\b/i.test(label(btn)));
+    const button = safe.find(btn => btn.matches('button.p-dialog-header-close, button.close') || /^close$/i.test(label(btn))) ||
+        safe.find(btn => /^(?:ok|okay|yes|proceed|accept)$/i.test(label(btn)) || btn.matches('button.swal2-confirm, button.confirm'));
+    if (!button) return { ok: false };
+    button.click();
+    return { ok: true };
+}"""
 
-    return { ok: false, err: 'no dismissible button found' };
-}
-"""
 
 def _classify_popup(body: str) -> str:
     """Classifies OIC alert popups based on content body."""
@@ -159,11 +94,10 @@ async def dismiss_portal_popup(
         if not popup_info.get("found"):
             continue
 
-        ptype = popup_info.get("type", "modal")
         body  = popup_info.get("body", "")
         tag   = _classify_popup(body)
 
-        _log_msg(log, "info", f"Popup overlay detected{ctx}: [{ptype}] -> {body[:120]}")
+        _log_msg(log, "info", f"OIC is showing a message{ctx}.")
 
         try:
             from app.web_sync.submission import capture_before_dismiss
@@ -175,19 +109,15 @@ async def dismiss_portal_popup(
         if not dismiss_res.get("ok"):
             return None if classify else False
 
-        via = dismiss_res.get("via", "unknown")
-        _log_msg(log, "success", f"Popup overlay dismissed{ctx} via {via} [{tag}]")
-
         if verify_closed:
             await asyncio.sleep(0.5)
             try:
-                still_open: dict = await page.evaluate(_JS_DETECT_POPUP)
-                if still_open.get("found"):
-                    await capture_before_dismiss(page)
-                    await page.evaluate(_JS_DISMISS_POPUP)
-                    await asyncio.sleep(0.5)
+                still_open = await page.evaluate(_JS_DETECT_POPUP)
+                if still_open.get("found") and still_open.get("body") == body:
+                    return None if classify else False
             except Exception:
-                pass
+                return None if classify else False
+        _log_msg(log, "success", f"OIC message acknowledged{ctx}.")
 
         return tag if classify else True
 

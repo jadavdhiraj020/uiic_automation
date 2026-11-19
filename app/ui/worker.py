@@ -41,7 +41,8 @@ class AutomationWorker(QObject):
             success = bool(getattr(result, "success", False))
             message = getattr(result, "message", "Automation finished.")
         except BaseException as e:
-            message = f"{type(e).__name__}: {e}"
+            message = ("OIC automation was interrupted. Check Chrome."
+                       if self.portal_id == "oic" else f"{type(e).__name__}: {e}")
         finally:
             if loop is not None:
                 try:

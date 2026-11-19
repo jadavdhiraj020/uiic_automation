@@ -103,7 +103,7 @@ async def fill_interim_report(
         return True
 
     except Exception as exc:
-        log.error(f"Interim Report failed: {exc}")
+        log.error("OIC could not complete Interim Report.")
         await capture_error_screenshot(page, "interim_report", log)
         return False
 
@@ -233,7 +233,7 @@ async def _fill_documentation_verification(page, claim, defaults, log, delay):
     try:
         spot_file = _spot_survey_file(claim)
     except OSError as exc:
-        log.warning(f"Could not check filenames for Spot Survey: {exc}")
+        log.warning("App3 could not check the files for a Spot Survey report.")
         if not await field_problem(
             page, log, "Spot Survey Done", "App3 could not read the claim folder. Check the folder and select Yes or No in Chrome.",
         ):
