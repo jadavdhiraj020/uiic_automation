@@ -32,4 +32,4 @@ jobs:
         run: python -m pytest tests/test_pdf_report_reader.py -v
 
       - name: Run OIC PDF unreadable-amount regression tests
-        run: python -m pytest tests/test_oic_pdf_intake.py -k "recovers_one_unreadable_spares_estimate or does_not_guess_when_two_spares_estimates or reconciles_workshop_estimate" -v
+        run: python -m pytest tests/test_oic_pdf_intake.py -k "recovers_one_unreadable_spares_estimate or does_not_guess_when_two_spares_estimates or reconciles_workshop_estimate or serial_ocr_mistake or summary_total_fallback" -v
