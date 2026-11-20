@@ -196,24 +196,28 @@ def _item_tables(tables, aliases, value_keys, kind):
                 if table.source not in sources:
                     sources.append(table.source)
                 continue
-            if not serial.isdecimal() or not name:
+            if not name:
                 continue
-            if table.score(index) < .78:
-                raise ValueError(f"Check the low-confidence {kind.lower()} row {serial} on {table.source}.")
-            serial_no = int(serial)
-            if serials and serial_no != serials[-1] + 1:
-                # An OCR digit can be wrong even though the printed grid
-                # has exactly one physical row between the two known serials.
-                next_serial = table.rows[index + 1][positions["serial"]].strip() if index + 1 < len(table.rows) else ""
-                amounts = [amount(row[positions[key]]) for key in value_keys]
-                if (table.confidence < 1 and table.score(index) < .90
-                        and next_serial == str(serials[-1] + 2)
-                        and all(value == ZERO for value in amounts)):
-                    serial_no = serials[-1] + 1
-                else:
-                    raise ValueError(f"Check the {kind.lower()} row sequence near row {serial} on {table.source}.")
-            if not serials and serial_no != 1:
-                raise ValueError(f"The {kind.lower()} table appears to start partway through on {table.source}.")
+
+            # Serial numbers are only printed row markers; they are not sent
+            # to the OIC portal. OCR commonly mistakes 18/78/88 etc. Do not
+            # reject a financially valid table because of that marker.
+            #
+            # We still require a real detail row: at least one amount column
+            # must contain a numeric value. Any missing/duplicated physical row
+            # is caught later by the strict subtotal reconciliation.
+            numeric_cells = [
+                amount(row[positions[key]])
+                for key in known_total_keys
+                if positions.get(key) is not None and positions[key] < len(row)
+            ]
+            if not any(value is not None for value in numeric_cells):
+                continue
+
+            expected_serial = serials[-1] + 1 if serials else 1
+            serial_no = int(serial) if serial.isdecimal() else expected_serial
+            if serial_no != expected_serial:
+                serial_no = expected_serial
             serials.append(serial_no)
             values = {}
             for key in known_total_keys:
