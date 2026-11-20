@@ -232,3 +232,53 @@ def test_oic_intake_keeps_excel_priority_and_existing_field_mapping(tmp_path):
     assert claim.policy_number == "POL123456"
     assert claim.fitness_valid_upto == "17/09/2033"
     assert not getattr(claim, "_oic_pdf_review_errors", ())
+
+
+def test_oic_pdf_to_excel_keeps_original_and_preserves_rows(tmp_path, monkeypatch):
+    import openpyxl
+
+    from app.portals.oic import pdf_to_excel
+    from app.portals.oic.pdf_layout import Line, Page, Table
+
+    pdf = tmp_path / "Final Survey Report.pdf"
+    original = b"%PDF-original-survey-copy"
+    pdf.write_bytes(original)
+
+    page = Page(
+        lines=(
+            Line(1, 10, ((10, 120, "Policy No: POL555555"), (250, 390, "Claim No: DEMO1234"))),
+            Line(1, 20, ((10, 250, "Initial Loss Assessment Amount: 1500"),)),
+            Line(1, 30, ((10, 220, "Workshop Estimate Amount: 2000"),)),
+        ),
+        tables=(
+            Table(
+                1,
+                (100, 120),
+                (
+                    ("SN", "Parts Name", "Estimated", "Metal", "Plastic", "Glass"),
+                    ("1", "Bonnet", "1450", "1300", "0", "0"),
+                ),
+            ),
+        ),
+        width=595,
+    )
+    monkeypatch.setattr(pdf_to_excel, "read_pages", lambda *args, **kwargs: [page])
+
+    output = pdf_to_excel.convert_oic_pdf_to_excel(str(pdf), str(tmp_path))
+
+    assert pdf.read_bytes() == original
+    assert Path(output).name == "auto_oic_pdf_source_current.xlsx"
+    wb = openpyxl.load_workbook(output, data_only=True)
+    try:
+        ws = wb["Survey Report"]
+        values = [[cell.value for cell in row] for row in ws.iter_rows()]
+        assert any("Initial Loss Assessment Amount: 1500" in str(value) for row in values for value in row)
+        assert any(row[:6] == ["1", "Bonnet", "1450", "1300", "0", "0"] for row in values)
+    finally:
+        wb.close()
+
+
+def test_oic_generated_pdf_source_workbook_is_not_a_claim_source():
+    from app.data.folder_scanner import _is_oic_generated_workbook
+
+    assert _is_oic_generated_workbook("auto_oic_pdf_source_current.xlsx")
