@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/universal-report-reader-v1
+      - fix/oic-pdf-unreadable-amount-recovery
   workflow_dispatch:
 
 permissions:
@@ -25,7 +26,10 @@ jobs:
           python-version: "3.10"
 
       - name: Install test dependency
-        run: python -m pip install --upgrade pytest pdfplumber
+        run: python -m pip install --upgrade pytest pdfplumber openpyxl
 
       - name: Run universal report reader tests
         run: python -m pytest tests/test_pdf_report_reader.py -v
+
+      - name: Run OIC PDF unreadable-amount regression tests
+        run: python -m pytest tests/test_oic_pdf_intake.py -k "recovers_one_unreadable_spares_estimate or does_not_guess_when_two_spares_estimates or reconciles_workshop_estimate" -v
