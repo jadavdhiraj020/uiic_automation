@@ -67,7 +67,7 @@ async def assessment_claim_mismatch(page, expected, policy_number=None):
     for selector, wanted in ((S.SEL_CLAIM_NUMBER_INPUT, expected), (S.SEL_POLICY_NUMBER_INPUT, policy_number)):
         wanted = identifier(wanted)
         if wanted:
-            control = page.locator(f'{selector}:is([readonly], [disabled]):visible').first
+            control = page.locator(f'input{selector}:is([readonly], [disabled]):visible').first
             if await control.is_visible():
                 shown = identifier(await control.input_value(timeout=1000))
                 if shown and shown != wanted:
@@ -81,7 +81,7 @@ async def wait_until_ready(ready, *, seconds, stopped=lambda: False):
     while not stopped() and loop.time() < deadline:
         with suppress(Exception):
             if await asyncio.wait_for(ready(), timeout=min(2, deadline - loop.time())):
-                return True
+                return not stopped()
         await asyncio.sleep(0.2)
     return False
 
@@ -156,18 +156,18 @@ class OperatorRecovery:
         self.form_marker = marker
         self.transition_started = False
         if step == "basic" and not self.claim_number:
-            control = page.locator(f'{S.SEL_CLAIM_NUMBER_INPUT}:is([readonly], [disabled]):visible').first
+            control = page.locator(f'input{S.SEL_CLAIM_NUMBER_INPUT}:is([readonly], [disabled]):visible').first
             if await control.is_visible():
                 self.claim_number = await control.input_value(timeout=1000)
 
-    async def is_original_document(self, page):
+    async def is_original_document(self, page, *, allow_route_change=False):
         if page.is_closed() or not self.form_marker:
             return False
-        return await page.evaluate("""marker => {
+        return await page.evaluate("""([marker, allowRouteChange]) => {
             const saved = window.__oicManualRecovery;
             return saved?.marker === marker &&
-                saved.route === location.origin + location.pathname + location.search;
-        }""", self.form_marker)
+                (allowRouteChange || saved.route === location.origin + location.pathname + location.search);
+        }""", [self.form_marker, allow_route_change])
 
     def field_key(self, page, section, action):
         return (id(page), self.form_step, section, action)
@@ -243,7 +243,7 @@ class OperatorRecovery:
                 same_document = True
                 if require_original:
                     with suppress(Exception):
-                        same_document = await self.is_original_document(page)
+                        same_document = await self.is_original_document(page, allow_route_change=self.transition_started)
                 detail = "OIC has not confirmed this action yet."
                 if not same_document:
                     detail = "The original tab was closed or reloaded."

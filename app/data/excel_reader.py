@@ -518,11 +518,12 @@ def _format_date(raw: str) -> str:
     if not raw:
         return ""
     val = str(raw).strip()
+    val = re.sub(r"(?:T|\s+(?:at\s+)?)\d{1,2}:\d{2}\b.*$", "", val, flags=re.IGNORECASE).strip()
     
     # Try parsing common formats, particularly timestamps from Excel
     for fmt in (
         "%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d-%m-%Y %H:%M:%S", "%d-%m-%Y",
-        "%d/%m/%Y", "%m/%d/%Y", "%d.%m.%Y", "%Y/%m/%d", "%B %d, %Y", "%b %d, %Y",
+        "%d/%m/%Y", "%m/%d/%Y", "%d.%m.%Y", "%Y/%m/%d", "%Y.%m.%d", "%d-%b-%Y", "%B %d, %Y", "%b %d, %Y",
         "%a %b %d %Y", "%b %d %Y"
     ):
         try:
@@ -878,8 +879,7 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
                     logger.info(f"  [TIME] Extracted time_of_survey: {claim.time_hh}:{claim.time_mm}")
 
             if is_date:
-                clean_date_val = re.sub(r"at.*$", "", str(value), flags=re.IGNORECASE).strip()
-                value = _format_date(clean_date_val)
+                value = _format_date(value)
 
             if field_name == "initial_loss_amount":
                 raw_initial_loss = value

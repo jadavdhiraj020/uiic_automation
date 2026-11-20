@@ -144,6 +144,10 @@ def _state_code(code: str) -> str:
     return _STATE_CODE_ALIASES.get(code[:2], code[:2])
 
 
+def _canonical_office_code(code: str) -> str:
+    return _state_code(code) + code[2:]
+
+
 def _office_key(name: str) -> tuple[str, ...]:
     return tuple(word for word in _words(name) if word not in _GENERIC_WORDS)
 
@@ -184,15 +188,18 @@ def resolve_rto_choice(registration_number: str, excel_rto: str, options: Iterab
     report_code = registration_rto_code(excel_rto)
     registration_code = registration_rto_code(registration_number)
     code = registration_code or report_code
+    canonical_code = _canonical_office_code(code)
     state = _state_code(code)
-    district = _licence_cities().get(code, "")
-    offices = _REGISTRATION_OFFICES.get(code, ())
+    districts = _licence_cities()
+    district = districts.get(code) or districts.get(canonical_code, "")
+    offices = _REGISTRATION_OFFICES.get(canonical_code, ())
     location = (offices or (district,))[0]
     compatible_names = [name for name in names if not state or _option_state(name) in ("", state)]
     same_state = [name for name in compatible_names if state and _option_state(name) == state]
 
     coded_option = next((name for name in names if code and any(
-        registration_rto_code(match.group()) == code for match in _OFFICE_CODE_TOKEN.finditer(name)
+        _canonical_office_code(registration_rto_code(match.group())) == canonical_code
+        for match in _OFFICE_CODE_TOKEN.finditer(name)
     )), "")
     exact_office = coded_option or _match_office_labels(offices, compatible_names)
     district_option = (
@@ -214,7 +221,7 @@ def resolve_rto_choice(registration_number: str, excel_rto: str, options: Iterab
     report_words = _distinctive_words(excel_rto) if not report_code else set()
     place_words = _distinctive_words(" ".join((*offices, district)))
     report_state = _option_state(excel_rto)
-    mismatch = bool(registration_code and report_code and registration_code != report_code)
+    mismatch = bool(registration_code and report_code and canonical_code != _canonical_office_code(report_code))
     if registration_code and state and report_state and state != report_state:
         mismatch = True
     if place_words and report_words and place_words.isdisjoint(report_words):

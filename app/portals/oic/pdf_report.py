@@ -27,6 +27,7 @@ BH_REGISTRATION = re.compile(r"^(\d{2}\s*BH\s*\d{4}\s*[A-Z]{1,2})(?=$|[\s,;/])",
 IDENTIFIER = re.compile(r"^[A-Z0-9][A-Z0-9/*._-]*", re.I)
 SURVEYOR_EXPIRY_LABEL = re.compile(r"(?<![A-Za-z])(?:expiry|expirey|expires|valid\s*until)\s*[:.-]?\s*", re.I)
 PLACEHOLDERS = {"", "na", "nil", "none", "notapplicable", "notavailable", "nana"}
+IGNORED_DRIVER_LABELS = ("Charges Filed", "Criminal Charges")
 SECTION_PATTERNS = (
     ("insured", r"insured\b(?!\s+vehicle)"),
     ("vehicle", r"(?:vehicle|registration)\s+(?:particulars|details)\b"),
@@ -102,7 +103,6 @@ FIELDS = {
         "badge_number": ("Badge No", "Badge Number"),
         "badge_issue_date": ("Badge Issue Date", "Badge Date"),
         "driver_qualification": ("Qualification", "Driver Qualification"),
-        "charges_filed": ("Charges Filed", "Criminal Charges"),
         "license_issuing_authority": ("Issuing Authority", "Licence Issuing Authority"),
     },
     "accident": {"date_of_accident": ("Date & Time of Accident", "Date and Time of Accident", "Accident Date", "Date of Accident")},
@@ -474,7 +474,9 @@ def _document_identity(lines):
         if raw := _after(line.text, FIELDS["vehicle"]["vehicle_registration_number"]):
             if value := _registration(raw)[0]:
                 fields["vehicle_registration_number"].setdefault(compact(value), value)
-    return {key: next(iter(values.values())) for key, values in fields.items() if len(values) == 1}
+    identity = {key: next(iter(values.values())) for key, values in fields.items() if len(values) == 1}
+    conflicts = {key for key, values in fields.items() if len(values) > 1}
+    return identity, conflicts
 
 
 def _report_evidence(lines):
@@ -485,7 +487,7 @@ def _report_evidence(lines):
         for line in lines
     )
     sections = _split_sections(lines)
-    identity = _document_identity(lines)
+    identity, _ = _document_identity(lines)
     return heading, sections, identity
 
 
@@ -502,7 +504,7 @@ def _is_supporting_report(lines):
 
 
 def find_oic_report(folder, *, preferred=None, stop_cb=None):
-    """Prefer a complete report by content, checking the cover with OCR when needed."""
+    """Prefer a complete report by content, checking up to three pages with OCR when needed."""
     from app.data.pdf_report_reader import read_lines
 
     files = []
@@ -536,7 +538,7 @@ def find_oic_report(folder, *, preferred=None, stop_cb=None):
         )
         if not strong and (heading or len(sample) < 12):
             try:
-                cover = [line for page in read_pages(path, stop_cb=stop_cb, max_pages=1) for line in page.lines]
+                cover = [line for page in read_pages(path, stop_cb=stop_cb, max_pages=3) for line in page.lines]
             except InterruptedError:
                 raise
             except Exception:
@@ -547,7 +549,7 @@ def find_oic_report(folder, *, preferred=None, stop_cb=None):
                 heading, sections, identity = _report_evidence(cover)
                 coverage = len(core & sections.keys())
                 strong = (heading and bool(identity or coverage >= 2)) or (bool(identity) and coverage >= 2)
-        if strong or (named and (heading or not sample)):
+        if strong or (named and (heading or len(sample) < 12)):
             with path.open("rb") as stream:
                 fingerprint = hashlib.sha256()
                 for block in iter(lambda: stream.read(1024 * 1024), b""):
@@ -633,7 +635,10 @@ def read_oic_pdf_report(path, *, stop_cb=None):
             for key, aliases in configured.items():
                 scoped_aliases = {"address", "datestart", "dateofissue", "licenceno", "licenseno", "validtill", "validupto", "gstin", "dateofbirth", "dob"}
                 configured[key] = tuple(alias for alias in aliases if compact(alias) not in scoped_aliases)
-        label_rows = tuple(_label_rows(rows, (alias for aliases in configured.values() for alias in aliases)))
+        label_boundaries = tuple(alias for aliases in configured.values() for alias in aliases)
+        if group == "driver":
+            label_boundaries += IGNORED_DRIVER_LABELS
+        label_rows = tuple(_label_rows(rows, label_boundaries))
         rows_by_field = defaultdict(list)
         for row in label_rows:
             specificity = {
@@ -787,7 +792,12 @@ def supplement_oic_pdf_fees(claim, folder, *, stop_cb=None):
         except (OSError, ValueError, PDFException, PdfminerException):
             claim._oic_pdf_review_warnings.append(f"Could not read optional fee bill {path.name}. Review or replace the file.")
             continue
-        identity = _document_identity(rows)
+        identity, conflicts = _document_identity(rows)
+        if conflicts:
+            claim._oic_pdf_review_warnings.append(
+                f"Conflicting claim, policy, or vehicle identifiers in fee bill {path.name}. Review this bill."
+            )
+            continue
         shared = {key for key, value in identity.items() if value and verified.get(key)}
         if not shared or any(compact(verified[key]) != compact(identity[key]) for key in shared):
             continue

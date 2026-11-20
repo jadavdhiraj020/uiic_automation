@@ -272,7 +272,7 @@ class AutomationEngine:
         from app.portals.oic.automation.recovery import wait_until_ready
 
         async def verified():
-            if form_transition and not await self._oic_recovery.is_original_document(page):
+            if form_transition and not await self._oic_recovery.is_original_document(page, allow_route_change=True):
                 return False
             return await ready()
 

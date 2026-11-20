@@ -82,10 +82,10 @@ async def portal_validation_summary(page, button):
             issues.append(("", message))
     lines = []
     for label, message in issues:
-        message = operator_reason(message, "")
+        safe_label = label if re.fullmatch(r"[A-Za-z][A-Za-z .()'/&-]{1,56}(?: [1-9]\d?)?", label or "") else ""
+        message = operator_reason(message, "Check this value in Chrome." if safe_label else "")
         if not message:
             continue
-        safe_label = label if re.fullmatch(r"[A-Za-z][A-Za-z .()'/&-]{1,59}", label or "") else ""
         line = f"{safe_label}. {message}" if safe_label else message
         if line not in lines:
             lines.append(line)

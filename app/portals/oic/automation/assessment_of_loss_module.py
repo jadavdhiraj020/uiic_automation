@@ -1510,6 +1510,23 @@ async def _fill_dynamic_expense_accordion(
         await run_field(page, log, amount_label, fill_amount)
 
 
+async def _surveyor_total_matches(page, minimum_without_tax):
+    total_input = page.locator("#totalClaimedAmount input").first
+    if not await total_input.is_visible():
+        return False
+    total = _expense_decimal(await total_input.input_value(timeout=1000))
+    committed = _expense_decimal(await total_input.get_attribute("aria-valuenow", timeout=1000))
+    if total is None or total <= 0 or total != committed:
+        return False
+    tax_values = []
+    for selector in ("#surveyorGst input", "#surveyorTds input", "#surveyorGstTds input"):
+        field = page.locator(selector).first
+        tax_values.append(_expense_decimal(await field.get_attribute("aria-valuenow", timeout=1000))
+                          if await field.count() else None)
+    # Existing expense rows can add to the total too.
+    return not all(value == 0 for value in tax_values) or total >= minimum_without_tax
+
+
 async def _verify_expense_rows(page, expenses, description, log, delay):
     """Reopen all rows after insertion and repair any values lost on rerender."""
     clean_rounds = 0
@@ -1541,29 +1558,18 @@ async def _verify_expense_rows(page, expenses, description, log, delay):
         # The portal's read-only total must also reflect a committed amount.
         # Do not guess its exact tax/deduction calculation for different cases.
         if not needs_repair and not manual_amount:
-            total_input = page.locator("#totalClaimedAmount input").first
-            await total_input.wait_for(state="visible", timeout=5000)
             minimum_without_tax = sum(Decimal(amount) for _, amount in expenses)
-            total_matches = False
-            for _ in range(8):
-                actual_total = _expense_decimal(await total_input.input_value())
-                committed_total = _expense_decimal(await total_input.get_attribute("aria-valuenow"))
-                tax_values = []
-                for selector in ("#surveyorGst input", "#surveyorTds input", "#surveyorGstTds input"):
-                    field = page.locator(selector).first
-                    tax_values.append(_expense_decimal(await field.get_attribute("aria-valuenow"))
-                                      if await field.count() else None)
-                if actual_total is not None and actual_total > 0 and actual_total == committed_total:
-                    # Existing expense rows can add to the total too.
-                    if not all(value == 0 for value in tax_values) or actual_total >= minimum_without_tax:
-                        total_matches = True
-                        break
-                await asyncio.sleep(0.25)
-            if not total_matches:
-                log.warning("   Surveyor claimed total was not committed; retrying the expense rows")
-                if current_recovery.get() is not None:
-                    await field_problem(page, log, "Surveyor Claimed Total",
-                                        "The total did not stay committed after the expense rows were saved.")
+            async def total_ready():
+                return await _surveyor_total_matches(page, minimum_without_tax)
+
+            recovery = current_recovery.get()
+            if not await wait_until_ready(total_ready, seconds=2, stopped=recovery.stopped if recovery else lambda: False):
+                log.warning("OIC did not save the Surveyor Claimed Total.")
+                if recovery is not None:
+                    await action_problem(
+                        page, log, "Surveyor Claimed Total", "The total did not stay committed.",
+                        total_ready, "Check the expense amounts in Chrome. Click Continue after OIC updates the total.",
+                    )
                     return
                 needs_repair = [(label, amount, True, True) for label, amount in expenses]
                 failed_checks.append("Surveyor Claimed Total")

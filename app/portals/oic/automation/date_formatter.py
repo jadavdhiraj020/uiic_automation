@@ -111,8 +111,8 @@ def format_oic_date(raw_date) -> str:
     if not raw or raw.lower() in {"", "na", "n/a", "nil", "none", "-", "--", "nat", "nan"}:
         return ""
 
-    # ── Strip trailing timestamp (e.g. "2024-01-15 00:00:00") ────────────────
-    raw_clean = raw.split(".")[0].strip()  # also strips microseconds
+    # Remove fractional seconds while preserving date separators such as DD.MM.YYYY.
+    raw_clean = re.sub(r"(?<=:\d{2})\.\d+$", "", raw)
 
     # ── Try each known strptime format ────────────────────────────────────────
     for fmt in _KNOWN_FORMATS:

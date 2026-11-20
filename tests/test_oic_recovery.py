@@ -10,7 +10,8 @@ from playwright.async_api import async_playwright
 
 from app.automation.automation_logger import AutomationLogger
 from app.automation.engine import AutomationEngine
-from app.portals.oic.automation import assessment_of_loss_module, document_upload_module, ui_utils
+from app.data.data_model import ClaimData
+from app.portals.oic.automation import assessment_of_loss_module, basic_details_module, document_upload_module, ui_utils
 from app.portals.oic.automation.invoice_upload import invoice_import_is_ready
 from app.portals.oic.automation.popup_service import dismiss_portal_popup
 from app.portals.oic.automation.recovery import (
@@ -45,6 +46,39 @@ class RecoveryRun:
 
     async def next_prompt(self):
         return await asyncio.wait_for(self.prompts.get(), timeout=8)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source", "drops_date"), [("17.09.2033", False), ("17.09.2033", True), ("31/02/2033", False), ("", False)],
+)
+async def test_fitness_date_is_date_only_and_verified_after_blur(page, monkeypatch, source, drops_date):
+    await page.set_content("""
+        <div class="DatePicker">
+            <label for="fitness">Fitness Valid Upto</label>
+            <input name="fitnessValidUpto" id="fitness" class="MuiInputBase-input" placeholder="DD-MM-YYYY">
+        </div>
+        <input aria-label="Next field">
+    """)
+    if drops_date:
+        await page.locator("#fitness").evaluate("el => el.addEventListener('blur', () => { el.value = ''; })")
+    monkeypatch.setattr(basic_details_module, "_select_rto", AsyncMock())
+    monkeypatch.setattr(ui_utils, "_get_oic_fill_settings", lambda: (True, 0))
+    recovery = AsyncMock()
+    monkeypatch.setattr(ui_utils, "field_problem", recovery)
+    claim = ClaimData(portal_id="oic", fitness_valid_upto=source)
+    log = Mock()
+
+    await basic_details_module._fill_vehicle_details(page, claim, log, 0)
+
+    valid = source == "17.09.2033"
+    expected_date = "17-09-2033" if valid and not drops_date else ""
+    assert await page.locator("#fitness").input_value() == expected_date
+    assert ("Fitness Valid Upto", "17/09/2033" if valid else "", False, "") in claim.all_fields_for_preview()
+    if drops_date:
+        recovery.assert_awaited_once_with(page, log, "Fitness Valid Upto", "OIC did not keep the date after entry.")
+    else:
+        recovery.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -118,7 +152,8 @@ async def test_field_resume_keeps_completed_work_and_rejects_the_next_step(page)
 
 
 @pytest.mark.asyncio
-async def test_navigation_resume_uses_the_destination_without_replaying_next(page, monkeypatch):
+@pytest.mark.parametrize("route_changes", [False, True])
+async def test_navigation_resume_uses_the_destination_without_replaying_next(page, monkeypatch, route_changes):
     await page.set_content("""
         <span aria-current="step">Basic Details</span>
         <input id="regNumber">
@@ -158,6 +193,8 @@ async def test_navigation_resume_uses_the_destination_without_replaying_next(pag
         document.querySelector('#regNumber').remove();
         document.body.insertAdjacentHTML('beforeend', '<input id="placeOfSurvey">');
     }""")
+    if route_changes:
+        await page.evaluate("history.pushState({}, '', '/assessment/interim')")
     run.recovery.respond(prompt.id, "fixed")
     assert await asyncio.wait_for(task, timeout=6)
     assert await page.evaluate("window.clicks") == 1
@@ -180,6 +217,18 @@ async def test_later_page_cannot_complete_a_phase_interrupted_before_next(page):
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, timeout=4)
     assert not page.is_closed()
+
+
+@pytest.mark.asyncio
+async def test_validation_keeps_field_number_without_reporting_portal_values(page):
+    await page.set_content("""
+        <label for="licence">License No. Field 2</label>
+        <input id="licence" aria-invalid="true" aria-errormessage="error">
+        <div id="error">Check vehicle reference FAKE-123456789.</div>
+    """)
+
+    _, detail = await portal_validation_summary(page, "Next")
+    assert detail == "License No. Field 2. Check this value in Chrome."
 
 
 @pytest.mark.asyncio
@@ -232,7 +281,9 @@ async def test_invoice_checkpoint_resumes_only_after_expected_items_are_present(
 async def test_manual_attachment_requires_success_from_the_failed_slot(page, monkeypatch):
     await page.set_content("""
         <span aria-current="step">Document Upload</span><textarea id="remarks"></textarea>
-        <section><input type="file" id="fileInput0"><div id="receipt0"></div></section>
+        <section><input type="file" id="fileInput0">
+            <div>previous.pdf</div><div>File Uploaded Successfully</div><div id="receipt0"></div>
+        </section>
         <section><input type="file" id="fileInput1"><div>File Uploaded Successfully</div></section>
     """)
     run = RecoveryRun()
@@ -256,6 +307,37 @@ async def test_manual_attachment_requires_success_from_the_failed_slot(page, mon
     run.recovery.respond(prompt.id, "fixed")
     assert await asyncio.wait_for(task, timeout=6)
     attach.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_document_upload_pauses_if_portal_discards_a_selected_file(page, monkeypatch, tmp_path):
+    await page.set_content("""
+        <span aria-current="step">Document Upload</span><textarea id="remarks"></textarea>
+        <section><input type="file" id="fileInput0" onchange="this.value = ''"><div id="receipt"></div></section>
+    """)
+    sample = tmp_path / "synthetic.pdf"
+    sample.write_bytes(b"Local attachment test")
+    run = RecoveryRun()
+    await run.recovery.bind_form(page, "upload")
+
+    async def quick_ready(ready, *, seconds, stopped):
+        return await wait_until_ready(ready, seconds=min(seconds, 0.3), stopped=stopped)
+
+    monkeypatch.setattr(document_upload_module, "wait_until_ready", quick_ready)
+    token = current_recovery.set(run.recovery)
+    try:
+        task = asyncio.create_task(document_upload_module._attach_document(
+            page, file_input_selector="#fileInput0", file_path=str(sample),
+            label="Workshop Repair Estimate", log=run.log,
+        ))
+    finally:
+        current_recovery.reset(token)
+
+    prompt = await run.next_prompt()
+    assert await page.locator("#fileInput0").input_value() == ""
+    await page.locator("#receipt").evaluate("el => el.textContent = 'File attached successfully for upload'")
+    run.recovery.respond(prompt.id, "fixed")
+    assert await asyncio.wait_for(task, timeout=6)
 
 
 @pytest.mark.asyncio
@@ -298,6 +380,41 @@ async def test_expense_row_is_added_once(page):
     await assessment_of_loss_module._ensure_expense_row(page, "Professional Fee", run.log)
     await assessment_of_loss_module._ensure_expense_row(page, "Professional Fee", run.log)
     assert await page.evaluate("window.adds") == 1
+
+
+@pytest.mark.asyncio
+async def test_expense_total_resume_waits_for_recalculation(page, monkeypatch):
+    await page.set_content("""
+        <span aria-current="step">Assessment of Loss</span><input id="invoiceNumber">
+        <input id="description" value="Survey"><input id="expense" value="100" aria-valuenow="100">
+        <div id="totalClaimedAmount"><input readonly value="0" aria-valuenow="0"></div>
+    """)
+    run = RecoveryRun()
+    await run.recovery.bind_form(page, "loss")
+    module = assessment_of_loss_module
+    monkeypatch.setattr(module, "_open_expense_inputs", AsyncMock(
+        return_value=(page.locator("#description"), page.locator("#expense")),
+    ))
+    token = current_recovery.set(run.recovery)
+    try:
+        task = asyncio.create_task(module._verify_expense_rows(
+            page, [("Professional Fee", "100")], "Survey", run.log, 0,
+        ))
+    finally:
+        current_recovery.reset(token)
+
+    prompt = await run.next_prompt()
+    assert prompt.action == "Surveyor Claimed Total"
+    assert not prompt.can_skip
+    run.recovery.respond(prompt.id, "fixed")
+    assert (await run.next_prompt()).id == prompt.id
+    await page.locator("#totalClaimedAmount input").evaluate("""el => {
+        el.value = '100';
+        el.setAttribute('aria-valuenow', '100');
+    }""")
+    run.recovery.respond(prompt.id, "fixed")
+    await asyncio.wait_for(task, timeout=6)
+    assert await page.locator("#expense").input_value() == "100"
 
 
 @pytest.mark.asyncio

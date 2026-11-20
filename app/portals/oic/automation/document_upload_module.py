@@ -7,6 +7,7 @@ import os
 import random
 import re
 import tempfile
+from collections import Counter
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set
 
@@ -22,7 +23,7 @@ from app.portals.oic.automation.ui_utils import (
 from app.portals.oic.automation import selectors as S
 from app.portals.oic.automation.popup_service import dismiss_portal_popup
 from app.portals.oic.automation.recovery import (
-    action_problem, current_recovery, field_problem, field_was_handled, portal_messages,
+    action_problem, current_recovery, field_problem, field_was_handled, portal_messages, wait_until_ready,
 )
 from app.portals.oic.automation.validation import portal_validation_summary
 
@@ -164,27 +165,29 @@ async def _submission_confirmed(page):
     return any(confirms_submission(message) for message in await portal_messages(page))
 
 
-async def _attachment_receipt(page, selector):
-    """Read the success receipt beside one specific upload control."""
+async def _attachment_receipts(page, selector):
+    """Read the success receipts beside one specific upload control."""
     control = page.locator(selector)
     if await control.count() != 1:
-        return ""
+        return []
     return await control.evaluate(r"""input => {
         const uploaded = /\bfile (?:uploaded successfully|attached successfully for upload)\b/i;
         for (let scope = input.parentElement; scope && scope !== document.body; scope = scope.parentElement) {
             if (scope.querySelectorAll('input[type=file]').length !== 1) break;
             const lines = (scope.innerText || '').split(/\n/).map(s => s.trim()).filter(Boolean);
-            const index = lines.findIndex(line => uploaded.test(line));
-            if (index >= 0) return lines.slice(Math.max(0, index - 1), index + 1).join('\n');
+            const receipts = lines.flatMap((line, index) => uploaded.test(line)
+                ? [lines.slice(Math.max(0, index - 1), index + 1).join('\n')] : []);
+            if (receipts.length) return receipts;
         }
-        return '';
+        return [];
     }""", timeout=1000)
 
 
-async def _recover_attachment(page, log, selector, label, reason, *, before=""):
+async def _recover_attachment(page, log, selector, label, reason, *, before=()):
+    previous = Counter(before)
+
     async def ready():
-        receipt = await _attachment_receipt(page, selector)
-        return bool(receipt and receipt != before)
+        return bool(Counter(await _attachment_receipts(page, selector)) - previous)
 
     return await action_problem(
         page, log, label, reason, ready,
@@ -195,7 +198,7 @@ async def _recover_attachment(page, log, selector, label, reason, *, before=""):
 async def _attach_document(page, *, file_input_selector, file_path, label, log):
     recovery = current_recovery.get()
     before = set(await portal_messages(page)) if recovery else set()
-    before_receipt = await _attachment_receipt(page, file_input_selector) if recovery else ""
+    before_receipts = await _attachment_receipts(page, file_input_selector) if recovery else []
     attached = await upload_file_via_input(
         page, file_input_selector=file_input_selector, file_path=file_path, label=label, log=log,
     )
@@ -209,12 +212,29 @@ async def _attach_document(page, *, file_input_selector, file_path, label, log):
                     continue
                 if re.search(r"\b(error|failed|invalid|unsupported|rejected|exceeds?|maximum file size|cannot|unable)\b", message, re.I):
                     return await _recover_attachment(
-                        page, log, file_input_selector, label, message, before=before_receipt,
+                        page, log, file_input_selector, label, message, before=before_receipts,
                     )
             await asyncio.sleep(0.25)
-        return True
+        if not recovery:
+            return True
+        control = page.locator(file_input_selector).first
+        previous = Counter(before_receipts)
+
+        async def retained():
+            if Counter(await _attachment_receipts(page, file_input_selector)) - previous:
+                return True
+            if not await control.count():
+                return False
+            return await control.evaluate(
+                "(input, filename) => Array.from(input.files || []).some(file => file.name === filename)",
+                Path(file_path).name, timeout=1000,
+            )
+
+        if await wait_until_ready(retained, seconds=2, stopped=recovery.stopped):
+            return True
+        reason = "OIC did not keep the attachment after it was selected."
     return await _recover_attachment(
-        page, log, file_input_selector, label, reason, before=before_receipt,
+        page, log, file_input_selector, label, reason, before=before_receipts,
     )
 
 

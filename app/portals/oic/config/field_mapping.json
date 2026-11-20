@@ -1,6 +1,6 @@
 {
   "_comment": "field_mapping.json — Oriental Insurance Company portal. Maps ClaimData fields to Excel labels for OIC automation. search_labels lists fallback labels tried in order.",
-  "_derived_fields": ["surveyor_other_expenses"],
+  "_derived_fields": ["surveyor_other_expenses", "charges_filed"],
 
   "claim_no": {
     "sheet": "ALL",
@@ -314,14 +314,6 @@
   "driver_qualification": {
     "sheet": "ALL",
     "search_labels": ["Qualification", "Driver Qualification", "Educational Qualification"],
-    "row_offset": 0,
-    "col_offset": 1,
-    "allow_text_values": true,
-    "_mandatory": false
-  },
-  "charges_filed": {
-    "sheet": "ALL",
-    "search_labels": ["Charges Filed", "Charges", "Criminal Charges", "Charges Filed Against Driver"],
     "row_offset": 0,
     "col_offset": 1,
     "allow_text_values": true,

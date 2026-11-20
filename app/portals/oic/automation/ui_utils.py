@@ -128,7 +128,7 @@ async def advance_form(page, log, selector, button_name, destination, stop_cb, s
     recovery = current_recovery.get()
 
     async def ready():
-        if recovery is not None and not await recovery.is_original_document(page):
+        if recovery is not None and not await recovery.is_original_document(page, allow_route_change=True):
             return False
         return await form_step_is_open(page, destination)
 
@@ -518,7 +518,7 @@ def format_date_for_mui(raw_date) -> str:
 
 async def fill_mui_datepicker(
     page: Page, label_text: str, value: str, label: str,
-    log, delay_ms: int = 30, source: Optional[str] = None
+    log, delay_ms: int = 30, source: Optional[str] = None, *, verify_value: bool = False
 ) -> bool:
     """Fill a Material UI DatePicker by locating it via its visible label text.
 
@@ -578,6 +578,10 @@ async def fill_mui_datepicker(
         await asyncio.sleep(0.05)
         await page.keyboard.press("Tab")
         await _check_field_validation(input_el)
+        if verify_value:
+            displayed = await input_el.input_value(timeout=3000)
+            if format_date_for_mui(displayed.replace("\u200e", "")) != formatted:
+                raise ValueError("OIC did not keep the date after entry.")
 
         if isinstance(log, AutomationLogger):
             kwargs = {}

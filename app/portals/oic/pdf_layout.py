@@ -80,6 +80,7 @@ def _native_lines(page, number):
 
 def _scan_regions(page, lines):
     """Find substantial raster areas which lack a usable native text layer."""
+    images = []
     regions = []
     page_area = page.width * page.height
     for image in page.images:
@@ -87,6 +88,7 @@ def _scan_regions(page, lines):
         right, bottom = min(page.width, image["x1"]), min(page.height, image["bottom"])
         if right <= left or bottom <= top:
             continue
+        images.append((left, top, right, bottom))
         if (right - left) * (bottom - top) < page_area * .035:
             continue
         covered = [line for line in lines if top <= line.top <= bottom and any(
@@ -95,6 +97,12 @@ def _scan_regions(page, lines):
         bands = {min(3, int(4 * (line.top - top) / (bottom - top))) for line in covered}
         if len(covered) < 4 or len(bands) < 3:
             regions.append((left, top, right, bottom))
+    # A short native letterhead/footer can be spread across a full-page scan.
+    # Count its text as well as its positions, including PDFs stored as small raster tiles.
+    sparse_native = sum(len(line.text.strip()) for line in lines) < 120
+    if sparse_native and sum((right - left) * (bottom - top) for left, top, right, bottom in images) >= page_area * .35:
+        return images
+
     areas = [(right - left) * (bottom - top) / page_area for left, top, right, bottom in regions]
     return regions if areas and (max(areas) >= .14 or sum(areas) >= .24) else []
 

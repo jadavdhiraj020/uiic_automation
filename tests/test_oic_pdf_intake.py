@@ -110,12 +110,18 @@ def test_native_oic_pdf_keeps_label_and_amount_columns(tmp_path, monkeypatch):
 
     monkeypatch.setattr(pdf_layout, "_ocr_page", unexpected_ocr)
     path = tmp_path / "Final Survey Report.pdf"
-    _write_pdf(path, (SUMMARY, ITEMS))
+    rows = tuple(
+        (*row, "Charges Filed: Case 12") if row[0].startswith("Driver Address:") else row
+        for row in SUMMARY
+    )
+    _write_pdf(path, (rows, ITEMS))
     claim = extract_claim_data_from_report(str(path), portal_id="oic")
 
     assert claim.policy_number == "POL555555"
     assert claim.claim_no == "DEMO1234"
     assert claim.driver_name == "Sample Driver"
+    assert claim.driver_address == "Sample Road, Vadodara 390001"
+    assert not claim.charges_filed
     assert claim.engine_no == "EN1234567"
     assert claim.place_of_survey == "Sample Garage"
     assert claim.workshop_estimate_amount == "2000"
@@ -167,6 +173,44 @@ def test_oic_blocks_conflicting_required_fields_and_unaligned_totals(tmp_path):
                for issue in claim._oic_pdf_review_errors)
     with pytest.raises(ValueError, match="Review the PDF fields"):
         build_upload_workbook(claim, {}, output_folder=tmp_path)
+
+
+def test_oic_finds_scan_with_a_cover_before_the_survey_report(tmp_path):
+    pytest.importorskip("rapidocr_onnxruntime")
+    path = tmp_path / "Document 08.pdf"
+    _write_pdf(path, ((("Cover Page",),), SUMMARY), scan=True)
+
+    assert find_oic_report(tmp_path) == str(path)
+
+
+def test_sparse_native_letterhead_does_not_hide_a_full_page_scan():
+    from app.portals.oic.pdf_layout import Line, _scan_regions
+
+    page = SimpleNamespace(width=600, height=800, images=[{"x0": 0, "top": 0, "x1": 600, "bottom": 800}])
+    native = [Line(1, top, ((10, 90, "Letterhead"),)) for top in (25, 100, 480, 750)]
+
+    assert _scan_regions(page, native) == [(0, 0, 600, 800)]
+
+
+def test_oic_rejects_fee_bill_with_conflicting_claim_numbers(tmp_path):
+    from app.portals.oic.pdf_report import supplement_oic_pdf_fees
+
+    report = tmp_path / "Final Survey Report.pdf"
+    _write_pdf(report, (SUMMARY, ITEMS))
+    claim = extract_claim_data_from_report(str(report), portal_id="oic")
+    rows = (
+        ("Claim No: WRONG1234",),
+        ("Registration No: GJ06AB1234",),
+        ("Claim No: DEMO1234",),
+        ("Professional Fee: 4321",),
+    )
+    _write_pdf(tmp_path / "Survey Fee Bill.pdf", (rows,))
+
+    supplement_oic_pdf_fees(claim, tmp_path)
+
+    assert claim.professional_fee == ""
+    assert not claim._excel_coords.get("professional_fee")
+    assert any("Conflicting claim" in warning for warning in claim._oic_pdf_review_warnings)
 
 
 def test_oic_intake_keeps_excel_priority_and_existing_field_mapping(tmp_path):

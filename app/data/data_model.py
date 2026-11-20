@@ -638,49 +638,28 @@ class ClaimData:
                 self._excel_logs.append(f"  📊 time_of_survey derived: '{self.time_of_survey}' (Source: {self.time_hh}:{self.time_mm})")
 
         elif portal_id == "oic":
-            # Calculate Age of Vehicle based on date_of_registration
-            if self.date_of_registration:
-                try:
-                    reg_date_str = str(self.date_of_registration).strip()
-                    accident_date_str = str(self.date_of_accident).strip()
-                    if reg_date_str:
-                        reg_date = None
-                        clean_val = reg_date_str.split()[0]
-                        for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d.%m.%Y", "%m/%d/%Y"):
-                            try:
-                                reg_date = datetime.strptime(clean_val, fmt).date()
-                                break
-                            except ValueError:
-                                continue
-                        
-                        accident_date = None
-                        if accident_date_str and not re.match(r'^(NA|N/A|nil|none|-)$', accident_date_str, re.IGNORECASE):
-                            clean_acc_val = accident_date_str.split()[0]
-                            for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d.%m.%Y", "%m/%d/%Y"):
-                                try:
-                                    accident_date = datetime.strptime(clean_acc_val, fmt).date()
-                                    break
-                                except ValueError:
-                                    continue
-                        
-                        # Use Date of Accident if available, otherwise fall back to today's date
-                        end_date = accident_date if accident_date else date.today()
-                        
-                        if reg_date:
-                            years = end_date.year - reg_date.year
-                            months = end_date.month - reg_date.month
-                            days = end_date.day - reg_date.day
-                            if days < 0:
-                                months -= 1
-                            if months < 0:
-                                years -= 1
-                                months += 12
-                            
-                            self.age_of_vehicle = f"{years} years {months} months"
-                            self._excel_coords["age_of_vehicle"] = "Calculated from Registration & Accident Date"
-                            self._excel_logs.append(f"  📊 age_of_vehicle: '{self.age_of_vehicle}' (Derived from Registration Date '{reg_date_str}' vs Accident Date '{end_date}')")
-                except Exception as exc:
-                    logger.warning("Failed to calculate age_of_vehicle from Registration Date %s: %s", self.date_of_registration, exc)
+            from app.portals.oic.automation.date_formatter import format_oic_date
+
+            registration = format_oic_date(self.date_of_registration)
+            if registration:
+                reg_date = datetime.strptime(registration, "%d-%m-%Y").date()
+                accident = format_oic_date(self.date_of_accident)
+                end_date = datetime.strptime(accident, "%d-%m-%Y").date() if accident else date.today()
+                if end_date < reg_date:
+                    self.age_of_vehicle = ""
+                    self._excel_coords.pop("age_of_vehicle", None)
+                    self._excel_logs.append("  [REVIEW] Age of Vehicle skipped because registration is after the reference date.")
+                else:
+                    months_since_registration = (end_date.year - reg_date.year) * 12 + end_date.month - reg_date.month
+                    if end_date.day < reg_date.day:
+                        months_since_registration -= 1
+                    years, months = divmod(months_since_registration, 12)
+                    years_unit = "year" if years == 1 else "years"
+                    months_unit = "month" if months == 1 else "months"
+                    self.age_of_vehicle = f"{years} {years_unit} {months} {months_unit}"
+                    reference = "Accident Date" if accident else "Today"
+                    self._excel_coords["age_of_vehicle"] = f"Calculated from Registration Date and {reference}"
+                    self._excel_logs.append(f"  📊 age_of_vehicle: '{self.age_of_vehicle}' (Registration {reg_date} to {end_date})")
 
             # Clean Year of Manufacture (keep only 4 digit year, e.g. 19xx or 20xx)
             if self.year_of_manufacture:
@@ -1074,8 +1053,11 @@ class ClaimData:
 
         # Match the value sent to the OIC Variant field.
         from app.portals.oic.automation.basic_details_module import _extract_variant, _resolve_charges_filed
+        from app.portals.oic.automation.date_formatter import format_oic_date
+
         variant = _extract_variant(self.vehicle_make)
-        charges_filed, charges_source = _resolve_charges_filed(self.charges_filed)
+        charges_filed = _resolve_charges_filed()
+        fitness_date = format_oic_date(self.fitness_valid_upto).replace("-", "/")
 
         from app.portals.oic.license_type_mapping import resolve_license_type
         licence_type, licence_source = resolve_license_type(
@@ -1145,7 +1127,7 @@ class ClaimData:
             ("RTO Portal Match",      rto_match,                  False, rto_preview_source),
             ("Registered Laden Weight", self.registered_laden_weight, False, _src("registered_laden_weight")),
             ("Seating Capacity",      self.seating_capacity,      False, _src("seating_capacity")),
-            ("Fitness Valid Upto",    self.fitness_valid_upto,     False, _src("fitness_valid_upto")),
+            ("Fitness Valid Upto",    fitness_date,              False, _src("fitness_valid_upto")),
             ("Permit Number",         self.permit_number,          False, _src("permit_number")),
             ("Type of Permit",        self.type_of_permit,         False, _src("type_of_permit")),
             ("Permit Valid Upto",     self.permit_valid_upto,      False, _src("permit_valid_upto")),
@@ -1189,7 +1171,7 @@ class ClaimData:
             ("Pincode",               self.driver_pin_code if is_pdf else "First available in portal", True,
                                       _src("driver_pin_code") if is_pdf else "Selected after city"),
             ("Address",               self.driver_address,        True,  _src("driver_address")),
-            ("Charges Filed",         charges_filed,              False, charges_source or _src("charges_filed")),
+            ("Charges Filed",         charges_filed,              False, "Automation Defaults" if charges_filed else ""),
 
             # Workshop Details
             ("Workshop Name",         self.workshop_name,              True,  _src("workshop_name")),
@@ -1257,7 +1239,9 @@ class ClaimData:
 
 
     def _preview_uiic(self) -> List[Tuple[str, str, bool, str]]:
-        """Original UIIC preview — completely unchanged."""
+        """UIIC preview with date-only display for calendar dates."""
+        from app.data.excel_reader import _format_date
+
         def _src(key: str) -> str:
             return self._excel_coords.get(key, "")
 
@@ -1265,12 +1249,12 @@ class ClaimData:
             ("Claim No",              self.claim_no,              True,  _src("claim_no")),
             ("Payment Option",        "Cashless" if "repairer" in self.payment_to.lower() or not self.payment_to else "Reimbursement" if "insured" in self.payment_to.lower() else "—",
                                                                   True,  _src("payment_to")),
-            ("Date of Survey",        self.date_of_survey,        True,  _src("date_of_survey")),
+            ("Date of Survey",        _format_date(self.date_of_survey), True, _src("date_of_survey")),
             ("Time of Survey",        f"{self.time_hh}:{self.time_mm}" if self.time_hh else "", False, _src("time_hh")),
             ("Place of Survey",       self.place_of_survey,       True,  _src("place_of_survey")),
             ("Mobile No",             self.mobile_no,             False, _src("mobile_no")),
             ("Email ID",              self.email_id,              False, _src("email_id")),
-            ("Expected Compl. Date",  self.expected_completion_date, False, _src("expected_completion_date") or _src("date_of_survey")),
+            ("Expected Compl. Date",  _format_date(self.expected_completion_date), False, _src("expected_completion_date") or _src("date_of_survey")),
             ("Type of Settlement",    self.type_of_settlement,    True,  _src("type_of_settlement")),
             ("Odometer Reading",      self.odometer,              False, _src("odometer")),
             ("Initial Loss (₹)",      self.initial_loss_amount,   True,  _src("initial_loss_amount")),
@@ -1281,7 +1265,7 @@ class ClaimData:
             ("Parts GST 18% (₹)",     self.parts_gst18_amount,     False, _src("parts_gst18_amount")),
             ("Labour GST 18% (₹)",   self.labour_gst18_amount,    True,  _src("labour_gst18_amount") or _src("labour_excl_gst")),
             ("Workshop Inv No",       self.workshop_invoice_no,   False, _src("workshop_invoice_no")),
-            ("Workshop Inv Date",     self.workshop_invoice_date, False, _src("workshop_invoice_date")),
+            ("Workshop Inv Date",     _format_date(self.workshop_invoice_date), False, _src("workshop_invoice_date")),
             ("Towing Charges (₹)",    self.towing_charges,        False, _src("towing_charges")),
             ("Spot Repairs (₹)",      self.spot_repairs,          False, _src("spot_repairs")),
             ("Voluntary Excess (₹)",  self.voluntary_excess,      False, _src("voluntary_excess")),
@@ -1289,9 +1273,9 @@ class ClaimData:
             ("Imposed Excess (₹)",    self.imposed_excess,        False, _src("imposed_excess")),
             ("Salvage Value (₹)",     self.salvage_value,         False, _src("salvage_value")),
             ("Invoice No",            self.invoice_no,            False, _src("invoice_no")),
-            ("Invoice Date",          self.invoice_date,          False, _src("invoice_date")),
+            ("Invoice Date",          _format_date(self.invoice_date), False, _src("invoice_date")),
             ("Report No",             self.final_report_no,       True,  _src("final_report_no")),
-            ("Report Date",           self.final_report_date,     False, _src("final_report_date")),
+            ("Report Date",           _format_date(self.final_report_date), False, _src("final_report_date")),
             ("Travel Exp (₹)",        self.traveling_expenses,    False, _src("traveling_expenses")),
             ("Survey Fee (₹)",        self.survey_fee,            False, _src("survey_fee")),
             ("Reinspection Fee (₹)",  self.reinspection_fee,      False, _src("reinspection_fee")),

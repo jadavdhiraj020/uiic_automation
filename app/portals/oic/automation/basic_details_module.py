@@ -365,7 +365,7 @@ async def _fill_vehicle_details(page: Page, claim, log, delay: int):
     if _fitness_date:
         await fill_mui_datepicker(
             page, SEL_FITNESS_VALID_UPTO_LABEL, _fitness_date,
-            "Fitness Valid Upto", log, delay
+            "Fitness Valid Upto", log, delay, verify_value=True
         )
 
     # 19. Optional: Permit Number
@@ -443,12 +443,10 @@ async def _fill_loss_details(page: Page, claim, log, delay: int):
 
     # 4. Age of Vehicle — text input
     if claim.age_of_vehicle:
-        age = re.sub(r'[^\d.]', '', str(claim.age_of_vehicle))
-        if age:
-            await fill_input_with_delay(
-                page, SEL_VEHICLE_AGE, age,
-                "Age of Vehicle", log, delay
-            )
+        await fill_input_with_delay(
+            page, SEL_VEHICLE_AGE, claim.age_of_vehicle,
+            "Age of Vehicle", log, delay
+        )
 
     # 5. Loss Description — hardcoded per business rule
     await fill_input_with_delay(
@@ -795,23 +793,20 @@ async def _fill_driver_details(page: Page, claim, log, delay: int, automation_de
     # Row 6 ─────────────────────────────────────────────────────────────────
 
     # 19. Charges Filed (optional) — textarea
-    charges_filed, source = _resolve_charges_filed(claim.charges_filed, automation_defaults)
+    charges_filed = _resolve_charges_filed(automation_defaults)
     if charges_filed:
         await fill_input_with_delay(
-            page, SEL_CHARGES_FILED, charges_filed, "Charges Filed", log, delay, source=source
+            page, SEL_CHARGES_FILED, charges_filed, "Charges Filed", log, delay,
+            source="Automation Defaults"
         )
 
     log.success("  ✅ Driver Details subsection done.")
     return True
 
 
-def _resolve_charges_filed(value, automation_defaults=None):
-    report_value = str(value or "").strip()
-    if report_value:
-        return report_value, ""
+def _resolve_charges_filed(automation_defaults=None) -> str:
     defaults = load_automation_defaults(portal_id="oic") if automation_defaults is None else automation_defaults
-    default_value = str(defaults.get("charges_filed_default") or "").strip()
-    return default_value, "Automation Defaults" if default_value else ""
+    return str(defaults.get("charges_filed_default") or "").strip()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
