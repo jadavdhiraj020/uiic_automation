@@ -232,3 +232,88 @@ def test_oic_intake_keeps_excel_priority_and_existing_field_mapping(tmp_path):
     assert claim.policy_number == "POL123456"
     assert claim.fitness_valid_upto == "17/09/2033"
     assert not getattr(claim, "_oic_pdf_review_errors", ())
+
+def test_oic_recovers_one_unreadable_spares_estimate_from_verified_subtotal():
+    from app.portals.oic.pdf_assessment import MATERIALS, PART_COLUMNS, _item_tables
+    from app.portals.oic.pdf_layout import Table
+
+    table = Table(
+        4,
+        (10, 20, 30, 40),
+        (
+            ("SN", "Parts Name", "Estimated", "Metal", "Plastic", "Glass"),
+            ("1", "Bonnet", "1450", "1300", "0", "0"),
+            ("2", "Bumper", "1?000", "0", "500", "0"),
+            ("Total", "", "2450", "1300", "500", "0"),
+        ),
+    )
+
+    rows, source = _item_tables((table,), PART_COLUMNS, MATERIALS, "Spares")
+
+    assert source == "PDF p4"
+    assert rows[0][1]["estimate"] == 1450
+    assert rows[1][1]["estimate"] == 1000
+
+
+def test_oic_does_not_guess_when_two_spares_estimates_are_unreadable():
+    from app.portals.oic.pdf_assessment import MATERIALS, PART_COLUMNS, _item_tables
+    from app.portals.oic.pdf_layout import Table
+
+    table = Table(
+        4,
+        (10, 20, 30, 40),
+        (
+            ("SN", "Parts Name", "Estimated", "Metal", "Plastic", "Glass"),
+            ("1", "Bonnet", "1?450", "1300", "0", "0"),
+            ("2", "Bumper", "1?000", "0", "500", "0"),
+            ("Total", "", "2450", "1300", "500", "0"),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="Check estimate in spares row"):
+        _item_tables((table,), PART_COLUMNS, MATERIALS, "Spares")
+
+
+def test_oic_reconciles_workshop_estimate_when_net_payable_has_extra_number():
+    from app.data.data_model import ClaimData
+    from app.portals.oic.pdf_layout import Line
+    from app.portals.oic.pdf_report import _assessment_fields, _aligned_estimate
+
+    def row(top, label, estimate=None, assessed=None, extra=None):
+        cells = [(0, 120, label)]
+        if estimate is not None:
+            cells.append((250, 300, str(estimate)))
+        if assessed is not None:
+            cells.append((350, 400, str(assessed)))
+        if extra is not None:
+            cells.append((450, 500, str(extra)))
+        return Line(4, top, tuple(cells))
+
+    lines = [
+        row(10, "Summary of Assessment"),
+        row(20, "Parts", 2000, 1500),
+        row(30, "Labour", 1000, 800),
+        row(40, "Sub Total", 3000, 2300),
+        row(50, "Less Excess Clause", None, 500),
+        row(60, "Net Payable", 3000, 1800, 999),
+    ]
+
+    assert _aligned_estimate(lines, 5) == 3000
+
+    claim = ClaimData(portal_id="oic")
+    warnings = {
+        "workshop_estimate_amount": "low-confidence OCR value",
+        "initial_loss_amount": "low-confidence OCR value",
+    }
+    _assessment_fields(
+        claim,
+        lines,
+        {"rr": 0, "denting": 0, "cw": 0, "painting": 0},
+        warnings,
+    )
+
+    assert claim.workshop_estimate_amount == "3000"
+    assert claim.initial_loss_amount == "2250"
+    assert "workshop_estimate_amount" not in warnings
+    assert "initial_loss_amount" not in warnings
+
