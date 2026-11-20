@@ -369,9 +369,8 @@ def _aligned_estimate(lines, index):
         return None
 
     columns = [(right, value) for _, right, text in net.cells if (value := amount(text)) is not None]
-    if len(columns) != 2:
+    if len(columns) < 2:
         return None
-    (estimate_x, estimate), (assessed_x, _) = columns
 
     def at_column(line, column):
         values = [value for _, right, text in line.cells
@@ -393,13 +392,30 @@ def _aligned_estimate(lines, index):
         return None
     if any(row.confidence < MIN_FIELD_CONFIDENCE for row in (parts, labour, subtotal, deduction)):
         return None
-    part_value, labour_value, subtotal_value = (at_column(row, estimate_x) for row in (parts, labour, subtotal))
     towing = rows.get("towingcharges")
-    towing_value = at_column(towing, estimate_x) if towing else None
-    if (part_value is None or labour_value is None or subtotal_value != estimate
-            or at_column(deduction, estimate_x) is not None or at_column(deduction, assessed_x) is None):
-        return None
-    return estimate if abs(estimate - part_value - labour_value - (towing_value or 0)) <= amount("0.02") else None
+    reconciled = []
+    # Some PDFs print an extra numeric value on Net Payable. Rather than
+    # requiring exactly two numbers, test every column pair and accept only a
+    # uniquely reconciled estimate/assessed pair.
+    for estimate_x, estimate in columns:
+        part_value, labour_value, subtotal_value = (
+            at_column(row, estimate_x) for row in (parts, labour, subtotal)
+        )
+        towing_value = at_column(towing, estimate_x) if towing else None
+        if part_value is None or labour_value is None or subtotal_value != estimate:
+            continue
+        if at_column(deduction, estimate_x) is not None:
+            continue
+        if abs(estimate - part_value - labour_value - (towing_value or 0)) > amount("0.02"):
+            continue
+        for assessed_x, _ in columns:
+            if assessed_x == estimate_x:
+                continue
+            if at_column(deduction, assessed_x) is not None:
+                reconciled.append(estimate)
+                break
+    unique = list(dict.fromkeys(reconciled))
+    return unique[0] if len(unique) == 1 else None
 
 
 def _assessment_fields(claim, lines, labour, warnings):
@@ -420,7 +436,7 @@ def _assessment_fields(claim, lines, labour, warnings):
             elif _date(raw):
                 invoice_rows.append(Line(line.page, line.top, ((0, 1, f"Invoice Date {_date(raw)}"),), line.confidence, line.extra_page))
 
-        if (not claim.workshop_estimate_amount and "workshop_estimate_amount" not in warnings
+        if (not claim.workshop_estimate_amount
                 and _after(line.text, ("Net Payable",)) and line.confidence >= MIN_FIELD_CONFIDENCE):
             estimate = _aligned_estimate(lines, index)
             if estimate is not None:
@@ -453,11 +469,16 @@ def _assessment_fields(claim, lines, labour, warnings):
     _read_field(claim, "workshop_invoice_no", invoice_rows, ("Invoice ID",), warnings=warnings)
     _read_field(claim, "workshop_invoice_date", invoice_rows, ("Invoice Date",), warnings=warnings)
     _read_field(claim, "workshop_estimate_amount", estimate_rows, ("Reconciled estimate",), warnings=warnings)
+    if claim.workshop_estimate_amount and estimate_rows:
+        # A fully reconciled summary is stronger evidence than a prior
+        # low-confidence OCR warning for the same field.
+        warnings.pop("workshop_estimate_amount", None)
     for key, rows in depreciation_rows.items():
         _read_field(claim, key, rows, ("Rate",), warnings=warnings)
-    if not claim.initial_loss_amount and "initial_loss_amount" not in warnings and claim.workshop_estimate_amount:
+    if not claim.initial_loss_amount and claim.workshop_estimate_amount:
         _set(claim, "initial_loss_amount", _initial_loss_75_percent(claim.workshop_estimate_amount),
              f"75% of Workshop Estimate · {claim._excel_coords['workshop_estimate_amount']}")
+        warnings.pop("initial_loss_amount", None)
 
 
 def _document_identity(lines):
