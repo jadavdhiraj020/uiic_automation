@@ -220,6 +220,14 @@ def _item_tables(tables, aliases, value_keys, kind):
                 raw = row[positions[key]]
                 value = amount(raw)
                 if value is None and compact(raw) not in {"", "na", "nil"}:
+                    # A single unreadable Spares estimate is recoverable when
+                    # the printed subtotal is readable: subtotal minus every
+                    # other verified estimate gives one exact remainder.
+                    # Keep the unresolved value as None for now and reconcile
+                    # only after the whole table has been read.
+                    if kind == "Spares" and key == "estimate":
+                        values[key] = None
+                        continue
                     raise ValueError(f"Check {key} in {kind.lower()} row {serial} on {table.source}.")
                 values[key] = value if value is not None else ZERO
             if table.source not in sources:
@@ -232,6 +240,29 @@ def _item_tables(tables, aliases, value_keys, kind):
         return None, ""
     if totals is None:
         raise ValueError(f"The {kind.lower()} subtotal is missing after the header on {header.source}.")
+
+    if kind == "Spares":
+        unreadable_estimates = [
+            (name, values, source)
+            for name, values, source in details
+            if values.get("estimate") is None
+        ]
+        if unreadable_estimates:
+            expected = totals.get("estimate")
+            if len(unreadable_estimates) != 1 or expected is None:
+                source = unreadable_estimates[0][2]
+                raise ValueError(f"Check estimate in spares row on {source}.")
+            known = sum(
+                (values["estimate"] for _, values, _ in details if values.get("estimate") is not None),
+                ZERO,
+            )
+            recovered = expected - known
+            if recovered < ZERO:
+                raise ValueError(
+                    f"The spares estimate subtotal is smaller than the readable detail rows on {', '.join(sources)}."
+                )
+            unreadable_estimates[0][1]["estimate"] = recovered
+
     for key in known_total_keys:
         expected = totals[key]
         actual = sum((values[key] for _, values, _ in details), ZERO)
