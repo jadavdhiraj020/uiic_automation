@@ -355,6 +355,46 @@ def _values_in_summary(text):
     return [result for token in text.split() if (result := amount(token)) is not None]
 
 
+def _summary_estimate_by_totals(summary):
+    """Recover the estimate from printed summary totals without x-position dependence.
+
+    This is intentionally conservative: it only returns a value when Parts +
+    Labour + optional Towing exactly reconciles to the printed Sub Total.
+    """
+    rows = {}
+    for line in summary:
+        if not line.cells:
+            continue
+        label = compact(line.cells[0][2])
+        if label in rows:
+            continue
+        if label in {"parts", "labour", "labor", "towingcharges", "subtotal"}:
+            rows[label] = line
+
+    parts = rows.get("parts")
+    labour = rows.get("labour") or rows.get("labor")
+    subtotal = rows.get("subtotal")
+    if not (parts and labour and subtotal):
+        return None
+
+    def first_amount(line):
+        values = _values_in_summary(line.text)
+        return values[0] if values else None
+
+    part_value = first_amount(parts)
+    labour_value = first_amount(labour)
+    subtotal_value = first_amount(subtotal)
+    towing = rows.get("towingcharges")
+    towing_value = first_amount(towing) if towing else ZERO
+    if None in (part_value, labour_value, subtotal_value):
+        return None
+    return (
+        subtotal_value
+        if abs(subtotal_value - part_value - labour_value - (towing_value or ZERO)) <= amount("0.02")
+        else None
+    )
+
+
 def _aligned_estimate(lines, index):
     """Read the estimate side of a reconciled two-column assessment summary."""
     net = lines[index]
@@ -415,7 +455,13 @@ def _aligned_estimate(lines, index):
                 reconciled.append(estimate)
                 break
     unique = list(dict.fromkeys(reconciled))
-    return unique[0] if len(unique) == 1 else None
+    if len(unique) == 1:
+        return unique[0]
+
+    # Geometry can be noisy in printed/scan-derived PDFs even when the summary
+    # text itself is perfectly readable. Fall back to arithmetic reconciliation
+    # of the printed summary totals.
+    return _summary_estimate_by_totals(summary)
 
 
 def _assessment_fields(claim, lines, labour, warnings):
