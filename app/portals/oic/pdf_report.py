@@ -385,12 +385,13 @@ def _summary_estimate_by_totals(summary):
     labour_value = first_amount(labour)
     subtotal_value = first_amount(subtotal)
     towing = rows.get("towingcharges")
-    towing_value = first_amount(towing) if towing else ZERO
+    zero = amount("0")
+    towing_value = first_amount(towing) if towing else zero
     if None in (part_value, labour_value, subtotal_value):
         return None
     return (
         subtotal_value
-        if abs(subtotal_value - part_value - labour_value - (towing_value or ZERO)) <= amount("0.02")
+        if abs(subtotal_value - part_value - labour_value - (towing_value or zero)) <= amount("0.02")
         else None
     )
 
