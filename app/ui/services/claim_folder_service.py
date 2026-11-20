@@ -531,14 +531,33 @@ class ClaimFolderService:
                 )
 
             source_ext = Path(report_source).suffix.lower()
+            extraction_source = report_source
+            converted_oic_excel = ""
             if scan_result.excel_path:
                 logs.append(f"Excel: {Path(report_source).name}")
             else:
                 logs.append(f"Survey Report PDF: {Path(report_source).name}")
                 scan_result.report_pdf_path = report_source
 
+            # OIC PDF-only flow: keep the original PDF untouched, create an
+            # app-owned Excel working copy, then reuse the proven Excel reader.
+            # The same working Excel is also used by the existing OIC upload
+            # workbook builder for parts/labour assessment rows.
+            if self.portal_id == "oic" and source_ext == ".pdf":
+                from app.portals.oic.pdf_to_excel import convert_oic_pdf_to_excel
+
+                converted_oic_excel = convert_oic_pdf_to_excel(
+                    report_source, folder, stop_cb=stop_cb,
+                )
+                _mark_generated_file(converted_oic_excel)
+                extraction_source = converted_oic_excel
+                logs.append(
+                    f"OIC PDF working Excel prepared: {Path(converted_oic_excel).name}; "
+                    f"original PDF kept: {Path(report_source).name}"
+                )
+
             claim = extract_claim_data_from_report(
-                report_source, portal_id=self.portal_id, stop_cb=stop_cb,
+                extraction_source, portal_id=self.portal_id, stop_cb=stop_cb,
             )
             claim.portal_id = self.portal_id
             claim._scan_context = scan_context
@@ -546,8 +565,9 @@ class ClaimFolderService:
             claim.assessment_files = scan_result.assessment_files
             claim.upload_doc_files = scan_result.upload_doc_files
             claim._scan_result = scan_result
-            claim.source_excel_path = scan_result.excel_path or ""
+            claim.source_excel_path = converted_oic_excel or scan_result.excel_path or ""
             claim.source_report_path = report_source
+            claim._oic_pdf_converted_excel = converted_oic_excel
             if self.portal_id == "oic" and source_ext == ".pdf":
                 from app.portals.oic.pdf_report import supplement_oic_pdf_fees
 
