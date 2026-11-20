@@ -317,3 +317,43 @@ def test_oic_reconciles_workshop_estimate_when_net_payable_has_extra_number():
     assert "workshop_estimate_amount" not in warnings
     assert "initial_loss_amount" not in warnings
 
+def test_oic_serial_ocr_mistake_does_not_block_when_subtotals_reconcile():
+    from app.portals.oic.pdf_assessment import MATERIALS, PART_COLUMNS, _item_tables
+    from app.portals.oic.pdf_layout import Table
+
+    table = Table(
+        5,
+        (10, 20, 30, 40, 50),
+        (
+            ("SN", "Parts Name", "Estimated", "Metal", "Plastic", "Glass"),
+            ("76", "Part A", "100", "100", "0", "0"),
+            ("7B", "Part B", "200", "0", "200", "0"),  # OCR of serial 77
+            ("78", "Part C", "300", "300", "0", "0"),
+            ("Total", "", "600", "400", "200", "0"),
+        ),
+        confidence=.86,
+    )
+
+    rows, source = _item_tables((table,), PART_COLUMNS, MATERIALS, "Spares")
+
+    assert source == "PDF p5 (OCR)"
+    assert [row[1]["estimate"] for row in rows] == [100, 200, 300]
+
+
+def test_oic_summary_total_fallback_ignores_geometry_shift():
+    from app.portals.oic.pdf_layout import Line
+    from app.portals.oic.pdf_report import _aligned_estimate
+
+    # The numeric columns deliberately do not align within the old 5-point
+    # tolerance, but the printed totals reconcile exactly.
+    lines = [
+        Line(5, 10, ((0, 130, "Summary of Assessment"),)),
+        Line(5, 20, ((0, 100, "Parts"), (240, 290, "2000"), (360, 405, "1500"))),
+        Line(5, 30, ((0, 100, "Labour"), (247, 297, "1000"), (367, 412, "800"))),
+        Line(5, 40, ((0, 100, "Sub Total"), (252, 302, "3000"), (374, 419, "2300"))),
+        Line(5, 50, ((0, 130, "Less Excess Clause"), (380, 425, "500"))),
+        Line(5, 60, ((0, 100, "Net Payable"), (260, 310, "3000"), (390, 435, "1800"))),
+    ]
+
+    assert _aligned_estimate(lines, 5) == 3000
+
