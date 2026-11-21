@@ -284,9 +284,18 @@ class AutomationEngine:
         if self._stop_requested:
             return False
         if form_transition and not self._oic_recovery.transition_started:
+            # Do not dead-end on a recoverable automation/extraction problem.
+            # Leave Chrome on the current OIC step so the surveyor can fill or
+            # correct it manually, click the portal button, then press Continue
+            # once the next step is open.
             return await self._oic_recovery.pause(
-                page, self.log, label, "The form stopped before App3 reached the next button.",
-                instruction="Stop this run and review the current step in Chrome.", section=section, stop_only=True,
+                page, self.log, label,
+                "App3 could not finish this step automatically.",
+                ready=verified,
+                instruction=instruction,
+                section=section,
+                describe=describe,
+                require_original=True,
             )
         if await wait_until_ready(verified, seconds=2 if succeeded else 1, stopped=self._stop_event.is_set):
             return True
@@ -675,24 +684,29 @@ class AutomationEngine:
                 "Claim Assessment",
             ]
 
-        # OIC's import template accepts only specific depreciation rates.
-        # Check before opening a browser, including non-UI entry points.
+        # OIC PDF policy: only unreconciled assessment/table totals are
+        # hard blockers before Chrome opens. Missing fields, unsupported
+        # depreciation, or a missing auto-upload workbook can be handled by the
+        # operator in Chrome through the recovery flow.
         if self.portal_id == "oic":
-            from app.portals.oic.automation.assessment_upload_excel import depreciation_errors, prepared_upload_error
-            pdf_errors = getattr(claim, "_oic_pdf_review_errors", [])
-            if pdf_errors:
-                message = "\n".join(pdf_errors)
-                self.log.error(f"OIC survey PDF needs review: {message}")
+            hard_errors = list(getattr(claim, "_oic_pdf_assessment_errors", []) or [])
+            if hard_errors:
+                message = "\n".join(hard_errors)
+                self.log.error(f"OIC financial assessment cannot start safely: {message}")
                 return AutomationRunResult(False, message)
-            rate_errors = depreciation_errors(claim)
-            if rate_errors:
-                message = "; ".join(rate_errors)
-                self.log.error(f"OIC upload cannot start: {message}")
-                return AutomationRunResult(False, message)
-            upload_error = prepared_upload_error(claim)
+
+            review = list(getattr(claim, "_oic_pdf_review_errors", []) or [])
+            upload_error = str(getattr(claim, "_oic_upload_error", "") or "").strip()
+            if review:
+                self.log.warning(
+                    "OIC PDF has fields for manual review; automation will pause where needed: "
+                    + " | ".join(review)
+                )
             if upload_error:
-                self.log.error(f"OIC upload cannot start: {upload_error}")
-                return AutomationRunResult(False, upload_error)
+                self.log.warning(
+                    "OIC upload workbook is unavailable; Assessment of Loss may need manual completion in Chrome: "
+                    + upload_error
+                )
 
         field_delay = _setting_int(settings, "field_wait_ms", "field_delay_ms", 400)
 
