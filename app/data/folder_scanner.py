@@ -58,6 +58,35 @@ def _is_oic_generated_workbook(filename: str) -> bool:
     return bool(re.fullmatch(r"(?:auto_oic_(?:assessment|upload)(?:_\d+|_current)?|auto_oic_pdf_source_current)\.xlsx", filename, re.IGNORECASE))
 
 
+def _is_generated_excel_candidate(filename: str, portal_id: str) -> bool:
+    """Return True for workbooks created by App3 that must never become source data."""
+    name = filename.strip().lower()
+    stem = Path(name).stem
+    if name.startswith("~$") or name.startswith("."):
+        return True
+    if name in {
+        "reinspection.xlsx",
+        "re-inspection report format.xlsx",
+        "printable_assessment.xlsx",
+        "assessment_report.xlsx",
+    }:
+        return True
+    if stem.startswith((
+        "printable_assessment",
+        "assessment_report",
+        "reinspection",
+        "auto_primary_assessment",
+    )):
+        return True
+    if portal_id == "oic" and (
+        _is_oic_generated_workbook(filename)
+        or stem.startswith("auto_oic_")
+        or stem.startswith("oic_assessment_")
+    ):
+        return True
+    return False
+
+
 def _is_oic_generated_audit(filename: str) -> bool:
     return bool(re.fullmatch(r"(?:auto_oic_assessment(?:_\d+)?_audit|oic_assessment_skipped_audit)\.txt", filename, re.IGNORECASE))
 
@@ -728,14 +757,8 @@ def scan_folder(
         ext = Path(fname).suffix.lower()
         if ext not in _EXCEL_EXTENSIONS:
             continue
-        if fname in _SKIP_FILES or fname.startswith("~$") or fname.startswith("."):
-            continue
-        fname_lower = fname.lower()
-        if (
-            fname_lower in _known_generated_reinspection
-            or fname_lower.startswith("printable_assessment")
-            or (portal_id == "oic" and _is_oic_generated_workbook(fname))
-        ):
+        if fname in _SKIP_FILES or _is_generated_excel_candidate(fname, portal_id):
+            logger.info("Excluded App3/generated Excel from main source selection: %s", fname)
             continue
         excel_candidates.append(full_path)
 
