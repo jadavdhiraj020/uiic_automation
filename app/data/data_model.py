@@ -748,12 +748,35 @@ class ClaimData:
         from_pdf = str(self.source_report_path or "").lower().endswith(".pdf")
         report_source = "the survey PDF" if from_pdf else "Excel"
         from app.portals.oic.automation.assessment_upload_excel import depreciation_errors
-        errors.extend(getattr(self, "_oic_pdf_review_errors", ()))
-        warnings.extend(getattr(self, "_oic_pdf_review_warnings", ()))
-        errors.extend(depreciation_errors(self))
+        assessment_errors = list(getattr(self, "_oic_pdf_assessment_errors", ()) or ())
+        review_errors = list(getattr(self, "_oic_pdf_review_errors", ()) or ())
+        if from_pdf:
+            # PDF-only OIC cases may continue with minor extraction issues.
+            # The browser recovery flow lets the surveyor fill/correct those
+            # fields manually.  Only unreconciled assessment/table totals are
+            # unsafe enough to block before opening the portal.
+            errors.extend(assessment_errors)
+            warnings.extend(issue for issue in review_errors if issue not in assessment_errors)
+            warnings.extend(getattr(self, "_oic_pdf_review_warnings", ()))
+            rate_errors = depreciation_errors(self)
+            if rate_errors:
+                warnings.extend(
+                    f"{issue} Manual assessment entry will be required if the upload workbook cannot be prepared."
+                    for issue in rate_errors
+                )
+        else:
+            errors.extend(review_errors)
+            warnings.extend(getattr(self, "_oic_pdf_review_warnings", ()))
+            errors.extend(depreciation_errors(self))
         upload_error = getattr(self, "_oic_upload_error", "")
-        if upload_error and not errors:
-            errors.append(f"OIC upload Excel could not be prepared: {upload_error}")
+        if upload_error:
+            if from_pdf:
+                warnings.append(
+                    f"OIC upload Excel could not be prepared automatically: {upload_error}. "
+                    "You can complete the Assessment of Loss manually in Chrome and continue."
+                )
+            elif not errors:
+                errors.append(f"OIC upload Excel could not be prepared: {upload_error}")
         upload_warning = getattr(self, "_oic_upload_warning", "")
         if upload_warning:
             warnings.append(upload_warning)
@@ -768,11 +791,20 @@ class ClaimData:
         # to Step 4 without them. Failing fast here prevents the browser session
         # from starting only to halt silently halfway through the form.
         if not self.date_of_survey or str(self.date_of_survey).strip() == "":
-            errors.append("Date of Survey is missing (required by OIC portal — Step 3)")
+            (warnings if from_pdf else errors).append(
+                "Date of Survey is missing (required by OIC portal — Step 3); fill it manually in Chrome."
+                if from_pdf else "Date of Survey is missing (required by OIC portal — Step 3)"
+            )
         if not self.place_of_survey or str(self.place_of_survey).strip() == "":
-            errors.append("Place of Survey is missing (required by OIC portal — Step 3)")
+            (warnings if from_pdf else errors).append(
+                "Place of Survey is missing (required by OIC portal — Step 3); fill it manually in Chrome."
+                if from_pdf else "Place of Survey is missing (required by OIC portal — Step 3)"
+            )
         if not self.initial_loss_amount or str(self.initial_loss_amount).strip() == "":
-            errors.append("Initial Loss Assessment Amount is missing (required by OIC portal — Step 3)")
+            (warnings if from_pdf else errors).append(
+                "Initial Loss Assessment Amount is missing (required by OIC portal — Step 3); fill it manually in Chrome."
+                if from_pdf else "Initial Loss Assessment Amount is missing (required by OIC portal — Step 3)"
+            )
 
         # Optional Interim Report fields — warn so the user can investigate.
         if not self.cause_nature_of_accident or str(self.cause_nature_of_accident).strip() == "":
@@ -836,7 +868,10 @@ class ClaimData:
         # Invoice file check — required for assessment
         invoice_file = self.assessment_files.get("invoice", "")
         if not invoice_file or invoice_file.strip() == "":
-            errors.append("Invoice File is missing")
+            (warnings if from_pdf else errors).append(
+                "Invoice File is missing — attach/handle it manually in Chrome."
+                if from_pdf else "Invoice File is missing"
+            )
 
         if not self.workshop_invoice_no:
             warnings.append(f"Workshop Invoice No not found in {report_source}")
@@ -851,27 +886,48 @@ class ClaimData:
         try:
             inv_amt = _parse_amount_for_total(invoice_amount)
             if not invoice_amount or str(invoice_amount).strip() == "":
-                errors.append("Invoice Amount Without GST is missing")
+                (warnings if from_pdf else errors).append(
+                    "Invoice Amount Without GST is missing — review/fill Assessment of Loss manually in Chrome."
+                    if from_pdf else "Invoice Amount Without GST is missing"
+                )
         except ValueError:
-            errors.append(f"Invoice Amount Without GST '{invoice_amount}' is not a valid numeric amount")
+            (warnings if from_pdf else errors).append(
+                f"Invoice Amount Without GST '{invoice_amount}' is not a valid numeric amount"
+                + (" — review/fill Assessment of Loss manually in Chrome." if from_pdf else "")
+            )
             inv_amt = None
 
         try:
             inv_gst = _parse_amount_for_total(self.invoice_gst_amount)
             if not self.invoice_gst_amount or str(self.invoice_gst_amount).strip() == "":
-                errors.append("Invoice GST Amount is missing")
+                (warnings if from_pdf else errors).append(
+                    "Invoice GST Amount is missing — review/fill Assessment of Loss manually in Chrome."
+                    if from_pdf else "Invoice GST Amount is missing"
+                )
         except ValueError:
-            errors.append(f"Invoice GST Amount '{self.invoice_gst_amount}' is not a valid numeric amount")
+            (warnings if from_pdf else errors).append(
+                f"Invoice GST Amount '{self.invoice_gst_amount}' is not a valid numeric amount"
+                + (" — review/fill Assessment of Loss manually in Chrome." if from_pdf else "")
+            )
             inv_gst = None
 
         if inv_amt is not None and inv_gst is not None:
             if inv_amt < inv_gst:
-                errors.append(f"Invoice Amount Without GST (₹{inv_amt}) cannot be less than Invoice GST Amount (₹{inv_gst})")
+                (warnings if from_pdf else errors).append(
+                    f"Invoice Amount Without GST (₹{inv_amt}) cannot be less than Invoice GST Amount (₹{inv_gst})"
+                    + (" — correct the values manually in Chrome." if from_pdf else "")
+                )
 
         if not self.surveyor_license_number or str(self.surveyor_license_number).strip() == "":
-            errors.append("Surveyor License Number is missing")
+            (warnings if from_pdf else errors).append(
+                "Surveyor License Number is missing — fill it manually in Chrome."
+                if from_pdf else "Surveyor License Number is missing"
+            )
         if not self.surveyor_license_expiry_date or str(self.surveyor_license_expiry_date).strip() == "":
-            errors.append("Surveyor License Expiry Date is missing")
+            (warnings if from_pdf else errors).append(
+                "Surveyor License Expiry Date is missing — fill it manually in Chrome."
+                if from_pdf else "Surveyor License Expiry Date is missing"
+            )
 
         if str(self.source_report_path or "").lower().endswith(".pdf"):
             warnings = [warning.replace("not found in Excel", "not found in the survey PDF") for warning in warnings]
