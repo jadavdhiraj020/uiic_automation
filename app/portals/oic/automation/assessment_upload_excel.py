@@ -225,20 +225,47 @@ def build_upload_workbook(claim, defaults, output_folder=None):
         labour_rows.append(("Labour Charge", "PAINT", paint_total, paint_rate, paint_total, labour_hsn))
     rows.extend(row for row in labour_rows if row[2] != 0)
 
-    if pdf_assessment is not None:
-        for section, items in (("spares", rows[:len(parts)]), ("labour", rows[len(parts):])):
-            expected = _number(getattr(claim, f"{section}_taxable_amount"), f"{section.title()} taxable amount")
+    # Reconcile the generated upload rows against the survey report totals for
+    # BOTH source types.  This is deliberately downstream of extraction so it
+    # catches omissions even when the source is an Excel workbook.
+    source_label = "survey PDF" if pdf_assessment is not None else "survey Excel"
+    for section, items in (("spares", rows[:len(parts)]), ("labour", rows[len(parts):])):
+        raw_expected = getattr(claim, f"{section}_taxable_amount", "")
+        if str(raw_expected or "").strip():
+            expected = _number(raw_expected, f"{section.title()} taxable amount")
             actual = sum((row[2] * (1 - row[3] / 100) for row in items), Decimal(0))
             if abs(actual - expected) > Decimal(".02"):
-                source = claim._excel_coords[f"{section}_taxable_amount"]
+                source_coord = getattr(claim, "_excel_coords", {}).get(
+                    f"{section}_taxable_amount", source_label
+                )
                 raise ValueError(
-                    f"{section.title()} items after depreciation total {actual:.2f}, "
-                    f"but the GST summary on {source} says {expected:.2f}. Check the survey PDF."
+                    f"{section.title()} upload rows total {actual:.2f} after depreciation, "
+                    f"but the {source_label} GST summary on {source_coord or source_label} "
+                    f"says {expected:.2f}. The OIC upload workbook would be incomplete; "
+                    "review the missing/incorrect assessed item before upload."
                 )
 
     # OIC compares this field against the sum of the uploaded item amounts.
-    # Derive it from the same rows rather than from the separate GST summary.
+    # Derive it from the exact rows that will be written to the Items sheet.
     invoice_amount = sum((row[2] for row in rows), Decimal(0))
+
+    # Independent completeness check: the GST carried on the Invoice sheet must
+    # agree with GST recomputed from the generated upload rows.  This catches a
+    # missing assessed row even when Invoice Amount was also derived from the
+    # same incomplete rows (the exact failure seen in an earlier Excel case).
+    taxable_from_rows = sum(
+        (row[2] * (Decimal(1) - row[3] / Decimal(100)) for row in rows),
+        Decimal(0),
+    )
+    computed_gst = (taxable_from_rows * Decimal("0.18")).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+    if abs(computed_gst - invoice_gst) > Decimal(".10"):
+        raise ValueError(
+            f"OIC upload rows imply GST {computed_gst:.2f}, but the source invoice/GST summary "
+            f"says {invoice_gst:.2f}. The generated upload workbook is incomplete or inconsistent; "
+            "review assessed items before upload."
+        )
     wb = openpyxl.Workbook()
     inv = wb.active
     inv.title = "Invoice"
