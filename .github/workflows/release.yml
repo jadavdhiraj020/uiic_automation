@@ -1,20 +1,8 @@
 # ─────────────────────────────────────────────────────────────────────────────
-#  UIIC Surveyor Automation — CI/CD Release Pipeline
+#  UIIC Automation — CI/CD Release Pipeline
 # ─────────────────────────────────────────────────────────────────────────────
-#  Triggers on every branch push and pull requests targeting main.
-#  Steps:
-#    1. Checkout code
-#    2. Set up Python 3.10 (pinned for PaddlePaddle 2.x Windows stability)
-#    3. Install all build dependencies (pinned from requirements-build.txt)
-#    4. Download Playwright Chromium into build_assets/
-#    5. Download PaddleOCR models into build_assets/
-#    6. Stage bundled LibreOffice runtime for offline PDF generation
-#    7. Extract version metadata
-#    8. Verify import parity
-#    9. Build the Windows EXE via PyInstaller (.spec file)
-#    10. Verify and package the EXE
-#    11. Upload ZIP as Build Artifact (available on all branches)
-#    12. Create a GitHub Release and upload ZIP (main push only)
+#  Triggers on code/build pushes, PRs to main, or manual workflow_dispatch.
+#  Skips non-app files (docs, sample PDFs, agent rules, logs).
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: Build & Release Windows EXE
@@ -22,63 +10,147 @@ name: Build & Release Windows EXE
 on:
   push:
     branches:
-      - '**'        # Run on every branch push
+      - '**'
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.agent/**'
+      - '.agents/**'
+      - 'AAA/**'
+      - 'ATTACHMENT/**'
+      - 'OIC DOCS/**'
+      - 'UIIC_TEST/**'
+      - 'SendAnywhere_746022/**'
+      - 'logs/**'
+      - 'diff_output.diff'
+      - 'html.txt'
+      - 'crash.log'
+      - 'dummy.xlsx'
   pull_request:
     branches:
-      - main        # Run on PRs targeting main
-  workflow_dispatch:  # Allow manual trigger from Actions tab
+      - main
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.agent/**'
+      - '.agents/**'
+      - 'AAA/**'
+      - 'ATTACHMENT/**'
+      - 'OIC DOCS/**'
+      - 'UIIC_TEST/**'
+      - 'SendAnywhere_746022/**'
+      - 'logs/**'
+      - 'diff_output.diff'
+      - 'html.txt'
+      - 'crash.log'
+      - 'dummy.xlsx'
+  workflow_dispatch:
 
-# Cancel superseded runs on the same branch
+# Cancel superseded runs on feature branches, never cancel a live main release
 concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: true
+  group: release-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
-# ── Permissions for creating releases ──────────────────────────────────────
 permissions:
   contents: write
 
 env:
   APP_NAME: UIIC_Surveyor_Automation
+  APP_ASSET_PREFIX: UIIC_Automation
   OWNER_TOOL_NAME: UIIC_License_Generator
   PYTHON_VERSION: "3.10"
+  UV_LINK_MODE: copy
 
 jobs:
   build-and-release:
     name: Build EXE → Release
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: pwsh
 
     steps:
-      # ─── 1. Checkout ─────────────────────────────────────────────────────
-      - name: Checkout repository
+      # ─── 1. Sparse shallow checkout (app + build inputs only) ────────────
+      - name: Checkout app sources
         uses: actions/checkout@v5
         with:
-          fetch-depth: 0   # Full history for version tagging
+          fetch-depth: 1
+          sparse-checkout: |
+            app
+            tools
+            scripts
+            pyinstaller_hooks
+            assets
+            .github
 
-      # ─── 2. Set up Python ────────────────────────────────────────────────
+      # ─── 2. Extract version & India Standard Time (IST) asset metadata ───
+      - name: Extract version & IST metadata
+        id: meta
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $verMatch = Select-String -Path pyproject.toml -Pattern '^\s*version\s*=\s*"([^"]+)"' | Select-Object -First 1
+          $version = if ($verMatch) { $verMatch.Matches.Groups[1].Value } else { "0.0.0" }
+
+          $pwMatch = Select-String -Path requirements-build.txt -Pattern '^\s*playwright\s*==\s*([^\s#]+)' | Select-Object -First 1
+          $pwVersion = if ($pwMatch) { $pwMatch.Matches.Groups[1].Value } else { "unknown" }
+
+          try {
+            $istZone = [System.TimeZoneInfo]::FindSystemTimeZoneById("India Standard Time")
+            $istNow  = [System.TimeZoneInfo]::ConvertTimeFromUtc([DateTime]::UtcNow, $istZone)
+          } catch {
+            $istNow  = [DateTime]::UtcNow.AddHours(5.5)
+          }
+
+          $dateTimeIst = $istNow.ToString("yyyy-MM-dd_HH-mm")
+          $displayIst  = $istNow.ToString("yyyy-MM-dd HH:mm") + " IST"
+          $tagStamp    = $istNow.ToString("yyyyMMdd-HHmmss")
+          $shortSha    = "${{ github.sha }}".Substring(0, 7)
+
+          $tag          = "v${version}-${tagStamp}-${shortSha}"
+          $zipName      = "${{ env.APP_ASSET_PREFIX }}_${dateTimeIst}_IST"
+          $ownerZipName = "${{ env.OWNER_TOOL_NAME }}_${dateTimeIst}_IST"
+
+          "VERSION=$version"                 >> $env:GITHUB_OUTPUT
+          "PLAYWRIGHT_VERSION=$pwVersion"    >> $env:GITHUB_OUTPUT
+          "DISPLAY_IST=$displayIst"          >> $env:GITHUB_OUTPUT
+          "TAG=$tag"                         >> $env:GITHUB_OUTPUT
+          "ZIP_NAME=$zipName"                >> $env:GITHUB_OUTPUT
+          "OWNER_ZIP_NAME=$ownerZipName"     >> $env:GITHUB_OUTPUT
+          "SHORT_SHA=$shortSha"              >> $env:GITHUB_OUTPUT
+
+          Write-Host "Version:          $version"
+          Write-Host "Playwright:       $pwVersion"
+          Write-Host "IST Timestamp:    $displayIst"
+          Write-Host "Tag:              $tag"
+          Write-Host "App ZIP Name:     ${zipName}.zip"
+          Write-Host "Owner ZIP Name:   ${ownerZipName}.zip"
+
+      # ─── 3. Set up Python 3.10 + uv with dependency caching ──────────────
       - name: Set up Python ${{ env.PYTHON_VERSION }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      # ─── 3. Cache pip packages ───────────────────────────────────────────
-      - name: Cache pip packages
-        uses: actions/cache@v5
+      - name: Set up uv & package cache
+        uses: astral-sh/setup-uv@v5
         with:
-          path: ~\AppData\Local\pip\Cache
-          key: pip-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('requirements-build.txt') }}
-          restore-keys: |
-            pip-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-
+          enable-cache: true
+          cache-dependency-glob: "requirements-build.txt"
 
-      # ─── 4. Install build dependencies ───────────────────────────────────
       - name: Install build dependencies
         run: |
-          python -m pip install --upgrade pip wheel
-          python -m pip install -r requirements-build.txt
+          $ErrorActionPreference = "Stop"
+          $pythonExe = (Get-Command python).Source
+          Write-Host "Installing build dependencies into: $pythonExe"
+          uv pip install --python $pythonExe -r requirements-build.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      # ─── 4b. Create placeholder settings.json files (gitignored) ─────────
+      # ─── 4. Create placeholder settings.json files (gitignored) ──────────
       - name: Create CI settings.json files
         run: |
+          $ErrorActionPreference = "Stop"
           function Ensure-Settings($real, $example) {
             if (-Not (Test-Path $real)) {
               if (Test-Path $example) {
@@ -91,144 +163,169 @@ jobs:
               Write-Host "Found existing: $real"
             }
           }
-          Ensure-Settings "app\config\settings.json"                    "app\config\settings.json.example"
-          Ensure-Settings "app\portals\uiic\config\settings.json"       "app\portals\uiic\config\settings.json.example"
-          Ensure-Settings "app\portals\newindia\config\settings.json"   "app\portals\newindia\config\settings.json.example"
-          Ensure-Settings "app\portals\oic\config\settings.json"        "app\portals\oic\config\settings.json.example"
-        shell: pwsh
+          Ensure-Settings "app\config\settings.json"                  "app\config\settings.json.example"
+          Ensure-Settings "app\portals\uiic\config\settings.json"     "app\portals\uiic\config\settings.json.example"
+          Ensure-Settings "app\portals\newindia\config\settings.json" "app\portals\newindia\config\settings.json.example"
+          Ensure-Settings "app\portals\oic\config\settings.json"      "app\portals\oic\config\settings.json.example"
 
-      # ─── 5. Prepare Playwright Chromium ──────────────────────────────────
-      - name: Download Playwright Chromium
+      # ─── 5. Cache & ensure Playwright Chromium (--no-shell) ──────────────
+      - name: Cache Playwright Chromium
+        id: pw-cache
+        uses: actions/cache@v5
+        with:
+          path: build_assets\ms-playwright
+          key: playwright-noshell-${{ runner.os }}-${{ steps.meta.outputs.PLAYWRIGHT_VERSION }}
+
+      - name: Ensure Playwright Chromium (--no-shell)
         run: |
-          New-Item -ItemType Directory -Force -Path "build_assets\ms-playwright" | Out-Null
-          $env:PLAYWRIGHT_BROWSERS_PATH = "${{ github.workspace }}\build_assets\ms-playwright"
-          python -m playwright install chromium
-        shell: pwsh
+          $ErrorActionPreference = "Stop"
+          $pwPath = "${{ github.workspace }}\build_assets\ms-playwright"
+          New-Item -ItemType Directory -Force -Path $pwPath | Out-Null
+          $env:PLAYWRIGHT_BROWSERS_PATH = $pwPath
 
-      # ─── 6. Verify RapidOCR models ────────────────────────────────────
-      - name: Verify RapidOCR models
-        run: |
-          python -c "from rapidocr_onnxruntime import RapidOCR; RapidOCR(); print('RapidOCR models ready.')"
-        shell: pwsh
+          $existing = Get-ChildItem -Path $pwPath -Directory -Filter "chromium*" -ErrorAction SilentlyContinue
+          if ($existing) {
+            Write-Host "Using cached Playwright Chromium: $($existing.Name -join ', ')"
+            exit 0
+          }
 
-      # ─── 7. Extract version from pyproject.toml ─────────────────────────
-      - name: Extract version
-        id: version
-        run: |
-          $match = Select-String -Path pyproject.toml -Pattern '^\s*version\s*=\s*"([^"]+)"' | Select-Object -First 1
-          $version = if ($match) { $match.Matches.Groups[1].Value } else { "0.0.0" }
-          $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-          $short_sha = "${{ github.sha }}".Substring(0,7)
-          $tag = "v${version}-build.${timestamp}"
-          $zip_name = "${{ env.APP_NAME }}_v${version}_${short_sha}"
-          $owner_zip_name = "${{ env.OWNER_TOOL_NAME }}_OWNER_v${version}_${short_sha}"
-
-          echo "VERSION=$version"       >> $env:GITHUB_OUTPUT
-          echo "TAG=$tag"               >> $env:GITHUB_OUTPUT
-          echo "ZIP_NAME=$zip_name"           >> $env:GITHUB_OUTPUT
-          echo "OWNER_ZIP_NAME=$owner_zip_name" >> $env:GITHUB_OUTPUT
-          echo "SHORT_SHA=$short_sha"   >> $env:GITHUB_OUTPUT
-          echo "TIMESTAMP=$timestamp"   >> $env:GITHUB_OUTPUT
-
-          Write-Host "Version: $version"
-          Write-Host "Tag:     $tag"
-          Write-Host "ZIP:       $zip_name"
-          Write-Host "Owner ZIP: $owner_zip_name"
-        shell: pwsh
-
-      # ─── 8. Verify OIC module imports (EXE vs local parity check) ───────
-      - name: Verify OIC module imports (pre-build parity check)
-        run: |
-          Write-Host "Checking all OIC automation + data modules are importable..."
-          $modules = @(
-            "app.portals.oic.automation",
-            "app.portals.oic.automation.login_module",
-            "app.portals.oic.automation.navigation_module",
-            "app.portals.oic.automation.assessment_of_loss_module",
-            "app.portals.oic.automation.interim_report_module",
-            "app.portals.oic.automation.date_formatter",
-            "app.portals.oic.automation.document_upload_module",
-            "app.portals.oic.automation.popup_service",
-            "app.portals.oic.automation.ui_utils",
-            "app.portals.oic.automation.workflow_module",
-            "app.portals.oic.automation.basic_details_module",
-            "app.portals.oic.automation.claim_search_module",
-            "app.portals.oic.automation.selectors",
-            "app.data",
-            "app.data.oic_assessment_generator",
-            "app.data.excel_parts_extractor",
-            "app.data.excel_reader",
-            "app.data.assessment_generator",
-            "app.data.data_model",
-            "app.data.folder_scanner",
-            "app.data.printable_excel_service",
-            "app.automation.services.cheque_ocr_adapter",
-            "app.portals.newindia.automation.ocr_helper",
-            "win32com.client",
-            "pythoncom",
-            "pywintypes",
-            "win32print"
-          )
-          $failed = @()
-          foreach ($mod in $modules) {
-            $result = python -c "import $mod; print('OK: $mod')" 2>&1
-            if ($LASTEXITCODE -ne 0) {
-              Write-Host "  FAIL: $mod -- $result" -ForegroundColor Red
-              $failed += $mod
+          $maxAttempts = 3
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            Write-Host "Installing Playwright Chromium (--no-shell), attempt $attempt/$maxAttempts..."
+            python -m playwright install chromium --no-shell
+            if ($LASTEXITCODE -eq 0) { break }
+            if ($attempt -lt $maxAttempts) {
+              Write-Warning "Playwright install failed (exit $LASTEXITCODE); retrying in 10s..."
+              Start-Sleep -Seconds 10
             } else {
-              Write-Host "  OK:   $mod"
+              Write-Error "Playwright Chromium install failed after $maxAttempts attempts."
+              exit 1
             }
           }
-          if ($failed.Count -gt 0) {
-            Write-Error "OIC parity check FAILED — $($failed.Count) module(s) not importable:`n$($failed -join ', ')`nThese modules will cause ModuleNotFoundError in the EXE at runtime."
+
+          $installed = Get-ChildItem -Path $pwPath -Directory -Filter "chromium*" -ErrorAction SilentlyContinue
+          if (-Not $installed) {
+            Write-Error "Playwright Chromium directory not found under $pwPath after install."
             exit 1
           }
-          Write-Host "OIC parity check PASSED — all $($modules.Count) modules importable." -ForegroundColor Green
-        shell: pwsh
+          Write-Host "Playwright Chromium ready: $($installed.Name -join ', ')"
 
-      # ─── 9. Build EXE with PyInstaller ──────────────────────────────────
-      - name: Build Windows EXE
+      # ─── 6. Single-process pre-build health check (all 3 portals + OCR) ──
+      - name: Pre-build 3-portal & OCR health check
         run: |
+          $ErrorActionPreference = "Stop"
+          @'
+          import importlib
+          import py_compile
+          from rapidocr_onnxruntime import RapidOCR
+
+          for script in ("main.py", "scripts/verify_packaged_runtime.py"):
+              py_compile.compile(script, doraise=True)
+
+          modules = [
+              "app.portals.registry",
+              "app.portals.uiic",
+              "app.portals.newindia",
+              "app.portals.newindia.field_values",
+              "app.portals.newindia.pdf_assessment",
+              "app.portals.newindia.pdf_report",
+              "app.portals.newindia.scan_outputs",
+              "app.portals.newindia.automation",
+              "app.portals.newindia.automation.login_module",
+              "app.portals.newindia.automation.navigation_module",
+              "app.portals.newindia.automation.claim_assessment_module",
+              "app.portals.newindia.automation.document_upload_module",
+              "app.portals.newindia.automation.ocr_helper",
+              "app.portals.oic",
+              "app.portals.oic.automation",
+              "app.portals.oic.automation.login_module",
+              "app.portals.oic.automation.navigation_module",
+              "app.portals.oic.automation.assessment_of_loss_module",
+              "app.portals.oic.automation.interim_report_module",
+              "app.portals.oic.automation.date_formatter",
+              "app.portals.oic.automation.document_upload_module",
+              "app.portals.oic.automation.popup_service",
+              "app.portals.oic.automation.ui_utils",
+              "app.portals.oic.automation.workflow_module",
+              "app.portals.oic.automation.basic_details_module",
+              "app.portals.oic.automation.claim_search_module",
+              "app.portals.oic.automation.selectors",
+              "app.data",
+              "app.data.oic_assessment_generator",
+              "app.data.excel_parts_extractor",
+              "app.data.excel_reader",
+              "app.data.assessment_generator",
+              "app.data.data_model",
+              "app.data.folder_scanner",
+              "app.data.printable_excel_service",
+              "app.data.pdf_report_reader",
+              "app.automation.engine",
+              "app.automation.services.cheque_ocr_adapter",
+              "app.automation.services.document_utils",
+              "app.licensing.verifier",
+              "app.licensing.ui",
+              "app.web_sync",
+              "app.ui.main_window",
+              "tools.owner_generator_app",
+              "tools.owner_vault",
+              "win32com.client",
+              "pythoncom",
+              "pywintypes",
+              "win32print",
+          ]
+
+          failed = []
+          for mod in modules:
+              try:
+                  importlib.import_module(mod)
+              except Exception as exc:
+                  failed.append(f"{mod}: {type(exc).__name__}: {exc}")
+
+          if failed:
+              raise SystemExit("Pre-build import check FAILED:\n  - " + "\n  - ".join(failed))
+
+          from app.portals.registry import list_portals
+          portal_ids = {p.portal_id for p in list_portals()}
+          missing_portals = {"uiic", "newindia", "oic"} - portal_ids
+          if missing_portals:
+              raise SystemExit(f"Missing registered portals: {sorted(missing_portals)}")
+
+          RapidOCR()
+          print(f"Pre-build health check PASSED: {len(modules)} modules, portals={sorted(portal_ids)}, RapidOCR ready.")
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # ─── 7. Build & verify main Windows App EXE ──────────────────────────
+      - name: Build Windows App EXE
+        run: |
+          $ErrorActionPreference = "Stop"
           $env:PLAYWRIGHT_BROWSERS_PATH = "${{ github.workspace }}\build_assets\ms-playwright"
           $env:PYTHONWARNINGS             = "ignore:The numpy.array_api submodule is still experimental.:UserWarning,ignore:invalid escape sequence.*:SyntaxWarning"
 
           Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
           python -m PyInstaller --noconfirm --clean uiic_automation.spec
-        shell: pwsh
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      # ─── 9. Verify build output ─────────────────────────────────────────
-      - name: Verify EXE was produced
+      - name: Verify Windows App EXE & runtime resources
         run: |
+          $ErrorActionPreference = "Stop"
           $exe = "dist\${{ env.APP_NAME }}\${{ env.APP_NAME }}.exe"
           if (-Not (Test-Path $exe)) {
             Write-Error "Build FAILED — EXE not found at $exe"
             exit 1
           }
           $size = (Get-Item $exe).Length / 1MB
-          Write-Host "EXE verified: $exe ($([math]::Round($size,1)) MB)"
+          Write-Host "EXE verified: $exe ($([math]::Round($size, 1)) MB)"
 
-          # List top-level dist contents for debugging
-          Write-Host "`n=== dist/${{ env.APP_NAME }}/ contents ==="
-          Get-ChildItem "dist\${{ env.APP_NAME }}" | Select-Object Name, Length | Format-Table -AutoSize
-        shell: pwsh
-
-      # ─── 10. Verify packaged runtime resources ──────────────────────────
-      - name: Verify packaged runtime resources
-        run: |
           python scripts\verify_packaged_runtime.py "dist\${{ env.APP_NAME }}"
-        shell: pwsh
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      # ─── 11. Smoke-test the EXE (headless) ──────────────────────────────
-      - name: Smoke-test EXE (launch + exit)
+      - name: Smoke-test App EXE (launch + exit)
+        continue-on-error: true
         run: |
-          Write-Host "Attempting headless smoke-test of the EXE..."
           $exe = "dist\${{ env.APP_NAME }}\${{ env.APP_NAME }}.exe"
-
-          # The app is a GUI (PyQt6) so we can only verify it starts without crashing.
-          # We launch it, wait briefly, then kill it. Non-zero exit = crash.
           $proc = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden
           Start-Sleep -Seconds 8
-
           if ($proc.HasExited) {
             if ($proc.ExitCode -ne 0) {
               Write-Error "EXE crashed on launch with exit code $($proc.ExitCode)"
@@ -239,52 +336,27 @@ jobs:
             Write-Host "EXE is running after 8 seconds — no crash detected."
             Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
           }
-          Write-Host "Smoke-test PASSED"
-        shell: pwsh
-        continue-on-error: true   # GUI may fail without a display; treated as non-fatal
+          Write-Host "App smoke-test PASSED"
 
-      # ─── 12. Create ZIP archive ─────────────────────────────────────────
-      - name: Package release ZIP
-        run: |
-          $source  = "dist\${{ env.APP_NAME }}"
-          $zipFile = "${{ steps.version.outputs.ZIP_NAME }}.zip"
-
-          Write-Host "Creating $zipFile from $source ..."
-          Compress-Archive -Path "$source\*" -DestinationPath $zipFile -CompressionLevel Optimal -Force
-
-          $sizeMB = [math]::Round((Get-Item $zipFile).Length / 1MB, 1)
-          Write-Host "ZIP created: $zipFile ($sizeMB MB)"
-
-          echo "ZIP_PATH=$zipFile" >> $env:GITHUB_OUTPUT
-        id: zip
-        shell: pwsh
-
-      # ─── 12.5. Upload Artifact (For All Branches) ───────────────────────
-      - name: Upload Build Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.version.outputs.ZIP_NAME }}
-          path: ${{ steps.version.outputs.ZIP_NAME }}.zip
-          retention-days: 14
-
-      # ─── 12.6. Build standalone Owner License Generator EXE ──────────────
+      # ─── 8. Build & verify standalone Owner License Generator EXE ─────────
       - name: Build Owner License Generator EXE
         run: |
+          $ErrorActionPreference = "Stop"
           python -m PyInstaller --noconfirm --clean --workpath build_owner license_generator.spec
-        shell: pwsh
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      # ─── 12.7. Verify Owner EXE & licensing security boundaries ──────────
-      - name: Verify Owner EXE & security boundaries
+      - name: Verify Owner EXE & licensing security boundaries
         run: |
+          $ErrorActionPreference = "Stop"
           $ownerExe = "dist\${{ env.OWNER_TOOL_NAME }}\${{ env.OWNER_TOOL_NAME }}.exe"
           if (-Not (Test-Path $ownerExe)) {
             Write-Error "Build FAILED — Owner EXE not found at $ownerExe"
             exit 1
           }
           $ownerSize = (Get-Item $ownerExe).Length / 1MB
-          Write-Host "Owner EXE verified: $ownerExe ($([math]::Round($ownerSize,1)) MB)"
+          Write-Host "Owner EXE verified: $ownerExe ($([math]::Round($ownerSize, 1)) MB)"
 
-          # Security boundary 1: Ensure no private keys, setup bundles, or vault files leaked into either dist folder
+          # Security boundary 1: Ensure no private keys, license files, or vault files leaked into either dist folder
           foreach ($dir in @("dist\${{ env.APP_NAME }}", "dist\${{ env.OWNER_TOOL_NAME }}")) {
             $leaks = Get-ChildItem -Path $dir -Recurse -File -Include *private_key*.pem,*.uikey,license.lic,*owner_vault*,*issued_licenses*
             if ($leaks) {
@@ -303,12 +375,10 @@ jobs:
           }
 
           Write-Host "All licensing build security checks PASSED." -ForegroundColor Green
-        shell: pwsh
 
-      # ─── 12.8. Smoke-test Owner EXE (launch + exit) ──────────────────────
       - name: Smoke-test Owner EXE (launch + exit)
+        continue-on-error: true
         run: |
-          Write-Host "Attempting smoke-test of Owner Generator EXE..."
           $ownerExe = "dist\${{ env.OWNER_TOOL_NAME }}\${{ env.OWNER_TOOL_NAME }}.exe"
           $proc = Start-Process -FilePath $ownerExe -PassThru -WindowStyle Hidden
           Start-Sleep -Seconds 6
@@ -322,57 +392,116 @@ jobs:
             Write-Host "Owner EXE is running cleanly after 6 seconds."
             Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
           }
-        shell: pwsh
-        continue-on-error: true
 
-      # ─── 12.9. Package & upload Owner EXE ONLY as private workflow artifact ─
-      - name: Package Owner Generator ZIP
+      # ─── 9. Package both EXEs using fast multi-core ZIP & upload ─────────
+      - name: Package release ZIPs
+        id: package
         run: |
-          $source = "dist\${{ env.OWNER_TOOL_NAME }}"
-          $ownerZip = "${{ steps.version.outputs.OWNER_ZIP_NAME }}.zip"
-          Compress-Archive -Path "$source\*" -DestinationPath $ownerZip -CompressionLevel Optimal -Force
-          $sizeMB = [math]::Round((Get-Item $ownerZip).Length / 1MB, 1)
-          Write-Host "Owner ZIP created: $ownerZip ($sizeMB MB)"
-        shell: pwsh
+          $ErrorActionPreference = "Stop"
+
+          function Compress-FastZip($sourceDir, $zipBaseName) {
+            $absZip = Join-Path (Get-Location).Path "$zipBaseName.zip"
+            if (Test-Path $absZip) { Remove-Item -Force $absZip }
+
+            $sevenZip = (Get-Command 7z -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1)
+            if (-Not $sevenZip -and (Test-Path "C:\Program Files\7-Zip\7z.exe")) {
+              $sevenZip = "C:\Program Files\7-Zip\7z.exe"
+            }
+
+            if ($sevenZip) {
+              Write-Host "Compressing $sourceDir -> $zipBaseName.zip using 7-Zip (multi-threaded)..."
+              Push-Location $sourceDir
+              try {
+                & $sevenZip a -tzip -mx=5 -mmt=on $absZip .\*
+                if ($LASTEXITCODE -ne 0) {
+                  throw "7z failed with exit code $LASTEXITCODE"
+                }
+              } finally {
+                Pop-Location
+              }
+            } else {
+              Write-Host "7-Zip not found; falling back to Compress-Archive for $zipBaseName.zip..."
+              Compress-Archive -Path "$sourceDir\*" -DestinationPath $absZip -CompressionLevel Optimal -Force
+            }
+
+            if (-Not (Test-Path $absZip)) {
+              throw "Expected ZIP archive was not created: $absZip"
+            }
+            $sizeMB = [math]::Round((Get-Item $absZip).Length / 1MB, 1)
+            Write-Host "Created ${zipBaseName}.zip (${sizeMB} MB)"
+            return $sizeMB
+          }
+
+          $appZipMB   = Compress-FastZip "dist\${{ env.APP_NAME }}"        "${{ steps.meta.outputs.ZIP_NAME }}"
+          $ownerZipMB = Compress-FastZip "dist\${{ env.OWNER_TOOL_NAME }}" "${{ steps.meta.outputs.OWNER_ZIP_NAME }}"
+
+          "APP_ZIP_MB=$appZipMB"     >> $env:GITHUB_OUTPUT
+          "OWNER_ZIP_MB=$ownerZipMB" >> $env:GITHUB_OUTPUT
+
+      - name: Upload App Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.ZIP_NAME }}
+          path: ${{ steps.meta.outputs.ZIP_NAME }}.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload Owner Generator Artifact (Private Workflow Only)
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.version.outputs.OWNER_ZIP_NAME }}
-          path: ${{ steps.version.outputs.OWNER_ZIP_NAME }}.zip
+          name: ${{ steps.meta.outputs.OWNER_ZIP_NAME }}
+          path: ${{ steps.meta.outputs.OWNER_ZIP_NAME }}.zip
+          compression-level: 0
+          if-no-files-found: error
           retention-days: 14
 
-      # ─── 13. Create GitHub Release (Only for Main Branch Push) ──────────
+      # ─── 10. Create GitHub Release (main push only — App ZIP only) ──────
       - name: Create GitHub Release
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.TAG }}
-          name: "${{ env.APP_NAME }} ${{ steps.version.outputs.VERSION }} (build ${{ steps.version.outputs.SHORT_SHA }})"
+          tag_name: ${{ steps.meta.outputs.TAG }}
+          name: "UIIC Automation v${{ steps.meta.outputs.VERSION }} (${{ steps.meta.outputs.DISPLAY_IST }})"
           body: |
             ## 🚀 Automated Release
 
-            **Version:** `${{ steps.version.outputs.VERSION }}`
-            **Commit:** [`${{ steps.version.outputs.SHORT_SHA }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
-            **Built:** ${{ steps.version.outputs.TIMESTAMP }} UTC
-            **Python:** ${{ env.PYTHON_VERSION }}
-            **Runner:** `windows-latest`
+            **Version:** `${{ steps.meta.outputs.VERSION }}`
+            **Built:** `${{ steps.meta.outputs.DISPLAY_IST }}`
+            **Commit:** [`${{ steps.meta.outputs.SHORT_SHA }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
+            **Download:** `${{ steps.meta.outputs.ZIP_NAME }}.zip`
 
             ### 📦 Installation
-            1. Download the `.zip` file below
+            1. Download `${{ steps.meta.outputs.ZIP_NAME }}.zip` below
             2. Extract to any folder
             3. Run `${{ env.APP_NAME }}.exe`
 
             ### ⚠️ Notes
+            - Keep the `_internal/` folder alongside `${{ env.APP_NAME }}.exe`
             - Windows Defender may briefly scan on first launch — this is normal
-            - The `_internal/` folder must stay alongside the EXE
             - Built from pinned dependencies (`requirements-build.txt`) for reproducibility
 
             ---
             *This release was created automatically by GitHub Actions.*
-          files: ${{ steps.version.outputs.ZIP_NAME }}.zip
+          files: ${{ steps.meta.outputs.ZIP_NAME }}.zip
           draft: false
           prerelease: false
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ─── 11. Publish Build Summary Card ──────────────────────────────────
+      - name: Publish build summary
+        run: |
+          @(
+            "## 🚀 UIIC Automation Build Summary"
+            ""
+            "| Item | Details |"
+            "| :--- | :--- |"
+            "| **Version** | ``v${{ steps.meta.outputs.VERSION }}`` |"
+            "| **Built (IST)** | ${{ steps.meta.outputs.DISPLAY_IST }} |"
+            "| **Branch** | ``${{ github.ref_name }}`` |"
+            "| **Commit** | ``${{ steps.meta.outputs.SHORT_SHA }}`` |"
+            "| **Client App Download** | ``${{ steps.meta.outputs.ZIP_NAME }}.zip`` (${{ steps.meta.outputs.APP_ZIP_MB }} MB) |"
+            "| **Owner License Tool (Private)** | ``${{ steps.meta.outputs.OWNER_ZIP_NAME }}.zip`` (${{ steps.meta.outputs.OWNER_ZIP_MB }} MB) |"
+          ) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
