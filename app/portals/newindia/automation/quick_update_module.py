@@ -25,9 +25,9 @@ async def _ensure_yes(page: Page, name: str, label: str,
         count = await page.locator(f'input[name="{name}"]').count()
         if not count:
             if isinstance(log, AutomationLogger):
-                log.info(f"[{label}] field not found in DOM.")
+                log.field_skipped(label, reason="Not shown on this claim")
             else:
-                log(f"   ⏭  [{label}] not in DOM")
+                log(f"   ⏭  [{label}] not shown on this claim")
             return
         await click_radio_with_delay(page, name, "Y", label, log, delay_ms, source="Default")
     except Exception as e:
@@ -80,25 +80,20 @@ async def fill_quick_update_details(
 
     if isinstance(log, AutomationLogger):
         log._section = "Quick Update"
-        log.info("Starting Quick Update Details phase...")
         log.indent()
     elif log:
-        log(f"Starting Phase 3 — Quick Update Details")
+        log("Starting Quick Update Details")
 
     try:
         await page.wait_for_selector(
             'h4.headerClip:has-text("Quick Update Details")',
             state="visible", timeout=20000
         )
-        if isinstance(log, AutomationLogger):
-            log.info("Phase container located.")
-        else:
-            log("Section visible — waiting for Angular to finish rendering...")
     except Exception as e:
         if isinstance(log, AutomationLogger):
-            log.error(f"Quick Update section not found: {str(e)[:100]}")
+            log.error("Quick Update section did not load", str(e)[:120])
         else:
-            log(f"Section not found: {e}")
+            log(f"Quick Update section did not load: {e}")
         return False
 
     await asyncio.sleep(1.5)

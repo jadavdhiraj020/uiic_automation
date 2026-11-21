@@ -132,7 +132,7 @@ async def _expand_survey_fee_bill_accordion(page: Page, log) -> bool:
         if result.get("ok"):
             await asyncio.sleep(1.0)
             if _structured:
-                log.success("Survey Fee Bill accordion expanded via JS fallback.")
+                log.success("Survey Fee Bill section opened.")
             else:
                 log("   ✅ Survey Fee Bill accordion expanded (JS fallback).")
             return True
@@ -294,7 +294,7 @@ async def _fill_hsn_code_typeahead(page: Page, log, field_delay_ms: int = 600, h
         await asyncio.sleep(0.5)
 
         if _structured:
-            log.warning("HSN Code set via Angular scope injection (JS fallback).")
+            log.info(f"HSN Code '{hsn_code}' applied — verify GST % is populated.")
         else:
             log("   ⚠️ HSN Code set via JS fallback — verify GST % is populated.")
         return True
@@ -384,7 +384,7 @@ async def _click_survey_fee_bill_submit(page: Page, log) -> bool:
         )
         if result.get("ok"):
             if _structured:
-                log.info("Submit clicked via JS fallback.")
+                log.info("Clicked Submit on Survey Fee Bill.")
             else:
                 log("   ℹ️ Submit clicked (JS fallback).")
             return True
@@ -715,7 +715,7 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
         return False
 
     if _structured:
-        log.wait("Clicking 'Submit' to save Survey Fee Bill...")
+        log.wait("Survey Fee Bill save confirmation")
     else:
         log("")
         log("   ── Clicking Submit ──")

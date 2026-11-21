@@ -94,7 +94,6 @@ async def fill_work_approval_details(
 
     if isinstance(log, AutomationLogger):
         log._section = "Work Approval Details"
-        log.info("Starting Work Approval Details phase...")
         log.indent()
     else:
         log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -276,7 +275,7 @@ async def _fill_work_approval_inner(
     # 5.1 Click Submit button for Work Approval (Final Invoice)
     if doc_path and os.path.exists(doc_path):
         if isinstance(log, AutomationLogger):
-            log.wait("Submitting Final Invoice (Work Approval Document)...")
+            log.wait("Final Invoice submission")
         else:
             log("  ℹ️ Submitting Final Invoice (Work Approval Document)...")
 

@@ -38,9 +38,10 @@ async def navigate_to_claim(
         return None
 
     structured_log = isinstance(log, AutomationLogger)
+    if structured_log:
+        log.section = "Worklist Navigation"
     info = log.info if structured_log else log
     success = log.success if structured_log else log
-    info("Opening the New India Worklist.")
     if structured_log:
         log.indent()
 
@@ -48,7 +49,10 @@ async def navigate_to_claim(
     try:
         criteria = page.locator(SEL_FILTER_DROPDOWN)
         if not await criteria.is_visible():
+            info("Opening the New India Worklist.")
             await page.locator(SEL_NAV_WORKLIST).click(timeout=15000)
+        else:
+            info("Worklist is already open.")
         await criteria.wait_for(state="visible", timeout=15000)
         if stop_cb():
             return None
@@ -65,7 +69,7 @@ async def navigate_to_claim(
             return None
 
         failure = "App3 could not run the claim-number filter on the Worklist."
-        info("Filtering the Worklist by the full claim number.")
+        info(f"Searching Worklist by Claim No.: {claim_no}")
         await page.locator(SEL_FILTER_BTN).click(timeout=10000)
 
         number = re.escape(claim_no)
@@ -80,12 +84,16 @@ async def navigate_to_claim(
         if not await wait_until_ready(claim_is_ready, seconds=SEARCH_TIMEOUT_S, stopped=stop_cb):
             if stop_cb():
                 return None
-            if await cards.count() == 0:
-                raise ClaimNavigationError("New India found no claim card in the selected Worklist.")
-            raise ClaimNavigationError("The Worklist did not show exactly one card for the requested claim number.")
+            total_cards = await cards.count()
+            if total_cards == 0:
+                raise ClaimNavigationError(f"New India found no claim card for {claim_no} in the Worklist.")
+            raise ClaimNavigationError(
+                f"Worklist showed {total_cards} card(s) instead of 1 exact match for {claim_no}."
+            )
         if stop_cb():
             return None
 
+        info(f"Found 1 matching claim card ({claim_no}). Clicking Edit...")
         edit = matching.locator(SEL_CLAIM_EDIT_BTN)
         origin_url = page.url
         popups: list[Page] = []
@@ -100,9 +108,10 @@ async def navigate_to_claim(
             for candidate in (page, *popups):
                 if candidate.is_closed() or not same_origin(candidate, origin_url):
                     continue
-                breadcrumb = candidate.locator("li:visible").filter(has_text=expected_breadcrumb)
+                breadcrumb = candidate.locator("p.surveyorBreadCrumb:visible").filter(has_text=expected_breadcrumb)
                 heading = candidate.locator(QUICK_UPDATE).filter(has_text=re.compile(r"^Quick Update Details$", re.I))
-                if await breadcrumb.count() == 1 and await heading.count() == 1:
+                claim_form = candidate.locator('form[name="workListForm"]', has=breadcrumb).filter(has=heading)
+                if await claim_form.count() == 1:
                     claim_page = candidate
                     return True
             return False
@@ -112,9 +121,8 @@ async def navigate_to_claim(
         try:
             failure = "The matching claim was found, but App3 could not click its Edit icon."
             await edit.click(timeout=10000)
-            info("Clicked Edit on the matching claim. Waiting for Quick Update.")
 
-            failure = "Edit was clicked, but Quick Update did not open for the requested claim."
+            failure = f"Edit was clicked, but Quick Update did not open for claim {claim_no}."
             if not await wait_until_ready(form_is_ready, seconds=FORM_TIMEOUT_S, stopped=stop_cb):
                 if stop_cb():
                     return None
@@ -122,7 +130,7 @@ async def navigate_to_claim(
         finally:
             page.remove_listener("popup", record_popup)
 
-        success("Quick Update is open for the matching claim.")
+        success(f"Quick Update opened for claim {claim_no}.")
         return claim_page
     except PlaywrightError as exc:
         raise ClaimNavigationError(failure) from exc

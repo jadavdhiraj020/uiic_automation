@@ -208,11 +208,11 @@ async def dismiss_portal_popup(
     When classify=False (default): True if popup was dismissed, False if none appeared.
     When classify=True: tag string or None (None means no popup appeared).
     """
-    ctx = f" [{context}]" if context else ""
+    ctx = f" ({context})" if context else ""
     poll_interval = 0.35
     elapsed = 0.0
 
-    _log_msg(log, "info", f"Polling for portal popup{ctx} (max {max_wait_s:.0f}s)...")
+    logger.debug("Polling for portal popup%s (max %.0fs)...", ctx, max_wait_s)
 
     while elapsed < max_wait_s:
         await asyncio.sleep(poll_interval)
@@ -221,7 +221,7 @@ async def dismiss_portal_popup(
         try:
             popup_info: dict = await page.evaluate(_JS_DETECT_POPUP)
         except Exception as exc:
-            _log_msg(log, "warning", f"Popup detection error{ctx}: {str(exc)[:80]}")
+            logger.debug("Popup detection error%s: %s", ctx, str(exc)[:80])
             continue
 
         if not popup_info.get("found"):
@@ -233,10 +233,13 @@ async def dismiss_portal_popup(
         body  = popup_info.get("body", "")
         tag   = _classify_popup(body) if body else "other"
 
-        _log_msg(
-            log, "info",
-            f"Portal popup detected{ctx}: [{ptype}] {title or tag} | {body[:100]}"
-        )
+        display_body = (body or title or "Notification shown").replace("\n", " ").strip()[:140]
+        if tag in ("size_error", "duplicate_error"):
+            _log_msg(log, "warning", f"Portal warning{ctx}: {display_body}")
+            from app.portals.newindia.automation.logging_utils import capture_newindia_screenshot
+            await capture_newindia_screenshot(page, f"popup_{tag}", log, reason=display_body)
+        else:
+            _log_msg(log, "info", f"Portal message{ctx}: {display_body}")
 
         # ── Dismiss ───────────────────────────────────────────────────────────
         try:
@@ -244,18 +247,19 @@ async def dismiss_portal_popup(
             await capture_before_dismiss(page)
             dismiss_res: dict = await page.evaluate(_JS_DISMISS_POPUP)
         except Exception as exc:
-            _log_msg(log, "error", f"Popup dismissal JS error{ctx}: {str(exc)[:80]}")
+            _log_msg(log, "warning", f"Could not close portal popup{ctx}. Check Chrome.")
+            logger.debug("Popup dismissal JS error%s: %s", ctx, str(exc)[:120])
             return None if classify else False
 
         if not dismiss_res.get("ok"):
             _log_msg(
                 log, "warning",
-                f"Could not dismiss popup{ctx}: {dismiss_res.get('err', 'unknown')}"
+                f"Could not close portal popup{ctx}. Please close it in Chrome."
             )
             return None if classify else False
 
         via = dismiss_res.get("via", "?")
-        _log_msg(log, "success", f"Popup dismissed{ctx} via {via} [{tag}]")
+        logger.debug("Popup dismissed%s via %s [%s] (%s)", ctx, via, tag, ptype)
 
         # ── Verify closure (optional retry) ───────────────────────────────────
         if verify_closed:
@@ -263,25 +267,27 @@ async def dismiss_portal_popup(
             try:
                 still_open: dict = await page.evaluate(_JS_DETECT_POPUP)
                 if still_open.get("found"):
-                    _log_msg(log, "warning", f"Popup still visible{ctx} — retrying once...")
+                    _log_msg(log, "warning", f"Portal popup still open{ctx} — retrying...")
                     await capture_before_dismiss(page)
                     await page.evaluate(_JS_DISMISS_POPUP)
                     await asyncio.sleep(0.8)
                     # Check again
                     final_check: dict = await page.evaluate(_JS_DETECT_POPUP)
                     if final_check.get("found"):
-                        _log_msg(log, "warning", f"Popup persists{ctx} — continuing anyway.")
+                        _log_msg(log, "warning", f"Portal popup stayed open{ctx} — continuing.")
                     else:
-                        _log_msg(log, "success", f"Popup closed{ctx}.")
+                        _log_msg(log, "success", f"Closed portal message{ctx}.")
                 else:
-                    _log_msg(log, "success", f"Popup closed{ctx}.")
+                    _log_msg(log, "success", f"Closed portal message{ctx}.")
             except Exception:
                 pass  # verification failure is non-fatal
+        else:
+            _log_msg(log, "success", f"Closed portal message{ctx}.")
 
         return tag if classify else True
 
     # ── No popup appeared within timeout ──────────────────────────────────────
-    _log_msg(log, "info", f"No portal popup appeared{ctx} — continuing.")
+    logger.debug("No portal popup appeared%s — continuing.", ctx)
     return None if classify else False
 
 

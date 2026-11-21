@@ -45,9 +45,9 @@ async def _try_auto_solve_captcha(page, log) -> bool:
             try:
                 if await captcha_frame.locator(_CAPTCHA_SOLVED_SEL).count() > 0:
                     if isinstance(log, AutomationLogger):
-                        log.success("reCAPTCHA auto-solved ✅")
+                        log.success("reCAPTCHA solved automatically.")
                     else:
-                        log(f"[{_ts()}]   ✅ reCAPTCHA auto-solved.")
+                        log(f"[{_ts()}]   ✅ reCAPTCHA solved automatically.")
                     return True
             except Exception:
                 pass
@@ -120,9 +120,9 @@ async def _wait_for_url_change(page, log, stop_cb: Callable[[], bool],
         try:
             if "IntermediaryLogin.html" not in page.url:
                 if isinstance(log, AutomationLogger):
-                    log.success("Login detected (URL changed).")
+                    log.success("Logged into New India portal.")
                 else:
-                    log("✅ Login detected (URL changed).")
+                    log("✅ Logged into New India portal.")
                 return True
         except Exception:
             pass
@@ -214,15 +214,16 @@ async def do_login(
     if stop_cb(): return False
 
     # ── 3. Wait for Manual Login ──────────────────────────────────────────────
-    if isinstance(log, AutomationLogger):
-        log.wait("manual CAPTCHA + login (up to 30s)...")
-    else:
-        log("⏳ Waiting for manual CAPTCHA + login (up to 30s)...")
-
     try:
         manual_login_timeout = int(settings.get("manual_login_timeout_s") or 45)
     except (ValueError, TypeError):
         manual_login_timeout = 45
+
+    if isinstance(log, AutomationLogger):
+        log.wait("manual CAPTCHA and login", f"up to {manual_login_timeout}s")
+    else:
+        log(f"⏳ Waiting for manual CAPTCHA and login (up to {manual_login_timeout}s)...")
+
     success = await _wait_for_url_change(page, log, stop_cb, timeout_seconds=manual_login_timeout)
 
     if success:

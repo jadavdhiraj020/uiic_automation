@@ -852,90 +852,105 @@ class AutomationEngine:
                     automation_defaults_paths,
                 )
 
-                self.log.raw(
-                    f"[{self.log._portal_tag}][Runtime]\nLoading Portal Config"
-                )
-                self.log.raw(
-                    f"[{self.log._portal_tag}][Runtime]\nPackaged Runtime: {'Frozen (EXE)' if is_frozen() else 'Source (Python)'}"
-                )
-                self.log.raw(
-                    f"[{self.log._portal_tag}][Runtime]\nBase Directory: {get_base_dir()}"
-                )
-                self.log.raw(
-                    f"[{self.log._portal_tag}][Runtime]\nExe Directory: {get_exe_dir()}"
-                )
-
-                # Settings
-                s_paths = settings_paths(self.portal_id)
-                self.log.raw(
-                    f"[{self.log._portal_tag}][Runtime]\nSettings Config Discovery:\n  • Bundled (Read-Only): {s_paths['default']}\n  • User (Writable):     {s_paths['user']}"
-                )
-                if os.path.exists(s_paths["user"]):
-                    self.log.raw(
-                        f"[{self.log._portal_tag}][Configuration]\nSettings Loaded (User Override Active)"
+                if self.portal_id == "newindia":
+                    s_paths = settings_paths(self.portal_id)
+                    fm_paths = field_mapping_paths(self.portal_id)
+                    dm_paths = doc_mapping_paths(self.portal_id)
+                    ad_paths = automation_defaults_paths(self.portal_id)
+                    self.log._py_logger.debug(
+                        "[NEW INDIA][Runtime] mode=%s base=%s settings=%s field=%s doc=%s defaults=%s",
+                        "EXE" if is_frozen() else "Source",
+                        get_base_dir(),
+                        s_paths.get("user") or s_paths.get("default"),
+                        fm_paths.get("user") or fm_paths.get("default"),
+                        dm_paths.get("user") or dm_paths.get("default"),
+                        ad_paths.get("user") or ad_paths.get("default"),
                     )
                 else:
                     self.log.raw(
-                        f"[{self.log._portal_tag}][Configuration]\nSettings Loaded (Using Bundled Defaults)"
+                        f"[{self.log._portal_tag}][Runtime]\nLoading Portal Config"
+                    )
+                    self.log.raw(
+                        f"[{self.log._portal_tag}][Runtime]\nPackaged Runtime: {'Frozen (EXE)' if is_frozen() else 'Source (Python)'}"
+                    )
+                    self.log.raw(
+                        f"[{self.log._portal_tag}][Runtime]\nBase Directory: {get_base_dir()}"
+                    )
+                    self.log.raw(
+                        f"[{self.log._portal_tag}][Runtime]\nExe Directory: {get_exe_dir()}"
                     )
 
-                # Field mapping
-                fm_paths = field_mapping_paths(self.portal_id)
-                self.log.raw(
-                    f"[{self.log._portal_tag}][Runtime]\nField Mapping Discovery:\n  • Bundled (Read-Only): {fm_paths['default']}\n  • User (Writable):     {fm_paths['user']}"
-                )
-                if os.path.exists(fm_paths["user"]):
+                    # Settings
+                    s_paths = settings_paths(self.portal_id)
                     self.log.raw(
-                        f"[{self.log._portal_tag}][Configuration]\nField Mapping Loaded (User Override Active)"
+                        f"[{self.log._portal_tag}][Runtime]\nSettings Config Discovery:\n  • Bundled (Read-Only): {s_paths['default']}\n  • User (Writable):     {s_paths['user']}"
                     )
-                else:
-                    self.log.raw(
-                        f"[{self.log._portal_tag}][Configuration]\nField Mapping Loaded (Using Bundled Defaults)"
-                    )
+                    if os.path.exists(s_paths["user"]):
+                        self.log.raw(
+                            f"[{self.log._portal_tag}][Configuration]\nSettings Loaded (User Override Active)"
+                        )
+                    else:
+                        self.log.raw(
+                            f"[{self.log._portal_tag}][Configuration]\nSettings Loaded (Using Bundled Defaults)"
+                        )
 
-                # Document mapping
-                dm_paths = doc_mapping_paths(self.portal_id)
-                self.log.raw(
-                    f"[{self.log._portal_tag}][Runtime]\nDocument Mapping Discovery:\n  • Bundled (Read-Only): {dm_paths['default']}\n  • User (Writable):     {dm_paths['user']}"
-                )
-                if os.path.exists(dm_paths["user"]):
+                    # Field mapping
+                    fm_paths = field_mapping_paths(self.portal_id)
                     self.log.raw(
-                        f"[{self.log._portal_tag}][Configuration]\nDocument Mapping Loaded (User Override Active)"
+                        f"[{self.log._portal_tag}][Runtime]\nField Mapping Discovery:\n  • Bundled (Read-Only): {fm_paths['default']}\n  • User (Writable):     {fm_paths['user']}"
                     )
-                else:
-                    self.log.raw(
-                        f"[{self.log._portal_tag}][Configuration]\nDocument Mapping Loaded (Using Bundled Defaults)"
-                    )
+                    if os.path.exists(fm_paths["user"]):
+                        self.log.raw(
+                            f"[{self.log._portal_tag}][Configuration]\nField Mapping Loaded (User Override Active)"
+                        )
+                    else:
+                        self.log.raw(
+                            f"[{self.log._portal_tag}][Configuration]\nField Mapping Loaded (Using Bundled Defaults)"
+                        )
 
-                # Automation defaults mapping
-                ad_paths = automation_defaults_paths(self.portal_id)
-                self.log.raw(
-                    f"[{self.log._portal_tag}][Runtime]\nAutomation Defaults Discovery:\n  • Bundled (Read-Only): {ad_paths['default']}\n  • User (Writable):     {ad_paths['user']}"
-                )
-                if os.path.exists(ad_paths["user"]):
+                    # Document mapping
+                    dm_paths = doc_mapping_paths(self.portal_id)
                     self.log.raw(
-                        f"[{self.log._portal_tag}][Configuration]\nAutomation Defaults Loaded (User Override Active)"
+                        f"[{self.log._portal_tag}][Runtime]\nDocument Mapping Discovery:\n  • Bundled (Read-Only): {dm_paths['default']}\n  • User (Writable):     {dm_paths['user']}"
                     )
-                else:
-                    self.log.raw(
-                        f"[{self.log._portal_tag}][Configuration]\nAutomation Defaults Loaded (Using Bundled Defaults)"
-                    )
+                    if os.path.exists(dm_paths["user"]):
+                        self.log.raw(
+                            f"[{self.log._portal_tag}][Configuration]\nDocument Mapping Loaded (User Override Active)"
+                        )
+                    else:
+                        self.log.raw(
+                            f"[{self.log._portal_tag}][Configuration]\nDocument Mapping Loaded (Using Bundled Defaults)"
+                        )
 
-                # Portal config path
-                from app.portals.registry import get_portal
+                    # Automation defaults mapping
+                    ad_paths = automation_defaults_paths(self.portal_id)
+                    self.log.raw(
+                        f"[{self.log._portal_tag}][Runtime]\nAutomation Defaults Discovery:\n  • Bundled (Read-Only): {ad_paths['default']}\n  • User (Writable):     {ad_paths['user']}"
+                    )
+                    if os.path.exists(ad_paths["user"]):
+                        self.log.raw(
+                            f"[{self.log._portal_tag}][Configuration]\nAutomation Defaults Loaded (User Override Active)"
+                        )
+                    else:
+                        self.log.raw(
+                            f"[{self.log._portal_tag}][Configuration]\nAutomation Defaults Loaded (Using Bundled Defaults)"
+                        )
 
-                portal_info = get_portal(self.portal_id)
-                if portal_info:
-                    self.log.raw(
-                        f"[{self.log._portal_tag}][Runtime]\nPortal Config Found:\n{portal_info.bundled_config_dir()}"
-                    )
-                    self.log.raw(
-                        f"[{self.log._portal_tag}][Configuration]\nUsing Portal-Specific Config"
-                    )
-                else:
-                    self.log.raw(
-                        f"[{self.log._portal_tag}][Configuration]\nUsing Fallback Configuration"
-                    )
+                    # Portal config path
+                    from app.portals.registry import get_portal
+
+                    portal_info = get_portal(self.portal_id)
+                    if portal_info:
+                        self.log.raw(
+                            f"[{self.log._portal_tag}][Runtime]\nPortal Config Found:\n{portal_info.bundled_config_dir()}"
+                        )
+                        self.log.raw(
+                            f"[{self.log._portal_tag}][Configuration]\nUsing Portal-Specific Config"
+                        )
+                    else:
+                        self.log.raw(
+                            f"[{self.log._portal_tag}][Configuration]\nUsing Fallback Configuration"
+                        )
 
                 claim_type = settings.get("claim_type", "Non Maruti")
 
@@ -949,6 +964,8 @@ class AutomationEngine:
                 total_steps = len(steps)
 
                 self.step_cb(0, steps[0])
+                if self.portal_id == "newindia":
+                    self.log.section = "Login"
                 self.log.phase_banner(1, total_steps, "Login to Portal")
 
                 if self.portal_id == "newindia":
@@ -965,6 +982,7 @@ class AutomationEngine:
                         login_settings = {**settings, "manual_login_timeout_s": 0}
                     return do_login(page, settings=login_settings, log=self.log, stop_cb=self._check_stop)
 
+                login_started = time.time()
                 if self._oic_recovery is not None:
                     success = await self._run_oic_phase(
                         page, "Login", login, signed_in,
@@ -978,7 +996,20 @@ class AutomationEngine:
                         if self._check_stop()
                         else "Login failed."
                     )
+                    if self.portal_id == "newindia":
+                        if not self._check_stop():
+                            from app.portals.newindia.automation.logging_utils import capture_newindia_screenshot
+
+                            await capture_newindia_screenshot(
+                                page, "login", self.log, reason=message, claim_no=claim.claim_no
+                            )
+                            self.log.record_step_result("Login", False, time.time() - login_started, reason=message)
+                        self.log.write_run_summary(
+                            "Stopped by User" if self._check_stop() else "Failed", message
+                        )
                     return AutomationRunResult(False, message)
+                if self.portal_id == "newindia":
+                    self.log.record_step_result("Login", True, time.time() - login_started)
                 if self._check_stop():
                     return AutomationRunResult(False, "Automation stopped by user.")
 
@@ -1012,22 +1043,36 @@ class AutomationEngine:
                 )
 
                 if self.portal_id == "newindia":
+                    from app.portals.newindia.automation.logging_utils import capture_newindia_screenshot
                     from app.portals.newindia.automation.navigation_module import (
                         ClaimNavigationError,
                         navigate_to_claim,
                     )
 
+                    self.log.section = "Worklist Navigation"
+                    nav_started = time.time()
                     try:
                         claim_page = await navigate_to_claim(
                             page, claim.claim_no, settings=settings, log=self.log, stop_cb=self._check_stop,
                         )
                     except ClaimNavigationError as exc:
                         if self._check_stop():
+                            self.log.write_run_summary("Stopped by User", "Automation stopped by user.")
                             return AutomationRunResult(False, "Automation stopped by user.")
                         self.log.error(str(exc))
+                        await capture_newindia_screenshot(
+                            page, "worklist_navigation", self.log, reason=str(exc), claim_no=claim.claim_no
+                        )
+                        self.log.record_step_result(
+                            "Worklist Navigation", False, time.time() - nav_started, reason=str(exc)
+                        )
+                        self.log.write_run_summary("Failed", str(exc))
                         return AutomationRunResult(False, str(exc))
                     if claim_page is None and self._check_stop():
+                        self.log.write_run_summary("Stopped by User", "Automation stopped by user.")
                         return AutomationRunResult(False, "Automation stopped by user.")
+                    if claim_page is not None:
+                        self.log.record_step_result("Worklist Navigation", True, time.time() - nav_started)
                 elif self.portal_id == "oic":
                     from app.portals.oic.automation.navigation_module import (
                         navigate_to_claim,
@@ -1111,155 +1156,164 @@ class AutomationEngine:
                         fill_document_upload_section,
                     )
 
+                    from app.portals.newindia.automation.logging_utils import capture_newindia_screenshot
+
+                    async def _run_ni_phase(step_idx: int, phase_num: int, title: str, coro_fn):
+                        self.step_cb(step_idx, steps[step_idx])
+                        self.log.section = title
+                        self.log.phase_banner(phase_num, total_steps, title)
+                        started = time.time()
+                        ok = await coro_fn()
+                        elapsed = time.time() - started
+                        if ok:
+                            self.log.record_step_result(title, True, elapsed)
+                            return None
+                        if self._check_stop():
+                            self.log.write_run_summary("Stopped by User", "Automation stopped by user.")
+                            return AutomationRunResult(False, "Automation stopped by user.")
+                        reason = f"Step {phase_num} ({title}) did not complete."
+                        await capture_newindia_screenshot(
+                            page, title, self.log, reason=reason, claim_no=claim.claim_no
+                        )
+                        self.log.record_step_result(title, False, elapsed, reason=reason)
+                        self.log.write_run_summary("Failed", reason)
+                        return AutomationRunResult(
+                            False,
+                            f"Step {phase_num} ({title}) failed. Check the log and screenshot for details.",
+                        )
+
                     # Phase 3: Quick Update
-                    self.step_cb(2, steps[2])
-                    self.log.phase_banner(3, total_steps, "Fill Quick Update Details")
-                    if not await fill_quick_update_details(
-                        page, claim, log=self.log, stop_cb=self._check_stop
-                    ):
-                        return AutomationRunResult(False, "Phase 3 failed.")
+                    fail = await _run_ni_phase(
+                        2, 3, "Fill Quick Update Details",
+                        lambda: fill_quick_update_details(page, claim, log=self.log, stop_cb=self._check_stop),
+                    )
+                    if fail is not None:
+                        return fail
 
                     # Phase 4: Vehicle Photo
-                    self.step_cb(3, steps[3])
-                    self.log.phase_banner(4, total_steps, "Vehicle Photo Graph")
-                    if not await fill_vehicle_photo_graph(
-                        page,
-                        claim,
-                        log=self.log,
-                        stop_cb=self._check_stop,
-                        field_delay_ms=field_delay,
-                    ):
-                        return AutomationRunResult(False, "Phase 4 failed.")
+                    fail = await _run_ni_phase(
+                        3, 4, "Vehicle Photo Graph",
+                        lambda: fill_vehicle_photo_graph(
+                            page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay
+                        ),
+                    )
+                    if fail is not None:
+                        return fail
 
                     # Phase 5: RC Details
-                    self.step_cb(4, steps[4])
-                    self.log.phase_banner(
-                        5, total_steps, "Registration Certificate Details"
+                    fail = await _run_ni_phase(
+                        4, 5, "Registration Certificate Details",
+                        lambda: fill_registration_cert_details(
+                            page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay
+                        ),
                     )
-                    if not await fill_registration_cert_details(
-                        page,
-                        claim,
-                        log=self.log,
-                        stop_cb=self._check_stop,
-                        field_delay_ms=field_delay,
-                    ):
-                        return AutomationRunResult(False, "Phase 5 failed.")
+                    if fail is not None:
+                        return fail
 
                     # Phase 6: Driver Details
-                    self.step_cb(5, steps[5])
-                    self.log.phase_banner(6, total_steps, "Driver Details")
-                    if not await fill_driver_details(
-                        page,
-                        claim,
-                        log=self.log,
-                        stop_cb=self._check_stop,
-                        field_delay_ms=field_delay,
-                    ):
-                        return AutomationRunResult(False, "Phase 6 failed.")
+                    fail = await _run_ni_phase(
+                        5, 6, "Driver Details",
+                        lambda: fill_driver_details(
+                            page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay
+                        ),
+                    )
+                    if fail is not None:
+                        return fail
 
                     # Phase 7: FIR Details
-                    self.step_cb(6, steps[6])
-                    self.log.phase_banner(7, total_steps, "FIR Details")
-                    if not await fill_fir_details(
-                        page,
-                        claim,
-                        log=self.log,
-                        stop_cb=self._check_stop,
-                        field_delay_ms=field_delay,
-                    ):
-                        return AutomationRunResult(False, "Phase 7 failed.")
+                    fail = await _run_ni_phase(
+                        6, 7, "FIR Details",
+                        lambda: fill_fir_details(
+                            page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay
+                        ),
+                    )
+                    if fail is not None:
+                        return fail
 
                     # Phase 8: NEFT Details
-                    self.step_cb(7, steps[7])
-                    self.log.phase_banner(8, total_steps, "NEFT Details")
-                    if not await self._wait_for_deferred_ocr(
-                        claim,
-                        kind="cheque",
-                        label="Cheque",
-                        required_fields=(
-                            ("IFSC Code", "ifsc_code"),
-                            ("Account Number", "account_number"),
-                        ),
-                        dependent_step="New India NEFT Details",
-                    ):
-                        if self._check_stop() or self._newindia_recovery is None:
-                            return AutomationRunResult(False, "Phase 8 failed: cheque OCR data not ready.")
-                        self.log.warning("Cheque data is still unavailable. App3 will check the page before Next.")
-                    if not await fill_neft_details(
-                        page,
-                        claim,
-                        log=self.log,
-                        stop_cb=self._check_stop,
-                        field_delay_ms=field_delay,
-                    ):
-                        return AutomationRunResult(False, "Phase 8 failed.")
+                    async def _phase_neft():
+                        if not await self._wait_for_deferred_ocr(
+                            claim,
+                            kind="cheque",
+                            label="Cheque",
+                            required_fields=(
+                                ("IFSC Code", "ifsc_code"),
+                                ("Account Number", "account_number"),
+                            ),
+                            dependent_step="New India NEFT Details",
+                        ):
+                            if self._check_stop() or self._newindia_recovery is None:
+                                self.log.error("Cheque details could not be read in time.")
+                                return False
+                            self.log.warning("Cheque data is still unavailable. App3 will check the page before Next.")
+                        return await fill_neft_details(
+                            page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay
+                        )
+
+                    fail = await _run_ni_phase(7, 8, "NEFT Details", _phase_neft)
+                    if fail is not None:
+                        return fail
 
                     # Phase 9: Work Approval
-                    self.step_cb(8, steps[8])
-                    self.log.phase_banner(9, total_steps, "Work Approval")
-                    if not await fill_work_approval_details(
-                        page,
-                        claim,
-                        log=self.log,
-                        stop_cb=self._check_stop,
-                        field_delay_ms=field_delay,
-                    ):
-                        return AutomationRunResult(False, "Phase 9 failed.")
+                    fail = await _run_ni_phase(
+                        8, 9, "Work Approval",
+                        lambda: fill_work_approval_details(
+                            page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay
+                        ),
+                    )
+                    if fail is not None:
+                        return fail
 
                     # Phase 10: Claim Assessment
-                    self.step_cb(9, steps[9])
-                    self.log.phase_banner(10, total_steps, "Claim Assessment")
-                    if not await self._wait_for_deferred_ocr(
-                        claim,
-                        kind="invoice",
-                        label="Workshop Invoice",
-                        required_fields=(
-                            ("Vendor Invoice Date", "vendor_invoice_date"),
-                            ("Vendor Invoice Number", "vendor_invoice_number"),
-                        ),
-                        dependent_step="New India Claim Assessment",
-                    ):
-                        if self._check_stop() or self._newindia_recovery is None:
-                            return AutomationRunResult(False, "Phase 10 failed: invoice OCR data not ready.")
-                        self.log.warning("Invoice data is still unavailable. App3 will check the page before Next.")
-                    if not await fill_claim_assessment_details(
-                        page,
-                        claim,
-                        log=self.log,
-                        stop_cb=self._check_stop,
-                        field_delay_ms=field_delay,
-                    ):
-                        return AutomationRunResult(False, "Phase 10 failed.")
+                    async def _phase_assessment():
+                        if not await self._wait_for_deferred_ocr(
+                            claim,
+                            kind="invoice",
+                            label="Workshop Invoice",
+                            required_fields=(
+                                ("Vendor Invoice Date", "vendor_invoice_date"),
+                                ("Vendor Invoice Number", "vendor_invoice_number"),
+                            ),
+                            dependent_step="New India Claim Assessment",
+                        ):
+                            if self._check_stop() or self._newindia_recovery is None:
+                                self.log.error("Workshop invoice details could not be read in time.")
+                                return False
+                            self.log.warning("Invoice data is still unavailable. App3 will check the page before Next.")
+                        return await fill_claim_assessment_details(
+                            page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay
+                        )
+
+                    fail = await _run_ni_phase(9, 10, "Claim Assessment", _phase_assessment)
+                    if fail is not None:
+                        return fail
 
                     # Phase 11: Document Upload
                     # (Runs before Survey Fee Bill to match the portal's
                     #  top-to-bottom accordion order on the Document Upload tab)
-                    self.step_cb(10, steps[10])
-                    self.log.phase_banner(11, total_steps, "Document Upload")
-                    if not await fill_document_upload_section(
-                        page,
-                        claim,
-                        log=self.log,
-                        stop_cb=self._check_stop,
-                        field_delay_ms=field_delay,
-                    ):
-                        return AutomationRunResult(False, "Phase 11 failed.")
+                    fail = await _run_ni_phase(
+                        10, 11, "Document Upload",
+                        lambda: fill_document_upload_section(
+                            page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay
+                        ),
+                    )
+                    if fail is not None:
+                        return fail
 
                     # Phase 12: Survey Fee Bill
-                    self.step_cb(11, steps[11])
-                    self.log.phase_banner(12, total_steps, "Survey Fee Bill")
-                    if not await fill_survey_fee_bill(
-                        page,
-                        claim,
-                        log=self.log,
-                        stop_cb=self._check_stop,
-                        field_delay_ms=field_delay,
-                    ):
-                        return AutomationRunResult(False, "Phase 12 failed.")
+                    fail = await _run_ni_phase(
+                        11, 12, "Survey Fee Bill",
+                        lambda: fill_survey_fee_bill(
+                            page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay
+                        ),
+                    )
+                    if fail is not None:
+                        return fail
 
                     self.log.section_done(
                         "Total New India Workflow", show_duration=True
                     )
+                    self.log.write_run_summary("Completed", "All New India steps finished.")
                     await self._wait_for_manual_review(browser)
                     return AutomationRunResult(True, "New India phases complete.")
 
@@ -1484,6 +1538,8 @@ class AutomationEngine:
                 return AutomationRunResult(True, "Automation finished.")
 
             except asyncio.CancelledError:
+                if self.portal_id == "newindia":
+                    self.log.write_run_summary("Stopped by User", "Automation stopped by user.")
                 if review_recovery is not None:
                     return AutomationRunResult(
                         False, f"{review_recovery.portal_name} automation stopped. Chrome is available for review."
@@ -1491,6 +1547,24 @@ class AutomationEngine:
                 self.log.error("Automation cancelled.")
                 return AutomationRunResult(False, "Automation cancelled.")
             except Exception as exc:
+                if self.portal_id == "newindia":
+                    from app.portals.newindia.automation.logging_utils import (
+                        capture_newindia_screenshot,
+                        newindia_operator_reason,
+                    )
+
+                    friendly = newindia_operator_reason(
+                        str(exc), "An unexpected error stopped automation. Check Chrome."
+                    )
+                    self.log.exception(f"Step '{self.log.section}' failed", exc)
+                    await capture_newindia_screenshot(
+                        page, self.log.section or "error", self.log, reason=friendly, claim_no=claim.claim_no
+                    )
+                    self.log.record_step_result(self.log.section or "Automation", False, reason=friendly)
+                    self.log.write_run_summary("Failed", friendly)
+                    return AutomationRunResult(
+                        False, f"Step '{self.log.section}' failed: {friendly}"
+                    )
                 if self._oic_recovery is None:
                     self.log.exception("Automation failed", exc)
                     return AutomationRunResult(False, f"Automation failed: {exc}")

@@ -138,6 +138,31 @@ class NewIndiaRecovery(OperatorRecovery):
     def record_field_issue(self, log, label, reason, *, matches=None, manual_value=None, identity=None):
         section = getattr(log, "_section", None) or ""
         self.field_issues[section, label] = _FieldIssue(section, label, reason, matches, manual_value, identity)
+        if hasattr(log, "field_failed"):
+            log.field_failed(label, reason)
+
+    async def pause(
+        self, page, log, action, reason, *, ready=None, instruction=None, describe=None, section=None, stop_only=False,
+        confirmation_button="", require_original=False, field_ready=None,
+    ):
+        from app.portals.newindia.automation.logging_utils import capture_newindia_screenshot
+
+        sec_name = section or getattr(log, "_section", None) or "New India"
+        summary_reason = " | ".join(line.strip() for line in str(reason or "").splitlines() if line.strip())
+        if hasattr(log, "warning"):
+            log.warning(f"Paused at '{sec_name}' ({action}) — {summary_reason[:220]}")
+        await capture_newindia_screenshot(
+            page, f"paused_{sec_name}", log, reason=action, claim_no=self.claim_number or ""
+        )
+        result = await super().pause(
+            page, log, action, reason,
+            ready=ready, instruction=instruction, describe=describe, section=section,
+            stop_only=stop_only, confirmation_button=confirmation_button,
+            require_original=require_original, field_ready=field_ready,
+        )
+        if result and not self.stopped() and hasattr(log, "info"):
+            log.info(f"Resumed automation after '{sec_name}'.")
+        return result
 
     def clear_field_issue(self, log, label):
         self.field_issues.pop((getattr(log, "_section", None) or "", label), None)

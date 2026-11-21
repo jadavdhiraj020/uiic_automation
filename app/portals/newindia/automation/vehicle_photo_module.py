@@ -128,25 +128,20 @@ async def fill_vehicle_photo_graph(
 ) -> bool:
     if isinstance(log, AutomationLogger):
         log._section = "Vehicle Photo Graph"
-        log.info("Starting Vehicle Photo Graph phase...")
         log.indent()
     elif log:
-        log(f"Starting Phase 4 — Vehicle Photo Graph")
+        log("Starting Vehicle Photo Graph")
 
     try:
         await page.wait_for_selector(
             'h4.headerClip:has-text("Vehicle Photo Graph")',
             state="visible", timeout=15000
         )
-        if isinstance(log, AutomationLogger):
-            log.info("Phase container located.")
-        else:
-            log("Section visible.")
     except Exception as e:
         if isinstance(log, AutomationLogger):
-            log.error(f"Vehicle Photo section not found: {str(e)[:100]}")
+            log.error("Vehicle Photo Graph section did not load", str(e)[:120])
         else:
-            log(f"Section not found: {e}")
+            log(f"Vehicle Photo Graph section did not load: {e}")
         return False
 
     await asyncio.sleep(0.8)
@@ -299,7 +294,7 @@ async def fill_vehicle_photo_graph(
         return advanced
 
     if isinstance(log, AutomationLogger):
-        log.wait("Submitting step (Next)...")
+        log.wait("Next step submission")
     else:
         log("Clicking Next button...")
         
@@ -317,18 +312,18 @@ async def fill_vehicle_photo_graph(
             log("  ✅ Next button clicked.")
     except Exception as e:
         if isinstance(log, AutomationLogger):
-            log.warning("Primary Next button not clickable; attempting JS fallback...")
+            log.info("Retrying Next button...")
         else:
-            log(f"  ⚠️ Next button not found via locator, falling back to JS click: {e}")
+            log(f"  ⚠️ Retrying Next button: {e}")
         try:
             await page.evaluate("document.getElementById('saveQuickUpdateNM').click()")
             if isinstance(log, AutomationLogger):
-                log.success("Next button clicked via JS.")
+                log.success("Next button clicked.")
             else:
-                log("  ✅ Next button clicked (JS fallback).")
+                log("  ✅ Next button clicked.")
         except Exception as e2:
             if isinstance(log, AutomationLogger):
-                log.error(f"Next submission failed: {str(e2)[:100]}")
+                log.error("Could not click Next button", str(e2)[:100])
             else:
                 log(f"  ❌ Next button click failed: {e2}")
             return False
@@ -338,7 +333,7 @@ async def fill_vehicle_photo_graph(
 
     # ── Wait for page to stabilise before handing off to Phase 5 ─────────────
     if isinstance(log, AutomationLogger):
-        log.wait("Waiting for page transition...")
+        log.wait("Additional Details tab to open")
     else:
         log("Waiting for page to stabilise after Next...")
         
