@@ -18,10 +18,12 @@ def additional_section(page, title):
     )
 
 
-def record_additional_issue(log, field, reason="App3 could not fill this field."):
+def record_additional_issue(
+    log, field, reason="App3 could not fill this field.", *, matches=None, manual_value=None, identity=None,
+):
     recovery = current_recovery.get()
     if recovery is not None:
-        recovery.record_field_issue(log, field, reason)
+        recovery.record_field_issue(log, field, reason, matches=matches, manual_value=manual_value, identity=identity)
     elif isinstance(log, AutomationLogger):
         log.field_failed(field, reason)
     elif log:
@@ -189,6 +191,13 @@ def _field_key(value, input_type=""):
     return text
 
 
+def _text_matches_field(state, value, *, numeric=False):
+    representation = "number" if numeric else state["type"]
+    expected = _field_key(value, representation)
+    return (_field_key(state["value"], representation) == expected
+            and (state["viewValue"] is None or _field_key(state["viewValue"], representation) == expected))
+
+
 async def _check_entry(page, target, label, value, script, kind, log, delay_ms, source,
                        radio_group=None, numeric=False):
     recovery = current_recovery.get()
@@ -206,10 +215,7 @@ async def _check_entry(page, target, label, value, script, kind, log, delay_ms, 
         if kind == "dropdown":
             return bool(state["value"] and (option_set and state["value"] == selected_value
                                            or state["option"].strip().casefold() == str(value).strip().casefold()))
-        representation = "number" if numeric else state["type"]
-        expected_key = _field_key(value, representation)
-        return (_field_key(state["value"], representation) == expected_key
-                and (state["viewValue"] is None or _field_key(state["viewValue"], representation) == expected_key))
+        return _text_matches_field(state, value, numeric=numeric)
 
     def log_verified():
         if recovery is not None:

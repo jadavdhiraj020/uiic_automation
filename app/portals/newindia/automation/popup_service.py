@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Optional, Union
 
 from playwright.async_api import Page
@@ -54,19 +55,19 @@ logger = logging.getLogger(__name__)
 
 # Detect any visible Angular-UI modal overlay and return metadata
 _JS_DETECT_POPUP = r"""
-() => {
+fullBody => {
     // Angular-UI Bootstrap modal (primary NIA pattern)
     const modal = document.querySelector(
         '.modal.in, .modal[style*="display: block"], .modal[style*="display:block"]'
     );
     if (modal) {
         const header = modal.querySelector('.modal-header, .modal-title');
-        const body   = modal.querySelector('.modal-body');
+        const body   = modal.querySelector('.modal-body')?.innerText.trim() || '';
         return {
             found: true,
             type:  'modal',
             title: header ? header.innerText.trim() : '',
-            body:  body   ? body.innerText.trim().substring(0, 200) : ''
+            body:  fullBody ? body : body.substring(0, 200)
         };
     }
     // SweetAlert / custom overlay (rare but possible)
@@ -142,6 +143,24 @@ _JS_DISMISS_POPUP = r"""
 """
 
 
+_JS_CLOSE_CONFIRMED_POPUP = r"""
+body => {
+    const dialogs = document.querySelectorAll(
+        '.modal.in, .modal[style*="display: block"], .modal[style*="display:block"]'
+    );
+    const dialog = [...dialogs].find(el => el.getClientRects().length &&
+        el.querySelector('.modal-body')?.innerText.trim() === body);
+    const buttons = dialog ? [...dialog.querySelectorAll('button')].filter(btn =>
+        !btn.disabled && btn.getClientRects().length) : [];
+    const closeButton = buttons.find(btn => /^(?:ok|okay|close|continue)$/i.test(btn.innerText.trim())) ||
+        buttons.find(btn => btn.matches('button.close, button[data-ng-click*="coverChangeObj.cancel"], button[ng-click*="coverChangeObj.cancel"]'));
+    if (!closeButton) return { ok: false };
+    closeButton.click();
+    return { ok: true, via: 'confirmedDialog' };
+}
+"""
+
+
 # ── Popup tag classification ───────────────────────────────────────────────────
 
 def _classify_popup(body: str) -> str:
@@ -173,6 +192,17 @@ def _log_msg(log, level: str, msg: str) -> None:
         log(f"  {prefix} {msg}")
 
 
+def _log_open_popup(log, context, popup):
+    text = " ".join((popup.get("body") or popup.get("title") or "").split())
+    if re.search(
+        r"[@\\]|\b(?:password|credentials?|token|otp|account|policy|claim no|claim number|pan|aadhaar|"
+        r"insured|customer|address|mobile|email)\b|\d{4}", text, re.I,
+    ):
+        text = ""
+    message = f"Left a New India message open{context}. Check Chrome."
+    _log_msg(log, "info", f"{message} Portal message: {text[:140]}" if text else message)
+
+
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 async def dismiss_portal_popup(
@@ -183,6 +213,8 @@ async def dismiss_portal_popup(
     classify: bool = False,
     context: str = "",
     verify_closed: bool = True,
+    expected_message: Optional[re.Pattern[str]] = None,
+    success_message: Optional[re.Pattern[str]] = None,
 ) -> Union[str, bool]:
     """
     Poll for and dismiss any visible NIA portal modal.
@@ -202,6 +234,8 @@ async def dismiss_portal_popup(
     context     : Optional label for log messages e.g. "after Upload click".
     verify_closed : If True, verify the popup is gone after dismissal and
                     retry once if it is still visible. Default True.
+    expected_message : If set, only dismiss a dialog whose body matches this pattern.
+    success_message : If set, require this positive confirmation before returning 'success'.
 
     Returns
     -------
@@ -219,7 +253,7 @@ async def dismiss_portal_popup(
         elapsed += poll_interval
 
         try:
-            popup_info: dict = await page.evaluate(_JS_DETECT_POPUP)
+            popup_info: dict = await page.evaluate(_JS_DETECT_POPUP, bool(expected_message or success_message))
         except Exception as exc:
             logger.debug("Popup detection error%s: %s", ctx, str(exc)[:80])
             continue
@@ -231,7 +265,15 @@ async def dismiss_portal_popup(
         ptype = popup_info.get("type", "modal")
         title = popup_info.get("title", "")
         body  = popup_info.get("body", "")
+        if expected_message is not None and not expected_message.search(body):
+            _log_open_popup(log, ctx, popup_info)
+            return None if classify else False
         tag   = _classify_popup(body) if body else "other"
+        if success_message is not None:
+            if success_message.search(body):
+                tag = "success"
+            elif tag == "success":
+                tag = "other"
 
         display_body = (body or title or "Notification shown").replace("\n", " ").strip()[:140]
         if tag in ("size_error", "duplicate_error"):
@@ -245,7 +287,10 @@ async def dismiss_portal_popup(
         try:
             from app.web_sync.submission import capture_before_dismiss
             await capture_before_dismiss(page)
-            dismiss_res: dict = await page.evaluate(_JS_DISMISS_POPUP)
+            if expected_message is None:
+                dismiss_res = await page.evaluate(_JS_DISMISS_POPUP)
+            else:
+                dismiss_res = await page.evaluate(_JS_CLOSE_CONFIRMED_POPUP, body)
         except Exception as exc:
             _log_msg(log, "warning", f"Could not close portal popup{ctx}. Check Chrome.")
             logger.debug("Popup dismissal JS error%s: %s", ctx, str(exc)[:120])
@@ -265,11 +310,17 @@ async def dismiss_portal_popup(
         if verify_closed:
             await asyncio.sleep(0.8)  # let Angular animate the modal out
             try:
-                still_open: dict = await page.evaluate(_JS_DETECT_POPUP)
+                still_open: dict = await page.evaluate(_JS_DETECT_POPUP, expected_message is not None)
                 if still_open.get("found"):
+                    if expected_message is not None and still_open.get("body") != body:
+                        _log_open_popup(log, ctx, still_open)
+                        return tag if classify else True
                     _log_msg(log, "warning", f"Portal popup still open{ctx} — retrying...")
                     await capture_before_dismiss(page)
-                    await page.evaluate(_JS_DISMISS_POPUP)
+                    if expected_message is None:
+                        await page.evaluate(_JS_DISMISS_POPUP)
+                    else:
+                        await page.evaluate(_JS_CLOSE_CONFIRMED_POPUP, body)
                     await asyncio.sleep(0.8)
                     # Check again
                     final_check: dict = await page.evaluate(_JS_DETECT_POPUP)

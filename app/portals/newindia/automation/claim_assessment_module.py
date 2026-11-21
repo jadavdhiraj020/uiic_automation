@@ -1,818 +1,446 @@
-import asyncio
+"""Fill the active New India Claim Assessment page, then review it at Next."""
+
+import os
 import re
+from contextlib import suppress
+
 from playwright.async_api import Page
+
+from app.automation.automation_logger import AutomationLogger
 from app.data.data_model import ClaimData
+from app.portals.newindia.automation.popup_service import dismiss_portal_popup
+from app.portals.newindia.automation.recovery import _BLOCKING_DIALOGS, _TAB_STATE, current_recovery
 from app.portals.newindia.automation.ui_utils import (
+    _JS_FIELD_STATE,
+    _text_matches_field,
     fill_input_with_delay,
+    open_additional_section,
+    record_additional_issue as record_review_issue,
     select_dropdown_with_delay,
     upload_file_via_input,
 )
-from app.portals.newindia.automation.popup_service import dismiss_portal_popup
-from app.portals.newindia.automation.recovery import current_recovery
 from app.portals.newindia.field_values import parse_amount, reinspection_document, workshop_gst_registered
-from app.automation.automation_logger import AutomationLogger
+from app.portals.oic.automation.recovery import wait_until_ready
 from app.utils import load_automation_defaults
 
 
-async def _fill_delivery_order_fields(page, data, log, field_delay_ms):
-    fields = [
-        ("Delivery Order Date", data.delivery_order_date),
-        ("Delivery Order Time", data.delivery_order_time),
-    ]
-    if not any(value for _, value in fields):
-        return
+_TAB = 'form[name="workListForm"] .tab-pane.active'
+_NEXT_BUTTON = (
+    'button[data-ng-click*=".docUploadCall("], button[ng-click*=".docUploadCall("], '
+    'button#saveClaimAssesment[data-ng-click*=".saveAssesment("], '
+    'button#saveClaimAssesment[ng-click*=".saveAssesment("]'
+)
+_NEXT = f"{_TAB} :is({_NEXT_BUTTON})"
+_SAVE_CONFIRMED = re.compile(
+    r"^\s*claim\s+(?:job\s+details|assessment(?:\s+details)?)\s+"
+    r"(?:(?:have|has)\s+been\s+)?"
+    r"(?:updated\s+successfully|saved\s+successfully|successfully\s+(?:updated|saved))[.!]?"
+    r"(?:\s+(?:you\s+(?:may|can)\s+(?:now\s+)?(?:proceed|continue)"
+    r"(?:\s+to\s+(?:(?:the\s+)?next\s+(?:page|step)|document\s+upload))?|"
+    r"(?:please\s+)?click\s+(?:ok|close)\s+to\s+(?:continue|proceed))[.!]?)?\s*$",
+    re.I,
+)
+_WORKBOOK_IMPORTED = re.compile(
+    r"\A\s*(?![\s\S]*\b(?:not|cannot|unable|failed|failure|invalid|error|rejected|unsuccessful|"
+    r"duplicate|too\s+large|exceeds?)\b)"
+    r"(?:(?:the\s+)?(?:(?:primary|supplementary)\s+)?"
+    r"(?:assessment(?:\s+excel)?(?:\s+(?:file|workbook))?|excel(?:\s+(?:file|sheet|workbook))?|"
+    r"file|workbook|spreadsheet|data)\s+(?:(?:has|have)\s+been\s+|(?:was|were)\s+)?)?"
+    r"(?:successfully\s+(?:uploaded|imported)|(?:uploaded|imported)\s+successfully|"
+    r"(?:upload|import)\s+(?:was\s+)?(?:successful|completed\s+successfully))\b",
+    re.I,
+)
+_PAYMENT_INVOICE = 'select[data-ng-model$=".isPaymentInvoice"], select#PaymentInvoiceName'
+_FORM_READY = f"{_TAB} :is({_PAYMENT_INVOICE}, {_NEXT_BUTTON}):visible"
+_FORM_LOAD_TIMEOUT = 10
+_PRIMARY_ESTIMATE = 'select[name^="Is there any primary estimate"]'
 
-    form = page.locator('ng-form[name="deliveryOrderDocForm"]')
-    if not await form.count():
-        return
-    heading = page.locator("a.accordion-toggle:visible").filter(has_text="Delivery Order Details")
-    if not await form.is_visible() and await heading.count() == 1:
-        try:
-            await heading.click(timeout=3000)
-            await form.wait_for(state="visible", timeout=3000)
-        except Exception:
-            # The page checkpoint also checks required inputs in closed accordions.
-            pass
-    for label, value in fields:
-        selector = f'input[name="{label}"]:not(:disabled):not([readonly])'
-        if value and await form.locator(selector).count():
-            await fill_input_with_delay(page, selector, value, label, log, field_delay_ms, source="Excel")
+# Use the repeater to distinguish primary and supplementary rows on the same page.
+_ASSESSMENT_ROWS = r"""
+(root, [listName, fileId]) => {
+    const table = 'table[id="myTable"]';
+    const fileInputs = root.querySelectorAll('input[id="' + fileId + '"]');
+    let scope = root;
+    if (fileInputs.length > 1) {
+        // The workbook belongs to the first invoice. Ignore rows from other invoices.
+        for (let node = fileInputs[0].parentElement; node !== root; node = node.parentElement) {
+            if (node.contains(fileInputs[1])) return [];
+            if (node.querySelector(table)) {
+                scope = node;
+                break;
+            }
+        }
+        if (scope === root) return [];
+    }
+    return [...scope.querySelectorAll(table + ' tbody tr')].flatMap(row => {
+        const repeat = row.getAttribute('data-ng-repeat') || row.getAttribute('ng-repeat') || '';
+        if (!repeat.split(/\W+/).includes(listName)) return [];
+        const name = row.querySelector('input[data-ng-model*="partName" i], input[name^="Part Name" i]');
+        if (!name?.value.trim()) return [];
+        return [[...row.querySelectorAll('input:not([type=hidden]), select')].map(el => el.value)];
+    });
+}
+"""
 
 
-async def _visible_invalid_required_fields(page: Page, limit: int = 8) -> list[str]:
-    """Return visible Angular required fields that may block Claim Assessment save."""
-    try:
-        return await page.evaluate(
-            """
-            (limit) => Array.from(document.querySelectorAll(
-                '.ng-invalid-required[name], [required].ng-invalid[name]'
-            ))
-            .filter((el) => {
-                const style = window.getComputedStyle(el);
-                return style.display !== 'none'
-                    && style.visibility !== 'hidden'
-                    && el.getClientRects().length > 0;
-            })
-            .map((el) => el.getAttribute('name') || el.id || el.getAttribute('data-ng-model') || el.tagName)
-            .filter(Boolean)
-            .slice(0, limit)
-            """,
-            limit,
+def _in_assessment(selector):
+    return f"{_TAB} :is({selector})"
+
+
+async def _review_failed_field(log, label, target, value, *, dropdown=False, numeric=False):
+    async def read_field():
+        if await target.count() != 1:
+            return None
+        return await target.evaluate(_JS_FIELD_STATE, timeout=1000)
+
+    original = None
+    with suppress(Exception):
+        original = await read_field()
+
+    def matches_value(state):
+        if not state or not state["valid"]:
+            return False
+        if dropdown:
+            return bool(state["value"] and state["option"].strip().casefold() == str(value).strip().casefold())
+        return _text_matches_field(state, value, numeric=numeric)
+
+    async def matches():
+        return matches_value(await read_field())
+
+    async def manual_value():
+        state = await read_field()
+        return matches_value(state) or bool(
+            state and state["valid"] and state["value"].strip()
+            and (original is None or state["value"] != original["value"])
+            and (dropdown or _text_matches_field(state, state["value"], numeric=numeric))
         )
-    except Exception:
-        return []
 
-
-async def _document_upload_ready(page: Page, timeout_ms: int = 5000) -> bool:
-    """
-    Detect whether the portal has reached the Document Upload tab.
-
-    Uses a tiered selector list: fast checks first (elements that appear as
-    soon as the tab loads, before accordions are expanded), then progressively
-    deeper ones. Each selector gets at most `timeout_ms` on the first try;
-    subsequent selectors use a much shorter 800ms to fail-fast.
-    """
-    # Tier 1: Elements visible immediately when the Document Upload tab loads
-    # (these exist in the DOM and are visible WITHOUT needing accordion expansion)
-    fast_selectors = [
-        'button[data-ng-click*="uploadFileNonTieUp"]',  # Upload button (always rendered)
-        'span.fa-plus-circle[data-ng-click*="addRow"]',  # + Add Row button
-        'ng-form[name="mandatoryDocForm"]',              # mandatory form wrapper
-    ]
-    # Tier 2: Deeper elements that may need accordion to be open
-    deep_selectors = [
-        'select[id^="docType"]',
-        'input[type="file"][id^="chooseFile"]',
-        'input[type="file"][id^="mandatoryFiles"]',
-    ]
-
-    first = True
-    for selector in fast_selectors + deep_selectors:
-        try:
-            await page.wait_for_selector(
-                selector,
-                state="attached",  # 'attached' is faster than 'visible' for hidden accordions
-                timeout=timeout_ms if first else 800,
-            )
-            return True
-        except Exception:
-            pass
-        first = False
-    return False
-
-
-async def _click_claim_assessment_next(page: Page, log) -> bool:
-    """
-    Click the visible Claim Assessment Next button.
-
-    The portal may keep duplicate tab DOM in memory, so first-match selectors and
-    document.querySelector can target a hidden button. This helper explicitly
-    chooses a visible, enabled docUploadCall button before falling back to DOM JS.
-    """
-    selector = (
-        'button[data-ng-click="surveyorWorklistSurvey.docUploadCall()"], '
-        'button[ng-click="surveyorWorklistSurvey.docUploadCall()"], '
-        'button[data-ng-click*="docUploadCall"], '
-        'button[ng-click*="docUploadCall"]'
+    record_review_issue(
+        log, label, matches=matches, manual_value=manual_value,
+        identity=tuple(original["identity"]) if original else None,
     )
 
-    candidates = page.locator(selector).filter(has_text=re.compile(r"\bNext\b", re.IGNORECASE))
-    count = await candidates.count()
-    if count == 0:
-        candidates = page.locator(selector)
-        count = await candidates.count()
 
-    last_error = None
-    for idx in range(count):
-        btn = candidates.nth(idx)
-        try:
-            if not await btn.is_visible():
-                continue
-            await btn.scroll_into_view_if_needed()
-            await asyncio.sleep(0.5)
-            for _ in range(20):
-                if not await btn.is_disabled():
-                    break
-                await asyncio.sleep(0.25)
-            if await btn.is_disabled():
-                invalid = await _visible_invalid_required_fields(page)
-                if isinstance(log, AutomationLogger):
-                    log.warning(
-                        "Visible Claim Assessment Next button is disabled."
-                        + (f" Blocking required fields: {', '.join(invalid)}" if invalid else "")
-                    )
-                else:
-                    log(
-                        "   ⚠️ Visible Next button disabled."
-                        + (f" Blocking fields: {', '.join(invalid)}" if invalid else "")
-                    )
-                continue
-
-            try:
-                await btn.click(timeout=5000)
-            except Exception as click_error:
-                last_error = click_error
-                await btn.click(timeout=5000, force=True)
-            return True
-        except Exception as exc:
-            last_error = exc
-
-    # DOM fallback: only click a visible enabled button, not querySelector's first match.
+async def _fill_text(page, log, selector, label, value, delay_ms, *, source="Excel", numeric=False):
+    if value is None or str(value).strip() == "":
+        return
+    editable = f":is({selector}):not(:disabled):not([readonly])"
+    selector = _in_assessment(editable)
+    target = page.locator(f"{selector}:visible")
     try:
-        result = await page.evaluate(
-            """
-            () => {
-                const buttons = Array.from(document.querySelectorAll(
-                    'button[data-ng-click*="docUploadCall"], button[ng-click*="docUploadCall"]'
-                ));
-                const target = buttons.find((btn) => {
-                    const style = window.getComputedStyle(btn);
-                    const text = (btn.textContent || '').toLowerCase();
-                    return text.includes('next')
-                        && !btn.disabled
-                        && style.display !== 'none'
-                        && style.visibility !== 'hidden'
-                        && btn.getClientRects().length > 0;
-                });
-                if (!target) {
-                    return { ok: false, reason: 'no visible enabled docUploadCall button' };
-                }
-                target.scrollIntoView({ block: 'center', inline: 'center' });
-                target.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, view: window }));
-                target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
-                target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
-                target.click();
-                return { ok: true, text: target.textContent.trim() };
-            }
-            """
+        if await target.count():
+            await fill_input_with_delay(page, selector, str(value).strip(), label, log, delay_ms,
+                                        source=source, numeric=numeric)
+    except Exception:
+        await _review_failed_field(log, label, target, value, numeric=numeric)
+
+
+async def _select(page, log, selector, label, value, delay_ms, *, source, index=None):
+    selector = _in_assessment(selector)
+    try:
+        await select_dropdown_with_delay(page, selector, value, label, log, delay_ms, source=source, index=index)
+    except Exception:
+        target = page.locator(f"{selector}:visible")
+        if index is not None:
+            target = target.nth(index)
+        await _review_failed_field(log, label, target, value, dropdown=True)
+
+
+async def _fill_invoice_fields(page, data, log, defaults, delay_ms, stop_cb):
+    count = await page.locator(f"{_in_assessment(_PAYMENT_INVOICE)}:visible").count()
+    for index in range(count):
+        if stop_cb():
+            return
+        label = "Payment Invoice in NIA Name?"
+        if count > 1:
+            label = f"Invoice {index + 1} / {label}"
+        await _select(page, log, _PAYMENT_INVOICE, label, str(defaults.get("payment_invoice_in_company_name") or "Yes"),
+                      delay_ms, source="Default", index=index)
+
+    if stop_cb():
+        return
+    workshop = 'select[data-ng-model$=".isWorkshopGstRegistered"], select#isWorkshopGstRegistered'
+    if await page.locator(f"{_in_assessment(workshop)}:visible").count():
+        # One GST amount belongs to the first invoice.
+        await _select(page, log, workshop, "Whether the Workshop is GST Registered",
+                      workshop_gst_registered(data.workshop_gst_amount), delay_ms,
+                      source="Excel GST amount" if data.workshop_gst_amount else "GST amount absent", index=0)
+
+    for field, model, label in (
+        ("vendor_invoice_date", "vendorTaxInvoiceDate", "Vendor/Tax Invoice Date"),
+        ("vendor_invoice_number", "vendorTaxInvoiceNumber", "Vendor/Tax Invoice Number"),
+    ):
+        if stop_cb():
+            return
+        # The report supplies one invoice. The multiple-invoice form appends its zero-based index.
+        suffix = '[name$="0"]' if count > 1 else ""
+        await _fill_text(page, log, f'input[data-ng-model$=".{model}"]{suffix}',
+                         label, getattr(data, field), delay_ms)
+
+
+async def _fill_estimate(page, log, data, delay_ms, stop_cb, *, primary):
+    kind = "Primary" if primary else "Supplementary"
+    label = f"{kind} Assessment Excel"
+    name = "Is there any primary estimate" if primary else "Is there any supplementary estimate"
+    dropdown = _PRIMARY_ESTIMATE if primary else f'select[name^="{name}"]'
+    target = page.locator(f"{_in_assessment(dropdown)}:visible").first
+    if not await target.count():
+        return
+
+    path = data.assessment_files.get("assessment_excel" if primary else "estimate_excel", "")
+    expected = "Yes" if primary or path else "No"
+    await _select(page, log, dropdown, name, expected, delay_ms, source="Calculated", index=0)
+    if stop_cb() or expected == "No":
+        return
+
+    try:
+        choice = await target.input_value(timeout=1500)
+    except Exception:
+        # The dropdown attempt already records a missing control.
+        return
+    if choice.rsplit(":", 1)[-1].casefold() not in {"yes", "y"}:
+        return
+
+    list_name = "addList" if primary else "addListSup"
+    file_id = "chooseFilePrim" if primary else "chooseFileSup"
+    active_tab = page.locator(_TAB)
+
+    async def imported_rows():
+        return await active_tab.evaluate(_ASSESSMENT_ROWS, [list_name, file_id], timeout=1000)
+
+    async def rows_present():
+        return bool(await imported_rows())
+
+    previous_rows = None
+
+    async def rows_changed():
+        rows = await imported_rows()
+        return bool(rows and previous_rows is not None and rows != previous_rows)
+
+    recheck = rows_changed
+    try:
+        if not path:
+            if not await rows_present():
+                reason = ("App3 could not prepare the workbook from the survey PDF."
+                          if getattr(data, "_newindia_pdf_assessment_error", "")
+                          else "The claim folder has no Primary Assessment workbook.")
+                record_review_issue(log, label, reason, matches=rows_present)
+            return
+
+        previous_rows = await imported_rows()
+        if isinstance(log, AutomationLogger):
+            log.upload_start(label, os.path.basename(path))
+        if not await upload_file_via_input(page, _in_assessment(f"input#{file_id}"), path, label, log):
+            record_review_issue(log, label, "App3 could not attach the workbook.", matches=rows_changed)
+            return
+        if stop_cb():
+            return
+
+        method = "readExcel" if primary else "readExcelSup"
+        button = _in_assessment(f'button[data-ng-click*="{method}("], button[ng-click*="{method}("]')
+        await page.locator(f"{button}:visible").first.click(timeout=5000)
+        outcome = await dismiss_portal_popup(
+            page, log, max_wait_s=8.0, classify=True, context=label, success_message=_WORKBOOK_IMPORTED,
         )
-        if result.get("ok"):
-            return True
-        if isinstance(log, AutomationLogger):
-            log.warning(f"JS Next fallback did not find clickable button: {result.get('reason')}")
+        if stop_cb():
+            return
+
+        if outcome == "size_error":
+            reason = "New India rejected the workbook size."
+        elif outcome == "duplicate_error":
+            reason = "New India reported a duplicate workbook."
         else:
-            log(f"   ⚠️ JS Next fallback did not find clickable button: {result.get('reason')}")
-    except Exception as exc:
-        last_error = exc
-
-    if isinstance(log, AutomationLogger):
-        log.error(f"Could not click visible Claim Assessment Next button: {str(last_error)[:140]}")
-    else:
-        log(f"   ❌ Could not click visible Claim Assessment Next button: {last_error}")
-    return False
-
-async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_cb, field_delay_ms: int = 600) -> bool:
-    if stop_cb(): return False
-
-    _using_structured_log = isinstance(log, AutomationLogger)
-    if _using_structured_log:
-        log._section = "Claim Assessment Details"
-        log.info("Starting Claim Assessment Details phase...")
-        log.indent()
-    else:
-        log(f"Opening Claim Assessment Details section...")
-
-    # try/finally guarantees log.outdent() always fires (prevents indentation drift
-    # if any stop_cb() or navigation failure causes an early return)
-    _result = False
-    try:
-        _result = await _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_delay_ms)
-    finally:
-        if _using_structured_log:
-            log.outdent()  # outdent Section (whichever was open)
-            log.outdent()  # outdent main module
-    return _result
-
-
-async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_delay_ms):
-    """Inner body of fill_claim_assessment_details — called via try/finally wrapper."""
-
-    defaults = load_automation_defaults(portal_id=getattr(data, "portal_id", "newindia"))
-
-    # 0. Handle Alert Popup (if any)
-    await dismiss_portal_popup(page, log, max_wait_s=3.0, context="Claim Assessment Start")
-
-    if stop_cb(): return False
-
-    # Wait for the main panel to be visible to ensure page loaded
-    try:
-        await page.wait_for_selector('select[data-ng-model*="isPaymentInvoice"]', state="visible", timeout=10000)
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.warning(f"Form load timeout: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Claim Assessment form not found or timed out: {e}")
-
-    if stop_cb(): return False
-
-    # 1. Whether Payment invoice is in the name of NIA (Yes/No)
-    # Behavior: use configured invoice-name default
-    try:
-        sel = 'select[data-ng-model*="isPaymentInvoice"]'
-        invoice_in_company = str(defaults.get("payment_invoice_in_company_name") or "Yes")
-        count = await page.locator(f"{sel}:visible").count()
-        for index in range(max(1, count)):
-            label = "Payment Invoice in NIA Name?"
-            if count > 1:
-                label = f"Invoice {index + 1} / {label}"
-            await select_dropdown_with_delay(
-                page, sel, invoice_in_company, label, log, field_delay_ms, source="Default", index=index,
-            )
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Payment Invoice dropdown error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error selecting Payment Invoice in NIA Name: {e}")
-
-    if stop_cb(): return False
-
-    # A single Excel GST amount describes the first invoice only.
-    workshop_gst = 'select[data-ng-model$=".isWorkshopGstRegistered"]'
-    if await page.locator(f"{workshop_gst}:visible").count():
-        await select_dropdown_with_delay(
-            page, workshop_gst, workshop_gst_registered(data.workshop_gst_amount),
-            "Whether the Workshop is GST Registered", log, field_delay_ms,
-            source="Excel GST amount" if data.workshop_gst_amount else "GST amount absent", index=0,
-        )
-
-    # 2. Is GST Applicable
-    # Behavior: READONLY, safely skip
-    if isinstance(log, AutomationLogger):
-        log.info("Skipping 'Is GST Applicable' (Readonly).")
-    else:
-        log(f"   ℹ️ Skipping 'Is GST Applicable' (Readonly field).")
-
-    if stop_cb(): return False
-
-    # 3. Vendor/Tax Invoice Date
-    try:
-        val = getattr(data, 'vendor_invoice_date', '') or ''
-        if val:
-            val = str(val).strip()
-            sel = 'input[data-ng-model*="vendorTaxInvoiceDate"]'
-            await fill_input_with_delay(page, sel, val, "Invoice Date", log, field_delay_ms, source="Excel")
-        else:
-            if isinstance(log, AutomationLogger):
-                log.field_skipped("Invoice Date", reason="Missing from Excel")
-            else:
-                log(f"   ⚠️ Vendor/Tax Invoice Date missing (Not extracted from PDF).")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Invoice Date field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling Vendor/Tax Invoice Date: {e}")
-
-    if stop_cb(): return False
-
-    # 4. Vendor/Tax Invoice Number
-    try:
-        val = getattr(data, 'vendor_invoice_number', '') or ''
-        if val:
-            val = str(val).strip()
-            sel = 'input[data-ng-model*="vendorTaxInvoiceNumber"]'
-            await fill_input_with_delay(page, sel, val, "Invoice Number", log, field_delay_ms, source="Excel")
-        else:
-            if isinstance(log, AutomationLogger):
-                log.field_skipped("Invoice Number", reason="Missing from Excel")
-            else:
-                log(f"   ⚠️ Vendor/Tax Invoice Number missing (Not extracted from PDF).")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Invoice Number field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling Vendor/Tax Invoice Number: {e}")
-
-    if stop_cb(): return False
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # SECTION 1 — PRIMARY ASSESSMENT
-    # ══════════════════════════════════════════════════════════════════════════
-    if isinstance(log, AutomationLogger):
-        log._section = "Primary Assessment"
-        log.info("Section 1: Primary Assessment")
-        log.indent()
-    else:
-        log("")
-        log(f"   ── Section 1: Primary Assessment ──")
-
-    # Field 1: Primary Assessment dropdown → ALWAYS "Yes"
-    try:
-        sel = 'select[name="Is there any primary estimate"]'
-        await select_dropdown_with_delay(page, sel, "Yes", "Primary Assessment", log, field_delay_ms, source="Calculated")
-        await asyncio.sleep(1.5)  # Wait for conditional sections to appear
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Primary Assessment dropdown error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error selecting Primary Assessment: {e}")
-
-    if stop_cb(): return False
-
-    # Field 2: Attach Assessment Excel
-    assessment_path = data.assessment_files.get("assessment_excel", "")
-    if assessment_path:
-        import os
-        if isinstance(log, AutomationLogger):
-            log.upload_start("Assessment Excel", os.path.basename(assessment_path))
-        await upload_file_via_input(
-            page,
-            file_input_selector='input#chooseFilePrim',
-            file_path=assessment_path,
-            label="Assessment Excel",
-            log=log,
-        )
-        try:
-            upload_btn = page.locator('button[data-ng-click*="readExcel(invoiceIndex)"], button[name="uploadSupAss0"]').first
-            await upload_btn.wait_for(state="visible", timeout=5000)
-            if isinstance(log, AutomationLogger):
-                log.info("Clicking Primary Assessment Excel Upload button...")
-            else:
-                log("   ℹ️ Clicking Primary Assessment Excel Upload button...")
-            await upload_btn.click()
-            # Wait for upload modal to appear and dismiss it (wait up to 8.0 seconds for slower server response)
-            await dismiss_portal_popup(page, log, max_wait_s=8.0, context="Assessment Excel")
-            await asyncio.sleep(0.5)
-            
-            if isinstance(log, AutomationLogger):
-                log.success("Primary Assessment Excel Uploaded successfully.")
-            else:
-                log("   ✅ Primary Assessment Excel Uploaded successfully.")
-        except Exception as ue:
-            if isinstance(log, AutomationLogger):
-                log.error(f"Primary Assessment Excel upload failed: {str(ue)[:100]}")
-            else:
-                log(f"   ⚠️ Primary Assessment Excel upload failed: {str(ue)[:100]}")
-    else:
-        if isinstance(log, AutomationLogger):
-            log.field_skipped("Assessment Excel", reason="File not found in folder scan")
-        else:
-            log(f"   ⚠️ No assessment Excel file found in folder (expected: assessment.xlsx / primary_assessment.xlsx).")
-        recovery = current_recovery.get()
-        if (
-            recovery is not None
-            and str(getattr(data, "source_report_path", "") or "").lower().endswith(".pdf")
-            and getattr(data, "_newindia_pdf_assessment_error", "")
-        ):
-            async def assessment_uploaded():
-                try:
-                    file_val = await page.locator("input#chooseFilePrim").input_value()
-                    return bool(str(file_val or "").strip())
-                except Exception:
-                    return False
-
-            recovery.record_field_issue(
-                log,
-                "Assessment Excel",
-                f"Primary Assessment Excel was not auto-generated from the PDF ({data._newindia_pdf_assessment_error}). "
-                "Attach and upload it in Chrome if needed, then click Next.",
-                matches=assessment_uploaded,
-                manual_value=assessment_uploaded,
-                identity=("chooseFilePrim", "chooseFilePrim"),
-            )
-
-    if stop_cb(): return False
-
-    if isinstance(log, AutomationLogger):
-        log.outdent()
-        log._section = "Supplementary Assessment"
-        log.info("Section 2: Supplementary Assessment")
-        log.indent()
-    else:
-        log("")
-        log(f"   ── Section 2: Supplementary Assessment ──")
-
-    has_estimate = bool(data.assessment_files.get("estimate_excel", ""))
-    supp_value = "Yes" if has_estimate else "No"
-
-    try:
-        sel = 'select[name*="Is there any supplementary estimate"]'
-        await select_dropdown_with_delay(page, sel, supp_value, "Supplementary Estimate", log, field_delay_ms, source="Calculated")
-        await asyncio.sleep(1.5)
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Supplementary dropdown error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error selecting Supplementary Estimate: {e}")
-
-    if stop_cb(): return False
-
-    if supp_value == "Yes":
-        # Attach Supplementary Estimate Excel
-        estimate_path = data.assessment_files.get("estimate_excel", "")
-        if estimate_path:
-            import os
-            if isinstance(log, AutomationLogger):
-                log.upload_start("Supp Estimate Excel", os.path.basename(estimate_path))
-            await upload_file_via_input(
-                page,
-                file_input_selector='input#chooseFileSup',
-                file_path=estimate_path,
-                label="Supp Estimate Excel",
-                log=log,
-            )
-            try:
-                upload_btn = page.locator('button[data-ng-click*="readExcelSup(invoiceIndex)"]').first
-                await upload_btn.wait_for(state="visible", timeout=5000)
+            if outcome == "success":
+                # A confirmed re-import can leave the existing rows identical.
+                recheck = rows_present
+            if await wait_until_ready(recheck, seconds=5, stopped=stop_cb):
                 if isinstance(log, AutomationLogger):
-                    log.info("Clicking Supp Assessment Excel Upload button...")
-                else:
-                    log("   ℹ️ Clicking Supp Assessment Excel Upload button...")
-                await upload_btn.click()
-                # Wait for upload modal to appear and dismiss it (wait up to 8.0 seconds for slower server response)
-                await dismiss_portal_popup(page, log, max_wait_s=8.0, context="Supp Excel")
-                await asyncio.sleep(0.5)
-                
-                if isinstance(log, AutomationLogger):
-                    log.success("Supp Assessment Excel Uploaded successfully.")
-                else:
-                    log("   ✅ Supp Assessment Excel Uploaded successfully.")
-            except Exception as ue:
-                if isinstance(log, AutomationLogger):
-                    log.error(f"Supp Assessment Excel upload failed: {str(ue)[:100]}")
-                else:
-                    log(f"   ⚠️ Supp Assessment Excel upload failed: {str(ue)[:100]}")
-        else:
-            if isinstance(log, AutomationLogger):
-                log.field_skipped("Supp Estimate Excel", reason="Estimate Excel missing for supplementary phase")
-            else:
-                log(f"   ⚠️ Supplementary Estimate set to Yes but no estimate Excel found.")
+                    log.success(f"{label} imported into the assessment rows.")
+                return
+            reason = "New India did not confirm that the workbook populated the assessment rows."
+        if stop_cb():
+            return
+        if outcome in ("size_error", "duplicate_error"):
+            # Only a later operator correction clears an explicit rejection.
+            previous_rows = await imported_rows()
+        record_review_issue(log, label, reason, matches=recheck)
+    except Exception:
+        record_review_issue(log, label, "App3 could not complete the workbook import.", matches=recheck)
 
-        if stop_cb(): return False
 
-    else:
-        if isinstance(log, AutomationLogger):
-            log.info("Supplementary estimate skipped.")
-        else:
-            log(f"   ℹ️ Supplementary Estimate = No. Section complete.")
+async def _fill_delivery_order_fields(page, data, log, delay_ms, stop_cb):
+    values = (("Delivery Order Date", data.delivery_order_date), ("Delivery Order Time", data.delivery_order_time))
+    if not any(value for _, value in values):
+        return
+    order_form = 'ng-form[name="deliveryOrderDocForm"]'
+    if not await page.locator(_in_assessment(order_form)).is_visible() and not await open_additional_section(
+        page, "Delivery Order Details", log, optional=True,
+    ):
+        return
 
-    if stop_cb(): return False
+    for label, value in values:
+        if stop_cb():
+            return
+        await _fill_text(page, log, f'{order_form} input[name="{label}"]', label, value, delay_ms)
 
-    if isinstance(log, AutomationLogger):
-        log.outdent()
-        log._section = "Painting Charges"
-        log.info("Section 3: Painting Charges")
-        log.indent()
-    else:
-        log("")
-        log(f"   ── Section 3: Painting Charges ──")
 
-    # Labour Charges — READONLY, skip
-    if isinstance(log, AutomationLogger):
-        log.info("Skipping 'Labour Charges' (Readonly).")
-    else:
-        log(f"   ℹ️ Skipping 'Labour Charges' (Readonly field).")
+async def _review_part_wise_assessment(page, log):
+    # Maruti uses its part-wise editor and does not expose the Non-Tie-Up workbook import.
+    if await page.locator(f"{_in_assessment(_PRIMARY_ESTIMATE)}:visible").count():
+        return
+    editor = ('button#saveClaimAssesment[data-ng-click*=".saveDetailsMaruti("], '
+              'button#saveClaimAssesment[ng-click*=".saveDetailsMaruti("]')
+    if not await page.locator(f"{_in_assessment(editor)}:visible").count():
+        return
+    rows = page.locator(_in_assessment("table#example tbody tr")).filter(
+        has=page.locator('select[id="vItem"], input[data-ng-model*="approvalAmount" i]'),
+    )
 
-    # Paint Material Charges — READONLY, skip
-    if isinstance(log, AutomationLogger):
-        log.info("Skipping 'Paint Material Charges' (Readonly).")
-    else:
-        log(f"   ℹ️ Skipping 'Paint Material Charges' (Readonly field).")
+    async def rows_present():
+        return bool(await rows.count())
 
-    # Painting Work Details — Dropdown from ClaimData
-    try:
-        raw_val = str(getattr(data, 'painting_work_details', '') or '').strip()
-        if raw_val:
-            # Normalize: map Excel values to dropdown values
-            normalized = raw_val.lower()
-            if "break" in normalized or "labor" in normalized or "labour" in normalized:
-                dropdown_val = "Break-up"
-            elif "consol" in normalized:
-                dropdown_val = "Consolidated"
-            else:
-                dropdown_val = raw_val
-
-            if isinstance(log, AutomationLogger):
-                log.field_mapped("Painting Work Details", "Excel Painting Details", raw_val)
-
-            sel = 'select[name*="Painting work details"]'
-            await select_dropdown_with_delay(page, sel, dropdown_val, "Painting Work Details", log, field_delay_ms, source="Excel")
-            await asyncio.sleep(1.0)  # Wait for painting table to update
-        else:
-            if isinstance(log, AutomationLogger):
-                log.field_skipped("Painting Work Details", reason="Missing from Excel")
-            else:
-                log(f"   ⚠️ Painting Work Details not found in ClaimData. Skipping.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Painting details dropdown error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error selecting Painting Work Details: {e}")
-
-    if stop_cb(): return False
-
-    if isinstance(log, AutomationLogger):
-        log.outdent()
-        log._section = "Delivery Order Details"
-        log.info("Section 4: Delivery Order Details")
-        log.indent()
-    else:
-        log("")
-        log(f"   ── Section 4: Delivery Order Details ──")
-
-    await _fill_delivery_order_fields(page, data, log, field_delay_ms)
-
-    # Net Salvage — Optional
-    try:
-        val = str(getattr(data, 'net_salvage', '') or '').strip()
-        if val and val != "0":
-            sel = 'input#netSlavage'
-            await fill_input_with_delay(page, sel, val, "Net Salvage", log, field_delay_ms, source="Excel")
-        else:
-            if isinstance(log, AutomationLogger):
-                log.field_skipped("Net Salvage", reason="Missing from Excel" if not val else "Value is 0")
-            else:
-                log(f"   ℹ️ Net Salvage = 0 or empty. Skipping.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Net Salvage field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling Net Salvage: {e}")
-
-    if stop_cb(): return False
-
-    # Net Salvage to map with Invoice — READONLY, skip
-    if isinstance(log, AutomationLogger):
-        log.info("Skipping 'Net Salvage Map' (Readonly).")
-    else:
-        log(f"   ℹ️ Skipping 'Net Salvage to map with Invoice' (Readonly field).")
-
-    # Less Compulsory Excess — READONLY, skip
-    if isinstance(log, AutomationLogger):
-        log.info("Skipping 'Compulsory Excess' (Readonly).")
-    else:
-        log(f"   ℹ️ Skipping 'Less Compulsory Excess' (Readonly field).")
-
-    # Less Voluntary Excess — READONLY, skip
-    if isinstance(log, AutomationLogger):
-        log.info("Skipping 'Voluntary Excess' (Readonly).")
-    else:
-        log(f"   ℹ️ Skipping 'Less Voluntary Excess' (Readonly field).")
-
-    # Less Any Other Deductions — Optional
-    try:
-        val = str(getattr(data, 'less_other_deductions', '') or '').strip()
-        if val and val != "0":
-            sel = 'input#lessOtherDeductions'
-            await fill_input_with_delay(page, sel, val, "Other Deductions", log, field_delay_ms, source="Excel")
-        else:
-            if isinstance(log, AutomationLogger):
-                log.field_skipped("Other Deductions", reason="Missing from Excel" if not val else "Value is 0")
-            else:
-                log(f"   ℹ️ Less Any Other Deductions = 0 or empty. Skipping.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Other Deductions field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling Less Any Other Deductions: {e}")
-
-    if stop_cb(): return False
-
-    # Less Imposed Excess — READONLY, skip
-    if isinstance(log, AutomationLogger):
-        log.info("Skipping 'Imposed Excess' (Readonly).")
-    else:
-        log(f"   ℹ️ Skipping 'Less Imposed Excess' (Readonly field).")
-
-    # Towing Charges — Optional
-    try:
-        val = str(getattr(data, 'towing_additional_charges', '') or '').strip()
-        if val and val != "0":
-            sel = 'input#towingCharges'
-            await fill_input_with_delay(page, sel, val, "Towing Charges", log, field_delay_ms, source="Excel")
-        else:
-            if isinstance(log, AutomationLogger):
-                log.field_skipped("Towing Charges", reason="Missing from Excel" if not val else "Value is 0")
-            else:
-                log(f"   ℹ️ Towing Charges = 0 or empty. Skipping.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Towing field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling Towing Charges: {e}")
-
-    if stop_cb(): return False
-
-    # Additional Towing Charges — Optional (separate field)
-    try:
-        sel = 'input#additionalTowingCharges'
-        if await page.locator(f"{sel}:visible").count():
-            amount = parse_amount(str(defaults.get("additional_towing_charges") or "0"))
-            if amount is not None and amount >= 0:
-                await fill_input_with_delay(
-                    page, sel, format(amount, "f"), "Additional Towing Charges",
-                    log, field_delay_ms, source="Default", numeric=True,
-                )
-            else:
-                recovery = current_recovery.get()
-                if recovery is not None:
-                    recovery.record_field_issue(
-                        log, "Additional Towing Charges", "Automation Defaults needs a non-negative amount."
-                    )
-                elif isinstance(log, AutomationLogger):
-                    log.field_failed("Additional Towing Charges", "Automation Defaults needs a non-negative amount.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Addl Towing field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling Additional Towing Charges: {e}")
-
-    if stop_cb(): return False
-
-    # Whether Re-Inspection Required
-    try:
-        sel = 'select#whetherReinspectionRequired'
-        report = reinspection_document(data)
-        await select_dropdown_with_delay(
-            page, sel, "Yes" if report else "No", "Whether Re-Inspection Required?",
-            log, field_delay_ms, source=f"Folder scan ({report})" if report else "Folder scan",
-        )
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Re-Inspection dropdown error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error selecting Whether Re-Inspection Required: {e}")
-
-    if stop_cb(): return False
-
-    if isinstance(log, AutomationLogger):
-        log.outdent()
-        log._section = "Add-On Cover Wise Assessment"
-        log.info("Section 5: Add-On Cover Wise Assessment")
-        log.indent()
-    else:
-        log("")
-        log(f"   ── Section 5: Add-On Cover Wise Assessment ──")
-
-    # These are all optional — fill only if values exist and are non-zero
-    addon_fields = [
-        ("nil_depreciation_amount",  "input#nilDepreciationCover",  "Nil Dep Amount"),
-        ("engine_protect_amount",    "input#engineProtectCover",    "Engine Protect Amount"),
-        ("consumable_items_amount",  "input#consumableItemsCover",  "Consumable Items Amount"),
-        ("key_protect_amount",       "input#keyProtectCover",       "Key Protect Amount"),
-    ]
-
-    for attr_name, selector, label in addon_fields:
-        if stop_cb(): return False
-        try:
-            val = str(getattr(data, attr_name, '') or '').strip()
-            if val and val != "0":
-                try:
-                    el = page.locator(selector).first
-                    is_visible = await el.is_visible()
-                    if is_visible:
-                        await fill_input_with_delay(page, selector, val.strip(), label, log, field_delay_ms, source="Excel")
-                    else:
-                        if isinstance(log, AutomationLogger):
-                            log.field_skipped(label, reason="Field not visible on page (add-on not applicable)")
-                        else:
-                            log(f"   ℹ️ [{label}] field not visible on page (add-on not applicable). Skipping.")
-                except Exception:
-                    if isinstance(log, AutomationLogger):
-                        log.field_skipped(label, reason="Field not found on page")
-                    else:
-                        log(f"   ℹ️ [{label}] field not found on page. Skipping.")
-            else:
-                if isinstance(log, AutomationLogger):
-                    log.field_skipped(label, reason="Missing from Excel" if not val else "Value is 0")
-                else:
-                    log(f"   ℹ️ [{label}] = 0 or empty. Skipping.")
-        except Exception as e:
-            if isinstance(log, AutomationLogger):
-                log.error(f"Add-on {label} field error: {str(e)[:100]}")
-            else:
-                log(f"   ⚠️ Error filling {label}: {e}")
-
-    recommendations = "textarea#recommendations"
-    if await page.locator(f"{recommendations}:visible").count():
-        await fill_input_with_delay(
-            page, recommendations, str(defaults.get("recommendations") or "Approved"),
-            "Recommendations", log, field_delay_ms, source="Default",
+    if not await rows_present():
+        record_review_issue(
+            log, "Part-wise Assessment",
+            "New India shows no part-wise rows. Review or enter the assessment items in Chrome.",
+            matches=rows_present,
         )
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # STEP: Click "Next" button → dismiss the success popup → wait for page load
-    # ═══════════════════════════════════════════════════════════════════════════
-    if stop_cb(): return False
 
-    recovery = current_recovery.get()
-    if recovery is not None:
-        advanced = await recovery.advance_next(
-            page, log, 'button#saveClaimAssesment[data-ng-click*=".saveAssesment("], '
-            'button#saveClaimAssesment:not([data-ng-click]), '
-            'button[data-ng-click$=".docUploadCall()"]',
-            source="three", destination="four", title="Document Upload",
-            after_click=lambda: dismiss_portal_popup(page, log, max_wait_s=5.0, context="Assessment Next"),
-        )
-        if advanced and isinstance(log, AutomationLogger):
-            log.success("Claim Assessment Details phase completed.")
-        return advanced
+async def _fill_amounts(page, data, log, defaults, delay_ms, stop_cb):
+    for field, selector, label in (
+        ("net_salvage", "input#netSlavage", "Net Salvage"),
+        ("less_other_deductions", "input#lessOtherDeductions", "Other Deductions"),
+        ("towing_additional_charges", "input#towingCharges", "Towing Charges"),
+        ("nil_depreciation_amount", "input#nilDepreciationCover", "Nil Depreciation Cover Amount"),
+        ("engine_protect_amount", "input#engineProtectCover", "Engine Protect Amount"),
+        ("consumable_items_amount", "input#consumableItemsCover", "Consumable Items Amount"),
+        ("key_protect_amount", "input#keyProtectCover", "Key Protect Amount"),
+    ):
+        if stop_cb():
+            return
+        value = str(getattr(data, field) or "").strip()
+        if value != "0":
+            await _fill_text(page, log, selector, label, value, delay_ms)
 
-    if isinstance(log, AutomationLogger):
-        log.wait("Clicking 'Next' to save and proceed...")
-    else:
-        log(f" ── Clicking Next button ──")
-    try:
-        clicked = await _click_claim_assessment_next(page, log)
-        if not clicked:
-            return False
-
-        if isinstance(log, AutomationLogger):
-            log.info("'Next' clicked — waiting for confirmation popup...")
+    if stop_cb():
+        return
+    towing = 'input#additionalTowingCharges:not(:disabled):not([readonly])'
+    if await page.locator(f"{_in_assessment(towing)}:visible").count():
+        amount = parse_amount(str(defaults.get("additional_towing_charges") or "0"))
+        if amount is None or amount < 0:
+            record_review_issue(log, "Additional Towing Charges", "Automation Defaults needs a non-negative amount.")
         else:
-            log(f"   ℹ️ Clicked 'Next' button — waiting for save confirmation popup...")
+            await _fill_text(page, log, towing, "Additional Towing Charges", format(amount, "f"), delay_ms,
+                             source="Default", numeric=True)
 
-        # ── The portal shows "Claim job details updated successfully" popup ──
-        # We MUST dismiss it (click OK) before the page transitions.
-        # The popup may take 1–8 seconds to appear depending on server response.
-        dismissed = await dismiss_portal_popup(page, log, max_wait_s=5.0, context="Assessment Next")
-        if dismissed:
-            if isinstance(log, AutomationLogger):
-                log.success("Save confirmation popup dismissed — page proceeding.")
-            else:
-                log(f"   ✅ Confirmation popup dismissed successfully.")
-        else:
-            # No popup appeared — portal may have navigated directly
-            if isinstance(log, AutomationLogger):
-                log.warning("No confirmation popup detected after 'Next' — continuing anyway.")
-            else:
-                log(f"   ⚠️ No popup appeared after 'Next' click (may have navigated directly).")
+    if stop_cb():
+        return
+    reinspection = "select#whetherReinspectionRequired"
+    if await page.locator(f"{_in_assessment(reinspection)}:visible").count():
+        await _select(page, log, reinspection, "Whether Re-Inspection Required?",
+                      "Yes" if reinspection_document(data) else "No", delay_ms, source="Folder scan")
 
-        if not await _document_upload_ready(page, timeout_ms=5000):
-            if isinstance(log, AutomationLogger):
-                log.warning("Document Upload tab not visible after Next; retrying Next once.")
-            else:
-                log("   ⚠️ Document Upload tab not visible after Next; retrying once.")
+    if not stop_cb():
+        await _fill_text(page, log, "textarea#recommendations", "Recommendations",
+                         str(defaults.get("recommendations") or "Approved"), delay_ms, source="Default")
 
-            clicked = await _click_claim_assessment_next(page, log)
-            if not clicked:
-                return False
-            # Give the server up to 8s to show the popup and navigate
-            await dismiss_portal_popup(page, log, max_wait_s=8.0, context="Assessment Next Retry")
-            if not await _document_upload_ready(page, timeout_ms=5000):
-                invalid = await _visible_invalid_required_fields(page)
-                message = "Claim Assessment did not navigate to Document Upload after clicking Next."
-                if invalid:
-                    message += f" Visible required fields still invalid: {', '.join(invalid)}"
-                if isinstance(log, AutomationLogger):
-                    log.error(message)
-                else:
-                    log(f"   ❌ {message}")
-                return False
 
-        # Short settle — page has navigated, Angular needs ~300ms to stabilise
-        await page.wait_for_timeout(300)
+async def _close_save_confirmation(page, log, *, context="Claim Assessment Next", max_wait_s=5.0):
+    return await dismiss_portal_popup(
+        page, log, max_wait_s=max_wait_s, context=context, expected_message=_SAVE_CONFIRMED,
+    )
 
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Navigation error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Could not click Next button: {e}")
+
+async def _wait_for_assessment_form(page, log, recovery, stop_cb):
+    if await page.locator(_BLOCKING_DIALOGS).count():
+        await _close_save_confirmation(page, log, context="Opening Claim Assessment", max_wait_s=1)
+
+    async def form_ready():
+        return (not await page.locator(_BLOCKING_DIALOGS).count()
+                and await page.locator(_FORM_READY).first.is_visible()
+                and (recovery is None or await recovery._same_step(page, "three")))
+
+    if await wait_until_ready(form_ready, seconds=_FORM_LOAD_TIMEOUT, stopped=stop_cb):
+        return True
+    if stop_cb():
         return False
 
+    reason = ("A New India message is covering the form."
+              if await page.locator(_BLOCKING_DIALOGS).count() else "The Claim Assessment form is still loading.")
+    if recovery is None:
+        record_review_issue(log, "Open Claim Assessment", reason)
+        return False
+    return await recovery.pause(
+        page, log, "Open Claim Assessment", reason, ready=form_ready, require_original=True,
+        instruction="Wait for Claim Assessment to open in Chrome and close any portal message, then click Continue here.",
+    )
 
+
+async def _advance_assessment(page, log, stop_cb):
+    recovery = current_recovery.get()
+    if recovery is not None:
+        return await recovery.advance_next(
+            page, log, _NEXT, source="three", destination="four", title="Document Upload",
+            button_text="Next", after_click=lambda: _close_save_confirmation(page, log), confirm_before_transition=True,
+        )
+
+    button = page.locator(f"{_NEXT}:visible").filter(has_text=re.compile(r"^\s*Next\s*$", re.I))
+    try:
+        await button.click(timeout=5000)
+        await _close_save_confirmation(page, log)
+    except Exception:
+        record_review_issue(log, "Next", "App3 could not click Next. Check the Claim Assessment page in Chrome.")
+        return False
+
+    async def opened_document_upload():
+        return await page.evaluate(_TAB_STATE) == "four" and not await page.locator(_BLOCKING_DIALOGS).count()
+
+    if await wait_until_ready(opened_document_upload, seconds=5, stopped=stop_cb):
+        return True
+    record_review_issue(log, "Next", "New India did not open Document Upload.")
+    return False
+
+
+async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_cb, field_delay_ms: int = 600) -> bool:
+    if stop_cb():
+        return False
+
+    defaults = load_automation_defaults(portal_id=getattr(data, "portal_id", "newindia"))
     if isinstance(log, AutomationLogger):
-        log.success("Claim Assessment Details phase completed.")
-    else:
-        log("")
-        log(f" ✅ Phase 10 (Claim Assessment Details — All 5 Sections) completed successfully.")
-    return True
+        log.section = "Claim Assessment"
+        log.info("Filling Claim Assessment.")
+        log.indent()
+
+    try:
+        recovery = current_recovery.get()
+        if recovery is not None and not await recovery._same_step(page, "three"):
+            return await _advance_assessment(page, log, stop_cb)
+        if not await _wait_for_assessment_form(page, log, recovery, stop_cb) or stop_cb():
+            return False
+        await _fill_invoice_fields(page, data, log, defaults, field_delay_ms, stop_cb)
+        for primary in (True, False):
+            if stop_cb():
+                return False
+            await _fill_estimate(page, log, data, field_delay_ms, stop_cb, primary=primary)
+
+        if stop_cb():
+            return False
+        painting = 'select[name^="Painting work details"]'
+        raw = str(data.painting_work_details or "").strip()
+        if raw and await page.locator(f"{_in_assessment(painting)}:visible").count():
+            normalized = raw.casefold()
+            value = "Break Up" if any(term in normalized for term in ("break", "labor", "labour")) else raw
+            if "consol" in normalized:
+                value = "Consolidated"
+            await _select(page, log, painting, "Painting Work Details", value, field_delay_ms, source="Excel", index=0)
+
+        await _fill_delivery_order_fields(page, data, log, field_delay_ms, stop_cb)
+        await _fill_amounts(page, data, log, defaults, field_delay_ms, stop_cb)
+        if stop_cb():
+            return False
+        await _review_part_wise_assessment(page, log)
+        return await _advance_assessment(page, log, stop_cb)
+    finally:
+        if isinstance(log, AutomationLogger):
+            log.outdent()

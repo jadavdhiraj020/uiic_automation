@@ -38,15 +38,17 @@ _TAB_STATE = r"""
 _STEP_NAMES = {"one": "Quick Update", "two": "Additional Details",
                "three": "Claim Assessment", "four": "Document Upload"}
 _CONTINUE_BUTTON = "I fixed all fields — continue"
+_PAGE_REVIEW_STEPS = ("one", "two", "three")
 
 _INVALID_FIELDS = r"""
 ([includeCheckboxes, step]) => {
     const claimForm = document.querySelector('form[name="workListForm"]');
     const quickUpdate = step === 'one';
     const additionalDetails = step === 'two';
+    const assessment = step === 'three';
     const root = quickUpdate ? [...document.querySelectorAll('[name="quickUpdateForm"]')].find(form =>
         !form.closest('.ng-hide, [hidden], [aria-hidden=true], .tab-pane:not(.active)')) :
-        additionalDetails ? claimForm?.querySelector('.tab-pane.active') : claimForm || document;
+        (additionalDetails || assessment) ? claimForm?.querySelector('.tab-pane.active') : claimForm || document;
     if (!root) return [];
     const invalid = [];
     for (const field of root.querySelectorAll('input, select, textarea')) {
@@ -65,25 +67,44 @@ _INVALID_FIELDS = r"""
         const model = window.angular?.element(field)?.controller('ngModel');
         if (model?.$pending) continue;
         const errors = model?.$error || {};
-        const pageReview = quickUpdate || additionalDetails;
+        const pageReview = quickUpdate || additionalDetails || assessment;
         const useNative = !pageReview || !model;
-        const missing = Boolean(errors.required || (useNative && field.validity?.valueMissing));
+        const missing = Boolean(errors.required || (useNative && field.validity?.valueMissing) ||
+            (assessment && !model && field.classList.contains('ng-invalid-required')));
         const failed = model?.$invalid || (useNative && field.willValidate && !field.validity.valid) ||
+            (assessment && !model && field.classList.contains('ng-invalid')) ||
             (pageReview && !model && field.getAttribute('aria-invalid') === 'true');
         if (!missing && !failed) continue;
 
         const section = field.closest('.panel')?.querySelector('.panel-heading');
         // Additional Details uses one .form-group for a row with many controls.
-        const group = (additionalDetails && field.closest('.checkbox, [class*="col-md-"], li')) ||
-            field.closest('.form-group');
+        const cell = assessment && field.closest('table:is(#myTable, #example) td');
+        const group = cell || (additionalDetails && field.closest('.checkbox, [class*="col-md-"], li')) ||
+            (assessment && field.closest('.form-group, .checkbox, [class*="col-"], li')) || field.closest('.form-group');
         const title = group?.querySelector('.datagrid-title:not(.hidden)') ||
             (pageReview && group?.querySelector('label:not(.hidden)'));
         const label = [...(field.labels || [])].find(el => !el.closest('.hidden'));
-        const name = (title?.textContent || (field.type === 'radio' && field.name) ||
+        const column = cell && cell.closest('table').tHead?.rows[0]?.cells[cell.cellIndex];
+        let name = ((assessment && field.id === 'recommendations' && 'Recommendations') ||
+                      (assessment && field.type === 'radio' && field.name) || title?.textContent ||
+                      column?.textContent || (field.type === 'radio' && field.name) ||
                       label?.textContent || field.name || field.id || '')
             .replace(/\s*\*\s*$/, '').replace(/\s+/g, ' ').trim();
         if (!name) continue;
-        const sectionName = (section?.textContent || '').replace(/\s+/g, ' ').trim();
+        let sectionName = (section?.textContent || '').replace(/\s+/g, ' ').trim();
+        if (assessment && !cell) {
+            const invoice = field.name.match(
+                /^(Whether the Workshop is GST Registered|Whether Payment invoice is in the name of NIA|Vendor\/Tax Invoice Date|Vendor\/Tax Invoice Number|Is there any supplementary estimate|Painting work details)(\d+)$/i
+            );
+            if (invoice) {
+                if (name === field.name) name = invoice[1];
+                sectionName = ['Invoice ' + (Number(invoice[2]) + 1), sectionName].filter(Boolean).join(' / ');
+            }
+        }
+        if (assessment && cell) {
+            const row = cell.parentElement;
+            sectionName = [sectionName, 'Item row ' + (row.sectionRowIndex + 1)].filter(Boolean).join(' / ');
+        }
         invalid.push({
             name, section: additionalDetails ? sectionName.replace(/\s+\d+$/, '') : sectionName,
             identity: [field.type === 'radio' ? '' : field.id, field.name],
@@ -95,7 +116,7 @@ _INVALID_FIELDS = r"""
 """
 
 _WATCH_NEXT = r"""
-([selector, key, source, claimNumber]) => {
+([selector, key, source, claimNumber, pageReview, buttonText]) => {
     const tabState = """ + _TAB_STATE + r""";
     const invalidFields = """ + _INVALID_FIELDS + r""";
     const controller = new AbortController();
@@ -104,12 +125,13 @@ _WATCH_NEXT = r"""
     document.addEventListener('click', event => {
         const button = event.target.closest?.('button');
         if (!event.isTrusted || !button?.matches(selector) || button.disabled ||
+            (buttonText && button.textContent.trim().toLowerCase() !== buttonText.toLowerCase()) ||
             button.getAttribute('aria-disabled') === 'true' || !button.getClientRects().length ||
             tabState() !== source || ![...document.querySelectorAll('li')].some(li =>
                 li.getClientRects().length &&
                 /^Claim\s+No\.?\s*:?\s*([^\s/]+)\s*\/?$/i.exec(li.textContent.trim())?.[1] === claimNumber)) return;
         watch.invalid = invalidFields([true, source]);
-        if (['one', 'two'].includes(source) || !watch.invalid.length) watch.clicks += 1;
+        if (pageReview || !watch.invalid.length) watch.clicks += 1;
     }, {capture: true, signal: controller.signal});
 }
 """
@@ -261,9 +283,12 @@ class NewIndiaRecovery(OperatorRecovery):
         self.field_issues.clear()
         return True
 
-    async def advance_next(self, page, log, selector, *, source, destination, title, after_click=None):
+    async def advance_next(
+        self, page, log, selector, *, source, destination, title, after_click=None, button_text="",
+        confirm_before_transition=False,
+    ):
         section = _STEP_NAMES[source]
-        page_review = source in {"one", "two"}
+        page_review = source in _PAGE_REVIEW_STEPS
         if self.stopped():
             raise asyncio.CancelledError
         if not await self._same_step(page, source):
@@ -273,7 +298,7 @@ class NewIndiaRecovery(OperatorRecovery):
             )
 
         key = f"__app3NewIndiaNext_{uuid4().hex}"
-        await page.evaluate(_WATCH_NEXT, [selector, key, source, self.claim_number])
+        await page.evaluate(_WATCH_NEXT, [selector, key, source, self.claim_number, page_review, button_text])
 
         async def click_count():
             with suppress(Exception):
@@ -292,6 +317,8 @@ class NewIndiaRecovery(OperatorRecovery):
             if self.stopped() or not await self._same_step(page, source):
                 return
             button = page.locator(f":is({selector}):visible")
+            if button_text:
+                button = button.filter(has_text=re.compile(rf"^\s*{re.escape(button_text)}\s*$", re.I))
             previous_clicks = await click_count()
             try:
                 if page_review and await page.locator(_BLOCKING_DIALOGS).count():
@@ -309,7 +336,7 @@ class NewIndiaRecovery(OperatorRecovery):
                 reason = "App3 could not click Next. Check Chrome."
 
             if after_click is not None and await click_count() > previous_clicks:
-                if not page_review or await wait_until_ready(
+                if confirm_before_transition or not page_review or await wait_until_ready(
                     lambda: self._same_step(page, destination), seconds=4, stopped=self.stopped,
                 ):
                     with suppress(Exception):
