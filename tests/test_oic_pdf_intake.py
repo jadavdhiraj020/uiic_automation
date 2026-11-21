@@ -367,3 +367,38 @@ def test_oic_upload_builder_rejects_incomplete_excel_rows_even_when_invoice_amou
         upload.build_upload_workbook(
             claim, load_automation_defaults("oic"), output_folder=tmp_path
         )
+
+
+def test_oic_pdf_ignores_bad_estimate_on_unassessed_spare_row():
+    from app.portals.oic.pdf_assessment import PART_COLUMNS, MATERIALS, _item_tables
+    from app.portals.oic.pdf_layout import Table
+
+    rows = (
+        ("S.N.", "Parts Name", "Estimated", "M-Age", "P-50%", "G-0%"),
+        ("1", "UNASSESSED PART", "3,975.00BAD", "0.00", "0.00", "0.00"),
+        ("2", "ASSESSED PART", "1,000.00", "500.00", "0.00", "0.00"),
+        ("SUB TOTAL", "", "4,975.00", "500.00", "0.00", "0.00"),
+    )
+    table = Table(4, tuple(float(i) for i in range(len(rows))), rows)
+
+    details, _ = _item_tables((table,), PART_COLUMNS, MATERIALS, "Spares")
+
+    assert len(details) == 1
+    assert details[0][0] == "ASSESSED PART"
+    assert details[0][1]["metal"] == 500
+    assert details[0][1]["estimate"] == 1000
+
+
+def test_oic_pdf_still_flags_bad_estimate_on_assessed_spare_row():
+    from app.portals.oic.pdf_assessment import PART_COLUMNS, MATERIALS, _item_tables
+    from app.portals.oic.pdf_layout import Table
+
+    rows = (
+        ("S.N.", "Parts Name", "Estimated", "M-Age", "P-50%", "G-0%"),
+        ("1", "ASSESSED PART", "1,000.00BAD", "500.00", "0.00", "0.00"),
+        ("SUB TOTAL", "", "1,000.00", "500.00", "0.00", "0.00"),
+    )
+    table = Table(4, tuple(float(i) for i in range(len(rows))), rows)
+
+    with pytest.raises(ValueError, match="Check estimate"):
+        _item_tables((table,), PART_COLUMNS, MATERIALS, "Spares")
