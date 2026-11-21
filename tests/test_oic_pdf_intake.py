@@ -155,14 +155,15 @@ def test_oic_reads_raster_only_and_hybrid_pdf_with_real_ocr(tmp_path, hybrid):
     assert not claim._oic_pdf_review_errors
 
 
-def test_oic_blocks_conflicting_required_fields_and_unaligned_totals(tmp_path):
+def test_oic_minor_pdf_field_issues_are_manual_review_not_financial_blockers(tmp_path):
     from app.portals.oic.automation.assessment_upload_excel import build_upload_workbook
+    from app.utils import load_automation_defaults
 
     path = tmp_path / "Final Survey Report.pdf"
     rows = (*SUMMARY[:14], ("Valid Till: 16/04/2037",), *SUMMARY[14:])
     rows = tuple(tuple(text for text in row if not text.startswith("Workshop Estimate Amount"))
                  for row in rows)
-    _write_pdf(path, (rows, (*ITEMS, ("Net Payable", "5000", "3000"))))
+    _write_pdf(path, (rows, ITEMS))
     claim = extract_claim_data_from_report(str(path), portal_id="oic")
 
     assert not claim.driver_license_expiry_date
@@ -171,8 +172,19 @@ def test_oic_blocks_conflicting_required_fields_and_unaligned_totals(tmp_path):
                for issue in claim._oic_pdf_review_errors)
     assert any("Workshop Estimate Amount is missing" in issue
                for issue in claim._oic_pdf_review_errors)
-    with pytest.raises(ValueError, match="Review the PDF fields"):
-        build_upload_workbook(claim, {}, output_folder=tmp_path)
+    assert not claim._oic_pdf_assessment_errors
+
+    errors, warnings = claim.validate()
+    assert not any("Driving Licence Expiry Date" in issue for issue in errors)
+    assert not any("Workshop Estimate Amount is missing" in issue for issue in errors)
+    assert any("Driving Licence Expiry Date" in issue for issue in warnings)
+    assert any("Workshop Estimate Amount is missing" in issue for issue in warnings)
+
+    upload, _, items = build_upload_workbook(
+        claim, load_automation_defaults("oic"), output_folder=tmp_path
+    )
+    assert Path(upload).is_file()
+    assert items
 
 
 def test_oic_finds_scan_with_a_cover_before_the_survey_report(tmp_path):
@@ -269,3 +281,23 @@ def test_oic_parts_serial_gap_still_fails_when_subtotal_does_not_reconcile():
 
     with pytest.raises(ValueError, match="total does not match its detail rows"):
         _item_tables((table,), PART_COLUMNS, MATERIALS, "Spares")
+
+
+def test_oic_unreconciled_assessment_remains_hard_blocker():
+    from app.data.data_model import ClaimData
+
+    claim = ClaimData(
+        portal_id="oic",
+        source_report_path="Final Survey Report.pdf",
+        policy_number="POL123",
+        nil_depreciation="Yes",
+    )
+    claim._oic_pdf_review_errors = ["Spares detail needs review."]
+    claim._oic_pdf_review_warnings = []
+    claim._oic_pdf_assessment_errors = [
+        "The spares metal total does not match its detail rows on PDF p4."
+    ]
+
+    errors, warnings = claim.validate()
+
+    assert any("spares metal total" in issue.lower() for issue in errors)
