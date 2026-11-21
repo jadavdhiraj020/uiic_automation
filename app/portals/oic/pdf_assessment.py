@@ -161,7 +161,12 @@ def _item_tables(tables, aliases, value_keys, kind):
     totals = None
     sources = []
     partial = ""
-    known_total_keys = ("estimate", *value_keys) if kind == "Spares" else value_keys
+    # Only assessed columns are financially relevant to OIC upload. The report's
+    # Estimate subtotal includes many unassessed rows and is not an upload-total
+    # invariant. Estimate is read only for rows that have a positive assessed
+    # Metal/Plastic/Glass amount.
+    reconciliation_keys = value_keys
+    row_value_keys = ("estimate", *value_keys) if kind == "Spares" else value_keys
     for table in tables:
         for index, row in enumerate(table.rows):
             header_columns = _columns(row, aliases)
@@ -192,14 +197,12 @@ def _item_tables(tables, aliases, value_keys, kind):
             name = row[positions["name"]].strip()
             if any(compact(cell) in {"subtotal", "total", "subtotalbeforegst", "totalbeforegst", "grandtotal"}
                    for cell in row):
-                totals = {key: amount(row[positions[key]]) for key in known_total_keys}
+                totals = {key: amount(row[positions[key]]) for key in reconciliation_keys}
                 if table.source not in sources:
                     sources.append(table.source)
                 continue
             if not serial.isdecimal() or not name:
                 continue
-            if table.score(index) < .78:
-                raise ValueError(f"Check the low-confidence {kind.lower()} row {serial} on {table.source}.")
             serial_no = int(serial)
             if serials:
                 # Real survey reports can legitimately skip serial numbers
@@ -217,12 +220,50 @@ def _item_tables(tables, aliases, value_keys, kind):
                 raise ValueError(f"The {kind.lower()} table appears to start partway through on {table.source}.")
             serials.append(serial_no)
             values = {}
-            for key in known_total_keys:
-                raw = row[positions[key]]
-                value = amount(raw)
-                if value is None and compact(raw) not in {"", "na", "nil"}:
-                    raise ValueError(f"Check {key} in {kind.lower()} row {serial} on {table.source}.")
-                values[key] = value if value is not None else ZERO
+
+            if kind == "Spares":
+                # Decide whether the row is assessed BEFORE touching Estimate.
+                # Rows with M/P/G all zero have no role in the OIC upload and
+                # must not fail because their Estimate text is cramped/unclear.
+                for key in value_keys:
+                    raw = row[positions[key]]
+                    value = amount(raw)
+                    if value is None and compact(raw) not in {"", "na", "nil", "0", "000", "0000"}:
+                        raise ValueError(
+                            f"Check {key} in {kind.lower()} row {serial} on {table.source}."
+                        )
+                    values[key] = value if value is not None else ZERO
+
+                if not any(values[key] > ZERO for key in value_keys):
+                    # Unassessed row: deliberately ignore it completely.
+                    continue
+
+                if table.score(index) < .78:
+                    raise ValueError(
+                        f"Check the low-confidence {kind.lower()} row {serial} on {table.source}."
+                    )
+
+                raw_estimate = row[positions["estimate"]]
+                estimate = amount(raw_estimate)
+                if estimate is None and compact(raw_estimate) not in {"", "na", "nil"}:
+                    raise ValueError(
+                        f"Check estimate in {kind.lower()} row {serial} on {table.source}."
+                    )
+                values["estimate"] = estimate if estimate is not None else ZERO
+            else:
+                if table.score(index) < .78:
+                    raise ValueError(
+                        f"Check the low-confidence {kind.lower()} row {serial} on {table.source}."
+                    )
+                for key in row_value_keys:
+                    raw = row[positions[key]]
+                    value = amount(raw)
+                    if value is None and compact(raw) not in {"", "na", "nil"}:
+                        raise ValueError(
+                            f"Check {key} in {kind.lower()} row {serial} on {table.source}."
+                        )
+                    values[key] = value if value is not None else ZERO
+
             if table.source not in sources:
                 sources.append(table.source)
             details.append((name, values, table.source))
@@ -233,11 +274,13 @@ def _item_tables(tables, aliases, value_keys, kind):
         return None, ""
     if totals is None:
         raise ValueError(f"The {kind.lower()} subtotal is missing after the header on {header.source}.")
-    for key in known_total_keys:
+    for key in reconciliation_keys:
         expected = totals[key]
         actual = sum((values[key] for _, values, _ in details), ZERO)
         if expected is None or abs(actual - expected) > TOLERANCE:
-            raise ValueError(f"The {kind.lower()} {key} total does not match its detail rows on {', '.join(sources)}.")
+            raise ValueError(
+                f"The {kind.lower()} {key} total does not match its assessed detail rows on {', '.join(sources)}."
+            )
     return details, ", ".join(sources)
 
 
