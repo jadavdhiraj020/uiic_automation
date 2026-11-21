@@ -402,3 +402,38 @@ def test_oic_pdf_still_flags_bad_estimate_on_assessed_spare_row():
 
     with pytest.raises(ValueError, match="Check estimate"):
         _item_tables((table,), PART_COLUMNS, MATERIALS, "Spares")
+
+
+def test_oic_pdf_line_fallback_recovers_assessed_parts_and_labour_without_table_grid():
+    from app.portals.oic.pdf_assessment import _line_assessment_fallback
+    from app.portals.oic.pdf_layout import Line, Page
+
+    def line(page, top, text):
+        return Line(page, top, ((10, 500, text),))
+
+    pages = (
+        Page((
+            line(3, 10, "PARTS DETAILS:"),
+            line(3, 20, "18 MODULE ASSY, AIR BAG(CHROME/BLACK) 3,975.00 0.00 0.00 0.00 0.00 0 18"),
+            line(3, 30, "27 PANEL FRONT HOOD 3,759.00 3,177.96 0.00 0.00 0.00 21 18"),
+            line(3, 40, "32 GARNISH, COWL TOP CTR 645.00 0.00 546.61 0.00 0.00 33 18"),
+            line(3, 50, "SUB TOTAL 2,79,214.00 15,715.89 16,221.51 3,262.00 3,093.40"),
+            line(3, 60, "LABOUR DETAIL"),
+            line(3, 70, "SUB TOTAL 0.00 5,400.00 3,400.00 0.00 22,274.00"),
+        ), (), 595),
+    )
+
+    parts, labour, sources = _line_assessment_fallback(pages)
+
+    assert [p["part_name"] for p in parts] == [
+        "PANEL FRONT HOOD",
+        "GARNISH, COWL TOP CTR",
+    ]
+    assert parts[0]["billed_amount"] == 3177.96
+    assert parts[1]["billed_amount"] == 546.61
+    assert labour["rr"] == 5400
+    assert labour["denting"] == 3400
+    assert labour["cw"] == 0
+    assert labour["painting"] == 22274
+    assert "spares" in sources
+    assert "labour" in sources
