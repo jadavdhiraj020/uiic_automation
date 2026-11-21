@@ -1013,16 +1013,21 @@ class AutomationEngine:
 
                 if self.portal_id == "newindia":
                     from app.portals.newindia.automation.navigation_module import (
+                        ClaimNavigationError,
                         navigate_to_claim,
                     )
 
-                    claim_page = await navigate_to_claim(
-                        page,
-                        claim.claim_no,
-                        settings=settings,
-                        log=self.log,
-                        stop_cb=self._check_stop,
-                    )
+                    try:
+                        claim_page = await navigate_to_claim(
+                            page, claim.claim_no, settings=settings, log=self.log, stop_cb=self._check_stop,
+                        )
+                    except ClaimNavigationError as exc:
+                        if self._check_stop():
+                            return AutomationRunResult(False, "Automation stopped by user.")
+                        self.log.error(str(exc))
+                        return AutomationRunResult(False, str(exc))
+                    if claim_page is None and self._check_stop():
+                        return AutomationRunResult(False, "Automation stopped by user.")
                 elif self.portal_id == "oic":
                     from app.portals.oic.automation.navigation_module import (
                         navigate_to_claim,
