@@ -284,6 +284,101 @@ def _item_tables(tables, aliases, value_keys, kind):
     return details, ", ".join(sources)
 
 
+
+def _line_assessment_fallback(pages):
+    """Parse readable printed assessment lines when PDF table geometry is unavailable.
+
+    This fallback is intentionally narrow: it accepts only numbered spare rows
+    with one positive assessed M/P/G amount, ignores invoice-only rows, and
+    reads labour from the printed SUB TOTAL row.  It is then reconciled by the
+    normal GST/source-total checks before upload.
+    """
+    parts = []
+    labour = dict.fromkeys(("rr", "denting", "cw", "painting"), ZERO)
+    in_parts = False
+    in_labour = False
+    part_sources = []
+    labour_source = ""
+    part_line = re.compile(
+        r"^\s*(\d+)\s+(.+?)\s+"
+        r"([\d,]+(?:\.\d{1,2})?)\s+"
+        r"([\d,]+(?:\.\d{1,2})?)\s+"
+        r"([\d,]+(?:\.\d{1,2})?)\s+"
+        r"([\d,]+(?:\.\d{1,2})?)"
+        r"(?:\s+[\d,]+(?:\.\d{1,2})?)?(?:\s+\d+)?(?:\s+\d+)?\s*$"
+    )
+    labour_subtotal = re.compile(
+        r"^\s*SUB\s*TOTAL\s+"
+        r"([\d,]+(?:\.\d{1,2})?)\s+"
+        r"([\d,]+(?:\.\d{1,2})?)\s+"
+        r"([\d,]+(?:\.\d{1,2})?)\s+"
+        r"([\d,]+(?:\.\d{1,2})?)\s+"
+        r"([\d,]+(?:\.\d{1,2})?)\s*$",
+        re.I,
+    )
+
+    for page in pages:
+        for line in page.lines:
+            text = " ".join(str(line.text or "").split())
+            marker = compact(text)
+            if "partsdetails" in marker:
+                in_parts, in_labour = True, False
+                continue
+            if "labourdetail" in marker:
+                in_parts, in_labour = False, True
+                continue
+            if in_parts and re.search(r"\bSUB\s*TOTAL\b", text, re.I):
+                in_parts = False
+                continue
+
+            if in_parts:
+                match = part_line.match(text)
+                if not match:
+                    continue
+                _serial, name, est_raw, metal_raw, plastic_raw, glass_raw = match.groups()
+                estimate = amount(est_raw)
+                values = {
+                    "metal": amount(metal_raw) or ZERO,
+                    "plastic": amount(plastic_raw) or ZERO,
+                    "glass": amount(glass_raw) or ZERO,
+                }
+                positive = [key for key, value in values.items() if value > ZERO]
+                if not positive:
+                    continue
+                if len(positive) != 1 or estimate is None:
+                    continue
+                material = positive[0]
+                parts.append({
+                    "material_type": material,
+                    "part_name": name.strip(),
+                    "billed_amount": values[material],
+                    "estimated_amount": estimate,
+                })
+                if line.source not in part_sources:
+                    part_sources.append(line.source)
+                continue
+
+            if in_labour:
+                match = labour_subtotal.match(text)
+                if match:
+                    _estimate, rr, denting, cw, painting = match.groups()
+                    labour.update({
+                        "rr": amount(rr) or ZERO,
+                        "denting": amount(denting) or ZERO,
+                        "cw": amount(cw) or ZERO,
+                        "painting": amount(painting) or ZERO,
+                    })
+                    labour_source = line.source
+                    in_labour = False
+
+    sources = {}
+    if parts:
+        sources["spares"] = ", ".join(part_sources)
+    if any(labour.values()):
+        sources["labour"] = labour_source
+    return parts, labour, sources
+
+
 def read_assessment(pages):
     """Return the same item inputs as Excel, plus traceable GST and review errors."""
     tables = tuple(table for page in pages for table in page.tables)
@@ -329,4 +424,21 @@ def read_assessment(pages):
                     "material_type": material, "part_name": name,
                     "billed_amount": values[material], "estimated_amount": values["estimate"],
                 })
+    # Some native PDFs expose readable text but no dependable table grid.
+    # In that case normal field extraction succeeds while assessment tables are
+    # empty. Fall back to the printed assessment lines instead of returning an
+    # empty upload dataset.
+    if not parts and not any(labour.values()):
+        line_parts, line_labour, line_sources = _line_assessment_fallback(pages)
+        if line_parts or any(line_labour.values()):
+            parts = line_parts
+            labour = line_labour
+            item_sources.update(line_sources)
+            # Empty-table errors are no longer relevant once the line fallback
+            # recovered usable assessment data. Financial mismatches remain.
+            errors = [
+                issue for issue in errors
+                if "detail table could not be read" not in issue.lower()
+            ]
+
     return parts, labour, gst, item_sources, list(dict.fromkeys(errors))
