@@ -54,8 +54,18 @@ MAX_FILE_BYTES = 2 * 1024 * 1024  # 2 MB portal limit
 
 
 def _is_oic_generated_workbook(filename: str) -> bool:
-    """Keep OIC's generated workbooks out of source and document selection."""
-    return bool(re.fullmatch(r"(?:auto_oic_(?:assessment|upload)(?:_\d+|_current)?|auto_oic_pdf_source_current)\.xlsx", filename, re.IGNORECASE))
+    """Keep every App3 OIC workbook out of main-source selection.
+
+    auto_oic_upload_current.xlsx remains the required portal-upload workbook;
+    it is excluded only as an INPUT source on later scans.
+    auto_oic_pdf_source_current.xlsx is a legacy artifact from the abandoned
+    PDF-to-Excel conversion path and is never used by the current workflow.
+    """
+    return bool(re.fullmatch(
+        r"(?:auto_oic_(?:assessment|upload)(?:_\d+|_current)?|auto_oic_pdf_source_current)\.xlsx",
+        filename,
+        re.IGNORECASE,
+    ))
 
 
 def _is_generated_excel_candidate(filename: str, portal_id: str) -> bool:
