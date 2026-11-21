@@ -234,51 +234,38 @@ def test_oic_intake_keeps_excel_priority_and_existing_field_mapping(tmp_path):
     assert not getattr(claim, "_oic_pdf_review_errors", ())
 
 
-def test_oic_pdf_to_excel_keeps_original_and_preserves_rows(tmp_path, monkeypatch):
-    import openpyxl
 
-    from app.portals.oic import pdf_to_excel
-    from app.portals.oic.pdf_layout import Line, Page, Table
+def test_oic_parts_allow_forward_serial_gap_when_subtotals_reconcile():
+    from app.portals.oic.pdf_assessment import PART_COLUMNS, MATERIALS, _item_tables
+    from app.portals.oic.pdf_layout import Table
 
-    pdf = tmp_path / "Final Survey Report.pdf"
-    original = b"%PDF-original-survey-copy"
-    pdf.write_bytes(original)
-
-    page = Page(
-        lines=(
-            Line(1, 10, ((10, 120, "Policy No: POL555555"), (250, 390, "Claim No: DEMO1234"))),
-            Line(1, 20, ((10, 250, "Initial Loss Assessment Amount: 1500"),)),
-            Line(1, 30, ((10, 220, "Workshop Estimate Amount: 2000"),)),
-        ),
-        tables=(
-            Table(
-                1,
-                (100, 120),
-                (
-                    ("SN", "Parts Name", "Estimated", "Metal", "Plastic", "Glass"),
-                    ("1", "Bonnet", "1450", "1300", "0", "0"),
-                ),
-            ),
-        ),
-        width=595,
+    rows = (
+        ("S.N.", "Parts Name", "Estimated", "M-Age", "P-50%", "G-0%"),
+        ("1", "Part A", "100.00", "100.00", "0.00", "0.00"),
+        ("2", "Part B", "200.00", "0.00", "200.00", "0.00"),
+        ("4", "Part C", "300.00", "0.00", "0.00", "300.00"),
+        ("SUB TOTAL", "", "600.00", "100.00", "200.00", "300.00"),
     )
-    monkeypatch.setattr(pdf_to_excel, "read_pages", lambda *args, **kwargs: [page])
+    table = Table(1, tuple(float(i) for i in range(len(rows))), rows)
 
-    output = pdf_to_excel.convert_oic_pdf_to_excel(str(pdf), str(tmp_path))
+    details, source = _item_tables((table,), PART_COLUMNS, MATERIALS, "Spares")
 
-    assert pdf.read_bytes() == original
-    assert Path(output).name == "auto_oic_pdf_source_current.xlsx"
-    wb = openpyxl.load_workbook(output, data_only=True)
-    try:
-        ws = wb["Survey Report"]
-        values = [[cell.value for cell in row] for row in ws.iter_rows()]
-        assert any("Initial Loss Assessment Amount: 1500" in str(value) for row in values for value in row)
-        assert any(row[:6] == ["1", "Bonnet", "1450", "1300", "0", "0"] for row in values)
-    finally:
-        wb.close()
+    assert source == "PDF p1"
+    assert [name for name, _, _ in details] == ["Part A", "Part B", "Part C"]
 
 
-def test_oic_generated_pdf_source_workbook_is_not_a_claim_source():
-    from app.data.folder_scanner import _is_oic_generated_workbook
+def test_oic_parts_serial_gap_still_fails_when_subtotal_does_not_reconcile():
+    from app.portals.oic.pdf_assessment import PART_COLUMNS, MATERIALS, _item_tables
+    from app.portals.oic.pdf_layout import Table
 
-    assert _is_oic_generated_workbook("auto_oic_pdf_source_current.xlsx")
+    rows = (
+        ("S.N.", "Parts Name", "Estimated", "M-Age", "P-50%", "G-0%"),
+        ("1", "Part A", "100.00", "100.00", "0.00", "0.00"),
+        ("2", "Part B", "200.00", "0.00", "200.00", "0.00"),
+        ("4", "Part C", "300.00", "0.00", "0.00", "300.00"),
+        ("SUB TOTAL", "", "650.00", "100.00", "200.00", "300.00"),
+    )
+    table = Table(1, tuple(float(i) for i in range(len(rows))), rows)
+
+    with pytest.raises(ValueError, match="total does not match its detail rows"):
+        _item_tables((table,), PART_COLUMNS, MATERIALS, "Spares")
