@@ -39,7 +39,7 @@ from app.portals.newindia.automation.ui_utils import (
     upload_file_via_input,
 )
 from app.automation.automation_logger import AutomationLogger, _ts
-from app.data.folder_scanner import (
+from app.automation.services.document_utils import (
     _prepare_files_for_merge,
     _compress_pdf_for_upload,
     _compress_image_for_upload,
