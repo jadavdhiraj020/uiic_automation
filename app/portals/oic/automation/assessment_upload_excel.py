@@ -76,9 +76,9 @@ def depreciation_errors(claim):
 
 def prepared_upload_error(claim):
     """Require the workbook produced for the current folder scan."""
-    pdf_errors = getattr(claim, "_oic_pdf_review_errors", [])
-    if pdf_errors:
-        return "\n".join(pdf_errors)
+    assessment_errors = getattr(claim, "_oic_pdf_assessment_errors", [])
+    if assessment_errors:
+        return "\n".join(assessment_errors)
     error = str(getattr(claim, "_oic_upload_error", "") or "").strip()
     if error:
         return f"OIC upload Excel could not be prepared: {error}"
@@ -176,8 +176,8 @@ def _save_upload_workbook(data, output_folder):
 
 def build_upload_workbook(claim, defaults, output_folder=None):
     """Create a fresh OIC import workbook and return its path and item names."""
-    if getattr(claim, "_oic_pdf_review_errors", []):
-        raise ValueError("Review the PDF fields listed in Extraction Review and rescan the folder.")
+    if getattr(claim, "_oic_pdf_assessment_errors", []):
+        raise ValueError("The PDF assessment rows/totals do not reconcile. Review the financial assessment before uploading.")
     errors = depreciation_errors(claim)
     if errors:
         raise ValueError("; ".join(errors))
