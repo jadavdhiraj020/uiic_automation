@@ -1,34 +1,21 @@
 import re
-from typing import Callable, Optional
-from urllib.parse import urlsplit
+from typing import Callable
 
-from playwright.async_api import Error as PlaywrightError
+from playwright.async_api import Error as PlaywrightError, Page
 
 from app.automation.automation_logger import AutomationLogger
-from app.portals.oic.automation.recovery import wait_until_ready
+from app.portals.oic.automation.recovery import same_origin, wait_until_ready
 
 
 SEL_NAV_WORKLIST = "li#navlink-worklist a:visible"
 SEL_FILTER_DROPDOWN = "select#searchType:visible"
 SEL_CLAIM_INPUT = "input#filterWorklistClaimNo:visible"
 SEL_FILTER_BTN = "button[data-ng-click*='filterClaims']:visible"
-
-# Scope the pencil or its tooltip to the card that contains the claim title.
-# Maruti and Non-Maruti can use different Angular handlers.
-SEL_CLAIM_EDIT_BTN = (
-    ':is(a, button, [role="button"]):visible:is('
-    ':has(.icon-tabler-edit), [title="Click Here To Proceed" i], '
-    '[data-original-title="Click Here To Proceed" i], '
-    '[data-bs-original-title="Click Here To Proceed" i], [aria-label="Edit Claim" i])'
-)
-CLAIM_CARD = (
-    "xpath=ancestor::*[contains(translate(normalize-space(.), "
-    "'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'insured name') "
-    "and not(.//*[@id='searchType'])][1]"
-)
+SEL_CLAIM_CARD = ".card-claim:visible"
+SEL_CLAIM_LABEL = ".card-claim-lbl"
+SEL_CLAIM_EDIT_BTN = "a:has(svg.icon-tabler-edit):visible"
 QUICK_UPDATE = 'h4.headerClip:visible'
 SEARCH_TIMEOUT_S = 15
-EDIT_TIMEOUT_S = 10
 FORM_TIMEOUT_S = 20
 
 
@@ -36,82 +23,13 @@ class ClaimNavigationError(RuntimeError):
     """An operator-facing failure while locating or opening a New India claim."""
 
 
-def _claim_label(number):
-    return re.compile(rf"^Claim\s+(?:Number|No\.?)\s*:?\s*{number}\s*[/★☆]?\s*$", re.I)
-
-
-async def _search_for_single_claim(page, results, matching, stop_cb):
-    origin = urlsplit(page.url)
-    pending = set()
-    search_failed = False
-    consecutive_matches = 0
-    search_result = page.get_by_text(re.compile(r"^Search Results?$", re.I)).and_(page.locator(":visible"))
-
-    def request_started(request):
-        url = urlsplit(request.url)
-        if request.resource_type in {"fetch", "xhr"} and (url.scheme, url.netloc) == (origin.scheme, origin.netloc):
-            pending.add(request)
-
-    def request_done(request):
-        pending.discard(request)
-
-    def request_failed(request):
-        nonlocal search_failed
-        search_failed = search_failed or request in pending
-        request_done(request)
-
-    def response_received(response):
-        nonlocal search_failed
-        search_failed = search_failed or (response.request in pending and response.status >= 400)
-
-    async def single_result_ready():
-        nonlocal consecutive_matches
-        if search_failed:
-            return True
-        ready = (not pending and await search_result.count() == 1
-                 and await results.count() == 1 and await matching.count() == 1)
-        consecutive_matches = consecutive_matches + 1 if ready else 0
-        return consecutive_matches >= 2
-
-    # Wait for the UI and its search requests to settle before trusting a card
-    # that could still be visible from the previous Worklist search.
-    listeners = [
-        ("request", request_started),
-        ("requestfinished", request_done),
-        ("requestfailed", request_failed),
-        ("response", response_received),
-    ]
-    for event, handler in listeners:
-        page.on(event, handler)
-    try:
-        await page.locator(SEL_FILTER_BTN).click(timeout=10000)
-        if await wait_until_ready(single_result_ready, seconds=SEARCH_TIMEOUT_S, stopped=stop_cb):
-            if search_failed:
-                raise ClaimNavigationError("New India returned an error during the Worklist search.")
-            return True
-    finally:
-        for event, handler in listeners:
-            page.remove_listener(event, handler)
-
-    if stop_cb():
-        return False
-    count = await results.count()
-    if pending:
-        raise ClaimNavigationError("The New India Worklist search did not finish in time.")
-    if count > 1:
-        raise ClaimNavigationError("The Worklist returned multiple claim cards. App3 needs one exact result before clicking Edit.")
-    if count == 1 and not await matching.count():
-        raise ClaimNavigationError("The Worklist returned a different claim number from the one entered.")
-    raise ClaimNavigationError("The Worklist did not show a single search result for the requested claim number.")
-
-
 async def navigate_to_claim(
-    page,
+    page: Page,
     claim_no: str,
     settings: dict,
     log=print,
     stop_cb: Callable[[], bool] = lambda: False,
-) -> Optional:
+) -> Page | None:
     """Filter the Worklist and continue only after opening the same claim."""
     claim_no = str(claim_no or "").strip()
     if not claim_no:
@@ -128,8 +46,9 @@ async def navigate_to_claim(
 
     failure = "The New India Worklist did not open."
     try:
-        await page.locator(SEL_NAV_WORKLIST).click(timeout=15000)
         criteria = page.locator(SEL_FILTER_DROPDOWN)
+        if not await criteria.is_visible():
+            await page.locator(SEL_NAV_WORKLIST).click(timeout=15000)
         await criteria.wait_for(state="visible", timeout=15000)
         if stop_cb():
             return None
@@ -145,47 +64,66 @@ async def navigate_to_claim(
         if stop_cb():
             return None
 
-        visible = page.locator(":visible")
-        expected_label = _claim_label(re.escape(claim_no))
-        results = page.get_by_text(_claim_label(r"[A-Z0-9]+")).and_(visible)
-        matching = page.get_by_text(expected_label).and_(results)
         failure = "App3 could not run the claim-number filter on the Worklist."
         info("Filtering the Worklist by the full claim number.")
-        if not await _search_for_single_claim(page, results, matching, stop_cb):
-            return None
+        await page.locator(SEL_FILTER_BTN).click(timeout=10000)
 
-        edit = matching.locator(CLAIM_CARD).locator(SEL_CLAIM_EDIT_BTN)
+        number = re.escape(claim_no)
+        # The priority star has a literal period inside the claim label.
+        card_label = re.compile(rf"^Claim Number\s*:\s*{number}\s*\.?\s*$", re.I)
+        cards = page.locator(SEL_CLAIM_CARD)
+        matching = cards.filter(has=page.locator(SEL_CLAIM_LABEL).filter(has_text=card_label))
 
-        async def edit_is_ready():
-            return await edit.count() == 1
+        async def claim_is_ready():
+            return await cards.count() == 1 and await matching.count() == 1
 
-        failure = "The matching claim was found, but App3 could not identify one Edit control on its card."
-        if not await wait_until_ready(edit_is_ready, seconds=EDIT_TIMEOUT_S, stopped=stop_cb):
+        if not await wait_until_ready(claim_is_ready, seconds=SEARCH_TIMEOUT_S, stopped=stop_cb):
             if stop_cb():
                 return None
-            raise ClaimNavigationError(failure)
-        if await results.count() != 1 or await matching.count() != 1:
-            raise ClaimNavigationError("The Worklist result changed before Edit could be clicked.")
+            if await cards.count() == 0:
+                raise ClaimNavigationError("New India found no claim card in the selected Worklist.")
+            raise ClaimNavigationError("The Worklist did not show exactly one card for the requested claim number.")
         if stop_cb():
             return None
 
-        failure = "The matching claim was found, but App3 could not click its Edit icon."
-        await edit.click(timeout=10000)
-        info("Clicked Edit on the matching claim. Waiting for Quick Update.")
+        edit = matching.locator(SEL_CLAIM_EDIT_BTN)
+        origin_url = page.url
+        popups: list[Page] = []
+        claim_page = None
+        expected_breadcrumb = re.compile(rf"^\s*Claim\s+(?:Number|No\.?)\s*:?\s*{number}\s*/?\s*$", re.I)
+
+        def record_popup(popup: Page):
+            popups.append(popup)
 
         async def form_is_ready():
-            breadcrumb = page.locator("li:visible").filter(has_text=expected_label)
-            heading = page.locator(QUICK_UPDATE).filter(has_text=re.compile(r"^Quick Update Details$", re.I))
-            return bool(await breadcrumb.count() and await heading.count())
+            nonlocal claim_page
+            for candidate in (page, *popups):
+                if candidate.is_closed() or not same_origin(candidate, origin_url):
+                    continue
+                breadcrumb = candidate.locator("li:visible").filter(has_text=expected_breadcrumb)
+                heading = candidate.locator(QUICK_UPDATE).filter(has_text=re.compile(r"^Quick Update Details$", re.I))
+                if await breadcrumb.count() == 1 and await heading.count() == 1:
+                    claim_page = candidate
+                    return True
+            return False
 
-        failure = "Edit was clicked, but Quick Update did not open for the requested claim."
-        if not await wait_until_ready(form_is_ready, seconds=FORM_TIMEOUT_S, stopped=stop_cb):
-            if stop_cb():
-                return None
-            raise ClaimNavigationError(failure)
+        # Start listening before the click so an immediately opened tab is included.
+        page.on("popup", record_popup)
+        try:
+            failure = "The matching claim was found, but App3 could not click its Edit icon."
+            await edit.click(timeout=10000)
+            info("Clicked Edit on the matching claim. Waiting for Quick Update.")
+
+            failure = "Edit was clicked, but Quick Update did not open for the requested claim."
+            if not await wait_until_ready(form_is_ready, seconds=FORM_TIMEOUT_S, stopped=stop_cb):
+                if stop_cb():
+                    return None
+                raise ClaimNavigationError(failure)
+        finally:
+            page.remove_listener("popup", record_popup)
 
         success("Quick Update is open for the matching claim.")
-        return page
+        return claim_page
     except PlaywrightError as exc:
         raise ClaimNavigationError(failure) from exc
     finally:
