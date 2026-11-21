@@ -67,6 +67,15 @@ async def _attach_file(page: Page, idx: int, file_path: str, log) -> bool:
         return False
 
 
+def _review_photo(page, log, label, file_path, reason):
+    recovery = current_recovery.get()
+    if recovery is not None:
+        uploaded = page.locator('tr[data-ng-repeat*="uploadDocArrayQuickUpdate"]:visible').get_by_text(
+            os.path.basename(file_path), exact=True,
+        )
+        recovery.record_field_issue(log, label, reason, matches=uploaded.is_visible)
+
+
 async def _click_plus_and_wait(page: Page, log,
                                before_count: int, timeout_s: float = 5.0) -> bool:
     """Click the + button and wait for a new row to appear in the DOM."""
@@ -119,6 +128,11 @@ def _find_file(claim_data, key: str, fallback_keys: list) -> Optional[str]:
 
 # ── Public entry point ────────────────────────────────────────────────────────
 
+_PHOTO_HEADING = 'h4.headerClip:has-text("Vehicle Photo Graph"):visible'
+_TIE_UP_NEXT = 'button#saveQuickUpdate[data-ng-click*="saveQuickUpdate("]'
+_QUICK_UPDATE_NEXT = f'{_TIE_UP_NEXT}, button#saveQuickUpdateNM[data-ng-click*="saveQuickUpdateNM("]'
+
+
 async def fill_vehicle_photo_graph(
     page: Page,
     claim_data,
@@ -134,7 +148,7 @@ async def fill_vehicle_photo_graph(
 
     try:
         await page.wait_for_selector(
-            'h4.headerClip:has-text("Vehicle Photo Graph")',
+            f'{_PHOTO_HEADING}, :is({_QUICK_UPDATE_NEXT}):visible',
             state="visible", timeout=15000
         )
     except Exception as e:
@@ -143,6 +157,12 @@ async def fill_vehicle_photo_graph(
         else:
             log(f"Vehicle Photo Graph section did not load: {e}")
         return False
+
+    if stop_cb(): return False
+    if not await page.locator(_PHOTO_HEADING).is_visible():
+        if isinstance(log, AutomationLogger):
+            log.info("Vehicle Photo Graph is unavailable on this claim's Quick Update page.")
+        return await _advance_after_quick_update(page, log)
 
     await asyncio.sleep(0.8)
     if stop_cb(): return False
@@ -175,6 +195,8 @@ async def fill_vehicle_photo_graph(
     chassis_attached = False
     if chassis_file:
         chassis_attached = await _attach_file(page, 0, chassis_file, log)
+        if not chassis_attached:
+            _review_photo(page, log, "Chassis Number Photograph", chassis_file, "App3 could not attach the photograph.")
         # Dismiss any immediate portal alert (file-size / duplicate)
         await quick_check_and_dismiss(page, log, context="Chassis attach")
     else:
@@ -206,6 +228,9 @@ async def fill_vehicle_photo_graph(
             odometer_attached = await _attach_file(page, 1, odometer_file, log)
             # Dismiss any immediate portal alert after odometer attachment
             await quick_check_and_dismiss(page, log, context="Odometer attach")
+        if not odometer_attached:
+            _review_photo(page, log, "Odometer Reading Photograph", odometer_file,
+                          "App3 could not attach the photograph.")
 
         if isinstance(log, AutomationLogger):
             log.outdent()
@@ -221,6 +246,7 @@ async def fill_vehicle_photo_graph(
     # A single Upload click submits all filled rows in one portal request.
     if chassis_attached or odometer_attached:
         attached_count = sum([chassis_attached, odometer_attached])
+        upload_failed = False
         if isinstance(log, AutomationLogger):
             log.wait(
                 f"Uploading {attached_count} attached document(s) — single Upload click..."
@@ -244,6 +270,7 @@ async def fill_vehicle_photo_graph(
                 await asyncio.sleep(0.5)
 
             if await upload_btn.is_disabled():
+                upload_failed = True
                 if isinstance(log, AutomationLogger):
                     log.warning(
                         "Upload button still disabled — files may already be "
@@ -262,14 +289,23 @@ async def fill_vehicle_photo_graph(
                 # _handle_popup_after_next detects any visible modal
                 # (success banner, duplicate warning, size error) and
                 # dismisses it. Returns True whether or not a popup appeared.
-                await dismiss_portal_popup(page, log, max_wait_s=8.0, context="Upload Multi-Row")
+                outcome = await dismiss_portal_popup(page, log, max_wait_s=8.0, context="Upload Multi-Row", classify=True)
+                upload_failed = outcome in {"size_error", "duplicate_error"}
                 await asyncio.sleep(1.0)
 
         except Exception as e:
+            upload_failed = True
             if isinstance(log, AutomationLogger):
                 log.error(f"Upload button error: {str(e)[:100]}")
             else:
                 log(f"  ⚠️ Error clicking Upload button: {e}")
+        if upload_failed:
+            for attached, label, path in (
+                (chassis_attached, "Chassis Number Photograph", chassis_file),
+                (odometer_attached, "Odometer Reading Photograph", odometer_file),
+            ):
+                if attached:
+                    _review_photo(page, log, label, path, "App3 could not confirm the photograph was uploaded.")
     else:
         if isinstance(log, AutomationLogger):
             log.warning(
@@ -280,11 +316,14 @@ async def fill_vehicle_photo_graph(
 
     if stop_cb(): return False
 
-    # ── Click Next button ─────────────────────────────────────────────────────
+    return await _advance_after_quick_update(page, log)
+
+
+async def _advance_after_quick_update(page, log):
     recovery = current_recovery.get()
     if recovery is not None:
         advanced = await recovery.advance_next(
-            page, log, "button#saveQuickUpdateNM, button#saveQuickUpdate",
+            page, log, _QUICK_UPDATE_NEXT,
             source="one", destination="two", title="Additional Details",
             after_click=lambda: dismiss_portal_popup(page, log, max_wait_s=5.0, context="Vehicle Next"),
         )
@@ -301,7 +340,7 @@ async def fill_vehicle_photo_graph(
     try:
         # Use Playwright's trusted click (not JS inject) so the portal's
         # Angular click-handler fires correctly and produces the modal.
-        next_btn = page.locator('#saveQuickUpdateNM')
+        next_btn = page.locator(f':is({_QUICK_UPDATE_NEXT}):visible')
         await next_btn.wait_for(state="visible", timeout=5000)
         await next_btn.scroll_into_view_if_needed()
         await asyncio.sleep(0.3)
@@ -312,21 +351,10 @@ async def fill_vehicle_photo_graph(
             log("  ✅ Next button clicked.")
     except Exception as e:
         if isinstance(log, AutomationLogger):
-            log.info("Retrying Next button...")
+            log.error("Could not click Next button", str(e)[:100])
         else:
-            log(f"  ⚠️ Retrying Next button: {e}")
-        try:
-            await page.evaluate("document.getElementById('saveQuickUpdateNM').click()")
-            if isinstance(log, AutomationLogger):
-                log.success("Next button clicked.")
-            else:
-                log("  ✅ Next button clicked.")
-        except Exception as e2:
-            if isinstance(log, AutomationLogger):
-                log.error("Could not click Next button", str(e2)[:100])
-            else:
-                log(f"  ❌ Next button click failed: {e2}")
-            return False
+            log(f"  ❌ Next button click failed: {e}")
+        return False
 
     # ── Handle popup / modal that appears after Next ──────────────────────────
     await dismiss_portal_popup(page, log, max_wait_s=5.0, context="Vehicle Next")

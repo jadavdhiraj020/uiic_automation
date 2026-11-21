@@ -165,6 +165,7 @@ class SettingsPage(QWidget):
             ] + _printable_rows,
             "newindia": [
                 ("remarks_default", "Remarks Default", "Remarks fallback", "text"),
+                ("allow_cashless_claim", "Allow Cashless Claim", "Quick Update", "yesno"),
                 ("observation_default", "Observation Default", "Observation fallback", "text"),
                 ("missing_text_default", "Missing Text Default", "FIR / police / charge fallbacks", "text"),
                 ("photo_charges_default", "Photo Charges Default", "Survey Fee Bill Photos Amount", "text"),

@@ -663,6 +663,31 @@ def _parse_time_string(val: str) -> Optional[Tuple[str, str]]:
     return None
 
 
+def _read_survey_time(claim, value, source, *, embedded=False) -> bool:
+    if claim.portal_id == "newindia":
+        from app.portals.newindia.field_values import parse_survey_time
+
+        if embedded and claim.time_of_survey:
+            return True
+        parsed = parse_survey_time(value, embedded=embedded)
+        if not parsed:
+            return False
+        claim.time_of_survey = parsed
+        claim.time_hh, claim.time_mm, _ = parsed.split(":")
+        claim._excel_coords["time_of_survey"] = source
+    else:
+        parts = _parse_time_string(value)
+        if not parts:
+            return False
+        claim.time_hh, claim.time_mm = parts
+        parsed = ":".join(parts)
+
+    claim._excel_coords["time_hh"] = source
+    claim._excel_logs.append(f"  📊 time_of_survey: '{parsed}' (Source: {source})")
+    logger.info("  [TIME] Extracted %s from %s", parsed, source)
+    return True
+
+
 def _extract_time_from_adjacent_cells(wb, sheet_name, found_label, cfg, claim, relaxed_punctuation=False) -> bool:
     """Helper to scan adjacent cells for survey time if missing from main cell."""
     try:
@@ -683,16 +708,8 @@ def _extract_time_from_adjacent_cells(wb, sheet_name, found_label, cfg, claim, r
                         if 0 <= target_r < len(all_row_data):
                             target_row = all_row_data[target_r]
                             for tc in range(c_idx + 1, len(target_row)):
-                                tc_str = str(target_row[tc]).strip()
-                                parsed = _parse_time_string(tc_str)
-                                if parsed:
-                                    claim.time_hh, claim.time_mm = parsed
-                                    coord_str = f"R{target_r+1}C{tc+1} ({sh_name})"
-                                    claim._excel_coords["time_hh"] = coord_str
-                                    claim._excel_logs.append(
-                                        f"  📊 time_of_survey: '{claim.time_hh}:{claim.time_mm}' (Source: {coord_str})"
-                                    )
-                                    logger.info(f"  [TIME] Extracted from adjacent cell {coord_str}: {claim.time_hh}:{claim.time_mm}")
+                                coord_str = f"R{target_r+1}C{tc+1} ({sh_name})"
+                                if _read_survey_time(claim, target_row[tc], coord_str, embedded=True):
                                     return True
     except Exception as e:
         logger.warning(f"  [TIME] Adjacent cell scan failed: {e}")
@@ -887,21 +904,8 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
 
         if value:
             if field_name == "date_of_survey":
-                # ── Extract time from the date string, adjacent cells, or fallback ──
-                time_found = False
-
-                # 1. Try parsing time from the value itself (e.g. '27/04/2023 11:30 AM', '14:15', '2023-04-27 11:30:00')
-                parsed_time = _parse_time_string(value)
-                if parsed_time:
-                    claim.time_hh, claim.time_mm = parsed_time
-                    time_found = True
-                    claim._excel_coords["time_hh"] = claim._excel_coords.get("date_of_survey", "")
-                    claim._excel_logs.append(
-                        f"  📊 time_of_survey: '{claim.time_hh}:{claim.time_mm}' (Source: {claim._excel_coords['time_hh']})"
-                    )
-                    logger.info(f"  [TIME] Extracted from date cell: {claim.time_hh}:{claim.time_mm}")
-
-                # 2. If no time in value, scan adjacent cells in the row
+                time_found = _read_survey_time(claim, value, claim._excel_coords.get("date_of_survey", ""),
+                                               embedded=True)
                 if not time_found:
                     time_found = _extract_time_from_adjacent_cells(
                         wb, sheet_name, found_label, cfg, claim, relaxed_punctuation
@@ -924,14 +928,9 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
                     logger.info("  [TIME FALLBACK] Survey time not found in Excel, defaulted to %s:%s", claim.time_hh, claim.time_mm)
 
             if field_name == "time_of_survey":
-                parsed_time = _parse_time_string(value)
-                if parsed_time:
-                    claim.time_hh, claim.time_mm = parsed_time
-                    claim._excel_coords["time_hh"] = claim._excel_coords.get("time_of_survey", "")
-                    claim._excel_logs.append(
-                        f"  📊 time_of_survey: '{claim.time_hh}:{claim.time_mm}' (Source: {claim._excel_coords['time_hh']})"
-                    )
-                    logger.info(f"  [TIME] Extracted time_of_survey: {claim.time_hh}:{claim.time_mm}")
+                if _read_survey_time(claim, value, claim._excel_coords.get("time_of_survey", "")):
+                    if portal_id == "newindia":
+                        value = claim.time_of_survey
 
             if is_date:
                 value = _format_date(value)

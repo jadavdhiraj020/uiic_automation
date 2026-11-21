@@ -1,70 +1,47 @@
 import asyncio
-import re
-from typing import Callable, Optional
+from contextlib import contextmanager
+from typing import Callable
 from playwright.async_api import Page
 from app.portals.newindia.automation.ui_utils import (
     fill_input_with_delay, click_radio_with_delay
 )
+from app.portals.newindia.automation.recovery import current_recovery
 from app.automation.automation_logger import AutomationLogger
+from app.data.data_model import clean_mobile_number
+from app.portals.newindia.field_values import parse_survey_time
 from app.utils import load_automation_defaults
 
 # ── JavaScript helpers ────────────────────────────────────────────────────────
 
-# Get all date radio values
-_JS_DATE_VALUES = """
-() => Array.from(document.querySelectorAll('input[name="dateOfSurveyRadio"]'))
-          .map(r => r.value)
+_FORM = '[name="quickUpdateForm"]'
+_RADIO_OPTIONS = r"""
+(radios, group) => radios.filter(radio => radio.name === group || /^\d*$/.test(radio.id.slice(group.length)))
+    .filter(radio => radio.getClientRects().length || [...radio.labels].some(label => label.getClientRects().length))
+    .map(radio => ({name: radio.name, value: radio.value}))
 """
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-async def _ensure_yes(page: Page, name: str, label: str,
-                      log, delay_ms: int = 600) -> None:
-    """Check current state; only click Yes if not already checked."""
+@contextmanager
+def _review_field_failure(log, label):
+    """Keep an unexpected field error for the Next review."""
     try:
-        count = await page.locator(f'input[name="{name}"]').count()
-        if not count:
-            if isinstance(log, AutomationLogger):
-                log.field_skipped(label, reason="Not shown on this claim")
-            else:
-                log(f"   ⏭  [{label}] not shown on this claim")
-            return
-        await click_radio_with_delay(page, name, "Y", label, log, delay_ms, source="Default")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"[{label}] toggle error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️  [{label}] error: {e}")
+        yield
+    except Exception:
+        reason = "App3 could not fill this field."
+        recovery = current_recovery.get()
+        if recovery is not None:
+            recovery.record_field_issue(log, label, reason)
+        elif isinstance(log, AutomationLogger):
+            log.field_failed(label, reason)
+        elif log:
+            log(f"{label} — {reason}")
 
 
-from app.data.data_model import clean_mobile_number as _clean_mobile_10
-
-
-def _normalise_time(raw: str) -> str:
-    """Normalize time to HH:MM (24-hour format) for Website 2."""
-    s = str(raw).strip()
-    # Check for AM/PM format first
-    time_match = re.search(r"(\d{1,2})[.:\s]?(\d{2})?\s*([aA]\.?[mM]\.?|[pP]\.?[mM]\.?)", s)
-    if time_match:
-        h = int(time_match.group(1))
-        m = time_match.group(2) or "00"
-        ampm = time_match.group(3).replace(".", "").lower()
-        if ampm == "pm" and h < 12:
-            h += 12
-        elif ampm == "am" and h == 12:
-            h = 0
-        return f"{h:02d}:{int(m):02d}"
-    
-    # Check for direct HH:MM 24-hour format
-    m24 = re.search(r"\b([01]?\d|2[0-3])[.:\s]([0-5]\d)\b", s)
-    if m24:
-        return f"{int(m24.group(1)):02d}:{int(m24.group(2)):02d}"
-        
-    # Fallback to standard regex match or first 5 chars
-    m = re.match(r"(\d{1,2})[:\.\s](\d{2})", s)
-    if m:
-        return f"{int(m.group(1)):02d}:{m.group(2)}"
-    return s[:5]
+async def _radio_options(form, name):
+    # The same group has a descriptive name on some claims and a short name on others.
+    radios = form.locator(f'input[type="radio"]:is([name="{name}"], [id^="{name}"])')
+    return await radios.evaluate_all(_RADIO_OPTIONS, name)
 
 
 # ── Public entry point ────────────────────────────────────────────────────────
@@ -97,184 +74,134 @@ async def fill_quick_update_details(
         return False
 
     await asyncio.sleep(1.5)
-    if stop_cb(): return False
+    form = page.locator(_FORM)
 
-    # ── 1. Date Of Survey ────────────────────────────────────────────────────
-    date_of_survey = getattr(claim_data, "date_of_survey", "").strip()
-    if date_of_survey:
-        if isinstance(log, AutomationLogger):
-            log.info(f"Filling Survey Date: {date_of_survey}")
-        else:
-            log(f"Date of Survey: {date_of_survey}")
-
-        try:
-            available = await page.evaluate(_JS_DATE_VALUES)
-            if date_of_survey in (available or []):
-                await click_radio_with_delay(page, "dateOfSurveyRadio", date_of_survey,
-                                   "Date of Survey", log, field_delay_ms, source="Excel")
-            else:
+    async def fill_text(selector, value, label, *, source="Excel", only_if_shown=False):
+        with _review_field_failure(log, label):
+            if only_if_shown and not await form.locator(f"{selector}:visible").count():
                 if isinstance(log, AutomationLogger):
-                    log.info("Target date not in radio options; selecting 'Others' for manual input.")
-                else:
-                    log("  Not in options — selecting 'Others'")
-                await click_radio_with_delay(page, "dateOfSurveyRadio", "Others",
-                                   "Date of Survey (Others)", log, field_delay_ms, source="Default")
-                await asyncio.sleep(0.8)
-                try:
-                    await page.wait_for_selector('input[name="dateOfSurvey"]',
-                                                 state="visible", timeout=5000)
-                    await fill_input_with_delay(page, 'input[name="dateOfSurvey"]',
-                                   date_of_survey, "Date (manual)", log, field_delay_ms, source="Excel")
-                except Exception as de:
-                    if isinstance(log, AutomationLogger):
-                        log.error(f"Manual date input failed: {str(de)[:100]}")
-                    else:
-                        log(f"  ⚠️  Manual date input: {de}")
-        except Exception as e:
-            if isinstance(log, AutomationLogger):
-                log.error(f"Date selection process failed: {str(e)[:100]}")
-            else:
-                log(f"  ⚠️  Date error: {e}")
-    else:
-        if isinstance(log, AutomationLogger):
-            log.field_skipped("Date of Survey", reason="Missing from Excel")
+                    log.field_skipped(label, reason="Not shown on this claim")
+                return
+            if value:
+                await fill_input_with_delay(page, f"{_FORM} {selector}", value, label, log,
+                                            field_delay_ms, source=source)
+            elif isinstance(log, AutomationLogger):
+                log.field_skipped(label, reason="No usable source value")
 
-    await asyncio.sleep(0.5)
-    if stop_cb(): return False
+    if stop_cb():
+        return False
 
-    # ── 2. Time Of Survey ────────────────────────────────────────────────────
-    time_raw = getattr(claim_data, "time_of_survey", "")
-    if not time_raw:
-        hh = getattr(claim_data, "time_hh", "")
-        mm = getattr(claim_data, "time_mm", "")
-        if hh and mm:
-            time_raw = f"{hh}:{mm}"
-    if time_raw:
-        n_time = _normalise_time(time_raw)
-        if isinstance(log, AutomationLogger):
-            log.info(f"Filling Survey Time: {n_time}")
-        else:
-            log(f"Time of Survey: {n_time}")
-        await fill_input_with_delay(page, 'input[name="timeOfSurvey"]',
-                       n_time, "Time of Survey", log, field_delay_ms, source="Excel")
-    else:
-        if isinstance(log, AutomationLogger):
-            log.field_skipped("Time of Survey", reason="Missing from Excel")
-
-    await asyncio.sleep(0.4)
-    if stop_cb(): return False
-
-    # ── 3. Place Of Survey ───────────────────────────────────────────────────
-    place = getattr(claim_data, "place_of_survey", "")
-    if place:
-        if isinstance(log, AutomationLogger):
-            log.info(f"Filling Survey Place: {place[:50]}...")
-        else:
-            log(f"Place of Survey: {place}")
-        await fill_input_with_delay(page, 'textarea[name="placeOfSurvey"]',
-                       place, "Place of Survey", log, field_delay_ms, source="Excel")
-    else:
-        if isinstance(log, AutomationLogger):
-            log.field_skipped("Place of Survey", reason="Missing from Excel")
-
-    await asyncio.sleep(0.4)
-    if stop_cb(): return False
-
-    # ── 4-10. Boolean Yes/No fields — always ensure YES ──────────────────────
-    if isinstance(log, AutomationLogger):
-        log.info("Setting compliance toggles to 'Yes'...")
-        log.indent()
-    else:
-        log("Setting boolean fields to YES...")
-
-    bool_fields = [
-        ("radioDataCompleted",          "Survey Completed"),
-        ("radioDrivingLicenseApplicable","DL Applicable"),
-        ("radioDrivingLicense",         "DL Verified (Original)"),
-        ("radioRCbook",                 "RC Verified (Original)"),
-        ("radioDrivingLicensePar",      "DL Verified (Parivahan)"),
-        ("radioRCbookPar",              "RC Verified (Parivahan)"),
-        ("isCloseProximityBreakIn",     "Close Proximity / Break-In"),
-    ]
-    for radio_name, label in bool_fields:
-        await _ensure_yes(page, radio_name, label, log, field_delay_ms)
-        if stop_cb():
-            if isinstance(log, AutomationLogger): log.outdent()
-            return False
-
-    # Conditional field — revealed after Close Proximity = Y
-    await asyncio.sleep(0.5)
-    await _ensure_yes(page, "inspectionReportUploaded", "Inspection Report Uploaded", log, field_delay_ms)
-    
-    if isinstance(log, AutomationLogger):
-        log.outdent()
-        
-    await asyncio.sleep(0.4)
-    if stop_cb(): return False
-
-    # ── 11. Remarks ──────────────────────────────────────────────────────────
-    remarks_source = "Excel" if (getattr(claim_data, "remarks", "") or getattr(claim_data, "surveyor_observation", "")) else "Default"
-    remarks = (
-        getattr(claim_data, "remarks", "")
-        or getattr(claim_data, "surveyor_observation", "")
-        or str(defaults.get("remarks_default", "Ok") or "Ok")
-    )
-    if isinstance(log, AutomationLogger):
-        log.info(f"Filling Remarks: {remarks[:50]}...")
-    else:
-        log(f"Remarks: {remarks[:80]}")
-    await fill_input_with_delay(page, 'textarea[name="remarks"]', remarks, "Remarks", log, field_delay_ms, source=remarks_source)
-    await asyncio.sleep(0.4)
-    if stop_cb(): return False
-
-    # ── 12. Mobile No ────────────────────────────────────────────────────────
-    raw_mobile = getattr(claim_data, "mobile_no", "")
-    mobile = _clean_mobile_10(raw_mobile) if raw_mobile else ""
-    if mobile:
-        if isinstance(log, AutomationLogger):
-            log.info(f"Filling Mobile No: {mobile}")
-        else:
-            log(f"Mobile No: {mobile}")
-        await fill_input_with_delay(page, 'input[name="mobileNo"]', mobile, "Mobile No", log, field_delay_ms, source="Excel")
-    else:
-        if isinstance(log, AutomationLogger):
-            log.field_skipped("Mobile No", reason="Missing from Excel")
-
-    await asyncio.sleep(0.4)
-    if stop_cb(): return False
-
-    # ── 13. Email ID ─────────────────────────────────────────────────────────
-    email = getattr(claim_data, "email_id", "")
-    if email:
-        if isinstance(log, AutomationLogger):
-            log.info(f"Filling Email ID: {email}")
-        else:
-            log(f"Email ID: {email}")
-        await fill_input_with_delay(page, 'input[name="emailId"]', email, "Email ID", log, field_delay_ms, source="Excel")
-    else:
-        if isinstance(log, AutomationLogger):
-            log.field_skipped("Email ID", reason="Missing from Excel")
-
-    await asyncio.sleep(0.4)
-    if stop_cb(): return False
-
-    # ── 14. Expected Date of Repair = Date of Survey ─────────────────────────
+    date_of_survey = str(getattr(claim_data, "date_of_survey", "") or "").strip()
     if date_of_survey:
-        if isinstance(log, AutomationLogger):
-            log.info(f"Filling Expected Repair Date: {date_of_survey}")
-        else:
-            log(f"Expected Date of Repair (= Survey Date): {date_of_survey}")
-        await fill_input_with_delay(page, 'input[name="expectedDateOfRepair"]',
-                       date_of_survey, "Expected Date of Repair", log, field_delay_ms, source="Excel")
-    else:
-        if isinstance(log, AutomationLogger):
-            log.field_skipped("Expected Date of Repair", reason="Date of Survey missing")
+        with _review_field_failure(log, "Date of Survey"):
+            options = await _radio_options(form, "dateOfSurveyRadio")
+            option = next((item for item in options if item["value"] == date_of_survey), None)
+            if option:
+                await click_radio_with_delay(page, option["name"], date_of_survey, "Date of Survey",
+                                             log, field_delay_ms, source="Excel", scope=form)
+            else:
+                await click_radio_with_delay(page, "dateOfSurveyRadio", "Others", "Date of Survey (Others)",
+                                             log, field_delay_ms, source="Default", scope=form)
+                await asyncio.sleep(0.8)
+                await fill_text('input[name="dateOfSurvey"]', date_of_survey, "Date of Survey")
+    elif isinstance(log, AutomationLogger):
+        log.field_skipped("Date of Survey", reason="Missing from Excel")
+
+    await asyncio.sleep(0.5)
+    if stop_cb():
+        return False
+
+    with _review_field_failure(log, "Time of Survey"):
+        time_raw = getattr(claim_data, "time_of_survey", "")
+        if time_raw in (None, ""):
+            hh = getattr(claim_data, "time_hh", "")
+            mm = getattr(claim_data, "time_mm", "")
+            time_raw = f"{hh}:{mm}" if hh and mm else hh
+        survey_time = parse_survey_time(time_raw)
+        time_input = 'input[name="timeOfSurvey"]'
+        if survey_time:
+            maxlength = await form.locator(f"{time_input}:visible").get_attribute("maxlength", timeout=5000)
+            await fill_text(time_input, survey_time[:5] if maxlength == "5" else survey_time, "Time of Survey")
+        elif time_raw not in (None, ""):
+            raise ValueError("Invalid survey time")
+        elif isinstance(log, AutomationLogger):
+            log.field_skipped("Time of Survey", reason="No usable source value")
 
     await asyncio.sleep(0.4)
+    if stop_cb():
+        return False
+
+    await fill_text('textarea[name="placeOfSurvey"]', getattr(claim_data, "place_of_survey", ""),
+                    "Place of Survey", only_if_shown=True)
+    await asyncio.sleep(0.4)
+
+    cashless = str(defaults.get("allow_cashless_claim", "Yes")).strip().casefold()
+    bool_fields = [
+        ("radioDataCompleted", "Survey Completed", "Y"),
+        ("radioDrivingLicenseApplicable", "DL Applicable", "Y"),
+        ("radioDrivingLicense", "Driving License verified with original", "Y"),
+        ("radioRCbook", "RC Book verified with original", "Y"),
+        ("radioDrivingLicensePar", "Driving License verified through Parivahan", "Y"),
+        ("radioRCbookPar", "RC Book verified through Parivahan", "Y"),
+        ("isCloseProximityBreakIn", "Close Proximity / Break-In", "Y"),
+        ("inspectionReportUploaded", "Inspection Report Uploaded", "Y"),
+        ("radioAllowCashless", "Allow Cashless Claim", {"yes": "Y", "no": "N"}.get(cashless)),
+    ]
+    for group, label, value in bool_fields:
+        if stop_cb():
+            return False
+        if group == "inspectionReportUploaded":
+            await asyncio.sleep(0.5)
+        with _review_field_failure(log, label):
+            options = await _radio_options(form, group)
+            names = {item["name"] for item in options}
+            if len(names) == 1 and value is not None:
+                source = "Automation Defaults" if group == "radioAllowCashless" else "Default"
+                await click_radio_with_delay(page, names.pop(), value, label, log, field_delay_ms,
+                                             source=source, scope=form)
+            elif names:
+                recovery = current_recovery.get()
+                if recovery is not None:
+                    recovery.record_field_issue(log, label, "Select the correct option in Chrome.")
+                elif isinstance(log, AutomationLogger):
+                    log.field_failed(label, "Select the correct option in Chrome.")
+            elif isinstance(log, AutomationLogger):
+                log.field_skipped(label, reason="Not shown on this claim")
+
+    await asyncio.sleep(0.4)
+    if stop_cb():
+        return False
+
+    remarks = getattr(claim_data, "remarks", "") or getattr(claim_data, "surveyor_observation", "")
+    await fill_text('textarea[name="remarks"]', remarks or str(defaults.get("remarks_default") or "Ok"),
+                    "Remarks", source="Excel" if remarks else "Default")
+    await asyncio.sleep(0.4)
+    if stop_cb():
+        return False
+
+    with _review_field_failure(log, "Mobile No of the Claimant"):
+        raw_mobile = getattr(claim_data, "mobile_no", "")
+        await fill_text('input[data-ng-model$=".quickUpdate.claimantMobileNo"]',
+                        clean_mobile_number(raw_mobile) if raw_mobile else "",
+                        "Mobile No of the Claimant")
+    await asyncio.sleep(0.4)
+    if stop_cb():
+        return False
+
+    await fill_text('input[name="emailId"]', getattr(claim_data, "email_id", ""), "Email ID")
+    await asyncio.sleep(0.4)
+    if stop_cb():
+        return False
+
+    await fill_text('input[data-ng-model$=".quickUpdate.expectedDateOfRepair"]', date_of_survey,
+                    "Expected date of completion of repair")
+    await asyncio.sleep(0.4)
+    if stop_cb():
+        return False
 
     if isinstance(log, AutomationLogger):
         log.outdent()
-        log.success("Quick Update Details phase completed.")
+        log.info("Quick Update field entry finished.")
     elif log:
-        log("Phase 3 complete — all fields filled.")
+        log("Quick Update field entry finished.")
     return True

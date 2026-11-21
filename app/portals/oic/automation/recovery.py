@@ -130,6 +130,7 @@ class RecoveryPrompt:
     instruction: str = ""
     stop_only: bool = False
     confirmation_button: str = ""
+    skip_button: str = ""
 
 
 class OperatorRecovery:
@@ -192,7 +193,7 @@ class OperatorRecovery:
 
     async def pause(
         self, page, log, action, reason, *, ready=None, instruction=None, describe=None, section=None, stop_only=False,
-        confirmation_button="", require_original=False, field_ready=None,
+        confirmation_button="", require_original=False, field_ready=None, skip_button="", on_skip=None,
     ):
         portal = self.portal_name
         section = section or getattr(log, "_section", None) or portal
@@ -216,8 +217,8 @@ class OperatorRecovery:
                     await asyncio.wait_for(page.bring_to_front(), timeout=2)
             prompt = RecoveryPrompt(
                 prompt_id, section, title, detail,
-                ready is None and not stop_only and not confirmation_button,
-                guidance, stop_only, confirmation_button,
+                not stop_only and (on_skip is not None if ready is not None else not confirmation_button),
+                guidance, stop_only, confirmation_button, skip_button,
             )
             loop = asyncio.get_running_loop()
             result = loop.create_future()
@@ -238,6 +239,8 @@ class OperatorRecovery:
                     result.cancel()
 
             if ready is not None:
+                if decision == "skip" and on_skip is not None:
+                    await on_skip()
                 if await wait_until_ready(ready, seconds=3, stopped=self.stopped):
                     log.info(f"{portal} resumed at {section} after confirming {action} in Chrome.")
                     self.notify(None)

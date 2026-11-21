@@ -918,8 +918,8 @@ class MainWindow(QMainWindow):
             dialog.setTextFormat(Qt.TextFormat.PlainText)
             dialog.fixed_button = dialog.addButton("Continue", QMessageBox.ButtonRole.ActionRole)
             dialog.skip_button = dialog.addButton("Skip this field", QMessageBox.ButtonRole.ActionRole)
-            stop = dialog.addButton("Stop automation", QMessageBox.ButtonRole.ActionRole)
-            stop.clicked.connect(self._stop_automation)
+            dialog.stop_button = dialog.addButton("Stop automation", QMessageBox.ButtonRole.ActionRole)
+            dialog.stop_button.clicked.connect(self._stop_automation)
 
             def respond(decision):
                 if self._worker is not worker or self._oic_recovery_dialog is not dialog:
@@ -950,8 +950,10 @@ class MainWindow(QMainWindow):
         dialog.fixed_button.setText(prompt.confirmation_button or ("I fixed it — continue" if prompt.can_skip else "Continue"))
         dialog.fixed_button.setVisible(not prompt.stop_only)
         dialog.fixed_button.setEnabled(not prompt.stop_only)
+        dialog.skip_button.setText(prompt.skip_button or "Skip this field")
         dialog.skip_button.setVisible(prompt.can_skip)
         dialog.skip_button.setEnabled(prompt.can_skip)
+        dialog.stop_button.setVisible(not prompt.skip_button or prompt.stop_only)
         self._review_oic_button.show()
         self._raise_oic_recovery()
         if not dialog.isActiveWindow():

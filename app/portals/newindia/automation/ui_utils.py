@@ -284,13 +284,14 @@ async def select_dropdown_with_delay(
 
 async def click_radio_with_delay(
     page: Page, name: str, value: str, label: str,
-    log, delay_ms: int = 600, source: Optional[str] = None
+    log, delay_ms: int = 600, source: Optional[str] = None, *, scope=None,
 ):
     """Click radio via label with delay."""
     group = f'input[type="radio"][name={json.dumps(name)}]'
-    target = page.locator(f'{group}[value={json.dumps(str(value))}]')
+    root = page if scope is None else scope
+    target = root.locator(f'{group}[value={json.dumps(str(value))}]')
     await _check_entry(page, target, label, value, _JS_CLICK_RADIO, "radio", log, delay_ms,
-                       source, radio_group=page.locator(f"{group}:checked"))
+                       source, radio_group=root.locator(f"{group}:checked"))
 
 def format_date_ddmmyyyy(raw_date) -> str:
     """Safely format any date string from Excel to DD/MM/YYYY."""

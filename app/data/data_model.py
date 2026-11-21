@@ -183,33 +183,6 @@ def _extract_number_suffix(val: Optional[str]) -> str:
     return s
 
 
-def _normalise_time(raw: str) -> str:
-    """Normalize time to HH:MM (24-hour format) for Website 2."""
-    s = str(raw).strip()
-    # Check for AM/PM format first
-    time_match = re.search(r"(\d{1,2})[.:\s]?(\d{2})?\s*([aA]\.?[mM]\.?|[pP]\.?[mM]\.?)", s)
-    if time_match:
-        h = int(time_match.group(1))
-        m = time_match.group(2) or "00"
-        ampm = time_match.group(3).replace(".", "").lower()
-        if ampm == "pm" and h < 12:
-            h += 12
-        elif ampm == "am" and h == 12:
-            h = 0
-        return f"{h:02d}:{int(m):02d}"
-    
-    # Check for direct HH:MM 24-hour format
-    m24 = re.search(r"\b([01]?\d|2[0-3])[.:\s]([0-5]\d)\b", s)
-    if m24:
-        return f"{int(m24.group(1)):02d}:{int(m24.group(2)):02d}"
-        
-    # Fallback to standard regex match or first 5 chars
-    m = re.match(r"(\d{1,2})[:\.\s](\d{2})", s)
-    if m:
-        return f"{int(m.group(1)):02d}:{m.group(2)}"
-    return s[:5]
-
-
 @dataclass
 class ClaimData:
     # ── Identification ────────────────────────────────────────────────────────
@@ -632,13 +605,17 @@ class ClaimData:
                 except Exception as exc:
                     logger.warning("Failed to calculate age_of_driver from DOB %s: %s", self.dob_of_driver, exc)
 
-            # 6. Normalize or construct time of survey for New India
-            if self.time_of_survey:
-                self.time_of_survey = _normalise_time(self.time_of_survey)
-                self._excel_logs.append(f"  📊 time_of_survey normalized: '{self.time_of_survey}'")
-            elif self.time_hh and self.time_mm:
-                self.time_of_survey = f"{self.time_hh}:{self.time_mm}"
-                self._excel_logs.append(f"  📊 time_of_survey derived: '{self.time_of_survey}' (Source: {self.time_hh}:{self.time_mm})")
+            from app.portals.newindia.field_values import parse_survey_time
+
+            raw_time = self.time_of_survey or self.time_hh
+            if not self.time_of_survey and self.time_hh and self.time_mm:
+                raw_time = f"{self.time_hh}:{self.time_mm}"
+            if parsed_time := parse_survey_time(raw_time):
+                self.time_of_survey = parsed_time
+                self.time_hh, self.time_mm, _ = parsed_time.split(":")
+                if not self._excel_coords.get("time_of_survey") and self._excel_coords.get("time_hh"):
+                    self._excel_coords["time_of_survey"] = self._excel_coords["time_hh"]
+                self._excel_logs.append(f"  📊 time_of_survey normalized: '{parsed_time}'")
 
         elif portal_id == "oic":
             from app.portals.oic.automation.date_formatter import format_oic_date
