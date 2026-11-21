@@ -569,6 +569,17 @@ class ClaimFolderService:
             claim.source_report_path = report_source
             claim._oic_pdf_converted_excel = converted_oic_excel
             if self.portal_id == "oic" and source_ext == ".pdf":
+                # The PDF was converted and then re-read through excel_reader,
+                # so this is a fresh ClaimData object.  Initialise the PDF-only
+                # review containers before the fee supplementer/logging uses
+                # them; otherwise PDF-only OIC scans fail with AttributeError.
+                claim._oic_pdf_review_errors = list(
+                    getattr(claim, "_oic_pdf_review_errors", []) or []
+                )
+                claim._oic_pdf_review_warnings = list(
+                    getattr(claim, "_oic_pdf_review_warnings", []) or []
+                )
+
                 from app.portals.oic.pdf_report import supplement_oic_pdf_fees
 
                 supplement_oic_pdf_fees(claim, folder, stop_cb=stop_cb)
