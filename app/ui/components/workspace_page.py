@@ -520,8 +520,8 @@ class DataReviewPanel(QWidget):
         self._rows = []
         self._metadata = get_portal_ui_metadata(portal_id)
         self._source_report_path = str(getattr(claim, "source_report_path", "") or "")
-        oic_pdf = portal_id == "oic" and self._source_report_path.lower().endswith(".pdf")
-        self.open_pdf_button.setVisible(oic_pdf)
+        review_pdf = portal_id in {"oic", "newindia"} and self._source_report_path.lower().endswith(".pdf")
+        self.open_pdf_button.setVisible(review_pdf)
 
         if not claim:
             self.validation_bar.setVisible(False)
@@ -534,7 +534,7 @@ class DataReviewPanel(QWidget):
         errors, warnings = claim.validate()
         upload_warning = getattr(claim, "_oic_upload_warning", "") if portal_id == "oic" else ""
         if errors:
-            title = "Review the survey PDF before starting" if oic_pdf else "MISSING FIELDS - Review before starting"
+            title = "Review the survey PDF before starting" if review_pdf else "MISSING FIELDS - Review before starting"
             message = title + "\n" + "\n".join(f"  - {e}" for e in errors)
             if upload_warning:
                 message += "\n\n" + upload_warning

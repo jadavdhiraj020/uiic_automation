@@ -160,6 +160,63 @@ def _create_template_workbook(data_rows: List[dict]):
 # PUBLIC API
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _write_primary_assessment_output(
+    parts_rows: List[dict],
+    labour_rows: List[dict],
+    output_folder: str,
+    audit_lines: List[str],
+    *,
+    stop_cb=None,
+) -> Optional[str]:
+    """Sanitise rows, write the primary assessment workbook atomically, and save audit."""
+    output_path = os.path.join(output_folder, ASSESSMENT_WORKBOOK)
+
+    # Sanitise copies: strip OIC-specific keys so the NIA template writer only
+    # sees the canonical schema without mutating caller-held PDF row lists.
+    all_rows = []
+    for row in (*parts_rows, *labour_rows):
+        cleaned = dict(row)
+        for k in _OIC_ONLY_KEYS:
+            cleaned.pop(k, None)
+        all_rows.append(cleaned)
+
+    wb = _create_template_workbook(all_rows)
+    audit_path = _audit_path_for(output_path)
+    try:
+        with staging_folder(output_folder) as stage:
+            staged = os.path.join(stage, ASSESSMENT_WORKBOOK)
+            wb.save(staged)
+            if not publish_scan_output(staged, output_path, stop_cb=stop_cb):
+                return None
+    finally:
+        wb.close()
+
+    parts_total = sum(float(row.get("assessed_amount") or 0) for row in parts_rows)
+    labour_total = sum(float(row.get("assessed_amount") or 0) for row in labour_rows)
+    audit_lines.extend([
+        "",
+        "Result",
+        f"Output Excel: {output_path}",
+        f"Audit File: {audit_path}",
+        f"Parts rows: {len(parts_rows)}",
+        f"Labour rows: {len(labour_rows)}",
+        f"Total rows: {len(all_rows)}",
+        f"Parts assessed total: {parts_total}",
+        f"Labour assessed total: {labour_total}",
+        f"Grand assessed total: {parts_total + labour_total}",
+    ])
+    _write_audit_file(audit_path, audit_lines, stop_cb=stop_cb)
+
+    logger.info(
+        "Assessment generator: SUCCESS — %d rows (%d parts + %d labour) → %s",
+        len(all_rows),
+        len(parts_rows),
+        len(labour_rows),
+        output_path,
+    )
+    return output_path
+
+
 def generate_primary_assessment(source_excel_path: str, output_folder: str, *, stop_cb=None) -> Optional[str]:
     """
     Generate a standardised primary_assessment.xlsx from the main data Excel.
@@ -279,49 +336,9 @@ def generate_primary_assessment(source_excel_path: str, output_folder: str, *, s
         _write_audit_file(audit_path, audit_lines, stop_cb=stop_cb)
         return None
 
-    # ── Sanitise: strip OIC-specific keys that the shared extractor adds ──
-    # The template writer only reads the canonical NIA schema keys.
-    for row in all_rows:
-        for k in _OIC_ONLY_KEYS:
-            row.pop(k, None)
-
-    # ── Phase 3: Generate Template ──
-    wb = _create_template_workbook(all_rows)
-
-    audit_path = _audit_path_for(output_path)
-    try:
-        with staging_folder(output_folder) as stage:
-            staged = os.path.join(stage, ASSESSMENT_WORKBOOK)
-            wb.save(staged)
-            if not publish_scan_output(staged, output_path, stop_cb=stop_cb):
-                return None
-    finally:
-        wb.close()
-
-    parts_total = sum(float(row["assessed_amount"] or 0) for row in parts_rows)
-    labour_total = sum(float(row["assessed_amount"] or 0) for row in labour_rows)
-    audit_lines.extend([
-        "",
-        "Result",
-        f"Output Excel: {output_path}",
-        f"Audit File: {audit_path}",
-        f"Parts rows: {len(parts_rows)}",
-        f"Labour rows: {len(labour_rows)}",
-        f"Total rows: {len(all_rows)}",
-        f"Parts assessed total: {parts_total}",
-        f"Labour assessed total: {labour_total}",
-        f"Grand assessed total: {parts_total + labour_total}",
-    ])
-    _write_audit_file(audit_path, audit_lines, stop_cb=stop_cb)
-
-    logger.info(
-        "Assessment generator: SUCCESS — %d rows (%d parts + %d labour) → %s",
-        len(all_rows),
-        len(parts_rows),
-        len(labour_rows),
-        output_path,
+    return _write_primary_assessment_output(
+        parts_rows, labour_rows, output_folder, audit_lines, stop_cb=stop_cb,
     )
-    return output_path
 
 
 def generate_primary_assessment_result(
@@ -343,4 +360,74 @@ def generate_primary_assessment_result(
         status="skipped_no_data",
         generated_files=generated_files,
         message="Assessment generation skipped: no parts/labour data found.",
+    )
+
+
+def generate_primary_assessment_from_pdf_result(
+    parts_rows: List[dict],
+    labour_rows: List[dict],
+    source_pdf_path: str,
+    output_folder: str,
+    *,
+    item_sources: Optional[dict] = None,
+    review_errors: Optional[List[str]] = None,
+    stop_cb=None,
+) -> AssessmentGenerationResult:
+    """Publish a verified New India primary_assessment.xlsx from survey PDF rows."""
+    defaults = load_automation_defaults(portal_id="newindia")
+    parts_hsn = coerce_hsn_code(defaults.get("assessment_parts_hsn_code"), "8512")
+    labour_hsn = coerce_hsn_code(defaults.get("assessment_labour_hsn_code"), "8729")
+    sources_desc = ", ".join(
+        f"{section}={source}" for section, source in (item_sources or {}).items() if source
+    ) or "-"
+    audit_lines: List[str] = [
+        "Primary Assessment Generation Audit (PDF)",
+        f"Source PDF: {source_pdf_path}",
+        f"Item sources: {sources_desc}",
+        f"Parts HSN: {parts_hsn}",
+        f"Labour HSN: {labour_hsn}",
+        "",
+    ]
+
+    if review_errors:
+        audit_lines.append("Review Errors")
+        audit_lines.extend(f"- {issue}" for issue in review_errors)
+        audit_lines.extend(["", "Result", "PDF assessment verification failed. Excel generation skipped."])
+        audit_path = os.path.join(output_folder, "primary_assessment_skipped_audit.txt")
+        _write_audit_file(audit_path, audit_lines, stop_cb=stop_cb)
+        return AssessmentGenerationResult(
+            output_path=None,
+            status="skipped_review_error",
+            generated_files=[audit_path] if os.path.isfile(audit_path) else [],
+            message="; ".join(review_errors),
+        )
+
+    if not parts_rows and not labour_rows:
+        audit_lines.extend(["Result", "No parts or labour data found in survey PDF. Excel generation skipped."])
+        audit_path = os.path.join(output_folder, "primary_assessment_skipped_audit.txt")
+        _write_audit_file(audit_path, audit_lines, stop_cb=stop_cb)
+        return AssessmentGenerationResult(
+            output_path=None,
+            status="skipped_no_data",
+            generated_files=[audit_path] if os.path.isfile(audit_path) else [],
+            message="Assessment generation skipped: no parts/labour data found in survey PDF.",
+        )
+
+    output_path = _write_primary_assessment_output(
+        parts_rows, labour_rows, output_folder, audit_lines, stop_cb=stop_cb,
+    )
+    if output_path:
+        audit_file = _audit_path_for(output_path)
+        return AssessmentGenerationResult(
+            output_path=output_path,
+            status="generated",
+            generated_files=[p for p in (output_path, audit_file) if os.path.isfile(p)],
+            message="Primary assessment generated from survey PDF.",
+        )
+
+    return AssessmentGenerationResult(
+        output_path=None,
+        status="cancelled",
+        generated_files=[],
+        message="Primary assessment generation cancelled.",
     )

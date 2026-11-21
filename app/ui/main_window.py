@@ -54,6 +54,7 @@ from app.portals.registry import (
     get_active_portal_id,
 )
 from app.portals.oic.automation.assessment_upload_excel import startup_review_notices
+from app.portals.newindia.pdf_report import newindia_startup_review_notices
 
 from app.ui.worker import AutomationWorker
 from app.ui.components.settings_page import SettingsPage
@@ -728,13 +729,13 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
-    def _show_oic_startup_review(self, notices):
+    def _show_startup_review_dialog(self, title: str, notices):
         dialog = QMessageBox(self)
-        dialog.setWindowTitle("OIC review before starting")
+        dialog.setWindowTitle(title)
         dialog.setIcon(QMessageBox.Icon.Warning)
         dialog.setTextFormat(Qt.TextFormat.PlainText)
         dialog.setText("Some claim details need review.")
-        message = "\n\n".join(f"{title}\n{detail}" for title, detail in notices.items())
+        message = "\n\n".join(f"{section}\n{detail}" for section, detail in notices.items())
         if len(message.splitlines()) > 10:
             dialog.setDetailedText(message)
             message = "\n".join(notices) + "\n\nOpen Show Details for the full list."
@@ -744,6 +745,12 @@ class MainWindow(QMainWindow):
         continue_button = dialog.addButton("Continue", QMessageBox.ButtonRole.AcceptRole)
         dialog.setDefaultButton(continue_button)
         dialog.exec()
+
+    def _show_oic_startup_review(self, notices):
+        self._show_startup_review_dialog("OIC review before starting", notices)
+
+    def _show_newindia_startup_review(self, notices):
+        self._show_startup_review_dialog("New India review before starting", notices)
 
     def _start_automation(self):
         def _warn(title: str, text: str):
@@ -834,6 +841,13 @@ class MainWindow(QMainWindow):
         claim = self._claim
         if portal_id == "oic" and (notices := startup_review_notices(claim)):
             self._show_oic_startup_review(notices)
+            if self._close_requested or self._worker is not None or self._thread is not None:
+                return
+            if self._claim is not claim or get_active_portal_id() != portal_id:
+                _warn("Claim changed", "Review the current claim before starting automation.")
+                return
+        elif portal_id == "newindia" and (notices := newindia_startup_review_notices(claim)):
+            self._show_newindia_startup_review(notices)
             if self._close_requested or self._worker is not None or self._thread is not None:
                 return
             if self._claim is not claim or get_active_portal_id() != portal_id:

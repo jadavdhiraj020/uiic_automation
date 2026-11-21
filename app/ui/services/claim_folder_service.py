@@ -442,6 +442,11 @@ class ClaimFolderService:
             claim._scan_result = scan_result
             claim.source_excel_path = scan_result.excel_path or ""
             claim.source_report_path = report_source
+            claim._background_generation_stop_event = threading.Event()
+            from app.utils import load_automation_defaults
+
+            _portal_defaults = load_automation_defaults(portal_id=self.portal_id)
+
             if self.portal_id == "oic" and source_ext == ".pdf":
                 from app.portals.oic.pdf_report import supplement_oic_pdf_fees
 
@@ -449,6 +454,62 @@ class ClaimFolderService:
                 claim.assessment_files["survey_report"] = report_source
                 claim.assessment_files["assessment_report"] = report_source
                 logs.extend(f"OIC PDF review: {issue}" for issue in claim._oic_pdf_review_errors)
+
+            if self.portal_id == "newindia" and source_ext == ".pdf":
+                from app.data.assessment_generator import generate_primary_assessment_from_pdf_result
+                from app.portals.newindia.pdf_report import supplement_newindia_pdf_fees
+                from app.portals.newindia.scan_outputs import is_scan_output
+
+                supplement_newindia_pdf_fees(claim, folder, stop_cb=stop_cb)
+                if stop_cb and stop_cb():
+                    return _cancel_after_service_generation("after_newindia_pdf_fees")
+
+                assessment_path = claim.assessment_files.get("assessment_excel")
+                if assessment_path and is_scan_output(assessment_path, _portal_defaults or {}):
+                    claim.assessment_files.pop("assessment_excel")
+
+                if "assessment_excel" not in claim.assessment_files:
+                    parts_rows, labour_rows = getattr(claim, "_newindia_pdf_assessment", ([], []))
+                    item_sources = getattr(claim, "_newindia_pdf_assessment_sources", {}) or {}
+                    assessment_err = str(getattr(claim, "_newindia_pdf_assessment_error", "") or "").strip()
+                    review_errors = [assessment_err] if assessment_err else []
+                    try:
+                        existing = {os.path.normcase(str(path.absolute())) for path in Path(folder).iterdir()}
+                    except OSError:
+                        existing = set()
+                    try:
+                        generation = generate_primary_assessment_from_pdf_result(
+                            parts_rows,
+                            labour_rows,
+                            report_source,
+                            folder,
+                            item_sources=item_sources,
+                            review_errors=review_errors,
+                            stop_cb=stop_cb,
+                        )
+                        for path in generation.generated_files:
+                            if os.path.isfile(path) and os.path.normcase(os.path.abspath(path)) not in existing:
+                                _mark_generated_file(path)
+                        if generation.output_path:
+                            claim.assessment_files["assessment_excel"] = generation.output_path
+                            claim._newindia_pdf_assessment_error = ""
+                            logs.append(
+                                f"Primary assessment generated from PDF: {Path(generation.output_path).name} "
+                                f"({len(parts_rows)} parts, {len(labour_rows)} labour)"
+                            )
+                        else:
+                            if not getattr(claim, "_newindia_pdf_assessment_error", ""):
+                                claim._newindia_pdf_assessment_error = generation.message
+                            logs.append(f"Warning: {generation.message}")
+                    except Exception as exc:
+                        if not getattr(claim, "_newindia_pdf_assessment_error", ""):
+                            claim._newindia_pdf_assessment_error = str(exc)
+                        logs.append(f"Warning: Primary assessment Excel from PDF skipped: {exc}")
+
+                logs.extend(f"New India PDF review: {issue}" for issue in getattr(claim, "_newindia_pdf_review_errors", ()))
+                logs.extend(f"Warning: {issue}" for issue in getattr(claim, "_newindia_pdf_review_warnings", ()))
+                if stop_cb and stop_cb():
+                    return _cancel_after_service_generation("after_newindia_pdf_assessment")
 
             # UIIC PDF-only cases may keep the fee bill / assessment summary in
             # another PDF in the same case folder. Supplement only from PDFs
@@ -461,17 +522,6 @@ class ClaimFolderService:
                     claim.calculate_derived_fields()
                 except Exception as supplement_exc:
                     logger.warning("UIIC PDF folder supplement failed: %s", supplement_exc)
-
-            claim._background_generation_stop_event = threading.Event()
-
-            # F6 FIX: import once here, used by printable block, OIC block,
-            # and the eager_ocr check further below — no repeated inline imports.
-            from app.utils import load_automation_defaults
-
-            # Issue 4: Load once, reuse for printable block + eager_ocr check.
-            # OIC block uses its own load with portal_id="oic" (intentional —
-            # it always needs OIC defaults regardless of the active portal).
-            _portal_defaults = load_automation_defaults(portal_id=self.portal_id)
 
             # Prepare the exact OIC upload workbook before returning scan data,
             # so the user can review it and Start cannot race a background job.
@@ -566,6 +616,8 @@ class ClaimFolderService:
                 bg_thread.start()
                 if scan_result.excel_path:
                     logs.append("Info: Excel PDF assessment generation started in background.")
+                elif self.portal_id == "newindia":
+                    logs.append("Info: PDF report selected; Excel printable copy skipped.")
                 else:
                     logs.append("Info: PDF report selected; Excel-only assessment generation skipped.")
 

@@ -935,6 +935,10 @@ class ClaimData:
     def _validate_newindia(self) -> Tuple[List[str], List[str]]:
         """New India validation — driven by mandatory field list."""
         errors, warnings = [], []
+        from_pdf = str(getattr(self, "source_report_path", "") or "").lower().endswith(".pdf")
+        if from_pdf:
+            errors.extend(getattr(self, "_newindia_pdf_review_errors", ()) or ())
+            warnings.extend(getattr(self, "_newindia_pdf_review_warnings", ()) or ())
 
         # ── Mandatory fields — automation cannot proceed without these ─────────
         mandatory_checks = [
@@ -1007,6 +1011,12 @@ class ClaimData:
 
         if not self.claim_doc_files:
             warnings.append("No claim documents found in folder")
+
+        if from_pdf:
+            assessment_error = str(getattr(self, "_newindia_pdf_assessment_error", "") or "").strip()
+            if assessment_error and not self.assessment_files.get("assessment_excel"):
+                errors.append(assessment_error)
+            return list(dict.fromkeys(errors)), list(dict.fromkeys(warnings))
 
         return errors, warnings
 
@@ -1320,7 +1330,7 @@ class ClaimData:
                 return "Deferred OCR"
             return _src(key)
 
-        return [
+        rows = [
             # ── Claim Details ───────────────────────────────
             ("Claim No",              self.claim_no,                 True,  _src("claim_no")),
             
@@ -1439,3 +1449,26 @@ class ClaimData:
             ("Conveyance Amount (₹)", self.traveling_expenses,       False, _src("traveling_expenses")),
             ("Others (₹)",            self.sfb_others,               False, _src("sfb_others")),
         ]
+        if str(getattr(self, "source_report_path", "") or "").lower().endswith(".pdf"):
+            from os.path import basename
+            from app.portals.newindia.scan_outputs import is_scan_output
+
+            excel_path = (self.assessment_files or {}).get("assessment_excel", "")
+            assessment_error = str(getattr(self, "_newindia_pdf_assessment_error", "") or "").strip()
+            if excel_path:
+                excel_label = basename(excel_path)
+                excel_source = "Generated from survey PDF" if is_scan_output(excel_path, defaults) else "User-provided"
+            else:
+                excel_label = "Skipped — review PDF"
+                excel_source = assessment_error or "PDF assessment skipped"
+            rows.append(("Primary Assessment Excel", excel_label, True, excel_source))
+
+            pdf_assessment = getattr(self, "_newindia_pdf_assessment", None)
+            if pdf_assessment is not None:
+                parts_rows, labour_rows = pdf_assessment
+                sources = getattr(self, "_newindia_pdf_assessment_sources", {}) or {}
+                parts_src = sources.get("spares", "")
+                labour_src = sources.get("labour", "")
+                rows.append(("PDF Spares Items", str(len(parts_rows)) if parts_src else "", False, parts_src))
+                rows.append(("PDF Labour Items (R/R, Denting, C/W)", str(len(labour_rows)) if labour_src else "", False, labour_src))
+        return rows

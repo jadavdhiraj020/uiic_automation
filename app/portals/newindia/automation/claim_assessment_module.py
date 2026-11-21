@@ -387,6 +387,28 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
             log.field_skipped("Assessment Excel", reason="File not found in folder scan")
         else:
             log(f"   ⚠️ No assessment Excel file found in folder (expected: assessment.xlsx / primary_assessment.xlsx).")
+        recovery = current_recovery.get()
+        if (
+            recovery is not None
+            and str(getattr(data, "source_report_path", "") or "").lower().endswith(".pdf")
+            and getattr(data, "_newindia_pdf_assessment_error", "")
+        ):
+            async def assessment_uploaded():
+                try:
+                    file_val = await page.locator("input#chooseFilePrim").input_value()
+                    return bool(str(file_val or "").strip())
+                except Exception:
+                    return False
+
+            recovery.record_field_issue(
+                log,
+                "Assessment Excel",
+                f"Primary Assessment Excel was not auto-generated from the PDF ({data._newindia_pdf_assessment_error}). "
+                "Attach and upload it in Chrome if needed, then click Next.",
+                matches=assessment_uploaded,
+                manual_value=assessment_uploaded,
+                identity=("chooseFilePrim", "chooseFilePrim"),
+            )
 
     if stop_cb(): return False
 

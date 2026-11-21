@@ -64,6 +64,25 @@ def _is_oic_generated_workbook(filename: str) -> bool:
     return bool(re.fullmatch(r"auto_oic_(?:assessment|upload)(?:_\d+|_current)?\.xlsx", filename, re.IGNORECASE))
 
 
+def _is_newindia_user_primary_assessment_excel(
+    fname: str,
+    full_path: str,
+    portal_id: str,
+    defaults: Optional[dict] = None,
+) -> bool:
+    """Identify user-supplied primary assessment workbooks so they stay Tab 3 attachments, not main claim Excel."""
+    if portal_id != "newindia":
+        return False
+    if Path(fname).suffix.lower() not in _EXCEL_EXTENSIONS:
+        return False
+    if fname in _SKIP_FILES or fname.startswith(("~$", ".")):
+        return False
+    if is_scan_output(full_path, defaults or {}):
+        return False
+    stem = Path(fname).stem.lower()
+    return bool(re.search(r"(?:^|[\s_-])primary[\s_-]*assessment(?:$|[\s_-]|\d)", stem))
+
+
 def _is_oic_generated_audit(filename: str) -> bool:
     return bool(re.fullmatch(r"(?:auto_oic_assessment(?:_\d+)?_audit|oic_assessment_skipped_audit)\.txt", filename, re.IGNORECASE))
 
@@ -773,6 +792,7 @@ def scan_folder(
             fname_lower in _known_generated_reinspection
             or fname_lower.startswith("printable_assessment")
             or is_newindia_output(full_path)
+            or _is_newindia_user_primary_assessment_excel(fname, full_path, portal_id, automation_defaults)
             or (portal_id == "oic" and _is_oic_generated_workbook(fname))
         ):
             continue
@@ -854,6 +874,18 @@ def scan_folder(
 
         # ── Excel file ────────────────────────────────────────────────────────
         if ext in _EXCEL_EXTENSIONS:
+            if _is_newindia_user_primary_assessment_excel(fname, full_path, portal_id, automation_defaults):
+                if "assessment_excel" not in result.assessment_files:
+                    result.assessment_files["assessment_excel"] = full_path
+                    logger.info("Assessment file [assessment_excel]: %s (user-provided)", fname)
+                else:
+                    logger.warning(
+                        "Duplicate assessment mapping for [assessment_excel], keeping first file."
+                    )
+                    result.skipped_files.append(
+                        (full_path, "Duplicate assessment mapping [assessment_excel]")
+                    )
+                continue
             _full_path_norm = os.path.normcase(os.path.normpath(full_path))
             if _main_excel_norm and _full_path_norm == _main_excel_norm:
                 result.excel_path = full_path
