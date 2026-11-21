@@ -29,18 +29,14 @@ import os
 import re
 import tempfile
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Set
+from typing import Callable, Iterable, Optional
 
 from playwright.async_api import Page
 
 from app.data.data_model import ClaimData
-from app.portals.newindia.automation.ui_utils import (
-    select_dropdown_with_delay,
-    upload_file_via_input,
-)
+from app.portals.newindia.automation.ui_utils import upload_file_via_input
 from app.automation.automation_logger import AutomationLogger, _ts
 from app.automation.services.document_utils import (
-    _prepare_files_for_merge,
     _compress_pdf_for_upload,
     _compress_image_for_upload,
 )
@@ -55,11 +51,12 @@ MAX_MERGED_PDF_BYTES = 15 * 1024 * 1024   # 15 MB portal limit (merged PDF)
 MAX_MANDATORY_FILE_BYTES = 1536 * 1024    # 1.5 MB portal limit per individual file
 
 # Supports both Tie-Up / Maruti (uploadFile) and Non-Tie-Up (uploadFileNonTieUp)
+_MANDATORY_FORM = 'ng-form[name="mandatoryDocForm"]:visible'
 _MANDATORY_UPLOAD_BTN_SELECTOR = (
-    'ng-form[name="mandatoryDocForm"] button[data-ng-click="uploadFile(\'mandatory\')"], '
-    'ng-form[name="mandatoryDocForm"] button[ng-click="uploadFile(\'mandatory\')"], '
-    'ng-form[name="mandatoryDocForm"] button[data-ng-click="uploadFileNonTieUp(\'mandatory\')"], '
-    'ng-form[name="mandatoryDocForm"] button[ng-click="uploadFileNonTieUp(\'mandatory\')"]'
+    f'{_MANDATORY_FORM} button[data-ng-click="uploadFile(\'mandatory\')"], '
+    f'{_MANDATORY_FORM} button[ng-click="uploadFile(\'mandatory\')"], '
+    f'{_MANDATORY_FORM} button[data-ng-click="uploadFileNonTieUp(\'mandatory\')"], '
+    f'{_MANDATORY_FORM} button[ng-click="uploadFileNonTieUp(\'mandatory\')"]'
 )
 _MANDATORY_UPLOAD_SUCCESS_MSG = re.compile(
     r"\b(?:documents?\s+uploaded\s+suc+essfully|uploaded\s+suc+essfully)\b", re.I
@@ -280,25 +277,25 @@ async def _find_mandatory_upload_button(page: Page, timeout_ms: int = 8000):
         await asyncio.sleep(0.25)
 
 
-async def _count_mandatory_upload_statuses(page: Page, expected_rows: int) -> tuple[int, int]:
-    """Return (successful_rows, failed_rows) across mandatory rows 0..expected_rows-1."""
+async def _count_mandatory_upload_statuses(page: Page, row_indices: Iterable[int]) -> tuple[int, int]:
+    """Count only the rows that were actually prepared for this upload."""
     successful = 0
     failed = 0
-    for i in range(expected_rows):
+    for i in row_indices:
         # Note: input#mandatoryFiles{i} is removed by Angular data-ng-if when uploadDocSucess == 0,
         # so anchor each <li> row on #uploadedFileTxt{i} / #docType{i} (avoid ancestor <div> matches).
         row_loc = page.locator(
             f'ng-form[name="mandatoryDocForm"] li:has(#uploadedFileTxt{i}), '
             f'ng-form[name="mandatoryDocForm"] li:has(#docType{i}), '
-            f'tr:has(input#mandatoryFiles{i})'
+            f'{_MANDATORY_FORM} tr:has(#uploadedFileTxt{i}, #docType{i}, #mandatoryFiles{i})'
         ).first
         if await row_loc.locator(
-            ':is(span:has-text("Successful"), td:has-text("Successful")):visible'
-        ).count():
+            ':is(span, td):visible'
+        ).filter(has_text=re.compile(r"^\s*Successful\s*$", re.I)).count():
             successful += 1
         elif await row_loc.locator(
-            ':is(span:has-text("Failed"), td:has-text("Failed")):visible'
-        ).count():
+            ':is(span, td):visible'
+        ).filter(has_text=re.compile(r"^\s*Failed\s*$", re.I)).count():
             failed += 1
     return successful, failed
 
@@ -323,7 +320,7 @@ async def _wait_for_upload_success(page: Page, expected_rows: int, log, max_wait
     failed_count = 0
     while elapsed < max_wait_s:
         try:
-            successful_count, failed_count = await _count_mandatory_upload_statuses(page, expected_rows)
+            successful_count, failed_count = await _count_mandatory_upload_statuses(page, range(expected_rows))
             if successful_count >= expected_rows:
                 if isinstance(log, AutomationLogger):
                     log.success(f"All {expected_rows} document(s) uploaded successfully ({elapsed:.0f}s).")
@@ -354,33 +351,33 @@ async def _wait_for_upload_success(page: Page, expected_rows: int, log, max_wait
     return False
 
 
-async def _first_visible_text(page: Page, selectors: tuple[str, ...]) -> str:
-    """Return normalized visible text for the first visible element matching any selector."""
-    for selector in selectors:
-        loc = page.locator(selector)
-        count = await loc.count()
-        for idx in range(count):
-            item = loc.nth(idx)
-            try:
-                if await item.is_visible():
-                    text = " ".join((await item.inner_text()).split())
-                    if text:
-                        return text
-            except Exception:
-                continue
-    return ""
+_UploadBanners = tuple[tuple[str, int], tuple[str, int]]
 
 
-async def _read_inline_upload_banners(page: Page) -> tuple[str, str]:
-    """Return (success_text, error_text) from visible New India inline upload alert banners."""
-    success_text = await _first_visible_text(
-        page,
-        (".accordion-surv .up-new-rvmp div.alert-success:visible", "div.alert-success:visible"),
-    )
-    error_text = await _first_visible_text(
-        page,
-        (".accordion-surv .up-new-rvmp div.alert-danger:visible", "div.alert-danger:visible"),
-    )
+async def _read_inline_upload_banners(page: Page) -> _UploadBanners:
+    """Read visible banner text and identity so an old result cannot confirm a new click."""
+    success, error = await page.evaluate(r"""() => {
+        const seen = window.__app3NewIndiaUploadBanners ??= { nodes: new WeakMap(), nextId: 0 };
+        return ['div.alert-success', 'div.alert-danger'].map(selector => {
+            for (const scope of ['.accordion-surv .up-new-rvmp ', '']) {
+                for (const node of document.querySelectorAll(scope + selector)) {
+                    if (!node.getClientRects().length || getComputedStyle(node).visibility !== 'visible') continue;
+                    const text = node.innerText.trim().replace(/\s+/g, ' ');
+                    if (!text) continue;
+                    if (!seen.nodes.has(node)) seen.nodes.set(node, ++seen.nextId);
+                    return [text, seen.nodes.get(node)];
+                }
+            }
+            return ['', 0];
+        });
+    }""")
+    return (success[0], success[1]), (error[0], error[1])
+
+
+async def _new_inline_upload_text(page: Page, previous: _UploadBanners) -> tuple[str, str]:
+    success, error = await _read_inline_upload_banners(page)
+    success_text = success[0] if success != previous[0] else ""
+    error_text = error[0] if error != previous[1] else ""
     return success_text, error_text
 
 
@@ -396,30 +393,41 @@ def _inline_banner_confirms(success_text: str, error_text: str, expected_rows: i
 
 
 async def _wait_for_mandatory_upload_outcome(
-    page: Page, expected_rows: int, log, max_wait_s: float = 45.0
+    page: Page, row_indices: tuple[int, ...], log, stop_cb, previous_banners: _UploadBanners,
+    max_wait_s: float = 45.0,
 ) -> tuple[bool, str]:
     """
     Wait for mandatory upload completion across Tie-Up (inline banner) and Non-Tie-Up (row badges / modal).
     Returns (upload_ok, failure_reason).
     """
     deadline = asyncio.get_running_loop().time() + max_wait_s
+    expected_rows = len(row_indices)
+    # A success dialog can report a partial upload. Only accept its count if it
+    # agrees with the verified batch, or fall back to the per-row statuses.
+    popup_success_message = re.compile(
+        rf"^(?!.*\b(?!{expected_rows}\b)\d+\s+documents?\s+uploaded\s+suc+essfully\b)"
+        rf".*{_MANDATORY_UPLOAD_SUCCESS_MSG.pattern}",
+        re.I | re.S,
+    )
     popup_tag = None
     successful_count = 0
     failed_count = 0
 
     while asyncio.get_running_loop().time() < deadline:
+        if stop_cb():
+            return False, "Automation stopped by user."
         tag = await dismiss_portal_popup(
             page,
             log,
             max_wait_s=0.4,
             classify=True,
             context="Post-upload processing",
-            success_message=_MANDATORY_UPLOAD_SUCCESS_MSG,
+            success_message=popup_success_message,
         )
         if tag is not None:
             popup_tag = tag
 
-        success_text, error_text = await _read_inline_upload_banners(page)
+        success_text, error_text = await _new_inline_upload_text(page, previous_banners)
         if error_text:
             reason = f"New India upload error: {error_text[:120]}"
             if isinstance(log, AutomationLogger):
@@ -438,7 +446,7 @@ async def _wait_for_mandatory_upload_outcome(
                 log(f"[{_ts()}]   ✅ Portal confirmed upload: {success_text[:120]}")
             return True, ""
 
-        successful_count, failed_count = await _count_mandatory_upload_statuses(page, expected_rows)
+        successful_count, failed_count = await _count_mandatory_upload_statuses(page, row_indices)
         if successful_count >= expected_rows:
             if isinstance(log, AutomationLogger):
                 log.success(f"All {expected_rows} document(s) uploaded successfully.")
@@ -453,13 +461,13 @@ async def _wait_for_mandatory_upload_outcome(
 
         if popup_tag == "success":
             await asyncio.sleep(0.8)
-            success_text, error_text = await _read_inline_upload_banners(page)
+            success_text, error_text = await _new_inline_upload_text(page, previous_banners)
             if error_text:
                 return False, f"New India upload error: {error_text[:120]}"
             banner_ok, reported_count = _inline_banner_confirms(success_text, error_text, expected_rows)
             if reported_count is not None and not banner_ok:
                 return False, f"Only {reported_count}/{expected_rows} mandatory documents uploaded."
-            successful_count, failed_count = await _count_mandatory_upload_statuses(page, expected_rows)
+            successful_count, failed_count = await _count_mandatory_upload_statuses(page, row_indices)
             if failed_count == 0:
                 if isinstance(log, AutomationLogger):
                     log.success(f"Portal confirmed mandatory upload ({expected_rows} document(s)).")
@@ -485,6 +493,84 @@ async def _wait_for_mandatory_upload_outcome(
         await asyncio.sleep(0.15)
 
     return False, f"Mandatory document upload not confirmed ({successful_count}/{expected_rows} rows Successful)."
+
+
+async def _staged_mandatory_files(page: Page) -> dict[int, tuple[str, tuple[str, ...]]]:
+    """Read the category and filename(s) from each occupied Mandatory Documents row."""
+    form = page.locator(_MANDATORY_FORM)
+    rows = await form.evaluate(r"""form => {
+        const rows = [];
+        for (const input of form.querySelectorAll('input[type="file"][id^="mandatoryFiles"]')) {
+            const index = input.id.slice('mandatoryFiles'.length);
+            if (!/^\d+$/.test(index)) continue;
+            const selected = form.querySelector('#docType' + index);
+            const displayed = form.querySelector('input#uploadedFileTxt' + index)?.value.trim();
+            const names = Array.from(input.files, file => file.name);
+            if (displayed) names.push(displayed.split(/[\\/]/).pop());
+            if (names.length) rows.push([Number(index), selected?.value, [...new Set(names)]]);
+        }
+        return rows;
+    }""", timeout=2000)
+    return {index: (value or "", tuple(names)) for index, value, names in rows}
+
+
+def _normalize_document_type(value: str) -> str:
+    normalized = " ".join(value.casefold().split())
+    return normalized.removeprefix("string:").strip().replace("licence", "license")
+
+
+async def _prepare_mandatory_row(
+    page: Page, row: int, doc_type: str, file_path: str, log, field_delay_ms: int,
+) -> tuple[str, str]:
+    """Return the verified category value, or a reason this file needs review."""
+    form = page.locator(_MANDATORY_FORM)
+    dropdown = form.locator(f"select#docType{row}")
+    if row and not await dropdown.count():
+        add_row = form.locator("span.fa-plus-circle:visible").first
+        try:
+            await add_row.click(timeout=3500)
+            await dropdown.wait_for(state="visible", timeout=3500)
+        except Exception:
+            return "", "New India did not open a new document row."
+    if row in await _staged_mandatory_files(page):
+        return "", "The document row already has an attachment."
+
+    options = await dropdown.evaluate("""select => Array.from(select.options)
+        .filter(option => option.value && !option.matches(':disabled'))
+        .map(option => [option.value, option.label])""", timeout=2500)
+    expected = _normalize_document_type(doc_type)
+    # Angular values such as "string:CLAIM FORM" are the submitted categories.
+    matches = [
+        value for value, label in options
+        if _normalize_document_type(value) == expected
+        or (re.fullmatch(r"(?:number:)?\d+", value) and _normalize_document_type(label) == expected)
+    ]
+    if len(matches) != 1:
+        return "", "The document type is unavailable or ambiguous in the New India dropdown."
+
+    selected = matches[0]
+    await dropdown.select_option(value=selected, timeout=2500)
+    await asyncio.sleep(field_delay_ms / 1000)
+    if await dropdown.input_value(timeout=1500) != selected:
+        return "", "New India did not keep the selected document type."
+
+    label = doc_type.title()
+    filename = os.path.basename(file_path)
+    if isinstance(log, AutomationLogger):
+        log.upload_start(label, filename)
+    attached = await upload_file_via_input(
+        page, f'{_MANDATORY_FORM} input#mandatoryFiles{row}', file_path, label, log,
+    )
+    alert = await dismiss_portal_popup(page, log, classify=True, max_wait_s=1.5)
+    if alert == "size_error":
+        return "", "New India rejected the file size."
+    if alert == "duplicate_error":
+        return "", "New India reported a duplicate document."
+    if alert == "other":
+        return "", "New India showed an alert while attaching the file."
+    if not attached or (await _staged_mandatory_files(page)).get(row) != (selected, (filename,)):
+        return "", "New India did not keep the expected file and document type on the same row."
+    return selected, ""
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -544,317 +630,143 @@ async def fill_document_upload_section(
 
     if stop_cb(): return False
 
-    # ── Track which files have been uploaded in this section ──────────────────
-    uploaded_keys: Set[str] = set()
-
-    # ── Define the upload sequence ────────────────────────────────────────────
-    upload_sequence = [
-        ("driving_license",          "Driving License",          "Driving License"),
-        ("registration_certificate", "Registration Certificate", "Registration Certificate"),
-        ("claim_form",               "Claim Form",               "Claim Form"),
-    ]
-
-    # Filter to only docs that actually have files in the folder
-    active_docs = []
-    for doc_key, dropdown_text, label in upload_sequence:
-        file_path = data.upload_doc_files.get(doc_key, "")
-        if file_path and os.path.isfile(file_path):
-            active_docs.append((doc_key, dropdown_text, label, file_path))
-            if isinstance(log, AutomationLogger):
-                log.document_mapped(label, os.path.basename(file_path), "Matched Successfully")
-        else:
-            if isinstance(log, AutomationLogger):
-                log.field_skipped(label, reason="File not found in folder scan")
-            else:
-                log(f"[{_ts()}]   ℹ️ No '{label}' file found in folder. Skipping.")
-
-    # ── Upload each document in its own row ───────────────────────────────────
-    current_row = 0
-    for idx, (doc_key, dropdown_text, label, file_path) in enumerate(active_docs):
-        if stop_cb(): return False
-
-        if isinstance(log, AutomationLogger):
-            log.info(f"Processing mandatory row {current_row}: {label}")
-            log.indent()
-        else:
-            log(f"")
-            log(f"[{_ts()}]   📎 Uploading: {label} (row {current_row})")
-
-        # If not the first row, click "+" to add a new row
-        if idx > 0:
-            try:
-                add_btn = page.locator('span.fa-plus-circle[data-ng-click="surveyorWorklistSurvey.addRow(\'man\')"]').first
-                if not await add_btn.is_visible():
-                    add_btn = page.locator('ng-form[name="mandatoryDocForm"] span.fa-plus-circle').first
-                await add_btn.click()
-                await asyncio.sleep(1.0)
-                if isinstance(log, AutomationLogger):
-                    log.success("New row added.")
-                else:
-                    log(f"[{_ts()}]     ✅ Added new row (row {current_row})")
-            except Exception as e:
-                if isinstance(log, AutomationLogger):
-                    log.warning(f"Row addition failed: {str(e)[:100]}")
-                else:
-                    log(f"[{_ts()}]     ⚠️ Could not add new row: {e}. Trying to use row {current_row} anyway.")
-
-        # Step 1: Select document type in dropdown for this row
-        dropdown_sel = f'select#docType{current_row}'
-        try:
-            await select_dropdown_with_delay(
-                page, dropdown_sel, dropdown_text,
-                label, log, field_delay_ms, source="Calculated"
-            )
-            await asyncio.sleep(0.5)
-        except Exception as e:
-            if isinstance(log, AutomationLogger):
-                log.error(f"Dropdown selection failed: {str(e)[:100]}")
-                log.outdent()
-            else:
-                log(f"[{_ts()}]     ⚠️ Could not select dropdown for {label}: {e}")
-            current_row += 1
-            continue
-
-        # Step 2: Attach file via Browse input for this row
-        # Note: file_path already points to compressed version if it was over
-        # 1.5 MB (compression happens at scan time in folder_scanner.py)
-        file_input_sel = f'input#mandatoryFiles{current_row}'
-        try:
-            if isinstance(log, AutomationLogger):
-                log.upload_start(label, os.path.basename(file_path))
-            
-            success = await upload_file_via_input(
-                page,
-                file_input_selector=file_input_sel,
-                file_path=file_path,
-                label=label,
-                log=log,
-            )
-            if success:
-                uploaded_keys.add(doc_key)
-            else:
-                if isinstance(log, AutomationLogger):
-                    log.error("File attachment failed.")
-        except Exception as e:
-            if isinstance(log, AutomationLogger):
-                log.error(f"Attachment error: {str(e)[:100]}")
-
-        # Step 4: Dismiss any portal alert that appeared after attaching
-        # (file size alert — in case compression was insufficient)
-        alert_tag = await dismiss_portal_popup(page, log, classify=True, max_wait_s=3.0)
-        if alert_tag == "size_error":
-            # File is truly too large and portal rejected it — log and skip
-            if isinstance(log, AutomationLogger):
-                log.warning(
-                    f"{label}: portal rejected file as too large — row will be empty. "
-                    "Check file size manually."
-                )
-
-        if isinstance(log, AutomationLogger):
-            log.outdent()
-
-        current_row += 1
-        await asyncio.sleep(0.8)
-
-    if stop_cb(): return False
-
-    # ── CLAIM RELATED DOCUMENTS — Use pre-merged PDF from folder scan ────────
-    if isinstance(log, AutomationLogger):
-        log.info("Processing 'Claim Related Documents' (Pre-merged PDF)")
-        log.indent()
-    else:
-        log("")
-        log(f"[{_ts()}]   📎 Preparing: Claim Related Documents (pre-merged PDF)")
-
-    # Use the pre-merged PDF generated by folder_scanner at scan time if available.
     scan_result = getattr(data, "_scan_result", None)
-    precomputed_pdf = getattr(scan_result, "claim_related_merged_pdf", None) if scan_result else None
-
-    if precomputed_pdf and os.path.isfile(precomputed_pdf):
-        merged_path = precomputed_pdf
-        precomputed = getattr(scan_result, "claim_related_files", None) if scan_result else None
-        n = len(precomputed) if precomputed else "?"
-        mb = os.path.getsize(merged_path) / (1024 * 1024)
-        if isinstance(log, AutomationLogger):
-            log.document_mapped("Claim Related Documents", Path(merged_path).name, f"Matched Successfully (Pre-merged, {n} files, {mb:.1f}MB)")
-            log.success(f"Using pre-merged PDF: {Path(merged_path).name} ({n} source file(s), {mb:.1f}MB)")
+    merged_path = getattr(scan_result, "claim_related_merged_pdf", None)
+    active_docs = []
+    for key, doc_type in _UPLOAD_DOC_TYPE_MAP.items():
+        file_path = merged_path if key == "claim_related" else data.upload_doc_files.get(key)
+        if file_path:
+            active_docs.append((doc_type, os.fspath(file_path)))
+        elif isinstance(log, AutomationLogger):
+            reason = "No merged PDF available" if key == "claim_related" else "File not found in folder scan"
+            log.field_skipped(doc_type.title(), reason=reason)
         else:
-            log(f"[{_ts()}]     ✅ Using pre-merged: {Path(merged_path).name} ({n} source file(s), {mb:.1f}MB)")
-    else:
-        merged_path = None
-        if isinstance(log, AutomationLogger):
-            log.field_skipped("Claim Related Documents", reason="No merged PDF available")
-        else:
-            log(f"[{_ts()}]     ⚠️ No pre-merged PDF available. Skipping Claim Related Documents.")
+            log(f"[{_ts()}]   No file found for {doc_type.title()}. Skipping.")
 
-    if merged_path:
-        # Add a new row if we already used row(s) for other docs
-        if current_row > 0:
+    prepared = {}
+    review = []
+    row = 0
+    for doc_type, file_path in active_docs:
+        if stop_cb():
+            return False
+        label = doc_type.title()
+        filename = os.path.basename(file_path)
+        reason = "The file from the folder scan is no longer available."
+        if os.path.isfile(file_path):
+            if isinstance(log, AutomationLogger):
+                log.document_mapped(label, filename, "Matched Successfully")
             try:
-                add_btn = page.locator('span.fa-plus-circle[data-ng-click="surveyorWorklistSurvey.addRow(\'man\')"]').first
-                if not await add_btn.is_visible():
-                    add_btn = page.locator('ng-form[name="mandatoryDocForm"] span.fa-plus-circle').first
-                await add_btn.click()
-                await asyncio.sleep(1.0)
-                if isinstance(log, AutomationLogger):
-                    log.success("New row added for merged document.")
-                else:
-                    log(f"[{_ts()}]     ✅ Added new row (row {current_row}) for Claim Related Documents")
-            except Exception as e:
-                if isinstance(log, AutomationLogger):
-                    log.warning(f"Row addition failed: {str(e)[:100]}")
-                else:
-                    log(f"[{_ts()}]     ⚠️ Could not add new row: {e}")
+                selected, reason = await _prepare_mandatory_row(page, row, doc_type, file_path, log, field_delay_ms)
+                if selected:
+                    prepared[row] = (selected, (filename,))
+                    row += 1
+                    continue
+                # Reuse a failed row only if New India has left it empty.
+                if row in await _staged_mandatory_files(page):
+                    row += 1
+            except Exception as exc:
+                logger.debug("Could not prepare mandatory document row %s: %r", row, exc)
+                reason = "App3 could not verify the document row in New India."
+        review.append(f"{label} ({filename}) — {reason}")
 
-        # Select "Claim Related Documents" in dropdown
-        dropdown_sel = f'select#docType{current_row}'
+    if stop_cb():
+        return False
+
+    row_indices = tuple(prepared)
+    previous_banners = None
+    upload_ok = False
+    failure_reason = ""
+    if active_docs:
         try:
-            await select_dropdown_with_delay(
-                page, dropdown_sel, "Claim Related Documents",
-                "Claim Related Documents", log, field_delay_ms, source="Calculated"
-            )
-            await asyncio.sleep(0.5)
-        except Exception as e:
-            if isinstance(log, AutomationLogger):
-                log.error(f"Dropdown selection failed: {str(e)[:100]}")
-            else:
-                log(f"[{_ts()}]     ⚠️ Could not select dropdown for Claim Related Documents: {e}")
-
-        # Attach merged PDF
-        file_input_sel = f'input#mandatoryFiles{current_row}'
-        try:
-            if isinstance(log, AutomationLogger):
-                log.upload_start("Claim Related Documents", os.path.basename(merged_path))
-            
-            success = await upload_file_via_input(
-                page,
-                file_input_selector=file_input_sel,
-                file_path=merged_path,
-                label="Claim Related Documents",
-                log=log,
-            )
-            if success:
-                if not isinstance(log, AutomationLogger):
-                    log(f"[{_ts()}]     ✅ Merged PDF attached ({mb:.1f}MB)")
-            else:
-                if isinstance(log, AutomationLogger):
-                    log.error("Merged PDF attachment failed.")
+            if await _staged_mandatory_files(page) != prepared:
+                failure_reason = "The files in the New India upload list could not all be verified."
+            elif prepared:
+                upload_btn = await _find_mandatory_upload_button(page)
+                if upload_btn is None:
+                    failure_reason = "App3 could not find the Mandatory Documents Upload button."
                 else:
-                    log(f"[{_ts()}]     ⚠️ Merged PDF attachment failed.")
-        except Exception as e:
-            if isinstance(log, AutomationLogger):
-                log.error(f"Attachment error: {str(e)[:100]}")
-            else:
-                log(f"[{_ts()}]     ⚠️ Error attaching merged PDF: {e}")
-
-        current_row += 1
-    else:
-        if isinstance(log, AutomationLogger):
-            log.warning("No merged PDF available. Claim Related Documents not attached.")
-        else:
-            log(f"[{_ts()}]     ⚠️ No merged PDF. Claim Related Documents not attached.")
-
-    if isinstance(log, AutomationLogger):
-        log.outdent()
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # CLICK UPLOAD BUTTON → WAIT FOR "SUCCESSFUL" → DISMISS ALERT
-    # ══════════════════════════════════════════════════════════════════════════
-    if current_row > 0:
-        if isinstance(log, AutomationLogger):
-            log.info(f"All {current_row} documents attached. Clicking Upload button...")
-        else:
-            log("")
-            log(f"[{_ts()}]   📋 All {current_row} document(s) attached. Clicking Upload...")
-
-        upload_ok = False
-        failure_reason = ""
-        try:
-            upload_btn = await _find_mandatory_upload_button(page, timeout_ms=8000)
-            if upload_btn is None:
-                failure_reason = "Mandatory Documents Upload button was not found on the page."
-                if isinstance(log, AutomationLogger):
-                    log.error(failure_reason)
-                else:
-                    log(f"[{_ts()}]   ❌ {failure_reason}")
-            else:
-                # Wait up to 5s for Angular to enable the button after file attachment
-                for _ in range(10):
-                    if not await upload_btn.is_disabled():
-                        break
-                    await asyncio.sleep(0.5)
-
-                if await upload_btn.is_disabled():
-                    failure_reason = "Mandatory Documents Upload button stayed disabled; files may not be attached."
-                    if isinstance(log, AutomationLogger):
-                        log.warning(failure_reason)
+                    for _ in range(10):
+                        if stop_cb():
+                            return False
+                        if not await upload_btn.is_disabled():
+                            break
+                        await asyncio.sleep(0.5)
+                    if await upload_btn.is_disabled():
+                        failure_reason = "New India did not enable the Mandatory Documents Upload button."
                     else:
-                        log(f"[{_ts()}]   ⚠️ {failure_reason}")
-                else:
-                    await upload_btn.click()
-                    if isinstance(log, AutomationLogger):
-                        log.success("Upload button clicked.")
-                        log.wait("Waiting for portal to finish mandatory document upload...")
-                    else:
-                        log(f"[{_ts()}]   ✅ Upload button clicked. Waiting for upload confirmation...")
+                        previous_banners = await _read_inline_upload_banners(page)
+                        # Recheck after the button becomes ready. Upload submits the entire list.
+                        if await _staged_mandatory_files(page) != prepared:
+                            failure_reason = "The document types or attachments changed before Upload."
+                        elif not stop_cb():
+                            count = len(prepared)
+                            message = f"Uploading {count} verified mandatory document(s)."
+                            if isinstance(log, AutomationLogger):
+                                log.info(message)
+                            else:
+                                log(f"[{_ts()}]   {message}")
+                            await upload_btn.click(timeout=5000)
+                            upload_ok, failure_reason = await _wait_for_mandatory_upload_outcome(
+                                page, row_indices, log, stop_cb, previous_banners,
+                            )
+        except Exception as exc:
+            logger.debug("Mandatory Documents upload could not be verified: %r", exc)
+            failure_reason = "App3 could not verify the Mandatory Documents upload in New India."
 
-                    upload_ok, failure_reason = await _wait_for_mandatory_upload_outcome(
-                        page, current_row, log, max_wait_s=45.0
-                    )
-        except Exception as e:
-            failure_reason = f"Upload button error: {str(e)[:100]}"
-            if isinstance(log, AutomationLogger):
-                log.error(failure_reason)
-            else:
-                log(f"[{_ts()}]   ⚠️ {failure_reason}")
+    if stop_cb():
+        return False
 
-        if not upload_ok:
-            recovery = current_recovery.get()
-            if recovery is not None:
-                skip_upload_wait = False
+    if review or failure_reason:
+        check_rows = not review and previous_banners is not None
+        if failure_reason:
+            review.append(failure_reason)
+        message = "\n".join(review)
+        if isinstance(log, AutomationLogger):
+            log.warning(message)
+        else:
+            log(message)
+        recovery = current_recovery.get()
+        resumed = False
+        if recovery is not None:
+            overridden = False
+            baseline = previous_banners if check_rows else await _read_inline_upload_banners(page)
+            expected = len(active_docs) - (len(prepared) if upload_ok else 0)
 
-                async def _mandatory_upload_ready():
-                    if skip_upload_wait:
-                        return True
-                    if not await recovery._same_step(page, "four") or await page.locator(_BLOCKING_DIALOGS).count():
-                        return False
-                    success_text, error_text = await _read_inline_upload_banners(page)
-                    banner_ok, _ = _inline_banner_confirms(success_text, error_text, current_row)
-                    if banner_ok:
-                        return True
-                    ok_count, _ = await _count_mandatory_upload_statuses(page, current_row)
-                    return ok_count >= current_row
-
-                async def _on_skip_upload():
-                    nonlocal skip_upload_wait
-                    skip_upload_wait = True
-
-                resumed = await recovery.pause(
-                    page,
-                    log,
-                    "Upload Mandatory Documents",
-                    failure_reason or "Mandatory document upload did not finish cleanly.",
-                    section="Document Upload",
-                    ready=_mandatory_upload_ready,
-                    require_original=True,
-                    instruction="Click Upload under List of Mandatory Documents in Chrome, close any popup, then click Continue.",
-                    confirmation_button="I uploaded the documents — continue",
-                    skip_button="Continue anyway",
-                    on_skip=_on_skip_upload,
-                )
-                if not resumed:
-                    if isinstance(log, AutomationLogger):
-                        log.outdent()
-                        log.outdent()
+            async def _mandatory_upload_ready():
+                if not await recovery._same_step(page, "four") or await page.locator(_BLOCKING_DIALOGS).count():
                     return False
-            else:
-                if isinstance(log, AutomationLogger):
-                    log.error(failure_reason or "Mandatory document upload failed.")
-                    log.outdent()
-                    log.outdent()
-                else:
-                    log(f"[{_ts()}]   ❌ {failure_reason or 'Mandatory document upload failed.'}")
+                if overridden:
+                    return True
+                success_text, error_text = await _new_inline_upload_text(page, baseline)
+                if _inline_banner_confirms(success_text, error_text, expected)[0]:
+                    return True
+                if check_rows:
+                    ok_count, _ = await _count_mandatory_upload_statuses(page, row_indices)
+                    return ok_count == expected
                 return False
+
+            async def _on_skip_upload():
+                nonlocal overridden
+                overridden = True
+
+            resumed = await recovery.pause(
+                page,
+                log,
+                "Review mandatory documents",
+                message,
+                section="Document Upload",
+                ready=_mandatory_upload_ready,
+                require_original=True,
+                instruction="Check the listed files in Chrome. Upload any missing files, close any portal popup, then click Continue.",
+                confirmation_button="I uploaded the documents — continue",
+                skip_button="Continue anyway",
+                on_skip=_on_skip_upload,
+            )
+        if not resumed:
+            if isinstance(log, AutomationLogger):
+                log.outdent()
+                log.outdent()
+            return False
 
     if stop_cb(): return False
 
