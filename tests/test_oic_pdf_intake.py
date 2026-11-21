@@ -301,3 +301,16 @@ def test_oic_unreconciled_assessment_remains_hard_blocker():
     errors, warnings = claim.validate()
 
     assert any("spares metal total" in issue.lower() for issue in errors)
+
+
+def test_oic_report_finder_ignores_stale_app_generated_pdf_copies(tmp_path):
+    source = tmp_path / "survey_report.pdf"
+    _write_pdf(source, (SUMMARY, ITEMS))
+
+    # Previous App3 runs may leave these files in the same claim folder.
+    # They must never compete with the user's real source survey PDF.
+    (tmp_path / "survey_report_printable_copy.pdf").write_bytes(source.read_bytes() + b"printable")
+    (tmp_path / "assessment_report.pdf").write_bytes(source.read_bytes() + b"assessment")
+    (tmp_path / "printable_assessment.pdf").write_bytes(source.read_bytes() + b"printable-assessment")
+
+    assert find_oic_report(tmp_path) == str(source)
