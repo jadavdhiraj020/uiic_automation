@@ -673,14 +673,25 @@ class MainWindow(QMainWindow):
                     f"({self._scan_context.portal_id})."
                 )
             self.workspace_page.update_data(self._claim, self._scan_result)
-            pdf_needs_review = (
+            pdf_hard_error = (
                 current_portal_id == "oic"
                 and str(getattr(self._claim, "source_report_path", "")).lower().endswith(".pdf")
-                and (getattr(self._claim, "_oic_pdf_review_errors", []) or getattr(self._claim, "_oic_upload_error", ""))
+                and bool(getattr(self._claim, "_oic_pdf_assessment_errors", []))
             )
-            if pdf_needs_review:
+            pdf_manual_review = (
+                current_portal_id == "oic"
+                and str(getattr(self._claim, "source_report_path", "")).lower().endswith(".pdf")
+                and (
+                    getattr(self._claim, "_oic_pdf_review_errors", [])
+                    or getattr(self._claim, "_oic_upload_error", "")
+                )
+            )
+            if pdf_hard_error:
                 self.workspace_page.set_stage(1)
-                self._set_status("error", "PDF needs review")
+                self._set_status("error", "Assessment totals need review")
+            elif pdf_manual_review:
+                self.workspace_page.set_stage(1)
+                self._set_status("ready", "Ready — manual review may be needed")
             else:
                 self._set_status("ready", "Ready")
         else:
@@ -803,27 +814,30 @@ class MainWindow(QMainWindow):
         portal_id = scan_context.portal_id
         portal_display = getattr(scan_context, "portal_display_name", "") or portal_id.upper()
         if portal_id == "oic":
-            from app.portals.oic.automation.assessment_upload_excel import depreciation_errors, prepared_upload_error
-            pdf_errors = getattr(self._claim, "_oic_pdf_review_errors", [])
-            if pdf_errors:
-                message = "\n".join(pdf_errors)
-                self._set_status("error", "OIC survey PDF needs review")
+            hard_errors = list(getattr(self._claim, "_oic_pdf_assessment_errors", []) or [])
+            if hard_errors:
+                message = "\n".join(hard_errors)
+                self._set_status("error", "OIC assessment totals need review")
                 self.workspace_page.set_stage(1)
-                _warn("OIC Survey PDF Needs Review", message)
+                self.log(f"Start blocked by unreconciled OIC financial assessment: {message}")
+                _warn(
+                    "OIC Financial Assessment Needs Review",
+                    message + "\n\nThese totals do not reconcile, so automatic upload is unsafe.",
+                )
                 return
-            rate_errors = depreciation_errors(self._claim)
-            if rate_errors:
-                message = "\n".join(rate_errors)
-                self._set_status("error", "OIC depreciation needs review")
-                self.log(f"Start blocked: {message}")
-                _warn("OIC Depreciation Needs Review", message)
-                return
-            upload_error = prepared_upload_error(self._claim)
+
+            manual_issues = list(getattr(self._claim, "_oic_pdf_review_errors", []) or [])
+            upload_error = str(getattr(self._claim, "_oic_upload_error", "") or "").strip()
             if upload_error:
-                self._set_status("error", "OIC upload Excel needs review")
-                self.log(f"Start blocked: {upload_error}")
-                _warn("OIC Upload Needs Review", upload_error)
-                return
+                manual_issues.append(
+                    "Automatic OIC upload workbook is not ready. "
+                    "You can complete Assessment of Loss manually in Chrome."
+                )
+            if manual_issues:
+                self.log(
+                    "OIC starting with manual-review fallback enabled: "
+                    + " | ".join(dict.fromkeys(manual_issues))
+                )
         settings = load_settings(portal_id=portal_id)
         if hasattr(self, "web_queue"):
             try:
