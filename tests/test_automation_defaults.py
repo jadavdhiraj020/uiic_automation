@@ -236,10 +236,11 @@ def test_primary_assessment_generation_uses_defaults_and_audit(monkeypatch, tmp_
     assert "Labour rows: 1" in audit_text
 
 
-def test_primary_assessment_generation_does_not_overwrite_existing_file(tmp_path):
+def test_primary_assessment_generation_skips_an_unrecognised_existing_file(monkeypatch, tmp_path):
     openpyxl = pytest.importorskip("openpyxl")
     from app.data.assessment_generator import generate_primary_assessment
 
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "app_data"))
     existing = tmp_path / "auto_primary_assessment.xlsx"
     existing.write_text("keep me", encoding="utf-8")
 
@@ -251,11 +252,10 @@ def test_primary_assessment_generation_does_not_overwrite_existing_file(tmp_path
     sheet.append(["Sub Total", None, None, None, None, None])
     workbook.save(source_path)
 
-    output_path = generate_primary_assessment(str(source_path), str(tmp_path))
-
-    assert output_path == str(tmp_path / "auto_primary_assessment_1.xlsx")
+    with pytest.raises(FileExistsError, match="Cannot replace"):
+        generate_primary_assessment(str(source_path), str(tmp_path))
     assert existing.read_text(encoding="utf-8") == "keep me"
-    assert (tmp_path / "auto_primary_assessment_1_audit.txt").exists()
+    assert not (tmp_path / "auto_primary_assessment_1.xlsx").exists()
 
 
 def test_primary_assessment_low_confidence_header_is_skipped(tmp_path):

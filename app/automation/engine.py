@@ -838,6 +838,8 @@ class AutomationEngine:
                     self.log.wait("background document generation", "finishing generation task")
                     bg_thread.join()
                     self.log.success("Background document generation complete.")
+                for warning in getattr(claim, "_scan_output_warnings", ()):
+                    self.log.warning(warning)
 
                 # Path resolution and settings loading logs for UIIC/NIA/OIC
                 from app.utils import (

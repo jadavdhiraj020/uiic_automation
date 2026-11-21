@@ -1274,13 +1274,16 @@ def looks_like_survey_report(pdf_path: str) -> int:
     return max(score, 0)
 
 
-def find_pdf_survey_report(folder: str, preferred: Optional[str] = None) -> Optional[str]:
-    if preferred and os.path.isfile(preferred) and Path(preferred).suffix.lower() == ".pdf":
+def find_pdf_survey_report(folder: str, preferred: Optional[str] = None, *, exclude=None) -> Optional[str]:
+    if (preferred and os.path.isfile(preferred) and Path(preferred).suffix.lower() == ".pdf"
+            and not (exclude and exclude(preferred))):
         return preferred
     candidates = []
     for name in sorted(os.listdir(folder)):
         path = os.path.join(folder, name)
         if not os.path.isfile(path) or Path(name).suffix.lower() != ".pdf":
+            continue
+        if exclude and exclude(path):
             continue
         score = looks_like_survey_report(path)
         if score > 0:

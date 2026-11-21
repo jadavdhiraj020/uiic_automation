@@ -22,6 +22,9 @@ from typing import List, Optional
 import openpyxl
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.datavalidation import DataValidation
+from app.portals.newindia.scan_outputs import (
+    ASSESSMENT_SHEET, ASSESSMENT_WORKBOOK, publish_scan_output, staging_folder,
+)
 from app.utils import load_automation_defaults
 
 # ── Shared extraction logic (single source of truth) ──────────────────────────
@@ -39,8 +42,6 @@ from app.data.excel_parts_extractor import (
 
 logger = logging.getLogger(__name__)
 
-# ── Output filename — includes doc_mapping.json keyword "primary_assessment" ──
-_OUTPUT_FILENAME = "auto_primary_assessment.xlsx"
 _MIN_HEADER_CONFIDENCE = 80
 
 # Keys added by the shared extractor that are OIC-specific and must be stripped
@@ -56,24 +57,20 @@ class AssessmentGenerationResult:
     message: str = ""
 
 
-def _next_available_path(output_folder: str, filename: str = _OUTPUT_FILENAME) -> str:
-    base, ext = os.path.splitext(filename)
-    candidate = os.path.join(output_folder, filename)
-    idx = 1
-    while os.path.exists(candidate):
-        candidate = os.path.join(output_folder, f"{base}_{idx}{ext}")
-        idx += 1
-    return candidate
-
-
 def _audit_path_for(output_path: str) -> str:
     root, _ext = os.path.splitext(output_path)
     return f"{root}_audit.txt"
 
 
-def _write_audit_file(audit_path: str, lines: List[str]) -> None:
-    with open(audit_path, "w", encoding="utf-8") as fh:
-        fh.write("\n".join(lines).rstrip() + "\n")
+def _write_audit_file(audit_path: str, lines: List[str], *, stop_cb=None) -> None:
+    try:
+        with staging_folder(os.path.dirname(os.path.abspath(audit_path))) as stage:
+            staged = os.path.join(stage, os.path.basename(audit_path))
+            with open(staged, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(lines).rstrip() + "\n")
+            publish_scan_output(staged, audit_path, stop_cb=stop_cb)
+    except OSError as exc:
+        logger.warning("Skipped assessment audit %s: %s", os.path.basename(audit_path), exc)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -87,7 +84,7 @@ def _create_template_workbook(data_rows: List[dict]):
     """
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = "Primary_Assessment_Template"
+    ws.title = ASSESSMENT_SHEET
     ws.views.sheetView[0].showGridLines = True
 
     # ── Headers ──
@@ -163,7 +160,7 @@ def _create_template_workbook(data_rows: List[dict]):
 # PUBLIC API
 # ══════════════════════════════════════════════════════════════════════════════
 
-def generate_primary_assessment(source_excel_path: str, output_folder: str) -> Optional[str]:
+def generate_primary_assessment(source_excel_path: str, output_folder: str, *, stop_cb=None) -> Optional[str]:
     """
     Generate a standardised primary_assessment.xlsx from the main data Excel.
 
@@ -180,6 +177,9 @@ def generate_primary_assessment(source_excel_path: str, output_folder: str) -> O
     """
     if not os.path.exists(source_excel_path):
         raise FileNotFoundError(f"Source Excel not found: {source_excel_path}")
+    output_path = os.path.join(output_folder, ASSESSMENT_WORKBOOK)
+    if os.path.exists(output_path) and os.path.samefile(source_excel_path, output_path):
+        raise ValueError("The source Excel uses the generated assessment filename.")
 
     defaults = load_automation_defaults(portal_id="newindia")
     parts_hsn = coerce_hsn_code(defaults.get("assessment_parts_hsn_code"), "8512")
@@ -276,7 +276,7 @@ def generate_primary_assessment(source_excel_path: str, output_folder: str) -> O
         # actual generator would later claim, avoiding phantom path conflicts.
         audit_path = os.path.join(output_folder, "primary_assessment_skipped_audit.txt")
         audit_lines.extend(["", "Result", "No parts or labour data found. Excel generation skipped."])
-        _write_audit_file(audit_path, audit_lines)
+        _write_audit_file(audit_path, audit_lines, stop_cb=stop_cb)
         return None
 
     # ── Sanitise: strip OIC-specific keys that the shared extractor adds ──
@@ -288,34 +288,13 @@ def generate_primary_assessment(source_excel_path: str, output_folder: str) -> O
     # ── Phase 3: Generate Template ──
     wb = _create_template_workbook(all_rows)
 
-    output_path = _next_available_path(output_folder)
     audit_path = _audit_path_for(output_path)
-    _max_save_attempts = 3
     try:
-        for _attempt in range(1, _max_save_attempts + 1):
-            try:
-                wb.save(output_path)
-                break
-            except PermissionError:
-                if _attempt == _max_save_attempts:
-                    logger.error(
-                        "Assessment generator: all %d save attempts failed (last path: %s)",
-                        _max_save_attempts, output_path,
-                    )
-                    audit_lines.extend([
-                        "", "Result",
-                        f"FAILED: Could not save after {_max_save_attempts} attempts.",
-                        f"Last attempted path: {output_path}",
-                    ])
-                    _write_audit_file(audit_path, audit_lines)
-                    raise
-                logger.warning(
-                    "Assessment generator: path locked on attempt %d, retrying: %s",
-                    _attempt, output_path,
-                )
-                output_path = _next_available_path(output_folder)
-                audit_path = _audit_path_for(output_path)
-        # No else needed: loop exits via break (success) or raise (PermissionError).
+        with staging_folder(output_folder) as stage:
+            staged = os.path.join(stage, ASSESSMENT_WORKBOOK)
+            wb.save(staged)
+            if not publish_scan_output(staged, output_path, stop_cb=stop_cb):
+                return None
     finally:
         wb.close()
 
@@ -333,7 +312,7 @@ def generate_primary_assessment(source_excel_path: str, output_folder: str) -> O
         f"Labour assessed total: {labour_total}",
         f"Grand assessed total: {parts_total + labour_total}",
     ])
-    _write_audit_file(audit_path, audit_lines)
+    _write_audit_file(audit_path, audit_lines, stop_cb=stop_cb)
 
     logger.info(
         "Assessment generator: SUCCESS — %d rows (%d parts + %d labour) → %s",
@@ -346,9 +325,9 @@ def generate_primary_assessment(source_excel_path: str, output_folder: str) -> O
 
 
 def generate_primary_assessment_result(
-    source_excel_path: str, output_folder: str
+    source_excel_path: str, output_folder: str, *, stop_cb=None
 ) -> AssessmentGenerationResult:
-    output_path = generate_primary_assessment(source_excel_path, output_folder)
+    output_path = generate_primary_assessment(source_excel_path, output_folder, stop_cb=stop_cb)
     if output_path:
         return AssessmentGenerationResult(
             output_path=output_path,

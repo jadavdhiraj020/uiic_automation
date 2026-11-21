@@ -220,7 +220,7 @@ def test_cancelled_service_scan_cleans_generated_assessment_files(
     fake_claim = ClaimData(portal_id="newindia")
     fake_claim.claim_no = "CLAIM-CANCEL"
 
-    def fake_generate(_source, _output_dir):
+    def fake_generate(_source, _output_dir, *, stop_cb=None):
         generated_path.write_text("new assessment", encoding="utf-8")
         audit_path.write_text("audit", encoding="utf-8")
         return SimpleNamespace(
@@ -267,7 +267,7 @@ def test_cancelled_service_scan_cleans_generated_assessment_files(
     )
 
 
-def test_generated_assessment_replacement_deletes_old_after_new_succeeds(
+def test_generated_assessment_replacement_keeps_canonical_path(
     monkeypatch, tmp_path
 ):
     from app.data.data_model import ClaimData
@@ -279,12 +279,10 @@ def test_generated_assessment_replacement_deletes_old_after_new_succeeds(
     old_path.write_text("old assessment", encoding="utf-8")
     old_audit_path = tmp_path / "auto_primary_assessment_audit.txt"
     old_audit_path.write_text("old audit", encoding="utf-8")
-    new_path = tmp_path / "auto_primary_assessment_1.xlsx"
-    new_audit_path = tmp_path / "auto_primary_assessment_1_audit.txt"
 
     fake_scan = SimpleNamespace(
         claim_doc_files={},
-        assessment_files={"assessment_excel": str(old_path)},
+        assessment_files={},
         upload_doc_files={},
         expected_docs=[],
         skipped_files=[],
@@ -300,13 +298,13 @@ def test_generated_assessment_replacement_deletes_old_after_new_succeeds(
     fake_claim.ifsc_code = "HDFC0000001"
     fake_claim.account_number = "1234567890"
 
-    def fake_generate(_source, _output_dir):
-        new_path.write_text("new assessment", encoding="utf-8")
-        new_audit_path.write_text("audit", encoding="utf-8")
+    def fake_generate(_source, _output_dir, *, stop_cb=None):
+        old_path.write_text("new assessment", encoding="utf-8")
+        old_audit_path.write_text("audit", encoding="utf-8")
         return SimpleNamespace(
-            output_path=str(new_path),
+            output_path=str(old_path),
             status="generated",
-            generated_files=[str(new_path), str(new_audit_path)],
+            generated_files=[str(old_path), str(old_audit_path)],
             message="Primary assessment generated.",
         )
 
@@ -331,23 +329,11 @@ def test_generated_assessment_replacement_deletes_old_after_new_succeeds(
     result = service.process_folder(str(tmp_path))
 
     assert result.success
-    assert not old_path.exists()
-    assert not old_audit_path.exists()
-    assert result.claim.assessment_files["assessment_excel"] == str(new_path)
-    assert str(new_path) in result.scan_result.generated_files
-    assert str(new_audit_path) in result.scan_result.generated_files
-    assert any(
-        event["event"] == "generated_assessment_replaced"
-        and event["old_path"] == str(old_path)
-        and event["new_path"] == str(new_path)
-        for event in result.scan_result.policy_events
-    )
-    assert any(
-        event["event"] == "old_generated_assessment_deleted"
-        and str(old_path) in event["deleted_files"]
-        and str(old_audit_path) in event["deleted_files"]
-        for event in result.scan_result.policy_events
-    )
+    assert old_path.read_text(encoding="utf-8") == "new assessment"
+    assert old_audit_path.read_text(encoding="utf-8") == "audit"
+    assert result.claim.assessment_files["assessment_excel"] == str(old_path)
+    assert result.scan_result.generated_files == []
+    assert not (tmp_path / "auto_primary_assessment_1.xlsx").exists()
 
 
 def test_cancelled_service_scan_cleans_skipped_assessment_audit(
@@ -376,7 +362,7 @@ def test_cancelled_service_scan_cleans_skipped_assessment_audit(
     fake_claim = ClaimData(portal_id="newindia")
     fake_claim.claim_no = "CLAIM-SKIP"
 
-    def fake_generate(_source, _output_dir):
+    def fake_generate(_source, _output_dir, *, stop_cb=None):
         skipped_audit.write_text("skipped", encoding="utf-8")
         return SimpleNamespace(
             output_path=None,
@@ -676,7 +662,7 @@ def test_claim_folder_service_respects_async_generation(monkeypatch, tmp_path):
     fake_claim.claim_no = "CLAIM-ASYNC"
 
     calls = []
-    def fake_generate_primary_assessment_result(src, out):
+    def fake_generate_primary_assessment_result(src, out, *, stop_cb=None):
         calls.append("generate")
         time.sleep(0.1)
         dest = tmp_path / "auto_primary_assessment.xlsx"

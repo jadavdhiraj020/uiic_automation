@@ -31,4 +31,11 @@ def find_main_report_source(folder: str, scan_result, portal_id: str = "uiic", *
         return find_oic_report(folder, preferred=preferred, stop_cb=stop_cb)
 
     from app.data.pdf_report_reader import find_pdf_survey_report
+    if portal_id == "newindia":
+        from app.portals.newindia.scan_outputs import is_scan_output
+        from app.utils import load_automation_defaults
+
+        defaults = load_automation_defaults(portal_id=portal_id)
+        return find_pdf_survey_report(folder, preferred=preferred, exclude=lambda path: is_scan_output(path, defaults))
+
     return find_pdf_survey_report(folder, preferred=preferred)

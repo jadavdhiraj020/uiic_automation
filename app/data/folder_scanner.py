@@ -31,6 +31,12 @@ from app.automation.services.document_utils import (
     _compress_pdf_for_upload,
     _compress_image_for_upload,
 )
+from app.portals.newindia.scan_outputs import (
+    CLAIM_RELATED_PDF,
+    is_scan_output,
+    publish_scan_output,
+    staging_folder,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -590,6 +596,26 @@ def scan_folder(
     from app.utils import load_automation_defaults
 
     automation_defaults = load_automation_defaults(portal_id=portal_id)
+    def is_newindia_output(path):
+        return portal_id == "newindia" and is_scan_output(path, automation_defaults)
+
+    def warn_skipped_output(target, error):
+        warning = f"{Path(target).name} skipped: {error}"
+        result.policy_warnings.append(warning)
+        logger.warning("%s", warning)
+
+    def refresh_newindia_copy(source, target, *, same_copy=False):
+        try:
+            with staging_folder(folder_path) as stage:
+                staged = os.path.join(stage, Path(target).name)
+                shutil.copy2(source, staged)
+                if publish_scan_output(staged, target, stop_cb=stop_cb, same_copy=same_copy):
+                    _mark_generated(target)
+                    return True
+        except (OSError, ValueError) as exc:
+            warn_skipped_output(target, exc)
+        return False
+
     reinspection_output_filename = (
         automation_defaults.get("reinspection_output_filename", "reinspection.xlsx")
         or "reinspection.xlsx"
@@ -635,6 +661,8 @@ def scan_folder(
                 return result
             if fname in _SKIP_FILES or os.path.isdir(os.path.join(folder_path, fname)):
                 continue
+            if is_newindia_output(os.path.join(folder_path, fname)):
+                continue
             fname_lower = fname.lower()
             if re.match(r"^vehicle_photo_[1-4]\.", fname_lower):
                 continue
@@ -658,7 +686,10 @@ def scan_folder(
                         return result
                     new_name = f"vehicle_photo_{copy_num}{ext}"
                     new_path = os.path.join(folder_path, new_name)
-                    if not os.path.exists(new_path):
+                    if portal_id == "newindia":
+                        if not refresh_newindia_copy(source_path, new_path):
+                            continue
+                    elif not os.path.exists(new_path):
                         try:
                             shutil.copy2(source_path, new_path)
                             _mark_generated(new_path)
@@ -670,7 +701,9 @@ def scan_folder(
                 # Assign the 4 slots immediately
                 for n, slot in enumerate(_photo_slot_keys, 1):
                     copy_path = os.path.join(folder_path, f"vehicle_photo_{n}{ext}")
-                    if os.path.exists(copy_path):
+                    if os.path.exists(copy_path) and (
+                        portal_id != "newindia" or os.path.normpath(copy_path) in _generated_vehicle_photos
+                    ):
                         result.claim_doc_files[slot] = copy_path
                         _generated_vehicle_photos.add(os.path.normpath(copy_path))
                 break  # Always copy first photo across all 4 slots as confirmed
@@ -689,7 +722,7 @@ def scan_folder(
         if not os.path.isfile(full_path):
             continue
         fname_lower = fname.lower()
-        if fname_lower in _known_generated_reinspection:
+        if fname_lower in _known_generated_reinspection or is_newindia_output(full_path):
             continue
         ext = Path(fname).suffix.lower()
         if ext not in _DOC_EXTENSIONS and ext not in _EXCEL_EXTENSIONS:
@@ -739,6 +772,7 @@ def scan_folder(
         if (
             fname_lower in _known_generated_reinspection
             or fname_lower.startswith("printable_assessment")
+            or is_newindia_output(full_path)
             or (portal_id == "oic" and _is_oic_generated_workbook(fname))
         ):
             continue
@@ -775,6 +809,10 @@ def scan_folder(
 
         ext = Path(fname).suffix.lower()
         fname_lower = fname.lower()
+
+        if is_newindia_output(full_path):
+            result.skipped_files.append((full_path, "Generated New India scan output"))
+            continue
 
         if portal_id == "oic" and (_is_oic_generated_workbook(fname) or _is_oic_generated_audit(fname)):
             result.skipped_files.append((full_path, "Generated OIC workbook or audit"))
@@ -836,12 +874,20 @@ def scan_folder(
                 else:
                     if _cancel_checkpoint("before_reinspection_generation"):
                         return result
-                    spot_path = _extract_sheet_for_reinspection_pdf(
-                        full_path,
-                        folder_path,
-                        sheet_index=2,
-                        output_filename="reinspection_report.pdf",
-                    )
+                    if portal_id == "newindia":
+                        target = os.path.join(folder_path, "reinspection_report.pdf")
+                        spot_path = None
+                        try:
+                            with staging_folder(folder_path) as stage:
+                                staged = _extract_sheet_for_reinspection_pdf(full_path, stage)
+                                if staged:
+                                    spot_path = publish_scan_output(staged, target, stop_cb=stop_cb)
+                        except (OSError, ValueError) as exc:
+                            warn_skipped_output(target, exc)
+                    else:
+                        spot_path = _extract_sheet_for_reinspection_pdf(
+                            full_path, folder_path, sheet_index=2, output_filename="reinspection_report.pdf",
+                        )
                     if spot_path and os.path.isfile(spot_path):
                         _mark_generated(spot_path)
                         if "reinspection_report" in upload_map:
@@ -1022,14 +1068,16 @@ def scan_folder(
         work_approval_path = os.path.join(folder_path, work_approval_name)
 
         try:
-            if not os.path.exists(work_approval_path):
+            if portal_id == "newindia":
+                if refresh_newindia_copy(invoice_path, work_approval_path):
+                    result.claim_doc_files[work_approval_key] = work_approval_path
+            elif not os.path.exists(work_approval_path):
                 shutil.copy2(invoice_path, work_approval_path)
                 _mark_generated(work_approval_path)
-            result.claim_doc_files[work_approval_key] = work_approval_path
-            logger.info(
-                "Generated %s from invoice because Work Approval Document was missing",
-                work_approval_name,
-            )
+            if portal_id != "newindia":
+                result.claim_doc_files[work_approval_key] = work_approval_path
+            if work_approval_key in result.claim_doc_files:
+                logger.info("Generated %s from invoice because Work Approval Document was missing", work_approval_name)
         except Exception as e:
             logger.error("Failed to copy invoice to %s: %s", work_approval_name, e)
 
@@ -1109,7 +1157,10 @@ def scan_folder(
             ext = Path(survey_path).suffix
             assessment_name = f"assessment_report{ext}"
             assessment_path = os.path.join(folder_path, assessment_name)
-            if os.path.normcase(os.path.normpath(survey_path)) != os.path.normcase(
+            if portal_id == "newindia":
+                if refresh_newindia_copy(survey_path, assessment_path, same_copy=True):
+                    result.assessment_files["assessment_report"] = assessment_path
+            elif os.path.normcase(os.path.normpath(survey_path)) != os.path.normcase(
                 os.path.normpath(assessment_path)
             ):
                 try:
@@ -1126,7 +1177,8 @@ def scan_folder(
                         assessment_name,
                         e,
                     )
-            result.assessment_files["assessment_report"] = assessment_path
+            if portal_id != "newindia":
+                result.assessment_files["assessment_report"] = assessment_path
 
     # ── Pre-compress mandatory upload files that exceed portal's 1.5 MB limit ─
     # This runs BEFORE automation starts so the UI shows the final file size
@@ -1286,7 +1338,7 @@ def scan_folder(
                 if not os.path.isfile(_full):
                     continue
                 _fname_lower = _fname.lower()
-                if _fname_lower in _skip_fnames:
+                if _fname_lower in _skip_fnames or is_newindia_output(_full):
                     continue
                 if portal_id == "oic" and (_is_oic_generated_workbook(_fname) or _is_oic_generated_audit(_fname)):
                     continue
@@ -1334,7 +1386,10 @@ def scan_folder(
             import time
 
             timestamp = time.strftime("%Y%m%d_%H%M%S")
-            _out = os.path.join(folder_path, "claim_others_documents_current.pdf" if portal_id == "oic" else f"claim_others_documents_{timestamp}.pdf")
+            _out = os.path.join(
+                folder_path,
+                CLAIM_RELATED_PDF if portal_id in {"newindia", "oic"} else f"claim_others_documents_{timestamp}.pdf",
+            )
             _mergeable_exts = {".pdf", ".jpg", ".jpeg", ".png", ".gif", ".bmp"}
             _mergeable = [
                 f
@@ -1396,6 +1451,17 @@ def scan_folder(
                         finally:
                             if os.path.exists(_staged_merge):
                                 os.unlink(_staged_merge)
+                    elif portal_id == "newindia":
+                        merged = None
+                        try:
+                            with staging_folder(folder_path) as stage:
+                                staged = _merge_claim_related_pdf(_mergeable, os.path.join(stage, CLAIM_RELATED_PDF))
+                                if staged:
+                                    merged = publish_scan_output(staged, _out, stop_cb=stop_cb)
+                                elif not (stop_cb and stop_cb()):
+                                    warn_skipped_output(_out, "The documents could not be merged.")
+                        except (OSError, ValueError) as exc:
+                            warn_skipped_output(_out, exc)
                     else:
                         merged = _merge_claim_related_pdf(_mergeable, _out)
                 finally:
@@ -1417,7 +1483,7 @@ def scan_folder(
                         logger.warning(
                             "Pre-merge returned missing file path: %s", merged
                         )
-                else:
+                elif portal_id != "newindia":
                     logger.warning(
                         "Pre-merge failed; merge will be retried at automation runtime."
                     )

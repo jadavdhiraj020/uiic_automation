@@ -90,7 +90,7 @@ def process_printable_output(
     settings: dict,
     logs: List[str],
     stop_cb: Optional[callable] = None,
-) -> None:
+) -> Optional[tuple[str, ...]]:
     """
     Orchestrates creation of printable Excel + PDF.
 
@@ -214,25 +214,27 @@ def process_printable_output(
 
     if stop_cb and stop_cb():
         logs.append("⚠️  Printable PDF: Generation cancelled before PDF render.")
-        return
+        return (output_excel_path,)
 
     # ── Step 2: Generate PDF (Excel COM) ────────────────────────────────
     if settings.get("printable_skip_pdf", False):
         logs.append(f"  ℹ️ Printable PDF skipped: '{output_pdf_name}' already exists.")
-        return
+        return (output_excel_path,)
 
     try:
-        _generate_pdf(
+        if _generate_pdf(
             output_excel_path,
             output_pdf_path,
             logs,
             print_mode=print_mode,
             scale=scale,
             col_range=col_range,
-        )
+        ):
+            return output_excel_path, output_pdf_path
     except Exception as exc:
         logs.append(f"  ❌ PDF generation failed: {exc}")
         logger.exception("PDF generation error")
+    return (output_excel_path,)
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -376,7 +378,7 @@ def _generate_pdf(
     print_mode: Optional[str] = None,
     scale: Optional[int] = None,
     col_range: Optional[Tuple[str, str]] = None,
-) -> None:
+) -> bool:
     """
     Generate PDF from the printable Excel using Microsoft Excel COM.
 
@@ -395,7 +397,7 @@ def _generate_pdf(
                 f"  ⚠️  PDF skipped: '{os.path.basename(abs_pdf)}' is open in another "
                 f"program. Please close it and scan again."
             )
-            return
+            return False
 
     # Check if we should run inline (e.g. for testing)
     should_run_inline = "pytest" in sys.modules or bool(os.environ.get("PYTEST_CURRENT_TEST"))
@@ -421,10 +423,10 @@ def _generate_pdf(
                 scale=scale,
                 col_range=col_range,
             ):
-                return
+                return True
         else:
             if _generate_pdf_excel_com(abs_excel, abs_pdf, logs):
-                return
+                return True
     else:
         # Run Excel COM in an isolated subprocess to prevent background thread COM hangs
         try:
@@ -454,22 +456,23 @@ def _generate_pdf(
                         logs.append(line.strip())
 
             if res.returncode == 0 and os.path.exists(abs_pdf):
-                return
+                return True
         except subprocess.TimeoutExpired:
             logs.append("  ❌ PDF generation timed out (30s limit).")
             logger.warning("Subprocess printable PDF generation timed out (30s limit). Terminating.")
             _cleanup_orphaned_automation_excel_processes()
-            return
+            return False
         except Exception as exc:
             logs.append(f"  ❌ Subprocess launch failed: {exc}")
             logger.exception("Subprocess launch failed for PDF generation")
-            return
+            return False
 
     # ── Failed ───────────────────────────────────────────────────────
     logs.append(
         "  ❌ PDF: Generation failed. "
         "Ensure Microsoft Excel is installed and a PDF printer (like 'Microsoft Print to PDF') is available."
     )
+    return False
 
 
 # ── Process & Office Resiliency Helpers ──────────────────────────────────────
