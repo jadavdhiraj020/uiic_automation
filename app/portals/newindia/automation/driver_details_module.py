@@ -1,5 +1,6 @@
 from playwright.async_api import Page
 from app.data.data_model import ClaimData
+from app.portals.newindia.field_values import normalize_driver_license_number
 from app.portals.newindia.automation.ui_utils import (
     click_radio_with_delay, fill_input_with_delay, select_dropdown_with_delay, format_date_ddmmyyyy,
     open_additional_section, record_additional_issue,
@@ -159,7 +160,7 @@ async def _fill_driver_details(page, data, log, stop_cb, field_delay_ms, default
 
     # 9. Driver driving License Number
     try:
-        val = data.driver_license_number
+        val = normalize_driver_license_number(data.driver_license_number)
         if val:
             await fill_input_with_delay(page, 'input[name="Driver driving License Number"]', val, "License No", log, field_delay_ms, source="Excel")
         else:

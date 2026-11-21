@@ -45,6 +45,7 @@ from app.automation.services.document_utils import (
     _compress_image_for_upload,
 )
 from app.portals.newindia.automation.popup_service import dismiss_portal_popup
+from app.portals.newindia.automation.recovery import _BLOCKING_DIALOGS, current_recovery
 
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,20 @@ logger = logging.getLogger(__name__)
 # ── Constants ─────────────────────────────────────────────────────────────────
 MAX_MERGED_PDF_BYTES = 15 * 1024 * 1024   # 15 MB portal limit (merged PDF)
 MAX_MANDATORY_FILE_BYTES = 1536 * 1024    # 1.5 MB portal limit per individual file
+
+# Supports both Tie-Up / Maruti (uploadFile) and Non-Tie-Up (uploadFileNonTieUp)
+_MANDATORY_UPLOAD_BTN_SELECTOR = (
+    'ng-form[name="mandatoryDocForm"] button[data-ng-click="uploadFile(\'mandatory\')"], '
+    'ng-form[name="mandatoryDocForm"] button[ng-click="uploadFile(\'mandatory\')"], '
+    'ng-form[name="mandatoryDocForm"] button[data-ng-click="uploadFileNonTieUp(\'mandatory\')"], '
+    'ng-form[name="mandatoryDocForm"] button[ng-click="uploadFileNonTieUp(\'mandatory\')"]'
+)
+_MANDATORY_UPLOAD_SUCCESS_MSG = re.compile(
+    r"\b(?:documents?\s+uploaded\s+suc+essfully|uploaded\s+suc+essfully)\b", re.I
+)
+_INLINE_SUCCESS_COUNT_RE = re.compile(
+    r"\b(\d+)\s+documents?\s+uploaded\s+suc+essfully\b", re.I
+)
 
 # Maps our internal keys → portal dropdown option values
 _UPLOAD_DOC_TYPE_MAP = {
@@ -247,16 +262,51 @@ async def _open_upload_new_documents_section(page: Page, log) -> bool:
 # POST-UPLOAD VERIFICATION — Wait for "Successful" status on all rows
 # ══════════════════════════════════════════════════════════════════════════════
 
+async def _find_mandatory_upload_button(page: Page, timeout_ms: int = 8000):
+    """Locate the visible Mandatory Documents Upload button for Tie-Up or Non-Tie-Up pages."""
+    candidates = page.locator(_MANDATORY_UPLOAD_BTN_SELECTOR)
+    deadline = asyncio.get_running_loop().time() + (timeout_ms / 1000.0)
+    while True:
+        count = await candidates.count()
+        for idx in range(count):
+            btn = candidates.nth(idx)
+            try:
+                if await btn.is_visible():
+                    return btn
+            except Exception:
+                continue
+        if asyncio.get_running_loop().time() >= deadline:
+            return None
+        await asyncio.sleep(0.25)
+
+
+async def _count_mandatory_upload_statuses(page: Page, expected_rows: int) -> tuple[int, int]:
+    """Return (successful_rows, failed_rows) across mandatory rows 0..expected_rows-1."""
+    successful = 0
+    failed = 0
+    for i in range(expected_rows):
+        # Note: input#mandatoryFiles{i} is removed by Angular data-ng-if when uploadDocSucess == 0,
+        # so anchor each <li> row on #uploadedFileTxt{i} / #docType{i} (avoid ancestor <div> matches).
+        row_loc = page.locator(
+            f'ng-form[name="mandatoryDocForm"] li:has(#uploadedFileTxt{i}), '
+            f'ng-form[name="mandatoryDocForm"] li:has(#docType{i}), '
+            f'tr:has(input#mandatoryFiles{i})'
+        ).first
+        if await row_loc.locator(
+            ':is(span:has-text("Successful"), td:has-text("Successful")):visible'
+        ).count():
+            successful += 1
+        elif await row_loc.locator(
+            ':is(span:has-text("Failed"), td:has-text("Failed")):visible'
+        ).count():
+            failed += 1
+    return successful, failed
+
+
 async def _wait_for_upload_success(page: Page, expected_rows: int, log, max_wait_s: float = 30.0) -> bool:
     """
-    After clicking the Upload button, the portal takes 5–10s (variable) to
-    process all files.  Each row transitions to show a green "Successful ✓"
-    status text once its file is accepted.
-
-    This function polls until ALL expected rows display "Successful", or
-    until the timeout expires.
-
-    Returns True if all rows show Successful, False on timeout.
+    Poll until all expected mandatory rows display "Successful" (or fail early if "Failed" shows).
+    Returns True only when all expected_rows show "Successful".
     """
     if expected_rows <= 0:
         return True
@@ -269,63 +319,172 @@ async def _wait_for_upload_success(page: Page, expected_rows: int, log, max_wait
     else:
         log(f"[{_ts()}]   ⏳ Waiting for {expected_rows} doc(s) to upload successfully (max {max_wait_s:.0f}s)...")
 
+    successful_count = 0
+    failed_count = 0
     while elapsed < max_wait_s:
-        await asyncio.sleep(poll_interval)
-        elapsed += poll_interval
-
         try:
-            # Count how many rows currently show "Successful" text
-            successful_count = 0
-            for i in range(expected_rows):
-                row_loc = page.locator(f'tr:has(input#mandatoryFiles{i}), div:has(input#mandatoryFiles{i})').first
-                has_success = await row_loc.locator(
-                    'span:has-text("Successful"), td:has-text("Successful"), div:has-text("Successful")'
-                ).first.is_visible()
-                if has_success:
-                    successful_count += 1
-
+            successful_count, failed_count = await _count_mandatory_upload_statuses(page, expected_rows)
             if successful_count >= expected_rows:
                 if isinstance(log, AutomationLogger):
                     log.success(f"All {expected_rows} document(s) uploaded successfully ({elapsed:.0f}s).")
                 else:
                     log(f"[{_ts()}]   ✅ All {expected_rows} doc(s) uploaded successfully ({elapsed:.0f}s).")
                 return True
-
-            # Log progress every 3 seconds
-            if elapsed % 3 < poll_interval:
+            if failed_count > 0 and (successful_count + failed_count) >= expected_rows:
+                break
+            if elapsed > 0 and elapsed % 3 < poll_interval:
                 if isinstance(log, AutomationLogger):
                     log.info(f"Upload progress: {successful_count}/{expected_rows} rows successful ({elapsed:.0f}s)...")
                 else:
                     log(f"[{_ts()}]   ⏳ {successful_count}/{expected_rows} successful ({elapsed:.0f}s)...")
-
         except Exception as exc:
             if isinstance(log, AutomationLogger):
                 log.warning(f"Upload status check error: {str(exc)[:80]}")
 
-    # Timeout — log how many actually succeeded
-    try:
-        final_count = 0
-        for i in range(expected_rows):
-            row_loc = page.locator(f'tr:has(input#mandatoryFiles{i}), div:has(input#mandatoryFiles{i})').first
-            has_success = await row_loc.locator(
-                'span:has-text("Successful"), td:has-text("Successful"), div:has-text("Successful")'
-            ).first.is_visible()
-            if has_success:
-                final_count += 1
-    except Exception:
-        final_count = 0
+        await asyncio.sleep(poll_interval)
+        elapsed += poll_interval
 
+    msg = f"Mandatory upload finished with {successful_count}/{expected_rows} successful" + (
+        f" and {failed_count} failed." if failed_count else "."
+    )
     if isinstance(log, AutomationLogger):
-        log.warning(
-            f"Upload timeout after {max_wait_s:.0f}s: {final_count}/{expected_rows} rows successful. "
-            "Continuing anyway..."
-        )
+        log.warning(msg)
     else:
-        log(
-            f"[{_ts()}]   ⚠️ Upload timeout ({max_wait_s:.0f}s): {final_count}/{expected_rows} successful. "
-            "Continuing..."
+        log(f"[{_ts()}]   ⚠️ {msg}")
+    return False
+
+
+async def _first_visible_text(page: Page, selectors: tuple[str, ...]) -> str:
+    """Return normalized visible text for the first visible element matching any selector."""
+    for selector in selectors:
+        loc = page.locator(selector)
+        count = await loc.count()
+        for idx in range(count):
+            item = loc.nth(idx)
+            try:
+                if await item.is_visible():
+                    text = " ".join((await item.inner_text()).split())
+                    if text:
+                        return text
+            except Exception:
+                continue
+    return ""
+
+
+async def _read_inline_upload_banners(page: Page) -> tuple[str, str]:
+    """Return (success_text, error_text) from visible New India inline upload alert banners."""
+    success_text = await _first_visible_text(
+        page,
+        (".accordion-surv .up-new-rvmp div.alert-success:visible", "div.alert-success:visible"),
+    )
+    error_text = await _first_visible_text(
+        page,
+        (".accordion-surv .up-new-rvmp div.alert-danger:visible", "div.alert-danger:visible"),
+    )
+    return success_text, error_text
+
+
+def _inline_banner_confirms(success_text: str, error_text: str, expected_rows: int) -> tuple[bool, Optional[int]]:
+    """Return (confirmed, reported_count) for visible inline upload banners."""
+    if error_text or not success_text or not _MANDATORY_UPLOAD_SUCCESS_MSG.search(success_text):
+        return False, None
+    count_match = _INLINE_SUCCESS_COUNT_RE.search(success_text)
+    if count_match:
+        reported = int(count_match.group(1))
+        return reported >= expected_rows, reported
+    return True, None
+
+
+async def _wait_for_mandatory_upload_outcome(
+    page: Page, expected_rows: int, log, max_wait_s: float = 45.0
+) -> tuple[bool, str]:
+    """
+    Wait for mandatory upload completion across Tie-Up (inline banner) and Non-Tie-Up (row badges / modal).
+    Returns (upload_ok, failure_reason).
+    """
+    deadline = asyncio.get_running_loop().time() + max_wait_s
+    popup_tag = None
+    successful_count = 0
+    failed_count = 0
+
+    while asyncio.get_running_loop().time() < deadline:
+        tag = await dismiss_portal_popup(
+            page,
+            log,
+            max_wait_s=0.4,
+            classify=True,
+            context="Post-upload processing",
+            success_message=_MANDATORY_UPLOAD_SUCCESS_MSG,
         )
-    return final_count > 0  # partial success is still acceptable
+        if tag is not None:
+            popup_tag = tag
+
+        success_text, error_text = await _read_inline_upload_banners(page)
+        if error_text:
+            reason = f"New India upload error: {error_text[:120]}"
+            if isinstance(log, AutomationLogger):
+                log.warning(reason)
+            else:
+                log(f"[{_ts()}]   ⚠️ {reason}")
+            return False, reason
+
+        banner_ok, reported_count = _inline_banner_confirms(success_text, error_text, expected_rows)
+        if reported_count is not None and not banner_ok:
+            return False, f"Only {reported_count}/{expected_rows} mandatory documents uploaded."
+        if banner_ok:
+            if isinstance(log, AutomationLogger):
+                log.success(f"Portal confirmed upload: {success_text[:120]}")
+            else:
+                log(f"[{_ts()}]   ✅ Portal confirmed upload: {success_text[:120]}")
+            return True, ""
+
+        successful_count, failed_count = await _count_mandatory_upload_statuses(page, expected_rows)
+        if successful_count >= expected_rows:
+            if isinstance(log, AutomationLogger):
+                log.success(f"All {expected_rows} document(s) uploaded successfully.")
+            else:
+                log(f"[{_ts()}]   ✅ All {expected_rows} doc(s) uploaded successfully.")
+            return True, ""
+        if failed_count > 0 and (successful_count + failed_count) >= expected_rows:
+            return False, (
+                f"Mandatory document upload failed ({successful_count}/{expected_rows} rows Successful, "
+                f"{failed_count} failed)."
+            )
+
+        if popup_tag == "success":
+            await asyncio.sleep(0.8)
+            success_text, error_text = await _read_inline_upload_banners(page)
+            if error_text:
+                return False, f"New India upload error: {error_text[:120]}"
+            banner_ok, reported_count = _inline_banner_confirms(success_text, error_text, expected_rows)
+            if reported_count is not None and not banner_ok:
+                return False, f"Only {reported_count}/{expected_rows} mandatory documents uploaded."
+            successful_count, failed_count = await _count_mandatory_upload_statuses(page, expected_rows)
+            if failed_count == 0:
+                if isinstance(log, AutomationLogger):
+                    log.success(f"Portal confirmed mandatory upload ({expected_rows} document(s)).")
+                else:
+                    log(f"[{_ts()}]   ✅ Portal confirmed mandatory upload ({expected_rows} doc(s)).")
+                return True, ""
+            return False, (
+                f"Mandatory document upload failed ({successful_count}/{expected_rows} rows Successful, "
+                f"{failed_count} failed)."
+            )
+
+        if popup_tag in ("size_error", "duplicate_error"):
+            return False, (
+                "New India rejected one or more mandatory documents during upload "
+                f"({successful_count}/{expected_rows} succeeded)."
+            )
+        if popup_tag is not None:
+            return False, (
+                "New India showed a portal alert instead of confirming all mandatory uploads "
+                f"({successful_count}/{expected_rows} succeeded)."
+            )
+
+        await asyncio.sleep(0.15)
+
+    return False, f"Mandatory document upload not confirmed ({successful_count}/{expected_rows} rows Successful)."
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -608,49 +767,94 @@ async def fill_document_upload_section(
             log("")
             log(f"[{_ts()}]   📋 All {current_row} document(s) attached. Clicking Upload...")
 
+        upload_ok = False
+        failure_reason = ""
         try:
-            upload_btn = page.locator('button[data-ng-click="uploadFileNonTieUp(\'mandatory\')"]').first
-            await upload_btn.wait_for(state="visible", timeout=8000)
-
-            # Wait up to 5s for Angular to enable the button after file attachment
-            for _ in range(10):
-                if not await upload_btn.is_disabled():
-                    break
-                await asyncio.sleep(0.5)
-
-            if await upload_btn.is_disabled():
+            upload_btn = await _find_mandatory_upload_button(page, timeout_ms=8000)
+            if upload_btn is None:
+                failure_reason = "Mandatory Documents Upload button was not found on the page."
                 if isinstance(log, AutomationLogger):
-                    log.warning("Upload button still disabled; files may not be attached correctly.")
+                    log.error(failure_reason)
                 else:
-                    log(f"[{_ts()}]   ⚠️ Upload button is still disabled. Skipping upload click.")
+                    log(f"[{_ts()}]   ❌ {failure_reason}")
             else:
-                await upload_btn.click()
-                if isinstance(log, AutomationLogger):
-                    log.success("Upload button clicked.")
-                    log.wait("Waiting for portal to process upload...")
+                # Wait up to 5s for Angular to enable the button after file attachment
+                for _ in range(10):
+                    if not await upload_btn.is_disabled():
+                        break
+                    await asyncio.sleep(0.5)
+
+                if await upload_btn.is_disabled():
+                    failure_reason = "Mandatory Documents Upload button stayed disabled; files may not be attached."
+                    if isinstance(log, AutomationLogger):
+                        log.warning(failure_reason)
+                    else:
+                        log(f"[{_ts()}]   ⚠️ {failure_reason}")
                 else:
-                    log(f"[{_ts()}]   ✅ Upload button clicked.")
+                    await upload_btn.click()
+                    if isinstance(log, AutomationLogger):
+                        log.success("Upload button clicked.")
+                        log.wait("Waiting for portal to finish mandatory document upload...")
+                    else:
+                        log(f"[{_ts()}]   ✅ Upload button clicked. Waiting for upload confirmation...")
 
-                # ── Wait for the post-upload alert popup ───────────────────────
-                # The portal shows a loading spinner and performs heavy network I/O.
-                # To prevent tab crashes and CPU overhead, we wait 20 seconds
-                # without executing any JS or Playwright actions.
-                if isinstance(log, AutomationLogger):
-                    log.wait("Waiting 20 seconds for upload processing quiet period...")
-                else:
-                    log(f"[{_ts()}]   ⏳ Waiting 20 seconds for upload processing quiet period...")
-                
-                await asyncio.sleep(20.0)
-
-                # After the quiet period, we poll for the popup modal (max 30s)
-                # to dismiss the "already applied/uploaded successfully" alert.
-                await dismiss_portal_popup(page, log, max_wait_s=30.0, context="Post-upload processing")
-
+                    upload_ok, failure_reason = await _wait_for_mandatory_upload_outcome(
+                        page, current_row, log, max_wait_s=45.0
+                    )
         except Exception as e:
+            failure_reason = f"Upload button error: {str(e)[:100]}"
             if isinstance(log, AutomationLogger):
-                log.error(f"Upload button error: {str(e)[:100]}")
+                log.error(failure_reason)
             else:
-                log(f"[{_ts()}]   ⚠️ Error clicking Upload button: {e}")
+                log(f"[{_ts()}]   ⚠️ {failure_reason}")
+
+        if not upload_ok:
+            recovery = current_recovery.get()
+            if recovery is not None:
+                skip_upload_wait = False
+
+                async def _mandatory_upload_ready():
+                    if skip_upload_wait:
+                        return True
+                    if not await recovery._same_step(page, "four") or await page.locator(_BLOCKING_DIALOGS).count():
+                        return False
+                    success_text, error_text = await _read_inline_upload_banners(page)
+                    banner_ok, _ = _inline_banner_confirms(success_text, error_text, current_row)
+                    if banner_ok:
+                        return True
+                    ok_count, _ = await _count_mandatory_upload_statuses(page, current_row)
+                    return ok_count >= current_row
+
+                async def _on_skip_upload():
+                    nonlocal skip_upload_wait
+                    skip_upload_wait = True
+
+                resumed = await recovery.pause(
+                    page,
+                    log,
+                    "Upload Mandatory Documents",
+                    failure_reason or "Mandatory document upload did not finish cleanly.",
+                    section="Document Upload",
+                    ready=_mandatory_upload_ready,
+                    require_original=True,
+                    instruction="Click Upload under List of Mandatory Documents in Chrome, close any popup, then click Continue.",
+                    confirmation_button="I uploaded the documents — continue",
+                    skip_button="Continue anyway",
+                    on_skip=_on_skip_upload,
+                )
+                if not resumed:
+                    if isinstance(log, AutomationLogger):
+                        log.outdent()
+                        log.outdent()
+                    return False
+            else:
+                if isinstance(log, AutomationLogger):
+                    log.error(failure_reason or "Mandatory document upload failed.")
+                    log.outdent()
+                    log.outdent()
+                else:
+                    log(f"[{_ts()}]   ❌ {failure_reason or 'Mandatory document upload failed.'}")
+                return False
 
     if stop_cb(): return False
 
@@ -679,6 +883,7 @@ async def fill_document_upload_section(
         log(f"[{_ts()}]   ℹ️ Skipping — no automation interaction needed.")
 
     if isinstance(log, AutomationLogger):
+        log.outdent()
         log.outdent()
         log.success("Document Upload phase completed.")
     else:

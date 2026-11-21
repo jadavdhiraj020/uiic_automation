@@ -1172,6 +1172,7 @@ class AutomationEngine:
                     from app.portals.newindia.automation.document_upload_module import (
                         fill_document_upload_section,
                     )
+                    from app.portals.newindia.automation.final_declarations_module import check_final_declarations
 
                     from app.portals.newindia.automation.logging_utils import capture_newindia_screenshot
 
@@ -1330,6 +1331,10 @@ class AutomationEngine:
                     if fail is not None:
                         return fail
 
+                    await check_final_declarations(page, claim.claim_no, self.log, self._check_stop)
+                    if self._check_stop():
+                        self.log.write_run_summary("Stopped by User", "Automation stopped by user.")
+                        return AutomationRunResult(False, "Automation stopped by user.")
                     self.log.section_done(
                         "Total New India Workflow", show_duration=True
                     )

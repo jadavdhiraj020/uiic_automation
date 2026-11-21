@@ -1,4 +1,5 @@
 import asyncio
+import os
 import re
 from playwright.async_api import Page
 from app.data.data_model import ClaimData
@@ -8,17 +9,32 @@ from app.portals.newindia.automation.ui_utils import (
     upload_file_via_input,
 )
 from app.portals.newindia.automation.popup_service import dismiss_portal_popup
-from app.portals.newindia.automation.recovery import current_recovery
+from app.portals.newindia.automation.recovery import _BLOCKING_DIALOGS, current_recovery
 from app.portals.oic.automation.recovery import wait_until_ready
 from app.automation.automation_logger import AutomationLogger
 from app.utils import load_automation_defaults
+
+
+_SFB_UPLOAD_BTN = (
+    'button[data-ng-click*="uploadDigSignature1"], '
+    'button[ng-click*="uploadDigSignature1"]'
+)
+_SFB_SUBMIT_BTN = (
+    'button[data-ng-click="saveSurveyFeeBill()"], '
+    'button[ng-click="saveSurveyFeeBill()"]'
+)
+_SFB_UPLOAD_SUCCESS_MSG = re.compile(
+    r"\b(?:document\s+uploaded\s+successfully|uploaded\s+successfully)\b", re.I
+)
+_SFB_SUBMIT_SUCCESS_MSG = re.compile(
+    r"\b(?:success(?:fully)?|saved|submitted|updated|generated)\b", re.I
+)
 
 
 def _find_survey_fee_bill_document(data: ClaimData) -> str:
     """Locate the Survey Fee Bill document.
     Enforces PDF format and uses dynamic doc mapping configuration keywords.
     """
-    import os
     try:
         from app.utils import load_doc_mapping
         # Explicitly pass portal_id to ensure New India's doc_mapping.json is
@@ -307,67 +323,70 @@ async def _fill_hsn_code_typeahead(page: Page, log, field_delay_ms: int = 600, h
         return False
 
 
-async def _click_survey_fee_bill_submit(page: Page, log) -> bool:
-    """Click the Survey Fee Bill Submit button and handle the confirmation popup."""
-    _structured = isinstance(log, AutomationLogger)
-
-    selector = 'button[data-ng-click="saveSurveyFeeBill()"]'
-
+async def _click_visible_enabled_button(
+    page: Page,
+    selector: str,
+    *,
+    wait_visible_s: float = 5.0,
+    wait_enabled_s: float = 5.0,
+) -> tuple[bool, str]:
+    """Find a visible button matching ``selector``, wait until enabled, and click it."""
     candidates = page.locator(selector)
-    count = await candidates.count()
-
-    if count == 0:
-        if _structured:
-            log.error("No Survey Fee Bill Submit button found.")
-        else:
-            log("   ❌ No Survey Fee Bill Submit button found.")
-        return False
-
-    last_error = None
-    for idx in range(count):
-        btn = candidates.nth(idx)
-        try:
-            if not await btn.is_visible():
-                continue
-            await btn.scroll_into_view_if_needed()
-            await asyncio.sleep(0.5)
-
-            # Wait for button to be enabled (Angular form validation)
-            for _ in range(20):
-                if not await btn.is_disabled():
-                    break
-                await asyncio.sleep(0.25)
-
-            if await btn.is_disabled():
-                if _structured:
-                    log.warning("Survey Fee Bill Submit button is disabled — form may be incomplete.")
-                else:
-                    log("   ⚠️ Submit button disabled — check required fields.")
-                continue
-
+    visible_btn = None
+    deadline = asyncio.get_running_loop().time() + wait_visible_s
+    while True:
+        count = await candidates.count()
+        for idx in range(count):
+            btn = candidates.nth(idx)
             try:
-                await btn.click(timeout=5000)
-            except Exception as click_error:
-                last_error = click_error
-                await btn.click(timeout=5000, force=True)
+                if await btn.is_visible():
+                    visible_btn = btn
+                    break
+            except Exception:
+                continue
+        if visible_btn is not None or asyncio.get_running_loop().time() >= deadline:
+            break
+        await asyncio.sleep(0.25)
 
-            if _structured:
-                log.info("Submit button clicked — waiting for confirmation...")
-            else:
-                log("   ℹ️ Submit button clicked — waiting for confirmation popup...")
-            return True
+    if visible_btn is None:
+        return False, "not_found"
 
-        except Exception as exc:
-            last_error = exc
-
-    # JS fallback
     try:
-        result = await page.evaluate(
+        await visible_btn.scroll_into_view_if_needed()
+    except Exception:
+        pass
+    await asyncio.sleep(0.25)
+
+    for _ in range(max(1, int(wait_enabled_s / 0.25))):
+        try:
+            if not await visible_btn.is_disabled():
+                break
+        except Exception:
+            break
+        await asyncio.sleep(0.25)
+
+    try:
+        if await visible_btn.is_disabled():
+            return False, "disabled"
+    except Exception:
+        pass
+
+    try:
+        await visible_btn.click(timeout=5000)
+        return True, "clicked"
+    except Exception:
+        try:
+            await visible_btn.click(timeout=5000, force=True)
+            return True, "clicked"
+        except Exception:
+            pass
+
+    # JS fallback for overlapping styling wrappers
+    try:
+        res = await page.evaluate(
             """
-            () => {
-                const buttons = Array.from(document.querySelectorAll(
-                    'button[data-ng-click="saveSurveyFeeBill()"]'
-                ));
+            (sel) => {
+                const buttons = Array.from(document.querySelectorAll(sel));
                 const target = buttons.find(btn => {
                     const style = window.getComputedStyle(btn);
                     return !btn.disabled
@@ -375,26 +394,44 @@ async def _click_survey_fee_bill_submit(page: Page, log) -> bool:
                         && style.visibility !== 'hidden'
                         && btn.getClientRects().length > 0;
                 });
-                if (!target) return { ok: false, reason: 'no visible enabled submit button' };
+                if (!target) return false;
                 target.scrollIntoView({ block: 'center' });
                 target.click();
-                return { ok: true };
+                return true;
             }
-            """
+            """,
+            selector,
         )
-        if result.get("ok"):
-            if _structured:
-                log.info("Clicked Submit on Survey Fee Bill.")
-            else:
-                log("   ℹ️ Submit clicked (JS fallback).")
-            return True
-    except Exception as exc:
-        last_error = exc
+        if res:
+            return True, "clicked"
+    except Exception:
+        pass
+    return False, "error"
 
-    if _structured:
-        log.error(f"Could not click Submit button: {str(last_error)[:140]}")
+
+async def _click_survey_fee_bill_submit(page: Page, log) -> bool:
+    """Click the Survey Fee Bill Submit button and handle the confirmation popup."""
+    _structured = isinstance(log, AutomationLogger)
+    clicked, reason = await _click_visible_enabled_button(
+        page, _SFB_SUBMIT_BTN, wait_visible_s=3.0, wait_enabled_s=5.0,
+    )
+    if clicked:
+        if _structured:
+            log.info("Submit button clicked — waiting for confirmation...")
+        else:
+            log("   ℹ️ Submit button clicked — waiting for confirmation popup...")
+        return True
+
+    if reason == "not_found":
+        msg = "No Survey Fee Bill Submit button found."
+    elif reason == "disabled":
+        msg = "Survey Fee Bill Submit button is disabled — form or PDF upload may be incomplete."
     else:
-        log(f"   ❌ Could not click Submit: {last_error}")
+        msg = "Could not click Survey Fee Bill Submit button."
+    if _structured:
+        log.error(msg)
+    else:
+        log(f"   ❌ {msg}")
     return False
 
 
@@ -458,8 +495,7 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
             log.document_mapped("Survey Fee Bill", os.path.basename(doc_path), "Matched Successfully")
             log.info(f"Survey Fee Bill document located: {doc_path}")
         else:
-            import os as _os
-            log(f"   ✅ Document pre-check passed: {_os.path.basename(doc_path)}")
+            log(f"   ✅ Document pre-check passed: {os.path.basename(doc_path)}")
 
     # Handle any stale popup
     await dismiss_portal_popup(page, log, max_wait_s=3.0, context="Survey Fee Bill Start")
@@ -653,45 +689,78 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
             log("")
             log("   ── Section: Document Upload ──")
 
+        sfb_upload_issue = ""
         try:
             if _structured:
                 log.upload_start("Survey Fee Bill Document", os.path.basename(doc_path))
-            
-            await upload_file_via_input(
+
+            attached = await upload_file_via_input(
                 page,
                 file_input_selector='input#uploadDigSig',
                 file_path=doc_path,
                 label="Survey Fee Bill Document",
                 log=log,
             )
-
-            # Click the Upload button
-            upload_btn = page.locator(
-                'button[data-ng-click="uploadDigSignature1(\'mandatory\')"]'
-            ).first
-            try:
-                await upload_btn.wait_for(state="visible", timeout=5000)
-                await asyncio.sleep(0.5)
-                await upload_btn.click()
-                await asyncio.sleep(1.5)
-
-                # Handle upload confirmation popup
-                await dismiss_portal_popup(page, log, max_wait_s=8.0, context="SFB Upload")
-
-                if _structured:
-                    log.success("Survey Fee Bill document uploaded successfully.")
-                else:
-                    log("   ✅ Survey Fee Bill document uploaded.")
-            except Exception as ue:
-                if _structured:
-                    log.error(f"Upload button click failed: {str(ue)[:100]}")
-                else:
-                    log(f"   ⚠️ Upload button error: {ue}")
-        except Exception as e:
-            if _structured:
-                log.error(f"SFB document upload error: {str(e)[:100]}")
+            if not attached:
+                sfb_upload_issue = "Could not attach Survey Fee Bill PDF."
             else:
-                log(f"   ⚠️ Error uploading Survey Fee Bill document: {e}")
+                attach_tag = await dismiss_portal_popup(
+                    page, log, max_wait_s=1.5, classify=True, context="SFB Attach",
+                )
+                if attach_tag in ("size_error", "duplicate_error", "other"):
+                    sfb_upload_issue = "New India rejected the attached Survey Fee Bill PDF."
+
+            if not sfb_upload_issue:
+                upload_clicked, upload_reason = await _click_visible_enabled_button(
+                    page, _SFB_UPLOAD_BTN, wait_visible_s=5.0, wait_enabled_s=5.0,
+                )
+                if upload_clicked:
+                    await asyncio.sleep(1.0)
+                    upload_tag = await dismiss_portal_popup(
+                        page,
+                        log,
+                        max_wait_s=10.0,
+                        classify=True,
+                        context="SFB Upload",
+                        success_message=_SFB_UPLOAD_SUCCESS_MSG,
+                    )
+                    if upload_tag == "success":
+                        if _structured:
+                            log.success("Survey Fee Bill document uploaded successfully.")
+                        else:
+                            log("   ✅ Survey Fee Bill document uploaded.")
+                    elif upload_tag is not None:
+                        sfb_upload_issue = "New India returned an alert instead of confirming Survey Fee Bill upload."
+                    else:
+                        if _structured:
+                            log.warning("No confirmation popup after Survey Fee Bill Upload click.")
+                        else:
+                            log("   ⚠️ No confirmation popup after Survey Fee Bill Upload click.")
+                else:
+                    sfb_upload_issue = (
+                        "Survey Fee Bill Upload button was disabled."
+                        if upload_reason == "disabled"
+                        else "Survey Fee Bill Upload button was not found or could not be clicked."
+                    )
+        except Exception as e:
+            sfb_upload_issue = f"Survey Fee Bill upload failed: {str(e)[:100]}"
+
+        if sfb_upload_issue:
+            if _structured:
+                log.warning(sfb_upload_issue)
+            else:
+                log(f"   ⚠️ {sfb_upload_issue}")
+            recovery = current_recovery.get()
+            if recovery is not None:
+                async def _sfb_submit_enabled():
+                    if await page.locator(_BLOCKING_DIALOGS).count():
+                        return False
+                    btn = page.locator(f":is({_SFB_SUBMIT_BTN}):visible").first
+                    return bool(await btn.count()) and not await btn.is_disabled()
+
+                recovery.record_field_issue(
+                    log, "Survey Fee Bill Document", sfb_upload_issue, manual_value=_sfb_submit_enabled,
+                )
 
         if stop_cb():
             return False
@@ -710,7 +779,8 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
 
     recovery = current_recovery.get()
     if recovery is not None:
-        await recovery.review_before_save(page, log, source="four")
+        if not await recovery.review_before_save(page, log, source="four"):
+            return False
     if stop_cb():
         return False
 
@@ -729,17 +799,45 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
         return False
 
     # Dismiss the confirmation popup
-    dismissed = await dismiss_portal_popup(page, log, max_wait_s=8.0, context="SFB Submit")
-    if dismissed:
+    submit_tag = await dismiss_portal_popup(
+        page,
+        log,
+        max_wait_s=8.0,
+        classify=True,
+        context="SFB Submit",
+        success_message=_SFB_SUBMIT_SUCCESS_MSG,
+    )
+    if submit_tag == "success":
         if _structured:
             log.success("Survey Fee Bill saved successfully.")
         else:
             log("   ✅ Survey Fee Bill confirmation popup dismissed.")
-    else:
+    elif submit_tag is None:
         if _structured:
             log.warning("No confirmation popup after Submit — may have saved silently.")
         else:
             log("   ⚠️ No popup after Submit (may have saved directly).")
+    else:
+        msg = "Survey Fee Bill Submit returned a portal alert instead of a save confirmation."
+        if _structured:
+            log.warning(msg)
+        else:
+            log(f"   ⚠️ {msg}")
+        if recovery is not None:
+            ok = await recovery.pause(
+                page,
+                log,
+                "Confirm Survey Fee Bill Save",
+                msg,
+                section="Survey Fee Bill",
+                instruction="Check Chrome, ensure Survey Fee Bill is saved without errors, then click Continue.",
+                confirmation_button="I verified Survey Fee Bill — continue",
+                require_original=True,
+            )
+            if not ok:
+                return False
+        else:
+            return False
 
     await asyncio.sleep(1.0)
 

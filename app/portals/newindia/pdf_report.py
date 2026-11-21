@@ -10,6 +10,7 @@ from typing import Optional
 
 from app.data.data_model import ClaimData, clean_mobile_number
 from app.data.pdf_report_reader import DATE_RX, EMAIL_RX, MOBILE_RX, extract_time, read_lines
+from app.portals.newindia.field_values import normalize_driver_license_number, normalize_vehicle_color
 from app.portals.newindia.pdf_assessment import amount, read_newindia_pdf_assessment
 from app.portals.newindia.scan_outputs import is_scan_output
 from app.portals.oic.pdf_layout import Line, compact, read_pages
@@ -84,6 +85,11 @@ FIELDS = {
         "vehicle_color": ("Vehicle Color", "Vehicle Colour", "Color of Vehicle", "Colour", "Color"),
         "vehicle_color_type": ("Vehicle Color Type", "Color Type", "Colour Type"),
         "registered_laden_weight": ("Registered Laden Weight", "Laden Weight (KG)", "Laden Weight", "Weight (KG)", "GVW"),
+        "unladen_weight": ("Unladen Weight", "Unladen Wt", "Unladen Weight (KG)", "ULW"),
+        "fitness_cert_no": ("Fitness Cert. No.", "Fitness Cert.No.", "Fitness Cert No", "Fitness Certificate No", "Fitness Certificate Number", "Fitness No"),
+        "fitness_valid_upto": ("Fitness Cert. Valid Upto", "Fitness Valid Upto", "Fitness Valid Up to", "Fitness Certificate Valid Upto", "Fitness Upto"),
+        "permit_number": ("Permit No.", "Permit No", "Permit Number"),
+        "permit_valid_upto": ("Permit Valid Upto", "Permit Valid Up to", "Permit Upto"),
         "type_of_vehicle": ("Type of Vehicle", "Vehicle Type"),
         "type_of_fuel": ("Type of Fuel", "Fuel Used", "Fuel Type", "Fuel"),
         "route_area_of_operation": ("Route/Area of Operation", "Route / Area of Operation", "Area of Operation"),
@@ -321,7 +327,7 @@ def _value(key: str, raw: str) -> str:
     if key == "driver_license_number":
         if not re.fullmatch(r"[A-Z0-9][A-Z0-9 /-]{7,28}", value, re.I) or not re.search(r"\d", value):
             return ""
-        return value.upper()
+        return normalize_driver_license_number(value)
     if key == "ifsc_code":
         match = IFSC_RX.search(value)
         return match.group(1).upper() if match else ""
@@ -344,7 +350,7 @@ def _value(key: str, raw: str) -> str:
     if key == "odometer_reading":
         digits = re.sub(r"\D", "", value.split()[0] if value else "")
         return digits if digits else ""
-    if key == "registered_laden_weight":
+    if key in {"registered_laden_weight", "unladen_weight"}:
         match = re.match(r"(\d[\d,]*)(?:\s*(?:kg|kgs|kilograms?))?\b", value, re.I)
         return match.group(1).replace(",", "") if match else ""
     if key == "no_of_invoices":
@@ -384,6 +390,8 @@ def _value(key: str, raw: str) -> str:
             if parsed is not None:
                 numbers.append(parsed)
         return format(numbers[-1], "f") if numbers else ""
+    if key == "vehicle_color":
+        return normalize_vehicle_color(value)
     return value
 
 

@@ -65,6 +65,23 @@ def parse_amount(value):
     return None
 
 
+VEHICLE_COLOR_MAX_LEN = 9
+
+
+def normalize_vehicle_color(value):
+    """Trim whitespace and cap New India Vehicle Color* to 9 characters."""
+    if value is None:
+        return ""
+    return str(value).strip()[:VEHICLE_COLOR_MAX_LEN]
+
+
+def normalize_driver_license_number(value):
+    """Strip spaces and special characters from New India Driver Driving License Number."""
+    if value is None:
+        return ""
+    return re.sub(r"[^A-Za-z0-9]", "", str(value)).upper()
+
+
 def workshop_gst_registered(amount):
     parsed = parse_amount(amount)
     return "Yes" if parsed is not None and parsed > 0 else "No"

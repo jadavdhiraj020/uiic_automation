@@ -157,6 +157,46 @@
     "allow_text_values": true,
     "_mandatory": true
   },
+  "unladen_weight": {
+    "sheet": "ALL",
+    "search_labels": ["Unladen Weight", "Unladen Wt", "Unladen Weight (KG)", "ULW"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "fitness_cert_no": {
+    "sheet": "ALL",
+    "search_labels": ["Fitness Cert. No.", "Fitness Cert.No.", "Fitness Cert No", "Fitness Certificate No", "Fitness Certificate Number", "Fitness No"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "fitness_valid_upto": {
+    "sheet": "ALL",
+    "search_labels": ["Fitness Cert. Valid Upto", "Fitness Cert. valid Upto", "Fitness Valid Upto", "Fitness Valid Up to", "Fitness Certificate Valid Upto", "Fitness Upto"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "is_date": true,
+    "_mandatory": false
+  },
+  "permit_number": {
+    "sheet": "ALL",
+    "search_labels": ["Permit No.", "Permit No", "Permit Number"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
+  "permit_valid_upto": {
+    "sheet": "ALL",
+    "search_labels": ["Permit Valid Upto", "Permit Valid Up to", "Permit Upto"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "is_date": true,
+    "_mandatory": false
+  },
   "vehicle_details_matching_policy": {
     "sheet": "ALL",
     "search_labels": ["Whether Vehicle Details are matching", "Vehicle Details matching", "Details matching with policy"],

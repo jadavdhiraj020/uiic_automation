@@ -300,6 +300,7 @@ class ClaimData:
     vehicle_details_mismatch_remarks: str = ""  # Optional
     reference_no: str = ""  # Optional, under Registration Cert Details
     registered_laden_weight: str = ""  # Weight from Excel (in KG)
+    fitness_cert_no: str = ""  # Optional, New India RC details
 
     # ── Accident Details ──────────────────────────────────────────────────────
     cause_nature_of_accident: str = ""
@@ -605,7 +606,11 @@ class ClaimData:
                 except Exception as exc:
                     logger.warning("Failed to calculate age_of_driver from DOB %s: %s", self.dob_of_driver, exc)
 
-            from app.portals.newindia.field_values import parse_survey_time
+            from app.portals.newindia.field_values import (
+                normalize_driver_license_number,
+                normalize_vehicle_color,
+                parse_survey_time,
+            )
 
             raw_time = self.time_of_survey or self.time_hh
             if not self.time_of_survey and self.time_hh and self.time_mm:
@@ -616,6 +621,22 @@ class ClaimData:
                 if not self._excel_coords.get("time_of_survey") and self._excel_coords.get("time_hh"):
                     self._excel_coords["time_of_survey"] = self._excel_coords["time_hh"]
                 self._excel_logs.append(f"  📊 time_of_survey normalized: '{parsed_time}'")
+
+            if self.vehicle_color:
+                normalized_color = normalize_vehicle_color(self.vehicle_color)
+                if normalized_color != self.vehicle_color:
+                    self._excel_logs.append(
+                        f"  📊 vehicle_color normalized (max 9 chars): '{normalized_color}'"
+                    )
+                self.vehicle_color = normalized_color
+
+            if self.driver_license_number:
+                normalized_dl = normalize_driver_license_number(self.driver_license_number)
+                if normalized_dl != self.driver_license_number:
+                    self._excel_logs.append(
+                        f"  📊 driver_license_number normalized (alphanumeric only): '{normalized_dl}'"
+                    )
+                self.driver_license_number = normalized_dl
 
         elif portal_id == "oic":
             from app.portals.oic.automation.date_formatter import format_oic_date
@@ -1334,6 +1355,11 @@ class ClaimData:
             ("Vehicle Color",         self.vehicle_color,            True,  _src("vehicle_color")),
             ("Color Type",            self.vehicle_color_type,       True,  _src("vehicle_color_type")),
             ("Laden Weight",          self.registered_laden_weight,  True,  _src("registered_laden_weight")),
+            ("Unladen Weight",        self.unladen_weight,           False, _src("unladen_weight")),
+            ("Fitness Cert. No.",     self.fitness_cert_no,          False, _src("fitness_cert_no")),
+            ("Fitness Valid Upto",    self.fitness_valid_upto,       False, _src("fitness_valid_upto")),
+            ("Permit No.",            self.permit_number,            False, _src("permit_number")),
+            ("Permit Valid Upto",     self.permit_valid_upto,        False, _src("permit_valid_upto")),
             ("Type of Vehicle",       self.type_of_vehicle,          True,  _src("type_of_vehicle")),
             ("Type of Fuel",          self.type_of_fuel,             True,  _src("type_of_fuel")),
             ("Details Match Policy",  self.vehicle_details_matching_policy, True, _src("vehicle_details_matching_policy")),

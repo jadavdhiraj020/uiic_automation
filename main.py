@@ -263,6 +263,20 @@ def main() -> None:
     # Check startup.log if captcha solving silently fails at runtime.
 
     window.showMaximized()
+    if sys.platform == "win32":
+        # Integrated terminals (e.g. ConPTY) often pass STARTF_USESHOWWINDOW + SW_HIDE
+        # in STARTUPINFO, which makes Windows hide the first ShowWindow() call.
+        # An explicit SW_SHOWMAXIMIZED (3) overrides that so the window always appears.
+        try:
+            import ctypes
+
+            hwnd = int(window.winId())
+            ctypes.windll.user32.ShowWindow(hwnd, 3)
+            ctypes.windll.user32.SetForegroundWindow(hwnd)
+        except Exception:
+            pass
+    window.raise_()
+    window.activateWindow()
     sys.exit(app.exec())
 
 

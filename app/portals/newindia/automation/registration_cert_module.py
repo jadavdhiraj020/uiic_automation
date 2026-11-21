@@ -1,11 +1,68 @@
 import re
 from playwright.async_api import Page
 from app.data.data_model import ClaimData
+from app.portals.newindia.field_values import normalize_vehicle_color
 from app.portals.newindia.automation.ui_utils import (
     check_checkbox_with_delay, fill_input_with_delay, select_dropdown_with_delay, format_date_ddmmyyyy,
     open_additional_section, record_additional_issue,
 )
 from app.automation.automation_logger import AutomationLogger
+
+async def _fill_optional_rc_field(
+    page: Page,
+    selector: str,
+    fallback_selector: str,
+    value: str,
+    label: str,
+    log,
+    field_delay_ms: int,
+    *,
+    kind: str = "text",
+    max_len: int | None = None,
+) -> None:
+    """Format and optionally fill a verified RC detail box if present on the current claim form."""
+    raw = str(value or "").strip()
+    if kind == "digits":
+        num_match = re.match(r"(\d[\d,]*)(?:\.\d+)?", raw)
+        formatted = re.sub(r"\D", "", num_match.group(1) if num_match else raw)
+        if max_len:
+            formatted = formatted[:max_len]
+    elif kind == "date":
+        formatted = format_date_ddmmyyyy(raw) if raw else ""
+    else:
+        formatted = raw[:max_len] if max_len else raw
+
+    if not formatted:
+        if isinstance(log, AutomationLogger):
+            log.field_skipped(label, reason="Missing from Excel")
+        else:
+            log(f"   ℹ️ {label} missing from data, skipping (Optional).")
+        return
+
+    chosen = None
+    for candidate in (selector, fallback_selector):
+        if not candidate:
+            continue
+        loc = page.locator(candidate).first
+        try:
+            if await loc.is_visible():
+                chosen = candidate
+                break
+        except Exception:
+            continue
+
+    if not chosen:
+        if isinstance(log, AutomationLogger):
+            log.field_skipped(label, reason="Not shown on this claim")
+        else:
+            log(f"   ⏭️ Skipped '{label}' — Not shown on this claim")
+        return
+
+    try:
+        await fill_input_with_delay(page, chosen, formatted, label, log, field_delay_ms, source="Excel")
+    except Exception:
+        record_additional_issue(log, label)
+
 
 async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_cb, field_delay_ms: int = 600) -> bool:
     if stop_cb(): return False
@@ -288,7 +345,7 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
 
     # 16. Vehicle Color (Mandatory)
     try:
-        val = data.vehicle_color
+        val = normalize_vehicle_color(data.vehicle_color)
         if val:
             await fill_input_with_delay(page, 'input[name="Vehicle Color"]', val, "Color", log, field_delay_ms, source="Excel")
         else:
@@ -377,6 +434,71 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
                 log(f"   ⚠️ Type Of Fuel missing from Excel.")
     except Exception:
         record_additional_issue(log, "Type of Fuel")
+
+    optional_rc_fields = (
+        (
+            'input[data-ng-model="surveyorData.worklist.additionalDetails.regLadenWt"]',
+            'input[ng-model="surveyorData.worklist.additionalDetails.regLadenWt"]',
+            getattr(data, "registered_laden_weight", ""),
+            "Registered Laden Weight",
+            "digits",
+            10,
+        ),
+        (
+            'input[data-ng-model="surveyorData.worklist.additionalDetails.unLadenWt"]',
+            'input[ng-model="surveyorData.worklist.additionalDetails.unLadenWt"]',
+            getattr(data, "unladen_weight", ""),
+            "Unladen Weight",
+            "digits",
+            10,
+        ),
+        (
+            'input[name="Fitness Cert.No."]',
+            'input[data-ng-model="surveyorData.worklist.additionalDetails.fitnessCertNo"]',
+            getattr(data, "fitness_cert_no", ""),
+            "Fitness Cert. No.",
+            "text",
+            20,
+        ),
+        (
+            'input[name="Fitness Cert. valid Upto"]',
+            'input[data-ng-model="surveyorData.worklist.additionalDetails.fitnessCertValidUpto"]',
+            getattr(data, "fitness_valid_upto", ""),
+            "Fitness Cert. Valid Upto",
+            "date",
+            None,
+        ),
+        (
+            'input[name="Permit No."]',
+            'input[data-ng-model="surveyorData.worklist.additionalDetails.permitNo"]',
+            getattr(data, "permit_number", ""),
+            "Permit No.",
+            "text",
+            20,
+        ),
+        (
+            'input[name="Permit Valid Upto"]',
+            'input[data-ng-model="surveyorData.worklist.additionalDetails.permitValidUpto"]',
+            getattr(data, "permit_valid_upto", ""),
+            "Permit Valid Upto",
+            "date",
+            None,
+        ),
+    )
+    for primary_sel, fallback_sel, field_val, field_label, field_kind, max_len in optional_rc_fields:
+        if stop_cb():
+            return False
+        await _fill_optional_rc_field(
+            page,
+            primary_sel,
+            fallback_sel,
+            field_val,
+            field_label,
+            log,
+            field_delay_ms,
+            kind=field_kind,
+            max_len=max_len,
+        )
 
     if isinstance(log, AutomationLogger):
         log.success("Registration Certificate Details phase completed.")
