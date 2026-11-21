@@ -1143,6 +1143,7 @@ class AutomationEngine:
                     from app.portals.newindia.automation.neft_module import (
                         fill_neft_details,
                     )
+                    from app.portals.newindia.automation.ui_utils import additional_section
                     from app.portals.newindia.automation.work_approval_module import (
                         fill_work_approval_details,
                     )
@@ -1232,6 +1233,9 @@ class AutomationEngine:
 
                     # Phase 8: NEFT Details
                     async def _phase_neft():
+                        if not await additional_section(page, "NEFT Details").count():
+                            self.log.info("NEFT Details is not shown for this claim.")
+                            return not self._check_stop()
                         if not await self._wait_for_deferred_ocr(
                             claim,
                             kind="cheque",

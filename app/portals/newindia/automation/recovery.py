@@ -40,17 +40,20 @@ _STEP_NAMES = {"one": "Quick Update", "two": "Additional Details",
 _CONTINUE_BUTTON = "I fixed all fields — continue"
 
 _INVALID_FIELDS = r"""
-([includeCheckboxes, quickUpdate]) => {
+([includeCheckboxes, step]) => {
+    const claimForm = document.querySelector('form[name="workListForm"]');
+    const quickUpdate = step === 'one';
+    const additionalDetails = step === 'two';
     const root = quickUpdate ? [...document.querySelectorAll('[name="quickUpdateForm"]')].find(form =>
         !form.closest('.ng-hide, [hidden], [aria-hidden=true], .tab-pane:not(.active)')) :
-        document.querySelector('form[name="workListForm"]') || document;
+        additionalDetails ? claimForm?.querySelector('.tab-pane.active') : claimForm || document;
     if (!root) return [];
     const invalid = [];
     for (const field of root.querySelectorAll('input, select, textarea')) {
         if (field.type === 'hidden' || field.type === 'file' ||
             (!includeCheckboxes && field.type === 'checkbox') ||
             field.matches(':disabled, [readonly]') ||
-            field.closest('.ng-hide, [hidden], [aria-hidden=true], .tab-pane:not(.active), .modal')) continue;
+            field.closest('.ng-hide, .hidden, [hidden], [aria-hidden=true], .tab-pane:not(.active), .modal')) continue;
 
         // Closed accordions still belong to the current tab and can block Next.
         const collapsed = field.closest('.panel-collapse.collapse:not(.in)');
@@ -62,23 +65,27 @@ _INVALID_FIELDS = r"""
         const model = window.angular?.element(field)?.controller('ngModel');
         if (model?.$pending) continue;
         const errors = model?.$error || {};
-        const useNative = !quickUpdate || !model;
+        const pageReview = quickUpdate || additionalDetails;
+        const useNative = !pageReview || !model;
         const missing = Boolean(errors.required || (useNative && field.validity?.valueMissing));
         const failed = model?.$invalid || (useNative && field.willValidate && !field.validity.valid) ||
-            (quickUpdate && !model && field.getAttribute('aria-invalid') === 'true');
+            (pageReview && !model && field.getAttribute('aria-invalid') === 'true');
         if (!missing && !failed) continue;
 
         const section = field.closest('.panel')?.querySelector('.panel-heading');
-        const group = field.closest('.form-group');
+        // Additional Details uses one .form-group for a row with many controls.
+        const group = (additionalDetails && field.closest('.checkbox, [class*="col-md-"], li')) ||
+            field.closest('.form-group');
         const title = group?.querySelector('.datagrid-title:not(.hidden)') ||
-            (quickUpdate && group?.querySelector('label:not(.hidden)'));
+            (pageReview && group?.querySelector('label:not(.hidden)'));
         const label = [...(field.labels || [])].find(el => !el.closest('.hidden'));
         const name = (title?.textContent || (field.type === 'radio' && field.name) ||
                       label?.textContent || field.name || field.id || '')
             .replace(/\s*\*\s*$/, '').replace(/\s+/g, ' ').trim();
         if (!name) continue;
+        const sectionName = (section?.textContent || '').replace(/\s+/g, ' ').trim();
         invalid.push({
-            name, section: (section?.textContent || '').replace(/\s+/g, ' ').trim(),
+            name, section: additionalDetails ? sectionName.replace(/\s+\d+$/, '') : sectionName,
             identity: [field.type === 'radio' ? '' : field.id, field.name],
             reason: missing ? 'Required value is missing.' : 'New India marked this value invalid.'
         });
@@ -101,8 +108,8 @@ _WATCH_NEXT = r"""
             tabState() !== source || ![...document.querySelectorAll('li')].some(li =>
                 li.getClientRects().length &&
                 /^Claim\s+No\.?\s*:?\s*([^\s/]+)\s*\/?$/i.exec(li.textContent.trim())?.[1] === claimNumber)) return;
-        watch.invalid = invalidFields([true, source === 'one']);
-        if (source === 'one' || !watch.invalid.length) watch.clicks += 1;
+        watch.invalid = invalidFields([true, source]);
+        if (['one', 'two'].includes(source) || !watch.invalid.length) watch.clicks += 1;
     }, {capture: true, signal: controller.signal});
 }
 """
@@ -191,7 +198,7 @@ class NewIndiaRecovery(OperatorRecovery):
         issues = [(issue.section, issue.label, issue.reason) for issue in unresolved_issues]
         identities = {issue.identity for issue in unresolved_issues if issue.identity and any(issue.identity)}
 
-        for field in await page.evaluate(_INVALID_FIELDS, [step != "four", step == "one"]):
+        for field in await page.evaluate(_INVALID_FIELDS, [step != "four", step]):
             if tuple(field["identity"]) not in identities:
                 issue = (field["section"], field["name"], field["reason"])
                 if issue not in issues:
@@ -256,6 +263,7 @@ class NewIndiaRecovery(OperatorRecovery):
 
     async def advance_next(self, page, log, selector, *, source, destination, title, after_click=None):
         section = _STEP_NAMES[source]
+        page_review = source in {"one", "two"}
         if self.stopped():
             raise asyncio.CancelledError
         if not await self._same_step(page, source):
@@ -286,19 +294,22 @@ class NewIndiaRecovery(OperatorRecovery):
             button = page.locator(f":is({selector}):visible")
             previous_clicks = await click_count()
             try:
-                if source == "one" and await page.locator(_BLOCKING_DIALOGS).count():
+                if page_review and await page.locator(_BLOCKING_DIALOGS).count():
                     reason = "Close the New India message in Chrome before trying Next."
                     return
-                if await button.count() == 1 and await button.is_enabled(timeout=1000):
-                    reason = "New India stayed on the current step after Next."
-                    await button.click(timeout=3500)
-                else:
+                if await button.count() != 1:
+                    reason = "App3 could not identify the Next button. Check the current page in Chrome."
+                    return
+                if not await button.is_enabled(timeout=1000):
                     reason = "New India has disabled Next. Fix the required fields in Chrome."
+                    return
+                reason = "New India stayed on the current step after Next."
+                await button.click(timeout=3500)
             except Exception:
                 reason = "App3 could not click Next. Check Chrome."
 
             if after_click is not None and await click_count() > previous_clicks:
-                if source != "one" or await wait_until_ready(
+                if not page_review or await wait_until_ready(
                     lambda: self._same_step(page, destination), seconds=4, stopped=self.stopped,
                 ):
                     with suppress(Exception):
@@ -342,7 +353,7 @@ class NewIndiaRecovery(OperatorRecovery):
                         return "", f"{reason}\n\n{detail}" if skip_tried else detail
                     return "", "Click Next in Chrome to save this page." if issues and not skip_tried else reason
                 if await self._same_step(page, destination):
-                    if source == "one" and await page.locator(_BLOCKING_DIALOGS).count():
+                    if page_review and await page.locator(_BLOCKING_DIALOGS).count():
                         return "", "Close the New India message in Chrome, then continue here."
                     invalid = await page.evaluate("key => window[key]?.invalid || []", key)
                     if invalid:
@@ -351,19 +362,19 @@ class NewIndiaRecovery(OperatorRecovery):
                         return "", f"Return to {section} in Chrome and fix these fields before clicking Next.\n\n{remaining}"
                 return "", f"Wait for {title} to open for the original claim."
 
-            quick_update = source == "one"
             advanced = await self.pause(
-                page, log, "Review Quick Update" if quick_update else "Review fields before Next" if issues else "Next",
+                page, log, f"Review {section}" if page_review else "Review fields before Next" if issues else "Next",
                 self._format_issues(issues) if issues else reason, ready=at_destination,
                 require_original=True, section=section, describe=describe,
-                instruction=("Fix the fields in Chrome and click Next, then continue here. "
-                             "Or let App3 try Next with the current values.") if quick_update else (
+                instruction=("Fix the listed fields and click Next in Chrome. "
+                             "Close any confirmation message, then continue here. "
+                             "Or let App3 try Next with the current values.") if page_review else (
                     f"Fix any listed fields in Chrome and click Next. "
                     f"When {title} opens, close any save message and click Continue here."
                 ),
-                confirmation_button="I fixed it — continue" if quick_update else _CONTINUE_BUTTON if issues else "",
-                skip_button="Skip and try Next" if quick_update else "",
-                on_skip=skip_and_try_next if quick_update else None,
+                confirmation_button="I fixed it — continue" if page_review else _CONTINUE_BUTTON if issues else "",
+                skip_button="Skip and try Next" if page_review else "",
+                on_skip=skip_and_try_next if page_review else None,
             )
             self.field_issues.clear()
             return advanced

@@ -1,9 +1,9 @@
-import asyncio
 import re
 from playwright.async_api import Page
 from app.data.data_model import ClaimData
 from app.portals.newindia.automation.ui_utils import (
-    check_checkbox_with_delay, fill_input_with_delay, select_dropdown_with_delay, format_date_ddmmyyyy
+    check_checkbox_with_delay, fill_input_with_delay, select_dropdown_with_delay, format_date_ddmmyyyy,
+    open_additional_section, record_additional_issue,
 )
 from app.automation.automation_logger import AutomationLogger
 
@@ -43,41 +43,16 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
                 log.field_skipped("Reference No", reason="Missing from Excel")
             else:
                 log(f"   ℹ️ Reference No missing from Excel, skipping (Optional).")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Reference No field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling Reference No: {e}")
+    except Exception:
+        record_additional_issue(log, "Reference No.")
 
     if stop_cb(): return False
 
-    # Click to expand Registration Certificate Details accordion
-    try:
-        acc_heading = page.locator('a.accordion-toggle:has-text("Registration Certificate Details")').first
-        await acc_heading.wait_for(state="visible", timeout=10000)
-        
-        # Check if collapsed
-        parent_div = page.locator('div.panel-heading').filter(has=acc_heading).first
-        is_collapsed = 'collapsed' in await parent_div.get_attribute('class')
-        if is_collapsed:
-            await acc_heading.click()
-            await asyncio.sleep(1.0)
-            if isinstance(log, AutomationLogger):
-                log.success("Accordion expanded.")
-            else:
-                log(f"   ✅ Expanded Registration Certificate Details.")
-        else:
-            if isinstance(log, AutomationLogger):
-                log.info("Accordion already expanded.")
-            else:
-                log(f"   ℹ️ Registration Certificate Details already expanded.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Expansion failed: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Could not expand Registration Certificate Details: {e}")
+    if not await open_additional_section(page, "Registration Certificate Details", log):
+        return not stop_cb()
 
-    if stop_cb(): return False
+    if stop_cb():
+        return False
 
     # 1. Registered Owner Name (Mandatory)
     try:
@@ -89,11 +64,8 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
                 log.field_skipped("Owner Name", reason="Missing from Excel")
             else:
                 log(f"   ⚠️ Registered Owner Name missing from Excel.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Owner Name field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling owner name: {e}")
+    except Exception:
+        record_additional_issue(log, "Registered Owner Name")
 
     if stop_cb(): return False
 
@@ -125,11 +97,8 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
                 log.field_skipped("Registration Number", reason="Missing from Excel")
             else:
                 log(f"   ℹ️ Vehicle Registration Number missing, skipping (Optional).")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Registration Number field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling Registration Number: {e}")
+    except Exception:
+        record_additional_issue(log, "Vehicle Registration Number")
 
     if stop_cb(): return False
 
@@ -144,11 +113,8 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
                 log.field_skipped("Reg Date", reason="Missing from Excel")
             else:
                 log(f"   ℹ️ Date of Registration missing, skipping (Optional).")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Registration Date field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling Date of Registration: {e}")
+    except Exception:
+        record_additional_issue(log, "Date of Registration")
 
     if stop_cb(): return False
 
@@ -162,11 +128,8 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
                 log.field_skipped("Engine No", reason="Missing from Excel")
             else:
                 log(f"   ⚠️ Engine Number missing from Excel.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Engine Number field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling Engine Number: {e}")
+    except Exception:
+        record_additional_issue(log, "Engine No.")
 
     if stop_cb(): return False
 
@@ -180,11 +143,8 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
                 log.field_skipped("Chassis No", reason="Missing from Excel")
             else:
                 log(f"   ⚠️ Chassis Number missing from Excel.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Chassis Number field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling Chassis Number: {e}")
+    except Exception:
+        record_additional_issue(log, "Chassis No.")
 
     if stop_cb(): return False
 
@@ -193,11 +153,8 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
         selector = 'input[name="Physically Verified -checkBox"]'
         if await page.locator(selector).count():
             await check_checkbox_with_delay(page, selector, "Physically Verified", log, field_delay_ms, source="Calculated")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Verification toggle error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error checking Physically Verified: {e}")
+    except Exception:
+        record_additional_issue(log, "Physically Verified")
 
     if stop_cb(): return False
 
@@ -211,11 +168,8 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
                 log.field_skipped("Type of Body", reason="Missing from Excel")
             else:
                 log(f"   ⚠️ Type Of Body missing from Excel.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Body Type field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error selecting Type Of Body: {e}")
+    except Exception:
+        record_additional_issue(log, "Type of Body")
 
     if stop_cb(): return False
 
@@ -229,11 +183,8 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
                 log.field_skipped("Class of Vehicle", reason="Missing from Excel")
             else:
                 log(f"   ⚠️ Class of Vehicle missing from Excel.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Vehicle Class field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling Class of Vehicle: {e}")
+    except Exception:
+        record_additional_issue(log, "Class of Vehicle")
 
     if stop_cb(): return False
 
@@ -247,11 +198,8 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
                 log.field_skipped("Condition", reason="Missing from Excel")
             else:
                 log(f"   ⚠️ Pre-Accident Condition missing from Excel.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Condition field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling Pre-Accident Condition: {e}")
+    except Exception:
+        record_additional_issue(log, "Pre-Accident Condition")
 
     if stop_cb(): return False
 
@@ -265,11 +213,8 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
                 log.field_skipped("Route/Area", reason="Missing from Excel")
             else:
                 log(f"   ℹ️ Route/Area of Operation missing, skipping (Optional).")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Route field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling Route/Area of Operation: {e}")
+    except Exception:
+        record_additional_issue(log, "Route or Area of Operation")
 
     if stop_cb(): return False
 
@@ -283,11 +228,8 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
                 log.field_skipped("Tax Paid Upto", reason="Missing from Excel")
             else:
                 log(f"   ℹ️ Tax Paid Upto missing, skipping (Optional).")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Tax field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling Tax Paid Upto: {e}")
+    except Exception:
+        record_additional_issue(log, "Tax Paid Upto")
 
     if stop_cb(): return False
 
@@ -301,11 +243,8 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
                 log.field_skipped("RTO Name", reason="Missing from Excel")
             else:
                 log(f"   ⚠️ RTO Name missing from Excel.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"RTO field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling RTO Name: {e}")
+    except Exception:
+        record_additional_issue(log, "RTO Name")
 
     if stop_cb(): return False
 
@@ -320,11 +259,8 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
                 log.field_skipped("Transfer Date", reason="Missing from Excel")
             else:
                 log(f"   ℹ️ Transfer Date missing, skipping (Optional).")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Transfer Date field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling Transfer Date: {e}")
+    except Exception:
+        record_additional_issue(log, "Transfer Date")
 
     if stop_cb(): return False
 
@@ -345,11 +281,8 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
                 log.field_skipped("Odometer Reading", reason="Missing from Excel")
             else:
                 log(f"   ⚠️ Odometer Reading missing from Excel.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Odometer field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling Odometer Reading: {e}")
+    except Exception:
+        record_additional_issue(log, "Odometer Reading")
 
     if stop_cb(): return False
 
@@ -363,11 +296,8 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
                 log.field_skipped("Color", reason="Missing from Excel")
             else:
                 log(f"   ⚠️ Vehicle Color missing from Excel.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Color field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling Vehicle Color: {e}")
+    except Exception:
+        record_additional_issue(log, "Vehicle Color")
 
     if stop_cb(): return False
 
@@ -381,11 +311,8 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
                 log.field_skipped("Color Type", reason="Missing from Excel")
             else:
                 log(f"   ⚠️ Vehicle Color Type missing from Excel.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Color Type field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling Vehicle Color Type: {e}")
+    except Exception:
+        record_additional_issue(log, "Vehicle Color Type")
 
     if stop_cb(): return False
 
@@ -416,11 +343,8 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
                 log.field_skipped("Type of Vehicle", reason="Missing from Excel")
             else:
                 log(f"   ⚠️ Type Of Vehicle missing from Excel.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Vehicle Type field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error selecting Type Of Vehicle: {e}")
+    except Exception:
+        record_additional_issue(log, "Type of Vehicle")
 
     if stop_cb(): return False
 
@@ -451,11 +375,8 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
                 log.field_skipped("Type of Fuel", reason="Missing from Excel")
             else:
                 log(f"   ⚠️ Type Of Fuel missing from Excel.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Fuel Type field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error selecting Type Of Fuel: {e}")
+    except Exception:
+        record_additional_issue(log, "Type of Fuel")
 
     if isinstance(log, AutomationLogger):
         log.success("Registration Certificate Details phase completed.")

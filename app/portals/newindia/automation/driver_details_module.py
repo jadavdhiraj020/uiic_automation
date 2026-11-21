@@ -1,11 +1,14 @@
-import asyncio
 from playwright.async_api import Page
 from app.data.data_model import ClaimData
 from app.portals.newindia.automation.ui_utils import (
-    click_radio_with_delay, fill_input_with_delay, select_dropdown_with_delay, format_date_ddmmyyyy
+    click_radio_with_delay, fill_input_with_delay, select_dropdown_with_delay, format_date_ddmmyyyy,
+    open_additional_section, record_additional_issue,
 )
 from app.automation.automation_logger import AutomationLogger
 from app.utils import load_automation_defaults
+
+_PARKED = 'select[name="Was the vehicle parked during accident ?"]'
+_RELATIONSHIP = 'select#relationship, select[name="Relationship of the driver with the Insured"]'
 
 async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_delay_ms: int = 600) -> bool:
     if stop_cb(): return False
@@ -18,68 +21,29 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
     else:
         log(f"Opening Driver Details section...")
     
-    # Click to expand Driver Details accordion
     try:
-        acc_heading = page.locator('a.accordion-toggle:has-text("Driver Details")').first
-        await acc_heading.wait_for(state="visible", timeout=10000)
-        
-        # Check if collapsed
-        parent_div = page.locator('div.panel-heading').filter(has=acc_heading).first
-        is_collapsed = 'collapsed' in await parent_div.get_attribute('class')
-        if is_collapsed:
-            await acc_heading.click()
-            await asyncio.sleep(1.5)
-            if isinstance(log, AutomationLogger):
-                log.success("Accordion expanded.")
-            else:
-                log("   ✅ Expanded Driver Details.")
-        else:
-            if isinstance(log, AutomationLogger):
-                log.info("Accordion already expanded.")
-            else:
-                log("   ℹ️ Driver Details already expanded.")
-    except Exception as e:
+        return await _fill_driver_details(page, data, log, stop_cb, field_delay_ms, defaults)
+    finally:
         if isinstance(log, AutomationLogger):
-            log.warning(f"Expansion attempt failed: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Could not expand Driver Details: {e}")
+            log.outdent()
 
-    if stop_cb(): return False
 
-    # 1. Was Vehicle Parked During Accident (ALWAYS NO)
+async def _fill_driver_details(page, data, log, stop_cb, field_delay_ms, defaults):
+    if not await open_additional_section(page, "Driver Details", log):
+        return not stop_cb()
+
+    # Remaining driver fields are conditional on the portal keeping No.
     try:
-        if isinstance(log, AutomationLogger):
-            log.info("Setting Parked Status to 'No'...")
-        else:
-            log(f"  ✏️ Selecting Vehicle Parked During Accident = NO...")
-            
         await select_dropdown_with_delay(
-            page, 'select[name="Was the vehicle parked during accident ?"]',
-            "No", "Vehicle Parked", log, field_delay_ms, source="Calculated"
+            page, _PARKED, "No", "Was the vehicle parked during accident?",
+            log, field_delay_ms, source="Calculated",
         )
-
-        # Wait for the Relationship dropdown to become VISIBLE
-        if isinstance(log, AutomationLogger):
-            log.wait("Waiting for conditional fields to appear...")
-        else:
-            log(f"  ⏳ Waiting for Relationship dropdown to become visible...")
-            
-        try:
-            await page.wait_for_selector(
-                'select[name="Relationship of the driver with the Insured"]',
-                state="visible", timeout=10000
-            )
-        except Exception:
-            await page.wait_for_selector(
-                'select[data-ng-model*="driverRelationship"], select[ng-model*="driverRelationship"]',
-                state="visible", timeout=6000
-            )
-        await asyncio.sleep(0.8) 
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Parked Status dropdown error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error selecting Vehicle Parked During Accident: {e}")
+        parked = await page.locator(f'{_PARKED}:visible').input_value(timeout=1500)
+    except Exception:
+        record_additional_issue(log, "Was the vehicle parked during accident?")
+        return not stop_cb()
+    if parked.rsplit(":", 1)[-1].strip().casefold() != "no":
+        return not stop_cb()
 
     if stop_cb(): return False
 
@@ -90,8 +54,7 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
         if val:
             await select_dropdown_with_delay(
                 page,
-                'select[name="Relationship of the driver with the Insured"]',
-                val, "Relationship", log, field_delay_ms, source="Excel"
+                _RELATIONSHIP, val, "Relationship with Insured", log, field_delay_ms, source="Excel"
             )
         else:
             relationship_default = str(defaults.get("relationship_with_insured", "Self") or "Self")
@@ -101,14 +64,10 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
                 log(f"   ⚠️ Relationship with Insured missing from Excel, defaulting to '{relationship_default}'")
             await select_dropdown_with_delay(
                 page,
-                'select[name="Relationship of the driver with the Insured"]',
-                relationship_default, "Relationship", log, field_delay_ms, source="Default"
+                _RELATIONSHIP, relationship_default, "Relationship with Insured", log, field_delay_ms, source="Default"
             )
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Relationship field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error selecting Relationship With Insured: {e}")
+    except Exception:
+        record_additional_issue(log, "Relationship with Insured")
 
     if stop_cb(): return False
 
@@ -122,11 +81,8 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
                 log.field_skipped("License Type", reason="Missing from Excel")
             else:
                 log("   ⚠️ License Type of Driver missing from Excel.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"License Type field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error selecting License Type of Driver: {e}")
+    except Exception:
+        record_additional_issue(log, "License Type of Driver")
 
     if stop_cb(): return False
 
@@ -141,11 +97,8 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
                 log.field_skipped("Driver DOB", reason="Missing from Excel")
             else:
                 log("   ⚠️ DOB of Driver missing from Excel.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"DOB field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling DOB of Driver: {e}")
+    except Exception:
+        record_additional_issue(log, "Date of Birth")
 
     if stop_cb(): return False
 
@@ -159,11 +112,8 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
                 log.field_skipped("Driver Name", reason="Missing from Excel")
             else:
                 log("   ⚠️ Driver Name missing from Excel.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Driver Name field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling Driver Name: {e}")
+    except Exception:
+        record_additional_issue(log, "Driver Name")
 
     if stop_cb(): return False
 
@@ -177,11 +127,8 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
                 log.field_skipped("Driver Age", reason="Missing from Excel")
             else:
                 log("   ⚠️ Age of Driver missing from Excel.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Age field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling Age of Driver: {e}")
+    except Exception:
+        record_additional_issue(log, "Age of Driver")
 
     if stop_cb(): return False
 
@@ -190,11 +137,8 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
         name = "Is the motor driving license valid for the type of vehicle on the date of accident?"
         if await page.locator(f'input[name="{name}"][value="Y"]').count():
             await click_radio_with_delay(page, name, "Y", "License Validation", log, field_delay_ms, source="Calculated")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"License Validation toggle error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error selecting License Valid: {e}")
+    except Exception:
+        record_additional_issue(log, "Driving License Valid for Vehicle Type")
 
     if stop_cb(): return False
 
@@ -208,11 +152,8 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
                 log.field_skipped("Issuing Authority", reason="Missing from Excel")
             else:
                 log("   ⚠️ License Issuing Authority missing from Excel.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Issuing Authority field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling License Issuing Authority: {e}")
+    except Exception:
+        record_additional_issue(log, "License Issuing Authority")
 
     if stop_cb(): return False
 
@@ -226,11 +167,8 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
                 log.field_skipped("License No", reason="Missing from Excel")
             else:
                 log("   ⚠️ License Number missing from Excel.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"License Number field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling License Number: {e}")
+    except Exception:
+        record_additional_issue(log, "Driver License Number")
 
     if stop_cb(): return False
 
@@ -245,11 +183,8 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
                 log.field_skipped("Issue Date", reason="Missing from Excel")
             else:
                 log("   ⚠️ License Issue Date missing from Excel.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Issue Date field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling License Issue Date: {e}")
+    except Exception:
+        record_additional_issue(log, "Driver License Issue Date")
 
     if stop_cb(): return False
 
@@ -264,11 +199,8 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
                 log.field_skipped("Expiry Date", reason="Missing from Excel")
             else:
                 log("   ⚠️ License Expiry Date missing from Excel.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Expiry Date field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling License Expiry Date: {e}")
+    except Exception:
+        record_additional_issue(log, "Driver License Expiry Date")
 
     if stop_cb(): return False
 
@@ -282,14 +214,10 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
                 log.field_skipped("Badge No", reason="Missing from Excel")
             else:
                 log("   ⏭️ [Badge Number] — Optional, not in Excel. Skipping.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Badge Number field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling Badge Number: {e}")
+    except Exception:
+        record_additional_issue(log, "Badge Number")
 
     if isinstance(log, AutomationLogger):
-        log.outdent()
         log.success("Driver Details phase completed.")
     else:
         log(f" ✅ Driver Details completed successfully.")

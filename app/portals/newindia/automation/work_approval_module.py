@@ -1,17 +1,22 @@
 import asyncio
 import logging
 import os
-from playwright.async_api import Page, Locator
+from playwright.async_api import Page
 from app.data.data_model import ClaimData
 from app.portals.newindia.automation.ui_utils import (
     fill_input_with_delay,
-    select_dropdown_with_delay
+    select_dropdown_with_delay,
+    open_additional_section,
+    record_additional_issue,
 )
 from app.portals.newindia.automation.popup_service import dismiss_portal_popup
-from app.portals.newindia.automation.recovery import current_recovery
+from app.portals.newindia.automation.recovery import _TAB_STATE, current_recovery
+from app.portals.oic.automation.recovery import wait_until_ready
 from app.automation.automation_logger import AutomationLogger
+from app.utils import load_automation_defaults
 
 logger = logging.getLogger(__name__)
+_NEXT = "button#toClaimAssessment"
 
 def _find_final_invoice_document(data: ClaimData) -> str:
     """Finds final invoice document using tracked scan dicts, then falls back to folder scan.
@@ -107,46 +112,7 @@ async def fill_work_approval_details(
             log.outdent()
 
 
-async def _fill_work_approval_inner(
-    page: Page,
-    data: ClaimData,
-    log,
-    stop_cb,
-    field_delay_ms: int = 500
-) -> bool:
-    if stop_cb(): return False
-
-    if isinstance(log, AutomationLogger):
-        log._section = "Work Approval Details"
-        log.info("Opening Work Approval Details section...")
-    else:
-        log("Opening Work Approval Details section...")
-    try:
-        acc_heading = page.locator('a.accordion-toggle:has-text("Work Approval Details")').first
-        await acc_heading.wait_for(state="visible", timeout=10000)
-
-        # Check the PARENT div.panel-heading for the 'collapsed' class
-        # (the 'collapsed' class is on the parent div, NOT the <a> link)
-        parent_div = page.locator('div.panel-heading').filter(has=acc_heading).first
-        is_collapsed = 'collapsed' in (await parent_div.get_attribute('class') or '')
-        if is_collapsed:
-            await acc_heading.click()
-            await asyncio.sleep(1.0)
-            if isinstance(log, AutomationLogger):
-                log.success("Accordion expanded.")
-            else:
-                log("  ✅ Expanded Work Approval Details.")
-        else:
-            if isinstance(log, AutomationLogger):
-                log.info("Accordion already expanded.")
-            else:
-                log("  ℹ️ Work Approval Details already expanded.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Expansion attempt failed: {str(e)[:100]}")
-        else:
-            log(f"  ⚠️ Error expanding Work Approval Details: {e}")
-
+async def _fill_work_approval_section(page, data, log, stop_cb, field_delay_ms):
     # 2. Determine Approval Type
     #    Normalise to exact portal dropdown text so the JS selector hits the
     #    fast exact-match path (Pass 1) every time, regardless of source casing.
@@ -178,11 +144,8 @@ async def _fill_work_approval_inner(
 
     try:
         await select_dropdown_with_delay(page, 'select[name="Approval Type"]', approval_val, "Approval Type", log, field_delay_ms, source=approval_source)
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Approval Type dropdown error: {str(e)[:100]}")
-        else:
-            log(f"  ⚠️ Error selecting Approval Type: {e}")
+    except Exception:
+        record_additional_issue(log, "Approval Type")
 
     if stop_cb(): return False
 
@@ -192,6 +155,7 @@ async def _fill_work_approval_inner(
     else:
         log("  ℹ️ Searching for Final Invoice...")
     doc_path = _find_final_invoice_document(data)
+    document_attached = False
     
     if doc_path and os.path.exists(doc_path):
         try:
@@ -202,29 +166,24 @@ async def _fill_work_approval_inner(
                 log.upload_start("Final Invoice", fname, fsize)
 
             file_input = page.locator('input[id="workApprovalFile"][type="file"]')
-            await file_input.set_input_files(doc_path)
+            await file_input.set_input_files(doc_path, timeout=5000)
             if isinstance(log, AutomationLogger):
                 log.upload_attached("Final Invoice", fname)
             else:
                 log(f"  ✅ Uploaded Final Invoice: {fname}")
             await asyncio.sleep(1.0)
             
-            uploaded_name = await page.locator('input[name="Work Approval Document"]').input_value()
+            uploaded_name = await page.locator('input[name="Work Approval Document"]').input_value(timeout=4000)
             if uploaded_name:
+                document_attached = True
                 if isinstance(log, AutomationLogger):
                     log.success(f"Verified upload completion (UI registered: {uploaded_name}).")
                 else:
                     log(f"  ✅ Verified upload completion (UI registered: {uploaded_name}).")
             else:
-                if isinstance(log, AutomationLogger):
-                    log.warning("Document upload input remained empty after attempt.")
-                else:
-                    log("  ⚠️ Document upload input remained empty after upload attempt.")
-        except Exception as e:
-            if isinstance(log, AutomationLogger):
-                log.upload_failed("Final Invoice", str(e)[:100])
-            else:
-                log(f"  ⚠️ Error uploading Final Invoice: {e}")
+                record_additional_issue(log, "Work Approval Document", "New India did not show the attached invoice.")
+        except Exception:
+            record_additional_issue(log, "Work Approval Document", "App3 could not attach the invoice.")
     else:
         if isinstance(log, AutomationLogger):
             log.field_skipped("Final Invoice", reason="No matched PDF document found")
@@ -243,11 +202,8 @@ async def _fill_work_approval_inner(
                 log.field_skipped("Approval Date", reason="Missing from Excel")
             else:
                 log("  ⚠️ Work Approval Date missing from data; skipping.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Approval Date field error: {str(e)[:100]}")
-        else:
-            log(f"  ⚠️ Error filling Work Approval Date: {e}")
+    except Exception:
+        record_additional_issue(log, "Work Approval Date")
 
     if stop_cb(): return False
 
@@ -258,22 +214,20 @@ async def _fill_work_approval_inner(
             # Normalise to HH:MM format
             if len(val) >= 5 and ":" in val:
                 val = val[:5]
-            await fill_input_with_delay(page, 'input[name="Work Approval Time"]', val, "Approval Time", log, field_delay_ms, source="Excel")
+            selector = 'input[name="workApprovalTime"], input[name="Work Approval Time"]'
+            await fill_input_with_delay(page, selector, val, "Work Approval Time", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
                 log.field_skipped("Approval Time", reason="Missing from Excel")
             else:
                 log("  ⚠️ Work Approval Time missing from data; skipping.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Approval Time field error: {str(e)[:100]}")
-        else:
-            log(f"  ⚠️ Error filling Work Approval Time: {e}")
+    except Exception:
+        record_additional_issue(log, "Work Approval Time")
 
     if stop_cb(): return False
 
     # 5.1 Click Submit button for Work Approval (Final Invoice)
-    if doc_path and os.path.exists(doc_path):
+    if document_attached:
         if isinstance(log, AutomationLogger):
             log.wait("Final Invoice submission")
         else:
@@ -296,53 +250,75 @@ async def _fill_work_approval_inner(
                 else:
                     log("  ⚠️ Work Approval Submit button (for Final Invoice) is disabled.")
             else:
-                await submit_btn.click()
-                if isinstance(log, AutomationLogger):
-                    log.success("Final Invoice (Work Approval) submitted successfully.")
-                else:
-                    log("  ✅ Final Invoice (Work Approval) submitted.")
+                await submit_btn.click(timeout=5000)
                 
                 # Handle the confirmation popup
-                await dismiss_portal_popup(page, log, max_wait_s=6.0)
+                result = await dismiss_portal_popup(page, log, max_wait_s=6.0, classify=True)
+                if result == "size_error":
+                    record_additional_issue(log, "Work Approval Document", "New India rejected the invoice file size.")
                 await asyncio.sleep(1.0)
-        except Exception as e:
-            if isinstance(log, AutomationLogger):
-                log.error(f"Work Approval submit button error: {str(e)[:100]}")
-            else:
-                log(f"  ⚠️ Error clicking Work Approval Submit button: {e}")
+        except Exception:
+            record_additional_issue(log, "Work Approval Document", "App3 could not complete the invoice upload.")
 
     if stop_cb(): return False
+    return True
 
-    # 6. Whether Vehicle Details are matching with policy
+
+async def _fill_work_approval_inner(
+    page: Page,
+    data: ClaimData,
+    log,
+    stop_cb,
+    field_delay_ms: int = 500,
+) -> bool:
+    if stop_cb():
+        return False
+    defaults = load_automation_defaults(portal_id=getattr(data, "portal_id", "newindia"))
+
+    if await open_additional_section(page, "Work Approval Details", log, optional=True):
+        if not await _fill_work_approval_section(page, data, log, stop_cb, field_delay_ms):
+            return False
+    if stop_cb():
+        return False
+
+    if isinstance(log, AutomationLogger):
+        log._section = "Additional Details"
+
     try:
         value = str(defaults.get("vehicle_details_match_policy") or "Yes")
         await select_dropdown_with_delay(
             page, 'select[name="Whether Vehicle Details are matching with policy ?"]', value,
-            "Vehicle Details Match Policy?", log, field_delay_ms, source="Default",
+            "Whether Vehicle Details are matching with policy?", log, field_delay_ms, source="Default",
         )
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Policy Match dropdown error: {str(e)[:100]}")
-        else:
-            log(f"  ⚠️ Error selecting Vehicle Details Matching: {e}")
+    except Exception:
+        record_additional_issue(log, "Whether Vehicle Details are matching with policy?")
 
     if stop_cb(): return False
 
-    # 7. Cause and Nature of Accident
+    try:
+        remarks = data.vehicle_details_mismatch_remarks
+        selector = 'textarea[name="Vehicle Details Mismatch Remarks"]'
+        if remarks and await page.locator(f"{selector}:visible").count():
+            await fill_input_with_delay(
+                page, selector, remarks, "Vehicle Details Mismatch Remarks", log, field_delay_ms, source="Excel",
+            )
+    except Exception:
+        record_additional_issue(log, "Vehicle Details Mismatch Remarks")
+
+    if stop_cb(): return False
+
     try:
         val = str(getattr(data, 'cause_nature_of_accident', '') or '').strip()
         if val:
-            await fill_input_with_delay(page, 'textarea[name="Cause and Nature of Accident"]', val, "Nature of Accident", log, field_delay_ms, source="Excel")
+            await fill_input_with_delay(page, 'textarea[name="Cause and Nature of Accident"]',
+                                        val, "Cause and Nature of Accident", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
                 log.field_skipped("Nature of Accident", reason="Missing from Excel")
             else:
                 log("  ⚠️ Cause and Nature of Accident missing from data; skipping.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Cause field error: {str(e)[:100]}")
-        else:
-            log(f"  ⚠️ Error filling Cause and Nature of Accident: {e}")
+    except Exception:
+        record_additional_issue(log, "Cause and Nature of Accident")
 
     if stop_cb(): return False
 
@@ -350,8 +326,9 @@ async def _fill_work_approval_inner(
     recovery = current_recovery.get()
     if recovery is not None:
         advanced = await recovery.advance_next(
-            page, log, "button#toClaimAssessment",
+            page, log, _NEXT,
             source="two", destination="three", title="Claim Assessment",
+            after_click=lambda: dismiss_portal_popup(page, log, max_wait_s=2.0, context="Additional Details Next"),
         )
         if advanced and isinstance(log, AutomationLogger):
             log.success("Work Approval Details phase completed.")
@@ -362,21 +339,19 @@ async def _fill_work_approval_inner(
             log.wait("Proceeding to Claim Assessment...")
         else:
             log("  ℹ️ Clicking 'Next' to proceed to Claim Assessment...")
-        next_btn = page.locator('button#toClaimAssessment').first
-        await next_btn.wait_for(state="visible", timeout=5000)
-        await next_btn.click()
-        await asyncio.sleep(2.0)  # Wait for transition
-        if isinstance(log, AutomationLogger):
-            log.success("Navigation to Claim Assessment successful.")
-        else:
-            log("  ✅ Clicked 'Next' successfully.")
+        await page.locator(f"{_NEXT}:visible").click(timeout=5000)
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Navigation error: {str(e)[:100]}")
         else:
             log(f"  ⚠️ Error clicking 'Next' button: {e}")
+        return False
 
-    if stop_cb(): return False
+    async def opened_assessment():
+        return await page.evaluate(_TAB_STATE) == "three"
+
+    if not await wait_until_ready(opened_assessment, seconds=4, stopped=stop_cb):
+        return False
 
     if isinstance(log, AutomationLogger):
         log.success("Work Approval Details phase completed.")

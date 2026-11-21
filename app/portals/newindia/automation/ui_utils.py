@@ -11,6 +11,39 @@ from app.automation.automation_logger import AutomationLogger, _ts
 from app.portals.newindia.automation.recovery import current_recovery
 from app.portals.oic.automation.recovery import wait_until_ready
 
+
+def additional_section(page, title):
+    return page.locator('form[name="workListForm"] .tab-pane.active a.accordion-toggle:visible').filter(
+        has_text=re.compile(rf"^\s*{re.escape(title)}(?:\s+\d+)?\s*$", re.I),
+    )
+
+
+def record_additional_issue(log, field, reason="App3 could not fill this field."):
+    recovery = current_recovery.get()
+    if recovery is not None:
+        recovery.record_field_issue(log, field, reason)
+    elif isinstance(log, AutomationLogger):
+        log.field_failed(field, reason)
+    elif log:
+        log(f"{field} — {reason}")
+
+
+async def open_additional_section(page, title, log, *, optional=False):
+    heading = additional_section(page, title)
+    try:
+        if optional and not await heading.count():
+            return False
+        await heading.wait_for(state="visible", timeout=5000)
+        panel = heading.locator("xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' panel ')][1]")
+        body = panel.locator(":scope > .panel-collapse")
+        if not await body.is_visible():
+            await heading.click(timeout=5000)
+        await body.wait_for(state="visible", timeout=5000)
+        return True
+    except Exception:
+        record_additional_issue(log, title, "App3 could not open this section in Chrome.")
+        return False
+
 # ── JavaScript Snippets ───────────────────────────────────────────────────────
 
 _JS_FILL = r"""

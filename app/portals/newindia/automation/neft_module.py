@@ -2,7 +2,8 @@ import asyncio
 from playwright.async_api import Page
 from app.data.data_model import ClaimData
 from app.portals.newindia.automation.ui_utils import (
-    fill_input_with_delay, select_dropdown_with_delay
+    fill_input_with_delay, select_dropdown_with_delay,
+    open_additional_section, record_additional_issue,
 )
 from app.automation.automation_logger import AutomationLogger, _ts
 from app.utils import load_automation_defaults
@@ -38,31 +39,11 @@ async def _fill_neft_details_inner(page: Page, data: ClaimData, log, stop_cb, fi
     if stop_cb(): return False
     defaults = load_automation_defaults(portal_id=getattr(data, "portal_id", "newindia"))
 
-    try:
-        acc_heading = page.locator('a.accordion-toggle:has-text("NEFT Details")').first
-        await acc_heading.wait_for(state="visible", timeout=10000)
-        
-        parent_div = page.locator('div.panel-heading').filter(has=acc_heading).first
-        is_collapsed = 'collapsed' in await parent_div.get_attribute('class')
-        if is_collapsed:
-            await acc_heading.click()
-            await asyncio.sleep(1.5)
-            if isinstance(log, AutomationLogger):
-                log.success("Accordion expanded.")
-            else:
-                log(f"   ✅ Expanded NEFT Details.")
-        else:
-            if isinstance(log, AutomationLogger):
-                log.info("Accordion already expanded.")
-            else:
-                log(f"   ℹ️ NEFT Details already expanded.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Expansion attempt failed: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Could not expand NEFT Details: {e}")
+    if not await open_additional_section(page, "NEFT Details", log, optional=True):
+        return not stop_cb()
 
-    if stop_cb(): return False
+    if stop_cb():
+        return False
 
     if isinstance(log, AutomationLogger):
         log.info("Scanning uploaded documents for cheque...")
@@ -80,12 +61,9 @@ async def _fill_neft_details_inner(page: Page, data: ClaimData, log, stop_cb, fi
     acc_type_source = "Excel" if data.account_type else "Default"
 
     if cheque_path:
-        deferred_cheque_done = bool(
-            getattr(data, "_deferred_cheque_ocr_event", None)
-            and data._deferred_cheque_ocr_event.is_set()
-        )
+        deferred_cheque = getattr(data, "_deferred_cheque_ocr_event", None)
         # Run OCR only if fields are missing in data (e.g. if extraction failed or excel was empty)
-        if (not ifsc or not acc_no) and not deferred_cheque_done:
+        if (not ifsc or not acc_no) and deferred_cheque is None:
             if isinstance(log, AutomationLogger):
                 log.success("Cheque document detected. Running OCR for missing bank details...")
                 import os
@@ -94,13 +72,15 @@ async def _fill_neft_details_inner(page: Page, data: ClaimData, log, stop_cb, fi
                 log(f"   ✅ Cheque document detected. Running OCR for missing bank details...")
                 log(f"   ℹ️ Extracting details from cheque...")
             
-            from app.portals.newindia.automation.ocr_helper import ChequeExtractor
-            extractor = ChequeExtractor(cheque_path)
-            cheque_details = extractor.extract_details(
-                log=log,
-                excel_ifsc=data.ifsc_code or "",
-                excel_account=data.account_number or "",
-            )
+            try:
+                from app.portals.newindia.automation.ocr_helper import ChequeExtractor
+                cheque_details = ChequeExtractor(cheque_path).extract_details(
+                    log=log, excel_ifsc=data.ifsc_code or "", excel_account=data.account_number or "",
+                ) or {}
+            except Exception:
+                cheque_details = {}
+                message = "Cheque OCR failed. Using the available bank details."
+                log.warning(message) if isinstance(log, AutomationLogger) else log(message)
             
             if not ifsc:
                 ifsc = cheque_details.get("ifsc")
@@ -117,7 +97,6 @@ async def _fill_neft_details_inner(page: Page, data: ClaimData, log, stop_cb, fi
                     acc_type_source = "OCR"
             
             if isinstance(log, AutomationLogger):
-                log.success("Cheque OCR completed successfully.")
                 log.extracted("IFSC", ifsc)
                 log.extracted("Account", acc_no)
                 if not cheque_details.get("ifsc"):
@@ -130,10 +109,8 @@ async def _fill_neft_details_inner(page: Page, data: ClaimData, log, stop_cb, fi
                 if not cheque_details.get("account_number"):
                     log(f"   ⚠️ Account Number not found in cheque. Falling back to Excel.")
         elif not ifsc or not acc_no:
-            if isinstance(log, AutomationLogger):
-                log.warning("Deferred cheque OCR already ran; using available Excel/manual fallback values.")
-            else:
-                log("   ⚠️ Deferred cheque OCR already ran. Using available fallback values.")
+            message = "Using available bank details from the scan."
+            log.warning(message) if isinstance(log, AutomationLogger) else log(message)
         else:
             if isinstance(log, AutomationLogger):
                 log.success("Cheque document detected. Using pre-extracted and reviewed bank details.")
@@ -168,11 +145,8 @@ async def _fill_neft_details_inner(page: Page, data: ClaimData, log, stop_cb, fi
             field_delay_ms,
             source="Calculated"
         )
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Payment To field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error selecting Payment To: {e}")
+    except Exception:
+        record_additional_issue(log, "Payment To")
 
     if stop_cb(): return False
 
@@ -190,11 +164,8 @@ async def _fill_neft_details_inner(page: Page, data: ClaimData, log, stop_cb, fi
                     log.field_skipped("Dealer Name", reason="Missing from source data")
                 else:
                     log("   ⚠️ Dealer Name missing from data; skipping.")
-        except Exception as e:
-            if isinstance(log, AutomationLogger):
-                log.error(f"Dealer Name field error: {str(e)[:100]}")
-            else:
-                log(f"   ⚠️ Error filling Dealer Name: {e}")
+        except Exception:
+            record_additional_issue(log, "Dealer Name")
 
     if stop_cb(): return False
 
@@ -216,11 +187,8 @@ async def _fill_neft_details_inner(page: Page, data: ClaimData, log, stop_cb, fi
                 log.field_skipped("IFSC Code", reason="Missing from both Cheque and Excel")
             else:
                 log(f"   ⚠️ IFSC Code missing from both Cheque and Excel.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"IFSC lookup error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling IFSC Code: {e}")
+    except Exception:
+        record_additional_issue(log, "IFSC Code")
 
     if stop_cb(): return False
 
@@ -238,11 +206,8 @@ async def _fill_neft_details_inner(page: Page, data: ClaimData, log, stop_cb, fi
         else:
             if isinstance(log, AutomationLogger):
                 log.field_skipped("Account Number", reason="Missing from both Cheque and Excel")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Account Number field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling Account Number: {e}")
+    except Exception:
+        record_additional_issue(log, "Account Number")
 
     if stop_cb(): return False
 
@@ -253,11 +218,8 @@ async def _fill_neft_details_inner(page: Page, data: ClaimData, log, stop_cb, fi
         else:
             if isinstance(log, AutomationLogger):
                 log.field_skipped("Account Re-entry", reason="Missing account number")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Account Re-entry field error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error filling Re-Enter Account Number: {e}")
+    except Exception:
+        record_additional_issue(log, "Re-enter Account Number")
 
     if stop_cb(): return False
 
@@ -270,11 +232,8 @@ async def _fill_neft_details_inner(page: Page, data: ClaimData, log, stop_cb, fi
                 log.field_skipped("Account Type", reason="Missing from both Cheque and Excel")
             else:
                 log(f"   ⚠️ Account Type missing from both Cheque and Excel.")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Account Type dropdown error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error selecting Account Type: {e}")
+    except Exception:
+        record_additional_issue(log, "Account Type")
 
     if stop_cb(): return False
 
@@ -282,11 +241,8 @@ async def _fill_neft_details_inner(page: Page, data: ClaimData, log, stop_cb, fi
     try:
         payment_method = str(defaults.get("payment_method", "NEFT") or "NEFT")
         await select_dropdown_with_delay(page, 'select[name="Party Payment Method"]', payment_method, "Payment Method", log, field_delay_ms, source="Default")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.error(f"Payment Method dropdown error: {str(e)[:100]}")
-        else:
-            log(f"   ⚠️ Error selecting Payment Method: {e}")
+    except Exception:
+        record_additional_issue(log, "Payment Method")
 
     if isinstance(log, AutomationLogger):
         log.success("NEFT Details phase completed.")
