@@ -61,39 +61,63 @@ _REASON_PATTERNS: tuple[tuple[str, str], ...] = (
     ),
 )
 
-_TECHNICAL_MARKERS = re.compile(
-    r"Locator\.|Page\.|Call log:|Traceback|PlaywrightError|TimeoutError|"
-    r"RuntimeError|ValueError|TypeError|AttributeError|KeyError|Exception|"
-    r"\bselector\b|\bxpath\b|ng-model|data-ng-|\b0x[0-9a-f]+\b|"
-    r"waiting for |stacktrace|dom\b",
+# Signs that a message carries a raw Playwright/Python error instead of App3's
+# own plain-English wording. API names are matched case-sensitively so a normal
+# sentence ending in "page." is not mistaken for "Page.click(...)".
+_TECHNICAL_MARKERS_CS = re.compile(
+    r"\b(?:Locator|Page|Frame|ElementHandle|BrowserContext|Browser)\.[a-z_]\w*|"
+    r"Call log:|Traceback|\b[A-Z]\w*(?:Error|Exception)\b|\bException\b"
+)
+_TECHNICAL_MARKERS_CI = re.compile(
+    r"\bselector\b|\bxpath\b|ng-model|data-ng-|\b0x[0-9a-f]+\b|stacktrace|\bdom\b|"
+    r"waiting for (?:locator|selector|element|navigation|event|load state|url)|"
+    r"\btimeout \d+ ?ms\b|net::|\berr_[a-z_]+\b|\berrno\b|winerror|\benoent\b|"
+    r"no such file or directory|strict mode violation|intercepts pointer events|"
+    r"element is not (?:enabled|visible|attached|editable|stable)|"
+    r"target (?:page|closed)|has been closed",
     re.I,
 )
+
+_MAX_CLEAN_LEN = 400
+
+
+def _looks_technical(text: str) -> bool:
+    return bool(_TECHNICAL_MARKERS_CS.search(text) or _TECHNICAL_MARKERS_CI.search(text))
 
 
 def newindia_operator_reason(
     raw_error: str,
     fallback: str = "Could not complete this step. Check Chrome.",
 ) -> str:
-    """Convert raw Playwright/Python errors into clear plain-English reasons."""
+    """Convert raw Playwright/Python errors into clear plain-English reasons.
+
+    Text that already reads as plain English (App3's own wording or the portal's
+    popup text) is returned unchanged, so instructions like "manual solve
+    required" are never replaced by a generic reason.
+    """
     text = " ".join(str(raw_error or "").split()).strip()
     if not text:
         return fallback
 
-    for pattern, friendly in _REASON_PATTERNS:
-        if re.search(pattern, text, re.I):
-            return friendly
+    if not _looks_technical(text):
+        if len(text) <= _MAX_CLEAN_LEN:
+            return text
+        return text[: _MAX_CLEAN_LEN - 3].rstrip() + "..."
 
-    # If the text already reads cleanly in plain English, keep it as-is.
-    if not _TECHNICAL_MARKERS.search(text) and len(text) <= 180:
-        return text
+    # Keep a clean prefix like "FIR Date field error: Locator.click..." and
+    # translate only the raw error after it.
+    prefix, detail = "", text
+    parts = re.split(r":\s", text, maxsplit=1)
+    if len(parts) == 2:
+        head = parts[0].strip()
+        if " " in head and len(head) <= 100 and not _looks_technical(head):
+            prefix, detail = head, parts[1].strip()
 
-    # Strip any trailing raw exception after a clean prefix like "FIR Date field error: Locator.click..."
-    if ":" in text:
-        prefix = text.split(":", 1)[0].strip()
-        if prefix and not _TECHNICAL_MARKERS.search(prefix) and len(prefix) <= 100:
-            return f"{prefix} — {fallback}"
-
-    return fallback
+    friendly = next(
+        (reason for pattern, reason in _REASON_PATTERNS if re.search(pattern, detail, re.I)),
+        fallback,
+    )
+    return f"{prefix} — {friendly}" if prefix else friendly
 
 
 def _safe_slug(value: str, default: str = "step", max_len: int = 40) -> str:

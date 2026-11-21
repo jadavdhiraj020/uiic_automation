@@ -40,7 +40,7 @@ async def _attach_file(page: Page, idx: int, file_path: str, log) -> bool:
     doc_type = "Chassis Number Photograph" if idx == 0 else "Odometer Reading Photograph"
 
     if isinstance(log, AutomationLogger):
-        log.upload_start(doc_type, fname, os.path.getsize(abs_path) if os.path.exists(abs_path) else 0)
+        log.upload_start(doc_type, fname)
 
     if not os.path.isfile(abs_path):
         if isinstance(log, AutomationLogger):
