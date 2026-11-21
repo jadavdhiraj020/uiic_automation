@@ -160,10 +160,9 @@ async def _fill_work_approval_section(page, data, log, stop_cb, field_delay_ms):
     if doc_path and os.path.exists(doc_path):
         try:
             fname = os.path.basename(doc_path)
-            fsize = os.path.getsize(doc_path)
             if isinstance(log, AutomationLogger):
                 log.document_mapped("Final Invoice", fname, "Matched Successfully")
-                log.upload_start("Final Invoice", fname, fsize)
+                log.upload_start("Final Invoice", fname)
 
             file_input = page.locator('input[id="workApprovalFile"][type="file"]')
             await file_input.set_input_files(doc_path, timeout=5000)
