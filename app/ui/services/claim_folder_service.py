@@ -531,33 +531,18 @@ class ClaimFolderService:
                 )
 
             source_ext = Path(report_source).suffix.lower()
-            extraction_source = report_source
-            converted_oic_excel = ""
             if scan_result.excel_path:
                 logs.append(f"Excel: {Path(report_source).name}")
             else:
                 logs.append(f"Survey Report PDF: {Path(report_source).name}")
                 scan_result.report_pdf_path = report_source
 
-            # OIC PDF-only flow: keep the original PDF untouched, create an
-            # app-owned Excel working copy, then reuse the proven Excel reader.
-            # The same working Excel is also used by the existing OIC upload
-            # workbook builder for parts/labour assessment rows.
-            if self.portal_id == "oic" and source_ext == ".pdf":
-                from app.portals.oic.pdf_to_excel import convert_oic_pdf_to_excel
-
-                converted_oic_excel = convert_oic_pdf_to_excel(
-                    report_source, folder, stop_cb=stop_cb,
-                )
-                _mark_generated_file(converted_oic_excel)
-                extraction_source = converted_oic_excel
-                logs.append(
-                    f"OIC PDF working Excel prepared: {Path(converted_oic_excel).name}; "
-                    f"original PDF kept: {Path(report_source).name}"
-                )
-
+            # OIC PDF-only flow: do NOT convert the PDF to Excel.
+            # The OIC PDF reader already returns structured ClaimData plus
+            # _oic_pdf_assessment, and assessment_upload_excel.py can build the
+            # portal upload workbook directly from that in-memory assessment.
             claim = extract_claim_data_from_report(
-                extraction_source, portal_id=self.portal_id, stop_cb=stop_cb,
+                report_source, portal_id=self.portal_id, stop_cb=stop_cb,
             )
             claim.portal_id = self.portal_id
             claim._scan_context = scan_context
@@ -565,27 +550,20 @@ class ClaimFolderService:
             claim.assessment_files = scan_result.assessment_files
             claim.upload_doc_files = scan_result.upload_doc_files
             claim._scan_result = scan_result
-            claim.source_excel_path = converted_oic_excel or scan_result.excel_path or ""
+            claim.source_excel_path = scan_result.excel_path or ""
             claim.source_report_path = report_source
-            claim._oic_pdf_converted_excel = converted_oic_excel
-            if self.portal_id == "oic" and source_ext == ".pdf":
-                # The PDF was converted and then re-read through excel_reader,
-                # so this is a fresh ClaimData object.  Initialise the PDF-only
-                # review containers before the fee supplementer/logging uses
-                # them; otherwise PDF-only OIC scans fail with AttributeError.
-                claim._oic_pdf_review_errors = list(
-                    getattr(claim, "_oic_pdf_review_errors", []) or []
-                )
-                claim._oic_pdf_review_warnings = list(
-                    getattr(claim, "_oic_pdf_review_warnings", []) or []
-                )
 
+            if self.portal_id == "oic" and source_ext == ".pdf":
                 from app.portals.oic.pdf_report import supplement_oic_pdf_fees
 
                 supplement_oic_pdf_fees(claim, folder, stop_cb=stop_cb)
                 claim.assessment_files["survey_report"] = report_source
                 claim.assessment_files["assessment_report"] = report_source
-                logs.extend(f"OIC PDF review: {issue}" for issue in claim._oic_pdf_review_errors)
+                logs.append("OIC PDF read directly; no PDF-to-Excel conversion used.")
+                logs.extend(
+                    f"OIC PDF review: {issue}"
+                    for issue in getattr(claim, "_oic_pdf_review_errors", [])
+                )
 
             # UIIC PDF-only cases may keep the fee bill / assessment summary in
             # another PDF in the same case folder. Supplement only from PDFs
