@@ -314,3 +314,56 @@ def test_oic_report_finder_ignores_stale_app_generated_pdf_copies(tmp_path):
     (tmp_path / "printable_assessment.pdf").write_bytes(source.read_bytes() + b"printable-assessment")
 
     assert find_oic_report(tmp_path) == str(source)
+
+
+def test_oic_upload_builder_rejects_incomplete_excel_rows_even_when_invoice_amount_is_derived(tmp_path, monkeypatch):
+    from app.data.data_model import ClaimData
+    from app.portals.oic.automation import assessment_upload_excel as upload
+    from app.utils import load_automation_defaults
+
+    source = tmp_path / "Survey.xlsx"
+    source.write_bytes(b"placeholder")
+
+    claim = ClaimData(
+        portal_id="oic",
+        source_excel_path=str(source),
+        source_report_path=str(source),
+        workshop_invoice_no="INV-1",
+        workshop_invoice_date="30/09/2026",
+        invoice_gst_amount="11929.22",
+        nil_depreciation="Yes",
+        spares_taxable_amount="35199.40",
+        labour_taxable_amount="31074.00",
+    )
+    claim._excel_coords["spares_taxable_amount"] = "Survey report GST Summary Spares"
+    claim._excel_coords["labour_taxable_amount"] = "Survey report GST Summary Labour"
+
+    # Simulate the historical bad extraction: one ₹700 assessed plastic row was missed.
+    bad_parts = [
+        {
+            "material_type": "plastic",
+            "part_name": "Part A",
+            "billed_amount": 34499.40,
+            "estimated_amount": 34499.40,
+        }
+    ]
+    monkeypatch.setattr(
+        upload,
+        "extract_parts_and_labour",
+        lambda *args, **kwargs: (bad_parts, [], []),
+    )
+    monkeypatch.setattr(
+        upload,
+        "_labour_totals",
+        lambda *args, **kwargs: {
+            "rr": 5400,
+            "denting": 3400,
+            "cw": 0,
+            "painting": 22274,
+        },
+    )
+
+    with pytest.raises(ValueError, match="incomplete"):
+        upload.build_upload_workbook(
+            claim, load_automation_defaults("oic"), output_folder=tmp_path
+        )
