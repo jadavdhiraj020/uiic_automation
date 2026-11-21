@@ -201,18 +201,19 @@ def _item_tables(tables, aliases, value_keys, kind):
             if table.score(index) < .78:
                 raise ValueError(f"Check the low-confidence {kind.lower()} row {serial} on {table.source}.")
             serial_no = int(serial)
-            if serials and serial_no != serials[-1] + 1:
-                # An OCR digit can be wrong even though the printed grid
-                # has exactly one physical row between the two known serials.
-                next_serial = table.rows[index + 1][positions["serial"]].strip() if index + 1 < len(table.rows) else ""
-                amounts = [amount(row[positions[key]]) for key in value_keys]
-                if (table.confidence < 1 and table.score(index) < .90
-                        and next_serial == str(serials[-1] + 2)
-                        and all(value == ZERO for value in amounts)):
-                    serial_no = serials[-1] + 1
-                else:
-                    raise ValueError(f"Check the {kind.lower()} row sequence near row {serial} on {table.source}.")
-            if not serials and serial_no != 1:
+            if serials:
+                # Real survey reports can legitimately skip serial numbers
+                # (for example 76 -> 78).  Do not treat a forward gap as an
+                # extraction failure.  Missing monetary rows are detected more
+                # reliably by the subtotal reconciliation below.
+                #
+                # Duplicates/backward jumps remain unsafe because they can mean
+                # OCR has misread the serial column or repeated a physical row.
+                if serial_no <= serials[-1]:
+                    raise ValueError(
+                        f"Check the {kind.lower()} row sequence near row {serial} on {table.source}."
+                    )
+            elif serial_no != 1:
                 raise ValueError(f"The {kind.lower()} table appears to start partway through on {table.source}.")
             serials.append(serial_no)
             values = {}
