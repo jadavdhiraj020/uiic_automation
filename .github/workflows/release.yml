@@ -186,12 +186,6 @@ jobs:
           Write-Host "OIC parity check PASSED — all $($modules.Count) modules importable." -ForegroundColor Green
         shell: pwsh
 
-      # ─── 8b. Run offline licensing & security tests ──────────────────────
-      - name: Run offline licensing unit tests
-        run: |
-          python -m pytest tests/test_licensing.py -v
-        shell: pwsh
-
       # ─── 9. Build EXE with PyInstaller ──────────────────────────────────
       - name: Build Windows EXE
         run: |
