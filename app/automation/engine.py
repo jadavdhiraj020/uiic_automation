@@ -1011,6 +1011,8 @@ class AutomationEngine:
                 if self.portal_id == "newindia":
                     self.log.record_step_result("Login", True, time.time() - login_started)
                 if self._check_stop():
+                    if self.portal_id == "newindia":
+                        self.log.write_run_summary("Stopped by User", "Automation stopped by user.")
                     return AutomationRunResult(False, "Automation stopped by user.")
 
                 if self._oic_recovery is not None:
@@ -1025,6 +1027,10 @@ class AutomationEngine:
                         if self._check_stop()
                         else "Could not find an authenticated Worklist page."
                     )
+                    if self.portal_id == "newindia":
+                        self.log.write_run_summary(
+                            "Stopped by User" if self._check_stop() else "Failed", message
+                        )
                     return AutomationRunResult(False, message)
                 health_state["authenticated_page_ready"] = True
 
@@ -1035,6 +1041,8 @@ class AutomationEngine:
                 await asyncio.sleep(1.5)
 
                 if self._check_stop():
+                    if self.portal_id == "newindia":
+                        self.log.write_run_summary("Stopped by User", "Automation stopped by user.")
                     return AutomationRunResult(False, "Automation stopped by user.")
 
                 self.step_cb(1, steps[1])
@@ -1099,10 +1107,16 @@ class AutomationEngine:
                     )
 
                 if claim_page is None:
-                    return AutomationRunResult(
-                        False,
-                        f"Claim '{claim.claim_no}' was not found in Worklist or navigation failed.",
-                    )
+                    message = f"Claim '{claim.claim_no}' was not found in Worklist or navigation failed."
+                    if self.portal_id == "newindia":
+                        await capture_newindia_screenshot(
+                            page, "worklist_navigation", self.log, reason=message, claim_no=claim.claim_no
+                        )
+                        self.log.record_step_result(
+                            "Worklist Navigation", False, time.time() - nav_started, reason=message
+                        )
+                        self.log.write_run_summary("Failed", message)
+                    return AutomationRunResult(False, message)
 
                 page = claim_page
                 if self.portal_id == "oic":
@@ -1110,6 +1124,8 @@ class AutomationEngine:
                 else:
                     self.log.info(f"Working on page: {page.url}")
                 if self._check_stop():
+                    if self.portal_id == "newindia":
+                        self.log.write_run_summary("Stopped by User", "Automation stopped by user.")
                     return AutomationRunResult(False, "Automation stopped by user.")
 
                 self._start_deferred_ocr_jobs(claim)
