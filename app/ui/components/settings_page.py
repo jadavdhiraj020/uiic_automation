@@ -172,11 +172,15 @@ class SettingsPage(QWidget):
                 ("assessment_labour_hsn_code", "Assessment Labour HSN Code", "Auto primary assessment labour", "text"),
                 ("hsn_code", "HSN Code", "Survey Fee Bill GST section", "text"),
                 ("gst_applicable", "GST Applicable", "Survey Fee Bill GST dropdown", "yesno"),
-                ("invoice_in_company_name", "Invoice In Company Name", "Claim Assessment, Survey Fee Bill", "yesno"),
+                ("driver_without_license", "Whether Driver Without License?", "FIR Details", "yesno"),
+                ("vehicle_details_match_policy", "Vehicle Details Match Policy?", "Work Approval", "yesno"),
+                ("payment_invoice_in_company_name", "Payment Invoice in NIA Name?", "Claim Assessment", "yesno"),
+                ("invoice_in_company_name", "Is Invoice in Name of NIA?", "Survey Fee Bill", "yesno"),
+                ("additional_towing_charges", "Additional Towing Charges", "Claim Assessment. Enter an amount such as 0 or 500.50.", "text"),
+                ("recommendations", "Recommendations", "Claim Assessment, when the field is available", "text"),
                 ("payment_method", "Payment Method", "NEFT payment method", "text"),
                 ("account_type", "Account Type", "NEFT account type fallback", "text"),
                 ("relationship_with_insured", "Relationship With Insured", "Driver details fallback", "text"),
-                ("reinspection_required", "Reinspection Required", "Claim Assessment dropdown", "yesno"),
                 ("table_boundary_keyword", "Table Boundary Keyword", "End-of-table marker(s) in Excel. Separate multiple with | (e.g. 'sub total|grand total')", "text"),
             ] + _printable_rows,
             "oic": [
@@ -610,6 +614,19 @@ class SettingsPage(QWidget):
                             self.defaults_table.scrollTo(idx)
                         w.setFocus()
                         w.selectAll()
+
+                    if self._portal_id == "newindia" and key == "additional_towing_charges":
+                        from app.portals.newindia.field_values import parse_amount
+
+                        amount = parse_amount(raw or "0")
+                        if amount is None or amount < 0:
+                            _scroll_to_error()
+                            raise ValueError("Additional Towing Charges must be a non-negative amount.")
+                        raw = format(amount, "f")
+                        if len(raw) > 13 or amount.as_tuple().exponent < -2:
+                            _scroll_to_error()
+                            raise ValueError("Additional Towing Charges allows up to two decimal places and 13 characters.")
+                        widget.setText(raw)
 
                     # ── Validate: Upload Remarks minimum length ───────────────
                     if key == "upload_remarks" and len(raw) < _remarks_min_len:

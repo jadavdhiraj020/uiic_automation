@@ -8,6 +8,7 @@ from app.portals.newindia.automation.ui_utils import (
     select_dropdown_with_delay
 )
 from app.portals.newindia.automation.popup_service import dismiss_portal_popup
+from app.portals.newindia.automation.recovery import current_recovery
 from app.automation.automation_logger import AutomationLogger
 
 logger = logging.getLogger(__name__)
@@ -313,9 +314,13 @@ async def _fill_work_approval_inner(
 
     if stop_cb(): return False
 
-    # 6. Whether Vehicle Details are matching with policy (Always YES)
+    # 6. Whether Vehicle Details are matching with policy
     try:
-        await select_dropdown_with_delay(page, 'select[name="Whether Vehicle Details are matching with policy ?"]', "Yes", "Matching Policy", log, field_delay_ms, source="Default")
+        value = str(defaults.get("vehicle_details_match_policy") or "Yes")
+        await select_dropdown_with_delay(
+            page, 'select[name="Whether Vehicle Details are matching with policy ?"]', value,
+            "Vehicle Details Match Policy?", log, field_delay_ms, source="Default",
+        )
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Policy Match dropdown error: {str(e)[:100]}")
@@ -343,6 +348,16 @@ async def _fill_work_approval_inner(
     if stop_cb(): return False
 
     # 8. Click Next button
+    recovery = current_recovery.get()
+    if recovery is not None:
+        advanced = await recovery.advance_next(
+            page, log, "button#toClaimAssessment",
+            source="two", destination="three", title="Claim Assessment",
+        )
+        if advanced and isinstance(log, AutomationLogger):
+            log.success("Work Approval Details phase completed.")
+        return advanced
+
     try:
         if isinstance(log, AutomationLogger):
             log.wait("Proceeding to Claim Assessment...")

@@ -138,6 +138,7 @@ class FolderScanResult:
     def __init__(self):
         self.excel_path: Optional[str] = None
         self.report_pdf_path: Optional[str] = None
+        self.source_reinspection_path: Optional[str] = None
         self.claim_doc_files: Dict[str, str] = {}
         self.assessment_files: Dict[str, str] = {}
         self.upload_doc_files: Dict[
@@ -693,6 +694,10 @@ def scan_folder(
         ext = Path(fname).suffix.lower()
         if ext not in _DOC_EXTENSIONS and ext not in _EXCEL_EXTENSIONS:
             continue
+        if (portal_id == "newindia" and result.source_reinspection_path is None
+                and not fname.startswith(("~$", "."))
+                and re.search(r"\bre[\s.-]*inspection(?:report)?\b", Path(fname).stem.replace("_", " "), re.I)):
+            result.source_reinspection_path = full_path
         fname_norm = fname_lower.replace("-", "_").replace(" ", "_")
         if any(k in fname_norm for k in reinspection_keywords):
             user_reinspection_file = full_path

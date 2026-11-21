@@ -4,6 +4,7 @@ from typing import Callable, Optional
 from playwright.async_api import Page
 from app.portals.newindia.automation.ui_utils import select_dropdown_with_delay
 from app.portals.newindia.automation.popup_service import dismiss_portal_popup, quick_check_and_dismiss
+from app.portals.newindia.automation.recovery import current_recovery
 from app.automation.automation_logger import AutomationLogger
 
 # Dropdown values exactly as they appear in the portal HTML option[value]
@@ -285,6 +286,18 @@ async def fill_vehicle_photo_graph(
     if stop_cb(): return False
 
     # ── Click Next button ─────────────────────────────────────────────────────
+    recovery = current_recovery.get()
+    if recovery is not None:
+        advanced = await recovery.advance_next(
+            page, log, "button#saveQuickUpdateNM, button#saveQuickUpdate",
+            source="one", destination="two", title="Additional Details",
+            after_click=lambda: dismiss_portal_popup(page, log, max_wait_s=5.0, context="Vehicle Next"),
+        )
+        if advanced and isinstance(log, AutomationLogger):
+            log.outdent()
+            log.success("Vehicle Photo Graph phase completed.")
+        return advanced
+
     if isinstance(log, AutomationLogger):
         log.wait("Submitting step (Next)...")
     else:

@@ -133,9 +133,10 @@ class RecoveryPrompt:
 
 
 class OperatorRecovery:
-    def __init__(self, notify, stopped):
+    def __init__(self, notify, stopped, *, portal_name="OIC"):
         self.notify = notify
         self.stopped = stopped
+        self.portal_name = portal_name
         self.pending = None
         self.handled = {}
         self.form_step = None
@@ -191,10 +192,11 @@ class OperatorRecovery:
 
     async def pause(
         self, page, log, action, reason, *, ready=None, instruction=None, describe=None, section=None, stop_only=False,
-        confirmation_button="", require_original=False,
+        confirmation_button="", require_original=False, field_ready=None,
     ):
-        section = section or getattr(log, "_section", None) or "OIC"
-        detail = reason or "OIC did not confirm that this action finished."
+        portal = self.portal_name
+        section = section or getattr(log, "_section", None) or portal
+        detail = reason or f"{portal} did not confirm that this action finished."
         guidance = instruction or ""
         title = action
         prompt_id = uuid4().hex
@@ -222,7 +224,7 @@ class OperatorRecovery:
             self.pending = (prompt, loop, result)
             try:
                 if first_prompt:
-                    log.warning(f"OIC paused at {section} — {action}. {detail}")
+                    log.warning(f"{portal} paused at {section} — {action}. {detail}")
                 first_prompt = False
                 self.notify(prompt)
                 while not self.stopped() and not result.done():
@@ -237,26 +239,30 @@ class OperatorRecovery:
 
             if ready is not None:
                 if await wait_until_ready(ready, seconds=3, stopped=self.stopped):
-                    log.info(f"OIC resumed at {section} after confirming {action} in Chrome.")
+                    log.info(f"{portal} resumed at {section} after confirming {action} in Chrome.")
                     self.notify(None)
                     return True
                 same_document = True
                 if require_original:
                     with suppress(Exception):
                         same_document = await self.is_original_document(page, allow_route_change=self.transition_started)
-                detail = "OIC has not confirmed this action yet."
+                detail = f"{portal} has not confirmed this action yet."
                 if not same_document:
                     detail = "The original tab was closed or reloaded."
                     guidance = "Stop this run and review Chrome."
                     stop_only = True
                     describe = None
-                log.warning(f"OIC is still paused at {section} — {action}. {detail}")
+                log.warning(f"{portal} is still paused at {section} — {action}. {detail}")
                 continue
             state = "unconfirmed"
 
             async def check_form():
                 nonlocal state
                 state = await self._field_resume_state(page)
+                if state == "same" and decision == "fixed" and field_ready is not None:
+                    state = "field_pending"
+                    if await field_ready():
+                        state = "same"
                 return state in ("same", "closed", "reloaded", "different_step", "different_claim")
 
             await wait_until_ready(check_form, seconds=4, stopped=self.stopped)
@@ -268,7 +274,7 @@ class OperatorRecovery:
                 else:
                     self.handled[self.field_key(page, section, action)] = decision
                     label = "handled manually" if decision == "fixed" else "skipped by operator"
-                log.info(f"OIC resumed at {section} — {action} was {label}.")
+                log.info(f"{portal} resumed at {section} — {action} was {label}.")
                 self.notify(None)
                 return True
             if state in ("closed", "reloaded"):
@@ -278,11 +284,14 @@ class OperatorRecovery:
             elif state == "different_claim":
                 detail = "Chrome is showing a different claim."
                 guidance = "Open the original claim and step in Chrome, then click Continue."
+            elif state == "field_pending":
+                detail = "The field is still empty or invalid."
+                guidance = "Correct it in Chrome, then click Continue. You can also skip this field."
             else:
-                detail = "App3 needs the original OIC step to finish the remaining fields."
+                detail = f"App3 needs the original {portal} step to finish the remaining fields."
                 guidance = "Return to the original step in Chrome, close any portal messages, then click Continue."
-            log.warning(f"OIC is still paused at {section} — {action}. {detail}")
-        log.info(f"OIC stopped while paused at {section} — {action}.")
+            log.warning(f"{portal} is still paused at {section} — {action}. {detail}")
+        log.info(f"{portal} stopped while paused at {section} — {action}.")
         raise asyncio.CancelledError
 
     async def _field_resume_state(self, page):

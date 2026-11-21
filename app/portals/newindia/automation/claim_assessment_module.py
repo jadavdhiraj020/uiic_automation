@@ -8,10 +8,35 @@ from app.portals.newindia.automation.ui_utils import (
     upload_file_via_input,
 )
 from app.portals.newindia.automation.popup_service import dismiss_portal_popup
+from app.portals.newindia.automation.recovery import current_recovery
+from app.portals.newindia.field_values import parse_amount, reinspection_document, workshop_gst_registered
 from app.automation.automation_logger import AutomationLogger
 from app.utils import load_automation_defaults
 
 
+async def _fill_delivery_order_fields(page, data, log, field_delay_ms):
+    fields = [
+        ("Delivery Order Date", data.delivery_order_date),
+        ("Delivery Order Time", data.delivery_order_time),
+    ]
+    if not any(value for _, value in fields):
+        return
+
+    form = page.locator('ng-form[name="deliveryOrderDocForm"]')
+    if not await form.count():
+        return
+    heading = page.locator("a.accordion-toggle:visible").filter(has_text="Delivery Order Details")
+    if not await form.is_visible() and await heading.count() == 1:
+        try:
+            await heading.click(timeout=3000)
+            await form.wait_for(state="visible", timeout=3000)
+        except Exception:
+            # The page checkpoint also checks required inputs in closed accordions.
+            pass
+    for label, value in fields:
+        selector = f'input[name="{label}"]:not(:disabled):not([readonly])'
+        if value and await form.locator(selector).count():
+            await fill_input_with_delay(page, selector, value, label, log, field_delay_ms, source="Excel")
 
 
 async def _visible_invalid_required_fields(page: Page, limit: int = 8) -> list[str]:
@@ -224,8 +249,15 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
     # Behavior: use configured invoice-name default
     try:
         sel = 'select[data-ng-model*="isPaymentInvoice"]'
-        invoice_in_company = str(defaults.get("invoice_in_company_name", "Yes") or "Yes")
-        await select_dropdown_with_delay(page, sel, invoice_in_company, "Payment Invoice NIA", log, field_delay_ms, source="Default")
+        invoice_in_company = str(defaults.get("payment_invoice_in_company_name") or "Yes")
+        count = await page.locator(f"{sel}:visible").count()
+        for index in range(max(1, count)):
+            label = "Payment Invoice in NIA Name?"
+            if count > 1:
+                label = f"Invoice {index + 1} / {label}"
+            await select_dropdown_with_delay(
+                page, sel, invoice_in_company, label, log, field_delay_ms, source="Default", index=index,
+            )
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Payment Invoice dropdown error: {str(e)[:100]}")
@@ -233,6 +265,15 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
             log(f"   ⚠️ Error selecting Payment Invoice in NIA Name: {e}")
 
     if stop_cb(): return False
+
+    # A single Excel GST amount describes the first invoice only.
+    workshop_gst = 'select[data-ng-model$=".isWorkshopGstRegistered"]'
+    if await page.locator(f"{workshop_gst}:visible").count():
+        await select_dropdown_with_delay(
+            page, workshop_gst, workshop_gst_registered(data.workshop_gst_amount),
+            "Whether the Workshop is GST Registered", log, field_delay_ms,
+            source="Excel GST amount" if data.workshop_gst_amount else "GST amount absent", index=0,
+        )
 
     # 2. Is GST Applicable
     # Behavior: READONLY, safely skip
@@ -486,6 +527,8 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
         log("")
         log(f"   ── Section 4: Delivery Order Details ──")
 
+    await _fill_delivery_order_fields(page, data, log, field_delay_ms)
+
     # Net Salvage — Optional
     try:
         val = str(getattr(data, 'net_salvage', '') or '').strip()
@@ -569,15 +612,22 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
 
     # Additional Towing Charges — Optional (separate field)
     try:
-        val = str(getattr(data, 'additional_towing_charges', '') or '').strip()
-        if val and val != "0":
-            sel = 'input#additionalTowingCharges'
-            await fill_input_with_delay(page, sel, val, "Addl Towing", log, field_delay_ms, source="Excel")
-        else:
-            if isinstance(log, AutomationLogger):
-                log.field_skipped("Addl Towing", reason="Missing from Excel" if not val else "Value is 0")
+        sel = 'input#additionalTowingCharges'
+        if await page.locator(f"{sel}:visible").count():
+            amount = parse_amount(str(defaults.get("additional_towing_charges") or "0"))
+            if amount is not None and amount >= 0:
+                await fill_input_with_delay(
+                    page, sel, format(amount, "f"), "Additional Towing Charges",
+                    log, field_delay_ms, source="Default", numeric=True,
+                )
             else:
-                log(f"   ℹ️ Additional Towing Charges = 0 or empty. Skipping.")
+                recovery = current_recovery.get()
+                if recovery is not None:
+                    recovery.record_field_issue(
+                        log, "Additional Towing Charges", "Automation Defaults needs a non-negative amount."
+                    )
+                elif isinstance(log, AutomationLogger):
+                    log.field_failed("Additional Towing Charges", "Automation Defaults needs a non-negative amount.")
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Addl Towing field error: {str(e)[:100]}")
@@ -589,8 +639,11 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
     # Whether Re-Inspection Required
     try:
         sel = 'select#whetherReinspectionRequired'
-        reinspection_required = str(defaults.get("reinspection_required", "No") or "No")
-        await select_dropdown_with_delay(page, sel, reinspection_required, "Re-Inspection", log, field_delay_ms, source="Default")
+        report = reinspection_document(data)
+        await select_dropdown_with_delay(
+            page, sel, "Yes" if report else "No", "Whether Re-Inspection Required?",
+            log, field_delay_ms, source=f"Folder scan ({report})" if report else "Folder scan",
+        )
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Re-Inspection dropdown error: {str(e)[:100]}")
@@ -647,10 +700,30 @@ async def _fill_claim_assessment_details_inner(page, data, log, stop_cb, field_d
             else:
                 log(f"   ⚠️ Error filling {label}: {e}")
 
+    recommendations = "textarea#recommendations"
+    if await page.locator(f"{recommendations}:visible").count():
+        await fill_input_with_delay(
+            page, recommendations, str(defaults.get("recommendations") or "Approved"),
+            "Recommendations", log, field_delay_ms, source="Default",
+        )
+
     # ═══════════════════════════════════════════════════════════════════════════
     # STEP: Click "Next" button → dismiss the success popup → wait for page load
     # ═══════════════════════════════════════════════════════════════════════════
     if stop_cb(): return False
+
+    recovery = current_recovery.get()
+    if recovery is not None:
+        advanced = await recovery.advance_next(
+            page, log, 'button#saveClaimAssesment[data-ng-click*=".saveAssesment("], '
+            'button#saveClaimAssesment:not([data-ng-click]), '
+            'button[data-ng-click$=".docUploadCall()"]',
+            source="three", destination="four", title="Document Upload",
+            after_click=lambda: dismiss_portal_popup(page, log, max_wait_s=5.0, context="Assessment Next"),
+        )
+        if advanced and isinstance(log, AutomationLogger):
+            log.success("Claim Assessment Details phase completed.")
+        return advanced
 
     if isinstance(log, AutomationLogger):
         log.wait("Clicking 'Next' to save and proceed...")

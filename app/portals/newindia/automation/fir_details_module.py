@@ -119,15 +119,11 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
 
     # 6. Whether driver without license ? (Mandatory)
     try:
-        val = data.whether_driver_without_license
-        if val:
-            normalized = "Yes" if str(val).strip().lower() == "yes" else "No"
-            await select_dropdown_with_delay(page, 'select[name="Whether driver without license ?"]', normalized, "Driver w/o License", log, field_delay_ms, source="Excel")
-        else:
-            if isinstance(log, AutomationLogger):
-                log.field_skipped("Driver w/o License", reason="Missing from Excel")
-            else:
-                log("   ⚠️ Whether driver without license missing from Excel.")
+        value = str(defaults.get("driver_without_license") or "No")
+        await select_dropdown_with_delay(
+            page, 'select[name="Whether driver without license ?"]', value,
+            "Whether driver without license?", log, field_delay_ms, source="Default",
+        )
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"License Status dropdown error: {str(e)[:100]}")

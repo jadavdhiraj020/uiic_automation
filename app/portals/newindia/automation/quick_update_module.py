@@ -16,14 +16,6 @@ _JS_DATE_VALUES = """
           .map(r => r.value)
 """
 
-# Read radio checked state
-_JS_IS_CHECKED = """
-([name, value]) => {
-    const r = document.querySelector(`input[name="${name}"][value="${value}"]`);
-    return r ? r.checked : null;
-}
-"""
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 async def _ensure_yes(page: Page, name: str, label: str,
@@ -36,13 +28,6 @@ async def _ensure_yes(page: Page, name: str, label: str,
                 log.info(f"[{label}] field not found in DOM.")
             else:
                 log(f"   ⏭  [{label}] not in DOM")
-            return
-        already = await page.evaluate(_JS_IS_CHECKED, [name, "Y"])
-        if already:
-            if isinstance(log, AutomationLogger):
-                log.info(f"[{label}] already set to YES.")
-            else:
-                log(f"   ✔  [{label}] already YES")
             return
         await click_radio_with_delay(page, name, "Y", label, log, delay_ms, source="Default")
     except Exception as e:

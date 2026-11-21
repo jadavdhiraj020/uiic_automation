@@ -8,11 +8,11 @@ import threading
 from pathlib import Path
 
 
-async def launch_review_browser(browser_type, args, slow_mo, stopped):
+async def launch_review_browser(browser_type, args, slow_mo, stopped, *, portal_name="OIC"):
     executable = Path(browser_type.executable_path)
     if not executable.is_file():
         raise FileNotFoundError(f"Playwright Chromium was not found at {executable}. Run playwright install chromium.")
-    profile = Path(tempfile.mkdtemp(prefix="oic-review-"))
+    profile = Path(tempfile.mkdtemp(prefix=f"{portal_name.lower().replace(' ', '-')}-review-"))
     try:
         process = subprocess.Popen(
             [str(executable), *args, "--remote-debugging-port=0",
@@ -36,7 +36,7 @@ async def launch_review_browser(browser_type, args, slow_mo, stopped):
         if stopped():
             raise asyncio.CancelledError
         if process.poll() is not None:
-            raise RuntimeError("Chrome exited before OIC automation could connect.")
+            raise RuntimeError(f"Chrome exited before {portal_name} automation could connect.")
         try:
             port = int(port_file.read_text(encoding="utf-8").splitlines()[0])
         except (OSError, ValueError, IndexError):
@@ -45,4 +45,4 @@ async def launch_review_browser(browser_type, args, slow_mo, stopped):
         return await browser_type.connect_over_cdp(
             f"http://127.0.0.1:{port}", timeout=5000, slow_mo=slow_mo,
         )
-    raise RuntimeError("OIC automation could not connect to Chrome. Check the open window.")
+    raise RuntimeError(f"{portal_name} automation could not connect to Chrome. Check the open window.")

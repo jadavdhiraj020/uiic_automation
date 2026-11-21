@@ -263,7 +263,9 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                   exact_offset: bool = False,
                   inline_amount: bool = False,
                   oic_labels: bool = False,
-                  relaxed_punctuation: bool = False) -> Tuple[Optional[str], Optional[str]]:
+                  relaxed_punctuation: bool = False,
+                  cell_parser=None,
+                  standard_towing_only: bool = False) -> Tuple[Optional[str], Optional[str]]:
     """
     Find label text anywhere in the sheet. Then:
       1. Move row_offset rows down.
@@ -281,6 +283,11 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
     flexible_label = _punctuation_flexible_label(label) if relaxed_punctuation else None
     label_matcher = re.compile(rf"(?<![^\W_]){flexible_label}(?![^\W_])", re.IGNORECASE) if flexible_label else None
     same_cell_amount = None
+    def extract(val):
+        if cell_parser is not None:
+            return cell_parser(val)
+        return _extract_value(val, is_date, allow_literal_values, allow_text_values)
+
     if inline_amount and row_offset == col_offset == 0:
         label_pattern = flexible_label or r"\s+".join(re.escape(word) for word in label.split())
         separator = r"(?:[:=–—]|-\s|\.(?=\s))?" if relaxed_punctuation else r"(?:[:=–—]|-\s)?"
@@ -312,6 +319,8 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
 
                 # Word-boundary check: prevent "TOTAL" matching "SUBTOTAL"
                 idx = match.start() if match else cell_str.find(label_lower)
+                if standard_towing_only and (idx or cell_str.startswith(("additional towing", "addl towing", "addl. towing"))):
+                    continue
                 before_ok = (idx == 0) or not cell_str[idx - 1].isalnum()
                 after_end = match.end() if match else idx + len(label_lower)
                 after_ok = (after_end >= len(cell_str)) or not cell_str[after_end].isalnum()
@@ -364,7 +373,7 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                         )[0].strip(" :-\n\t")
                     
                     if val:
-                        result = _extract_value(val, is_date, allow_literal_values, allow_text_values)
+                        result = extract(val)
                         if result is not None:
                             coord_str = f"R{r_idx+1}C{c_idx+1}"
                             logger.info(
@@ -396,7 +405,7 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                 hint_c = c_idx + col_offset
                 if 0 <= hint_c < row_end:
                     val = target_row[hint_c]
-                    result = _extract_value(val, is_date, allow_literal_values, allow_text_values)
+                    result = extract(val)
                     if result is not None:
                         coord_str = f"R{target_r+1}C{hint_c+1}"
                         logger.info(
@@ -411,7 +420,7 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                 # ── Strategy 2: Scan right from label col to find first value
                 for scan_c in range(c_idx + 1, row_end):
                     val = target_row[scan_c]
-                    result = _extract_value(val, is_date, allow_literal_values, allow_text_values)
+                    result = extract(val)
                     if result is not None:
                         coord_str = f"R{target_r+1}C{scan_c+1}"
                         logger.info(
@@ -571,6 +580,44 @@ def _format_date(raw: str) -> str:
         if any(c.isdigit() for c in candidate) and any(c in "-/." for c in candidate):
             return _format_date(candidate)
     return val
+
+
+def _parse_delivery_order_time(value):
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value < 1:
+        minutes = min(round(value * 86400), 86399) // 60
+        return f"{minutes // 60:02d}:{minutes % 60:02d}"
+    if isinstance(value, datetime):
+        return value.strftime("%H:%M")
+    match = re.fullmatch(
+        r"(\d{1,2})(?:[.:]([0-5]\d)(?::[0-5]\d)?)?\s*(?:([ap])\.?m\.?)?",
+        str(value).strip(), flags=re.I,
+    )
+    if not match:
+        return None
+    hours, minutes, meridiem = match.groups()
+    hour = int(hours)
+    if meridiem and 1 <= hour <= 12:
+        hour = hour % 12 + (12 if meridiem.lower() == "p" else 0)
+    elif meridiem or minutes is None or hour >= 24:
+        return None
+    return f"{hour:02d}:{minutes or '00'}"
+
+
+def _parse_delivery_order_date(value):
+    raw = _extract_value(value, is_date=True)
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(_format_date(raw), "%d/%m/%Y").strftime("%d/%m/%Y")
+    except ValueError:
+        return None
+
+
+def _parse_workshop_gst_amount(value):
+    from app.portals.newindia.field_values import parse_amount
+
+    parsed = parse_amount(value)
+    return format(parsed, "f") if parsed is not None else None
 
 
 def _parse_time_string(val: str) -> Optional[Tuple[str, str]]:
@@ -750,6 +797,11 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
 
     found_count = 0
     missing_fields = []
+    newindia_parsers = {
+        "delivery_order_date": _parse_delivery_order_date,
+        "delivery_order_time": _parse_delivery_order_time,
+        "workshop_gst_amount": _parse_workshop_gst_amount,
+    } if portal_id == "newindia" else {}
 
     for field_name, cfg in mapping.items():
         if field_name.startswith("_"):
@@ -783,6 +835,7 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
         )
         allow_literal_values = bool(cfg.get("allow_literal_values"))
         allow_text_values    = bool(cfg.get("allow_text_values"))
+        cell_parser = newindia_parsers.get(field_name)
 
         value = None
         found_label = ""
@@ -806,7 +859,7 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
                 logger.warning(f"  [{field_name}] Sheet '{sheet_name}' not found in workbook")
 
             # Give existing label matches priority across aliases and sheets.
-            for relaxed_punctuation in ((False, True) if portal_id == "oic" else (False,)):
+            for relaxed_punctuation in ((False, True) if portal_id == "oic" or cell_parser else (False,)):
                 for current_label in filter(None, labels):
                     for sh in sheets:
                         value, coord = _search_label(
@@ -817,6 +870,8 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
                             inline_amount=bool(cfg.get("inline_amount")),
                             oic_labels=portal_id == "oic",
                             relaxed_punctuation=relaxed_punctuation,
+                            cell_parser=cell_parser,
+                            standard_towing_only=portal_id == "newindia" and field_name == "towing_additional_charges",
                         )
                         if value:
                             sh_name = getattr(sh, "name", "Sheet") if sheet_name == "ALL" else sheet_name

@@ -2,7 +2,7 @@ import asyncio
 from playwright.async_api import Page
 from app.data.data_model import ClaimData
 from app.portals.newindia.automation.ui_utils import (
-    fill_input_with_delay, select_dropdown_with_delay, format_date_ddmmyyyy
+    click_radio_with_delay, fill_input_with_delay, select_dropdown_with_delay, format_date_ddmmyyyy
 )
 from app.automation.automation_logger import AutomationLogger
 from app.utils import load_automation_defaults
@@ -187,23 +187,9 @@ async def fill_driver_details(page: Page, data: ClaimData, log, stop_cb, field_d
 
     # 7. Is the motor driving license valid for type of vehicle (ALWAYS YES)
     try:
-        rb_loc = page.locator('input[name="Is the motor driving license valid for the type of vehicle on the date of accident?"][value="Y"]').first
-        if await rb_loc.count() > 0:
-            is_checked = await rb_loc.is_checked()
-            if not is_checked:
-                await page.evaluate("""
-                    () => {
-                        const rb = document.querySelector('input[name="Is the motor driving license valid for the type of vehicle on the date of accident?"][value="Y"]');
-                        if (rb) {
-                            rb.click();
-                        }
-                    }
-                """)
-                await asyncio.sleep(field_delay_ms / 1000.0)
-                if isinstance(log, AutomationLogger):
-                    log.field_filled("License Validation", "Y", source="Calculated")
-                else:
-                    log(f"   ✅ License Valid set to YES")
+        name = "Is the motor driving license valid for the type of vehicle on the date of accident?"
+        if await page.locator(f'input[name="{name}"][value="Y"]').count():
+            await click_radio_with_delay(page, name, "Y", "License Validation", log, field_delay_ms, source="Calculated")
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"License Validation toggle error: {str(e)[:100]}")

@@ -8,6 +8,8 @@ from app.portals.newindia.automation.ui_utils import (
     upload_file_via_input,
 )
 from app.portals.newindia.automation.popup_service import dismiss_portal_popup
+from app.portals.newindia.automation.recovery import current_recovery
+from app.portals.oic.automation.recovery import wait_until_ready
 from app.automation.automation_logger import AutomationLogger
 from app.utils import load_automation_defaults
 
@@ -144,6 +146,65 @@ async def _expand_survey_fee_bill_accordion(page: Page, log) -> bool:
     return True  # Non-fatal — fields might already be visible
 
 
+async def _fill_hsn_with_recovery(page, log, recovery, hsn_code, field_delay_ms):
+    field = page.locator("input#hSNCode:visible")
+    # The fee bill can hide or disable HSN when the field does not apply.
+    count = await field.count()
+    if not count or (count == 1 and not await field.is_enabled()):
+        return True
+
+    requested_code = re.compile(rf"(?<!\d){re.escape(hsn_code)}(?!\d)")
+
+    async def selected_value():
+        return await field.evaluate("""el => {
+            const model = window.angular?.element(el)?.controller('ngModel');
+            if (!model?.$valid || model.$pending || !el.validity.valid) return '';
+            const committed = model.$modelValue;
+            return committed == null || committed === '' || Number.isNaN(committed) ? '' : el.value.trim();
+        }""", timeout=1000)
+
+    async def requested_selected():
+        return bool(requested_code.search(await selected_value()))
+
+    reason = "New India did not confirm an HSN Code selection."
+    if recovery.stopped():
+        raise asyncio.CancelledError
+    try:
+        if await requested_selected():
+            log.info("HSN Code is already selected.")
+            return True
+        await field.click(timeout=3000)
+        await field.fill("", timeout=3000)
+        await field.press_sequentially(hsn_code, delay=80, timeout=3000)
+        choices = page.locator('ul.dropdown-menu[typeahead-popup] li a:visible').filter(has_text=requested_code)
+
+        async def one_choice():
+            return await choices.count() == 1
+
+        if await wait_until_ready(one_choice, seconds=4, stopped=recovery.stopped):
+            await choices.click(timeout=2500)
+            await asyncio.sleep(max(0.12, field_delay_ms / 1000))
+            if await wait_until_ready(requested_selected, seconds=2, stopped=recovery.stopped):
+                log.info("New India confirmed the HSN Code selection.")
+                return True
+        elif await choices.count() > 1:
+            reason = "More than one HSN suggestion matches. Choose the correct item in Chrome."
+        else:
+            reason = "New India did not offer a matching HSN Code. Check the suggestions in Chrome."
+    except Exception:
+        if await wait_until_ready(requested_selected, seconds=0.6, stopped=recovery.stopped):
+            return True
+
+    async def manually_selected():
+        return bool(await selected_value())
+
+    recovery.record_field_issue(
+        log, "HSN Code", reason, matches=requested_selected, manual_value=manually_selected,
+        identity=("hSNCode", "hSNCode"),
+    )
+    return False
+
+
 async def _fill_hsn_code_typeahead(page: Page, log, field_delay_ms: int = 600, hsn_code: str = "8512") -> bool:
     """Fill the HSN Code typeahead field with the configured default.
 
@@ -156,6 +217,9 @@ async def _fill_hsn_code_typeahead(page: Page, log, field_delay_ms: int = 600, h
     _structured = isinstance(log, AutomationLogger)
     selector = "#hSNCode"
     hsn_code = str(hsn_code or "8512")
+    recovery = current_recovery.get()
+    if recovery is not None:
+        return await _fill_hsn_with_recovery(page, log, recovery, hsn_code, field_delay_ms)
 
     try:
         field = page.locator(selector).first
@@ -643,6 +707,12 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
     # ══════════════════════════════════════════════════════════════════════════
     # SUBMIT
     # ══════════════════════════════════════════════════════════════════════════
+
+    recovery = current_recovery.get()
+    if recovery is not None:
+        await recovery.review_before_save(page, log, source="four")
+    if stop_cb():
+        return False
 
     if _structured:
         log.wait("Clicking 'Submit' to save Survey Fee Bill...")

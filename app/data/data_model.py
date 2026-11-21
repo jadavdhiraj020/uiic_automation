@@ -375,6 +375,9 @@ class ClaimData:
     approval_type: str = ""
     work_approval_date: str = ""
     work_approval_time: str = ""
+    delivery_order_date: str = ""
+    delivery_order_time: str = ""
+    workshop_gst_amount: str = ""
     no_of_invoices: str = ""
     payment_invoice_in_name_of_nia: str = ""
     is_gst_applicable: str = ""
@@ -1287,6 +1290,13 @@ class ClaimData:
 
     def _preview_newindia(self) -> List[Tuple[str, str, bool, str]]:
         """New India preview — organized by form sections."""
+        from app.portals.newindia.field_values import reinspection_document, workshop_gst_registered
+        from app.utils import load_automation_defaults
+
+        defaults = load_automation_defaults(portal_id="newindia")
+        reinspection = reinspection_document(self)
+        settings = "Automation Defaults"
+
         def _src(key: str) -> str:
             return self._excel_coords.get(key, "")
 
@@ -1372,7 +1382,7 @@ class ClaimData:
             ("Informant Name",        self.name_of_informant,        False, _src("name_of_informant")),
             ("Sections of Law",       self.sections_of_law,          False, _src("sections_of_law")),
             ("Remarks",               self.remarks,                  False, _src("remarks")),
-            ("Driver Without License?",self.whether_driver_without_license, True, _src("whether_driver_without_license")),
+            ("Driver Without License?", defaults.get("driver_without_license") or "No", True, settings),
             ("Previous Police Records?",self.any_previous_police_records, False, _src("any_previous_police_records")),
             ("Any TP Claim?",         self.is_there_any_tp_claim,    True,  _src("is_there_any_tp_claim")),
 
@@ -1389,14 +1399,21 @@ class ClaimData:
             ("Approval Date",         self.work_approval_date,       True,  _src("work_approval_date")),
             ("Approval Time",         self.work_approval_time,       True,  _src("work_approval_time")),
             ("No. of Invoices",       self.no_of_invoices,           True,  _src("no_of_invoices")),
-            ("Invoice in NIA Name?",  self.payment_invoice_in_name_of_nia, True, _src("payment_invoice_in_name_of_nia")),
+            ("Vehicle Details Match Policy?", defaults.get("vehicle_details_match_policy") or "Yes", True, settings),
+            ("Payment Invoice in NIA Name?", defaults.get("payment_invoice_in_company_name") or "Yes", True, settings),
+            ("Delivery Order Date",   self.delivery_order_date,      False, _src("delivery_order_date")),
+            ("Delivery Order Time",   self.delivery_order_time,      False, _src("delivery_order_time")),
+            ("Workshop GST Amount",   self.workshop_gst_amount,      False, _src("workshop_gst_amount")),
+            ("Workshop GST Registered?", workshop_gst_registered(self.workshop_gst_amount), True,
+             _src("workshop_gst_amount") or "GST amount absent"),
             ("GST Applicable?",       self.is_gst_applicable,        True,  _src("is_gst_applicable")),
             ("Invoice Date",          _inv_val(self.vendor_invoice_date), True, _inv_src("vendor_invoice_date")),
             ("Invoice Number",        _inv_val(self.vendor_invoice_number), True, _inv_src("vendor_invoice_number")),
             ("Primary Assessment (₹)",self.primary_assessment,       True,  _src("primary_assessment")),
             ("Supplementary Est.?",   self.is_supplementary_estimate, True, _src("is_supplementary_estimate")),
             ("Painting Details",      self.painting_work_details,    True,  _src("painting_work_details")),
-            ("Re-Inspection Req?",    self.re_inspection_required,   True,  _src("re_inspection_required")),
+            ("Re-Inspection Req?",    "Yes" if reinspection else "No", True, reinspection or "Folder scan"),
+            ("Recommendations",        defaults.get("recommendations") or "Approved", False, settings),
 
             # ── Add-on Covers & Deductions ──────────────────
             ("Nil Dep Amount (₹)",    self.nil_depreciation_amount,  True,  _src("nil_depreciation_amount")),
@@ -1409,11 +1426,12 @@ class ClaimData:
             ("Voluntary Excess (₹)",  self.less_voluntary_excess,    False, _src("less_voluntary_excess")),
             ("Imposed Excess (₹)",    self.less_imposed_excess,      False, _src("less_imposed_excess")),
             ("Towing Charges (₹)",    self.towing_additional_charges, False, _src("towing_additional_charges")),
-            ("Addl. Towing (₹)",      self.additional_towing_charges, False, _src("additional_towing_charges")),
+            ("Addl. Towing (₹)",      str(defaults.get("additional_towing_charges") or "0"), False, settings),
             ("Other Deductions (₹)",   self.less_other_deductions,     False, _src("less_other_deductions")),
             ("Verification",          self.verification_checkbox,    True,  _src("verification_checkbox")),
 
             # ── Survey Fee Bill ─────────────────────────────
+            ("Is Invoice in Name of NIA?", defaults.get("invoice_in_company_name") or "Yes", True, settings),
             ("SFB Invoice Number",    _inv_val(self.vendor_invoice_number), True, _inv_src("vendor_invoice_number")),
             ("SFB Invoice Date",      _inv_val(self.vendor_invoice_date), True, _inv_src("vendor_invoice_date")),
             ("Professional Fee (₹)",  self.professional_fee,         False, _src("professional_fee")),

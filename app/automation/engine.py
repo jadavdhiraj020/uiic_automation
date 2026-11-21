@@ -255,14 +255,20 @@ class AutomationEngine:
         self._stop_event = threading.Event()
         self.log = AutomationLogger("ENGINE", self.log_cb, portal_id=self.portal_id)
         self._oic_recovery = None
+        self._newindia_recovery = None
         if portal_id == "oic" and recovery_cb is not None:
             from app.portals.oic.automation.recovery import OperatorRecovery
 
             self._oic_recovery = OperatorRecovery(recovery_cb, self._stop_event.is_set)
+        elif portal_id == "newindia" and recovery_cb is not None:
+            from app.portals.newindia.automation.recovery import NewIndiaRecovery
+
+            self._newindia_recovery = NewIndiaRecovery(recovery_cb, self._stop_event.is_set)
 
     def resume_oic(self, prompt_id, decision):
-        if self._oic_recovery is not None:
-            self._oic_recovery.respond(prompt_id, decision)
+        recovery = self._oic_recovery or self._newindia_recovery
+        if recovery is not None:
+            recovery.respond(prompt_id, decision)
 
     async def _run_oic_phase(self, page, label, operation, ready, instruction, *, section=None, describe=None,
                              form_transition=False):
@@ -317,7 +323,7 @@ class AutomationEngine:
     def _check_stop(self) -> bool:
         """Internal callback passed to modules."""
         if self._stop_event.is_set():
-            if self._oic_recovery is not None:
+            if self._oic_recovery is not None or self._newindia_recovery is not None:
                 self.log_cb("⛔ Stop requested. Chrome remains open for review.")
             else:
                 self.log_cb("⛔ Stop requested. Closing automation safely...")
@@ -710,10 +716,14 @@ class AutomationEngine:
                 launch_args.append(f"--proxy-server={settings['proxy_url']}")
 
             slow_mo = _setting_int(settings, "browser_slow_mo_ms", "slow_mo_ms", 0)
-            if self._oic_recovery is not None:
+            review_recovery = self._oic_recovery or self._newindia_recovery
+            if review_recovery is not None:
                 from app.portals.oic.automation.review_browser import launch_review_browser
 
-                browser = await launch_review_browser(browser_type, launch_args, slow_mo, self._stop_event.is_set)
+                browser = await launch_review_browser(
+                    browser_type, launch_args, slow_mo, self._stop_event.is_set,
+                    portal_name=review_recovery.portal_name,
+                )
                 context = browser.contexts[0]
             else:
                 browser = await browser_type.launch(
@@ -733,7 +743,7 @@ class AutomationEngine:
                 from app.web_sync.submission import SubmissionMonitor
                 monitor = SubmissionMonitor(**web_submission)
                 await monitor.install(context)
-            page = context.pages[0] if self._oic_recovery is not None and context.pages else await context.new_page()
+            page = context.pages[0] if review_recovery is not None and context.pages else await context.new_page()
             if self._oic_recovery is not None:
                 from app.portals.oic.automation.recovery import (
                     assessment_claim_mismatch, current_recovery, form_step_is_open, same_origin,
@@ -1069,9 +1079,12 @@ class AutomationEngine:
 
                 # --- NEW INDIA PORTAL PHASES ---
                 if self.portal_id == "newindia":
-                    # (Quick Update, Vehicle Photo, RC, Driver, FIR, NEFT, Work Approval, Assessment, Upload)
-                    # I'll omit the full NIA block for brevity as I'm focused on UIIC refactor,
-                    # but I'll ensure the existing NIA logic remains compatible with 'log=self.log'
+                    if self._newindia_recovery is not None:
+                        from app.portals.newindia.automation.recovery import current_recovery
+
+                        await self._newindia_recovery.bind_claim(page, claim.claim_no)
+                        recovery_token = current_recovery.set(self._newindia_recovery)
+                        resources.callback(current_recovery.reset, recovery_token)
 
                     from app.portals.newindia.automation.quick_update_module import (
                         fill_quick_update_details,
@@ -1175,9 +1188,9 @@ class AutomationEngine:
                         ),
                         dependent_step="New India NEFT Details",
                     ):
-                        return AutomationRunResult(
-                            False, "Phase 8 failed: cheque OCR data not ready."
-                        )
+                        if self._check_stop() or self._newindia_recovery is None:
+                            return AutomationRunResult(False, "Phase 8 failed: cheque OCR data not ready.")
+                        self.log.warning("Cheque data is still unavailable. App3 will check the page before Next.")
                     if not await fill_neft_details(
                         page,
                         claim,
@@ -1212,9 +1225,9 @@ class AutomationEngine:
                         ),
                         dependent_step="New India Claim Assessment",
                     ):
-                        return AutomationRunResult(
-                            False, "Phase 10 failed: invoice OCR data not ready."
-                        )
+                        if self._check_stop() or self._newindia_recovery is None:
+                            return AutomationRunResult(False, "Phase 10 failed: invoice OCR data not ready.")
+                        self.log.warning("Invoice data is still unavailable. App3 will check the page before Next.")
                     if not await fill_claim_assessment_details(
                         page,
                         claim,
@@ -1477,8 +1490,10 @@ class AutomationEngine:
                 return AutomationRunResult(True, "Automation finished.")
 
             except asyncio.CancelledError:
-                if self._oic_recovery is not None:
-                    return AutomationRunResult(False, "OIC automation stopped. Chrome is available for review.")
+                if review_recovery is not None:
+                    return AutomationRunResult(
+                        False, f"{review_recovery.portal_name} automation stopped. Chrome is available for review."
+                    )
                 self.log.error("Automation cancelled.")
                 return AutomationRunResult(False, "Automation cancelled.")
             except Exception as exc:

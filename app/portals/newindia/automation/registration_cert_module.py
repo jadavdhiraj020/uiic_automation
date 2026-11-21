@@ -3,7 +3,7 @@ import re
 from playwright.async_api import Page
 from app.data.data_model import ClaimData
 from app.portals.newindia.automation.ui_utils import (
-    fill_input_with_delay, select_dropdown_with_delay, format_date_ddmmyyyy
+    check_checkbox_with_delay, fill_input_with_delay, select_dropdown_with_delay, format_date_ddmmyyyy
 )
 from app.automation.automation_logger import AutomationLogger
 
@@ -190,23 +190,9 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
 
     # 6. Physically Verified (ALWAYS YES)
     try:
-        cb_loc = page.locator('input[name="Physically Verified -checkBox"]').first
-        if await cb_loc.count() > 0:
-            is_checked = await cb_loc.is_checked()
-            if not is_checked:
-                await page.evaluate("""
-                    () => {
-                        const cb = document.querySelector('input[name="Physically Verified -checkBox"]');
-                        if (cb) {
-                            cb.click();
-                        }
-                    }
-                """)
-                await asyncio.sleep(field_delay_ms / 1000.0)
-                if isinstance(log, AutomationLogger):
-                    log.field_filled("Physically Verified", "Y", source="Calculated")
-                else:
-                    log(f"   ✅ Physically Verified set to YES")
+        selector = 'input[name="Physically Verified -checkBox"]'
+        if await page.locator(selector).count():
+            await check_checkbox_with_delay(page, selector, "Physically Verified", log, field_delay_ms, source="Calculated")
     except Exception as e:
         if isinstance(log, AutomationLogger):
             log.error(f"Verification toggle error: {str(e)[:100]}")

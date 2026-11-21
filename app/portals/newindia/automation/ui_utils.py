@@ -1,17 +1,20 @@
 import asyncio
+import json
 from typing import Callable, Optional
 from playwright.async_api import Page
 import re
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 
 
 from app.automation.automation_logger import AutomationLogger, _ts
+from app.portals.newindia.automation.recovery import current_recovery
+from app.portals.oic.automation.recovery import wait_until_ready
 
 # ── JavaScript Snippets ───────────────────────────────────────────────────────
 
 _JS_FILL = r"""
-([sel, val]) => {
-    const el = document.querySelector(sel);
+(el, val) => {
     if (!el) return { ok: false };
     el.scrollIntoView({ behavior: 'auto', block: 'center' });
     el.value = val;
@@ -35,52 +38,25 @@ _JS_FILL = r"""
 """
 
 _JS_SELECT = r"""
-([sel, txt]) => {
-    const select = document.querySelector(sel);
+(select, txt) => {
     if (!select) return { ok: false, err: 'not_found' };
 
     select.scrollIntoView({ behavior: 'auto', block: 'center' });
 
     const search = txt.trim().toLowerCase();
-    let matchedValue = null;
-    let matchedText  = null;
-
-    // Pass 1: exact text match
-    for (let i = 0; i < select.options.length; i++) {
-        const optText = select.options[i].text.trim().toLowerCase();
-        if (optText === search) {
-            matchedValue = select.options[i].value;
-            matchedText  = select.options[i].text;
-            break;
-        }
+    const options = [...select.options].filter(option => option.value && !option.disabled);
+    const label = option => option.text.trim().toLowerCase();
+    const words = search.split(/\s+/).filter(word => word.length > 2);
+    const matches = options.filter(option => label(option) === search);
+    if (!matches.length && search) {
+        matches.push(...options.filter(option => label(option) && (label(option).includes(search) || search.includes(label(option)))));
     }
-
-    // Pass 2: substring match (both directions)
-    if (matchedValue === null) {
-        for (let i = 0; i < select.options.length; i++) {
-            const optText = select.options[i].text.trim().toLowerCase();
-            if (optText.includes(search) || search.includes(optText)) {
-                matchedValue = select.options[i].value;
-                matchedText  = select.options[i].text;
-                break;
-            }
-        }
+    if (!matches.length) {
+        matches.push(...options.filter(option => words.some(word => label(option).includes(word))));
     }
-
-    // Pass 3: word-level fallback
-    if (matchedValue === null && search.length > 2) {
-        const words = search.split(/\s+/);
-        for (let i = 0; i < select.options.length; i++) {
-            const optText = select.options[i].text.toLowerCase();
-            if (words.some(w => w.length > 2 && optText.includes(w))) {
-                matchedValue = select.options[i].value;
-                matchedText  = select.options[i].text;
-                break;
-            }
-        }
-    }
-
-    if (matchedValue !== null) {
+    if (matches.length !== 1) return {ok: false, err: matches.length ? 'ambiguous' : 'no_match'};
+    const [{value: matchedValue, text: matchedText}] = matches;
+    if (select.value !== matchedValue) {
         select.value = matchedValue;
         select.dispatchEvent(new Event('change', { bubbles: true }));
         try {
@@ -95,19 +71,17 @@ _JS_SELECT = r"""
                 }
             }
         } catch(e) {}
-        return { ok: true, text: matchedText };
     }
-    return { ok: false, err: 'no_match' };
+    return {ok: true, text: matchedText, value: matchedValue};
 }
 """
 
 _JS_CLICK_RADIO = r"""
-([name, value]) => {
-    const radio = document.querySelector(`input[name="${name}"][value="${value}"]`);
+(radio) => {
     if (!radio) return { ok: false, err: 'not_found' };
     if (radio.checked) return { ok: true, already: true };
     radio.scrollIntoView({ behavior: 'auto', block: 'center' });
-    const lbl = document.querySelector(`label[for="${radio.id}"]`);
+    const lbl = [...radio.labels].find(label => label.getClientRects().length);
     if (lbl) { lbl.click(); return { ok: true }; }
     const outer = radio.closest('label');
     if (outer) { outer.click(); return { ok: true, via: 'outer' }; }
@@ -139,65 +113,173 @@ _JS_TRIGGER_CHANGE = r"""
 
 # ── Python Helpers ────────────────────────────────────────────────────────────
 
+_JS_FIELD_STATE = """
+el => {
+    const visible = node => node && node.getClientRects().length && !node.closest('[aria-hidden=true], [hidden]');
+    if (el.type === 'radio' && !visible(el) && ![...el.labels].some(visible)) return null;
+    const model = window.angular?.element(el)?.controller('ngModel');
+    const errors = Object.keys(model?.$error || {}).filter(code => model.$error[code]);
+    const selected = el.selectedOptions?.[0];
+    return {
+        value: el.value,
+        identity: [el.type === 'radio' ? '' : el.id, el.name],
+        type: el.type,
+        viewValue: ['string', 'number'].includes(typeof model?.$viewValue) ? String(model.$viewValue) : null,
+        checked: ['radio', 'checkbox'].includes(el.type) ? el.checked : null,
+        editable: !el.readOnly && !el.matches(':disabled'),
+        valid: (!el.willValidate || el.validity.valid) && !errors.length && !model?.$pending &&
+               (Boolean(model) || el.getAttribute('aria-invalid') !== 'true'),
+        missing: el.validity?.valueMissing || errors.includes('required'),
+        option: selected && !selected.disabled ? selected.text : ''
+    };
+}
+"""
+
+
+def _field_key(value, input_type=""):
+    text = " ".join(str(value or "").split())
+    if input_type == "number":
+        try:
+            return Decimal(text)
+        except InvalidOperation:
+            return text
+    time = re.fullmatch(r"(\d{1,2}):(\d{2})(?::(\d{2}))?", text)
+    if time:
+        hour, minute, second = time.groups()
+        return f"{int(hour):02d}:{minute}:{second or '00'}"
+    if re.fullmatch(r"\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}", text):
+        for pattern in ("%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(text, pattern).date().isoformat()
+            except ValueError:
+                pass
+    return text
+
+
+async def _check_entry(page, target, label, value, script, kind, log, delay_ms, source,
+                       radio_group=None, numeric=False):
+    recovery = current_recovery.get()
+    selected_value = str(value)
+    shown = str(value)
+    async def matches():
+        nonlocal state
+        if await target.count() != 1:
+            return False
+        state = await target.evaluate(_JS_FIELD_STATE, timeout=1000)
+        if not state or not state["valid"]:
+            return False
+        if kind in {"radio", "checkbox"}:
+            return state["checked"]
+        if kind == "dropdown":
+            return bool(state["value"] and (option_set and state["value"] == selected_value
+                                           or state["option"].strip().casefold() == str(value).strip().casefold()))
+        representation = "number" if numeric else state["type"]
+        expected_key = _field_key(value, representation)
+        return (_field_key(state["value"], representation) == expected_key
+                and (state["viewValue"] is None or _field_key(state["viewValue"], representation) == expected_key))
+
+    def log_verified():
+        if recovery is not None:
+            recovery.clear_field_issue(log, label)
+        if isinstance(log, AutomationLogger):
+            write = log.field_selected if kind == "dropdown" else log.field_filled
+            write(label, shown, **({"source": source} if source is not None else {}))
+        elif log:
+            log(f"[{_ts()}] {label} verified.")
+
+    async def verified_manual_value():
+        if await matches():
+            return True
+        control = radio_group if kind == "radio" else target
+        if await control.count() != 1:
+            return False
+        current = await control.evaluate(_JS_FIELD_STATE, timeout=1000)
+        return bool(current and current["valid"] and str(current["value"]).strip()
+                    and (current["value"], current["checked"]) != rejected_value
+                    and (kind not in {"radio", "checkbox"} or current["checked"])
+                    and (kind != "text" or current["viewValue"] is None
+                         or _field_key(current["viewValue"], current["type"]) == _field_key(current["value"], current["type"])))
+
+    state = None
+    option_set = False
+    reason = "App3 could not find this field in the current section."
+    if recovery is not None and recovery.stopped():
+        raise asyncio.CancelledError
+    try:
+        ready_state = "attached" if kind in {"radio", "checkbox"} else "visible"
+        await target.wait_for(state=ready_state, timeout=5000)
+        reason = "New India did not keep this value."
+        valid = await matches()
+        if not valid and state and state["editable"]:
+            result = await target.evaluate(script, str(value), timeout=5000)
+            if result and result.get("value") is not None:
+                selected_value = result["value"]
+                shown = result["text"]
+                option_set = True
+            if result and result.get("err") == "no_match":
+                reason = "The supplied value does not match an available option."
+            elif result and result.get("err") == "ambiguous":
+                reason = "More than one option matches. Select the correct one in Chrome."
+            await asyncio.sleep(max(delay_ms / 1000, 0.12))
+            valid = await wait_until_ready(
+                matches, seconds=1, stopped=recovery.stopped if recovery else lambda: False,
+            )
+        if valid:
+            log_verified()
+            return
+        if state and reason == "New India did not keep this value.":
+            if state["missing"] and not str(state["value"]).strip():
+                reason = "New India requires a value for this field."
+            elif not state["valid"]:
+                reason = "New India marked this field invalid. Check the message beside it in Chrome."
+            elif not state["editable"]:
+                reason = "This field is read-only and needs review in Chrome."
+    except Exception:
+        # A portal rerender can interrupt the write after accepting it.
+        if reason != "App3 could not find this field in the current section.":
+            if await wait_until_ready(matches, seconds=0.6):
+                log_verified()
+                return
+    if recovery is not None:
+        rejected_value = (state["value"], state["checked"]) if state else None
+        recovery.record_field_issue(
+            log, label, reason, matches=matches, manual_value=verified_manual_value,
+            identity=tuple(state["identity"]) if state else None,
+        )
+    elif isinstance(log, AutomationLogger):
+        log.field_failed(label, reason)
+    elif log:
+        log(f"[{_ts()}] {label}: {reason}")
+
+
+def _visible_field(page, selector):
+    return page.locator(f":is({selector}):visible")
+
+
+async def check_checkbox_with_delay(page, selector, label, log, delay_ms=600, source=None):
+    await _check_entry(page, page.locator(selector), label, "Y", _JS_CLICK_RADIO,
+                       "checkbox", log, delay_ms, source)
+
+
 async def fill_input_with_delay(
     page: Page, selector: str, value: str, label: str,
-    log, delay_ms: int = 600, source: Optional[str] = None
+    log, delay_ms: int = 600, source: Optional[str] = None, *, numeric=False,
 ):
     """Angular-aware text fill with configurable post-fill delay."""
-    try:
-        await page.wait_for_selector(selector, state="visible", timeout=5000)
-        res = await page.evaluate(_JS_FILL, [selector, str(value)])
-        if res and res.get("ok"):
-            if isinstance(log, AutomationLogger):
-                kwargs = {}
-                if source is not None:
-                    kwargs["source"] = source
-                log.field_filled(label, value, **kwargs)
-            else:
-                log(f"[{_ts()}]   ✅ [{label}] filled → '{str(value)[:60]}'")
-        else:
-            if isinstance(log, AutomationLogger):
-                log.field_failed(label, "Element not found in DOM")
-            else:
-                log(f"[{_ts()}]   ⚠️ [{label}] fill failed (element not found in DOM)")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.field_failed(label, str(e))
-        else:
-            log(f"[{_ts()}]   ⚠️ [{label}] error: {e}")
-
-    await asyncio.sleep(delay_ms / 1000.0)
+    await _check_entry(page, _visible_field(page, selector), label, value, _JS_FILL,
+                       "text", log, delay_ms, source, numeric=numeric)
 
 
 async def select_dropdown_with_delay(
     page: Page, selector: str, value: str, label: str,
-    log, delay_ms: int = 600, source: Optional[str] = None
+    log, delay_ms: int = 600, source: Optional[str] = None, *, index: int | None = None,
 ):
     """Standard <select> dropdown helper with 3-pass matching and configurable delay."""
-    try:
-        await page.wait_for_selector(selector, state="visible", timeout=5000)
-        res = await page.evaluate(_JS_SELECT, [selector, str(value)])
-        if res and res.get("ok"):
-            if isinstance(log, AutomationLogger):
-                kwargs = {}
-                if source is not None:
-                    kwargs["source"] = source
-                log.field_selected(label, res.get("text"), **kwargs)
-            else:
-                log(f"[{_ts()}]   ✅ [{label}] selected → '{res.get('text')}'")
-        else:
-            err = res.get('err') if res else 'unknown'
-            if isinstance(log, AutomationLogger):
-                log.field_failed(label, f"No match for '{value}': {err}")
-            else:
-                log(f"[{_ts()}]   ⚠️ [{label}] select failed (no match for '{value}'): {err}")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.field_failed(label, str(e))
-        else:
-            log(f"[{_ts()}]   ⚠️ [{label}] error: {e}")
-
-    await asyncio.sleep(delay_ms / 1000.0)
+    target = _visible_field(page, selector)
+    if index is not None:
+        target = target.nth(index)
+    await _check_entry(page, target, label, value, _JS_SELECT,
+                       "dropdown", log, delay_ms, source)
 
 
 async def click_radio_with_delay(
@@ -205,31 +287,10 @@ async def click_radio_with_delay(
     log, delay_ms: int = 600, source: Optional[str] = None
 ):
     """Click radio via label with delay."""
-    try:
-        res = await page.evaluate(_JS_CLICK_RADIO, [name, value])
-        if res and res.get("ok"):
-            already = res.get("already", False)
-            msg = f"'{value}'" + (" (already set)" if already else "")
-            if isinstance(log, AutomationLogger):
-                kwargs = {}
-                if source is not None:
-                    kwargs["source"] = source
-                log.field_filled(label, msg, **kwargs)
-            else:
-                log(f"[{_ts()}]   {'✔' if already else '✅'} [{label}] → {msg}")
-        else:
-            err = res.get('err') if res else 'unknown'
-            if isinstance(log, AutomationLogger):
-                log.field_failed(label, f"Click failed: {err}")
-            else:
-                log(f"[{_ts()}]   ⚠️ [{label}] click failed: {err}")
-    except Exception as e:
-        if isinstance(log, AutomationLogger):
-            log.field_failed(label, str(e))
-        else:
-            log(f"[{_ts()}]   ⚠️ [{label}] error: {e}")
-
-    await asyncio.sleep(delay_ms / 1000.0)
+    group = f'input[type="radio"][name={json.dumps(name)}]'
+    target = page.locator(f'{group}[value={json.dumps(str(value))}]')
+    await _check_entry(page, target, label, value, _JS_CLICK_RADIO, "radio", log, delay_ms,
+                       source, radio_group=page.locator(f"{group}:checked"))
 
 def format_date_ddmmyyyy(raw_date) -> str:
     """Safely format any date string from Excel to DD/MM/YYYY."""

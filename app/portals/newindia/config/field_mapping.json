@@ -1,6 +1,12 @@
 {
   "_comment": "field_mapping.json — New India Assurance portal. Maps ClaimData fields to Excel labels. search_labels lists fallback labels tried in order. '_mandatory': true marks fields required for automation.",
 
+  "_derived_fields": [
+    "whether_driver_without_license",
+    "payment_invoice_in_name_of_nia",
+    "re_inspection_required",
+    "additional_towing_charges"
+  ],
   "claim_no": {
     "sheet": "ALL",
     "search_labels": ["Claim No.", "Claim no.", "Claim No", "Claim no", "Claim Number", "claim_number", "claim_no"],
@@ -351,15 +357,6 @@
     "allow_text_values": true,
     "_mandatory": false
   },
-  "whether_driver_without_license": {
-    "sheet": "ALL",
-    "search_labels": ["Whether driver without license", "Driver without license"],
-    "row_offset": 0,
-    "col_offset": 1,
-    "allow_literal_values": true,
-    "fallback_value": "No",
-    "_mandatory": true
-  },
   "any_previous_police_records": {
     "sheet": "ALL",
     "search_labels": ["Any Previous Police Records", "Previous Police Record"],
@@ -440,14 +437,32 @@
     "fallback_value": "1",
     "_mandatory": true
   },
-  "payment_invoice_in_name_of_nia": {
+  "delivery_order_date": {
     "sheet": "ALL",
-    "search_labels": ["Whether Payment invoice is in name of NIA", "Invoice in name of NIA"],
+    "search_labels": ["Delivery Order Date"],
     "row_offset": 0,
     "col_offset": 1,
-    "allow_literal_values": true,
-    "fallback_value": "No",
-    "_mandatory": true
+    "exact_offset": true,
+    "excel_only": true,
+    "_mandatory": false
+  },
+  "delivery_order_time": {
+    "sheet": "ALL",
+    "search_labels": ["Delivery Order Time"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "exact_offset": true,
+    "excel_only": true,
+    "_mandatory": false
+  },
+  "workshop_gst_amount": {
+    "sheet": "ALL",
+    "search_labels": ["ADD GST (9%CGST+9%SGST)", "ADD GST (9% CGST + 9% SGST)"],
+    "row_offset": 0,
+    "col_offset": 3,
+    "exact_offset": true,
+    "excel_only": true,
+    "_mandatory": false
   },
   "is_gst_applicable": {
     "sheet": "ALL",
@@ -494,15 +509,6 @@
     "row_offset": 0,
     "col_offset": 1,
     "allow_text_values": true,
-    "_mandatory": true
-  },
-  "re_inspection_required": {
-    "sheet": "ALL",
-    "search_labels": ["Whether Re-Inspection Required", "Re-Inspection Required", "Reinspection Required"],
-    "row_offset": 0,
-    "col_offset": 1,
-    "allow_literal_values": true,
-    "fallback_value": "No",
     "_mandatory": true
   },
   "nil_depreciation_amount": {
@@ -579,15 +585,7 @@
   },
   "towing_additional_charges": {
     "sheet": "ALL",
-    "search_labels": ["Towing / Additional Towing Charges", "Towing Charges", "Additional Towing"],
-    "row_offset": 0,
-    "col_offset": 1,
-    "fallback_value": "0",
-    "_mandatory": false
-  },
-  "additional_towing_charges": {
-    "sheet": "ALL",
-    "search_labels": ["Additional Towing Charges", "Addl Towing Charges", "Addl. Towing"],
+    "search_labels": ["Towing / Additional Towing Charges", "Towing Charges"],
     "row_offset": 0,
     "col_offset": 1,
     "fallback_value": "0",

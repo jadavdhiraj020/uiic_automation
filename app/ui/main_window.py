@@ -855,7 +855,7 @@ class MainWindow(QMainWindow):
 
         self._worker.log_signal.connect(self._append_log)
         self._worker.step_signal.connect(self.workspace_page.set_step)
-        if portal_id == "oic":
+        if portal_id in {"oic", "newindia"}:
             self._worker.recovery_signal.connect(self._show_oic_recovery)
 
         self.workspace_page.set_automation_running(True)
@@ -896,7 +896,8 @@ class MainWindow(QMainWindow):
             dialog = _OicRecoveryMessage(self)
             self._oic_recovery_dialog = dialog
             dialog.prompt_id = prompt.id
-            dialog.setWindowTitle("OIC automation paused")
+            portal_name = "New India" if getattr(worker, "portal_id", None) == "newindia" else "OIC"
+            dialog.setWindowTitle(f"{portal_name} automation paused")
             dialog.setWindowModality(Qt.WindowModality.NonModal)
             dialog.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
             dialog.setIcon(QMessageBox.Icon.Warning)
