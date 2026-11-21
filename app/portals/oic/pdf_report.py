@@ -719,6 +719,10 @@ def read_oic_pdf_report(path, *, stop_cb=None):
         claim.bank_payment_to = "Dealer" if claim.payment_to == "REPAIRER" else "Insured"
 
     parts, labour, taxes, sources, review = read_assessment(pages)
+    # Keep assessment/table reconciliation failures separate from ordinary
+    # field-review issues.  Assessment errors can make an automated financial
+    # upload unsafe; ordinary missing fields can be corrected manually in OIC.
+    claim._oic_pdf_assessment_errors = list(dict.fromkeys(review))
     claim._oic_pdf_assessment = (parts, labour)
     claim._oic_pdf_item_sources = sources
     for section, (values, source) in taxes.items():
