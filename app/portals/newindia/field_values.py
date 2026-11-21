@@ -68,6 +68,11 @@ def parse_amount(value):
 VEHICLE_COLOR_MAX_LEN = 9
 
 
+def configured_pre_accident_condition(defaults):
+    """Get the condition used for New India review and portal entry."""
+    return str(defaults.get("pre_accident_condition") or "").strip() or "always good"
+
+
 def normalize_vehicle_color(value):
     """Trim whitespace and cap New India Vehicle Color* to 9 characters."""
     if value is None:

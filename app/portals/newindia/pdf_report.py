@@ -79,7 +79,6 @@ FIELDS = {
         "vehicle_make": ("Make & Year of Manufacturer", "Make & Model", "Make and Model", "Make / Model", "Vehicle Make", "Make of Vehicle", "Make"),
         "type_of_body": ("Type of Body", "Body Type"),
         "class_of_vehicle": ("Class of Vehicle", "Vehicle Class"),
-        "pre_accident_condition": ("Pre-Accident Condition", "Pre Accident Condition", "Condition before Accident"),
         "rto_name": ("RTO Name", "RTO Office", "Registering Authority", "Registration Authority"),
         "odometer_reading": ("Odometer Reading", "Odometer", "KM Reading", "Mileage"),
         "vehicle_color": ("Vehicle Color", "Vehicle Colour", "Color of Vehicle", "Colour", "Color"),

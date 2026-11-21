@@ -1298,7 +1298,9 @@ class ClaimData:
 
     def _preview_newindia(self) -> List[Tuple[str, str, bool, str]]:
         """New India preview — organized by form sections."""
-        from app.portals.newindia.field_values import reinspection_document, workshop_gst_registered
+        from app.portals.newindia.field_values import (
+            configured_pre_accident_condition, reinspection_document, workshop_gst_registered,
+        )
         from app.utils import load_automation_defaults
 
         defaults = load_automation_defaults(portal_id="newindia")
@@ -1349,7 +1351,7 @@ class ClaimData:
             ("Vehicle Make",          self.vehicle_make,             True,  _src("vehicle_make")),
             ("Type of Body",          self.type_of_body,             True,  _src("type_of_body")),
             ("Class of Vehicle",      self.class_of_vehicle,         True,  _src("class_of_vehicle")),
-            ("Pre-Accident Cond.",    self.pre_accident_condition,   True,  _src("pre_accident_condition")),
+            ("Pre-Accident Cond.",    configured_pre_accident_condition(defaults), True, settings),
             ("RTO Name",              self.rto_name,                 True,  _src("rto_name")),
             ("Odometer Reading",      self.odometer_reading,         True,  _src("odometer_reading")),
             ("Vehicle Color",         self.vehicle_color,            True,  _src("vehicle_color")),

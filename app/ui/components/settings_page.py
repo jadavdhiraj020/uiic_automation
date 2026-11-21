@@ -174,6 +174,7 @@ class SettingsPage(QWidget):
                 ("hsn_code", "HSN Code", "Survey Fee Bill GST section", "text"),
                 ("gst_applicable", "GST Applicable", "Survey Fee Bill GST dropdown", "yesno"),
                 ("driver_without_license", "Whether Driver Without License?", "FIR Details", "yesno"),
+                ("pre_accident_condition", "Pre-Accident Condition", "Registration Certificate Details", "text"),
                 ("vehicle_details_match_policy", "Vehicle Details Match Policy?", "Work Approval", "yesno"),
                 ("payment_invoice_in_company_name", "Payment Invoice in NIA Name?", "Claim Assessment", "yesno"),
                 ("invoice_in_company_name", "Is Invoice in Name of NIA?", "Survey Fee Bill", "yesno"),

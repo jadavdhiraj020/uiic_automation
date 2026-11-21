@@ -5,7 +5,8 @@
     "whether_driver_without_license",
     "payment_invoice_in_name_of_nia",
     "re_inspection_required",
-    "additional_towing_charges"
+    "additional_towing_charges",
+    "pre_accident_condition"
   ],
   "claim_no": {
     "sheet": "ALL",
@@ -82,15 +83,6 @@
     "row_offset": 0,
     "col_offset": 1,
     "allow_text_values": true,
-    "_mandatory": true
-  },
-  "pre_accident_condition": {
-    "sheet": "ALL",
-    "search_labels": ["Pre-Accident Condition", "Pre Accident Condition", "Condition before Accident"],
-    "row_offset": 0,
-    "col_offset": 1,
-    "allow_text_values": true,
-    "fallback_value": "Good",
     "_mandatory": true
   },
   "rto_name": {

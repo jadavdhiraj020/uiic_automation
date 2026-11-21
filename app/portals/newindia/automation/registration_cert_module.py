@@ -1,12 +1,13 @@
 import re
 from playwright.async_api import Page
 from app.data.data_model import ClaimData
-from app.portals.newindia.field_values import normalize_vehicle_color
+from app.portals.newindia.field_values import configured_pre_accident_condition, normalize_vehicle_color
 from app.portals.newindia.automation.ui_utils import (
     check_checkbox_with_delay, fill_input_with_delay, select_dropdown_with_delay, format_date_ddmmyyyy,
     open_additional_section, record_additional_issue,
 )
 from app.automation.automation_logger import AutomationLogger
+from app.utils import load_automation_defaults
 
 async def _fill_optional_rc_field(
     page: Page,
@@ -247,14 +248,11 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
 
     # 10. Pre-Accident Condition (Text field - Mandatory)
     try:
-        val = data.pre_accident_condition
-        if val:
-            await fill_input_with_delay(page, 'input[name="Pre-Accident Condition"]', val, "Condition", log, field_delay_ms, source="Excel")
-        else:
-            if isinstance(log, AutomationLogger):
-                log.field_skipped("Condition", reason="Missing from Excel")
-            else:
-                log(f"   ⚠️ Pre-Accident Condition missing from Excel.")
+        defaults = load_automation_defaults(portal_id="newindia")
+        await fill_input_with_delay(
+            page, 'input[name="Pre-Accident Condition"]', configured_pre_accident_condition(defaults),
+            "Pre-Accident Condition", log, field_delay_ms, source="Default",
+        )
     except Exception:
         record_additional_issue(log, "Pre-Accident Condition")
 

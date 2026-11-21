@@ -10,6 +10,7 @@
   "hsn_code": "8512",
   "gst_applicable": "Yes",
   "driver_without_license": "No",
+  "pre_accident_condition": "always good",
   "vehicle_details_match_policy": "Yes",
   "payment_invoice_in_company_name": "Yes",
   "invoice_in_company_name": "Yes",
