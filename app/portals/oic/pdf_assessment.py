@@ -1,5 +1,6 @@
 """Extract OIC parts, labour and GST summaries from a survey PDF."""
 
+from dataclasses import replace
 from decimal import Decimal
 import re
 
@@ -32,6 +33,7 @@ MATERIALS = ("metal", "plastic", "glass")
 LABOUR_TYPES = ("rr", "denting", "cw", "paint")
 ZERO = Decimal(0)
 TOLERANCE = Decimal(".02")
+TOTAL_LABELS = {"subtotal", "total", "subtotalbeforegst", "totalbeforegst", "grandtotal"}
 AMOUNT = re.compile(r"(?:\d+|\d{1,3}(?:,\d{2,3})*,\d{3})(?:\.\d{1,2})?")
 
 
@@ -65,6 +67,130 @@ def _gst_section(text):
         if any(marker in {f"gstsummary{word}", f"{word}gstsummary", f"gstsummaryfor{word}"} for word in words):
             return section
     return ""
+
+
+def _open_header(table):
+    for index in range(len(table.rows) - 1, -1, -1):
+        row = table.rows[index]
+        if any(compact(cell) in TOTAL_LABELS for cell in row):
+            break
+        for aliases in (PART_COLUMNS, LABOUR_COLUMNS, GST_COLUMNS):
+            positions = _columns(row, aliases)
+            if aliases is GST_COLUMNS:
+                if (len(positions) >= 2 and "taxable" in positions and 0 not in positions.values()
+                        and any(_gst_section(_heading(title)) for title in table.rows[:index])):
+                    return index, positions
+            elif len(positions) == len(aliases):
+                return index, positions
+    return None
+
+
+def _aligned_cell(box, boxes):
+    if box is None:
+        return None
+    matches = [i for i, cell in enumerate(boxes) if cell is not None
+               and abs(cell[0] - box[0]) <= 2 and abs(cell[2] - box[2]) <= 2]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _printed_serial(lines, serial_box, row_box, name):
+    """Read an orphaned native digit from the printed row at the page break."""
+    candidates = set()
+    for line in lines:
+        if (line.confidence < 1 or not row_box[1] <= line.top < row_box[3]
+                or not serial_box[0] <= line.cells[0][0] < serial_box[2]):
+            continue
+        match = re.match(r"^(\d+)\s+(.+)$", line.text)
+        if match and match[2].startswith(name + " "):
+            candidates.add(match[1])
+    return candidates.pop() if len(candidates) == 1 else ""
+
+
+def _project_continuation(table, index, header_boxes, positions, lines):
+    row, boxes = table.rows[index], table.row_boxes[index]
+    projected = [""] * len(header_boxes)
+    serial_column, name_column = positions.get("serial"), positions.get("name")
+    name_box = header_boxes[name_column] if name_column is not None else None
+    serial_box = header_boxes[serial_column] if serial_column is not None else None
+    # The subtotal label typically spans the serial and description columns.
+    subtotal = next((cell for cell, box in zip(row, boxes)
+                     if name_box and serial_box and box and compact(cell) in TOTAL_LABELS
+                     and abs(box[0] - serial_box[0]) <= 2 and abs(box[2] - name_box[2]) <= 2), "")
+    # The native grid can grow empty columns when other sections on the page
+    # have vertical dividers. Use the printed column boundaries from the header.
+    for key, column in positions.items():
+        if key == "serial":
+            continue
+        if key == "name" and subtotal:
+            projected[column] = subtotal
+            continue
+        match = _aligned_cell(header_boxes[column], boxes)
+        if match is None:
+            return None
+        projected[column] = row[match]
+    if "serial" not in positions:
+        match = _aligned_cell(header_boxes[0], boxes)
+        if match is None or (compact(row[match]) not in TOTAL_LABELS and amount(row[match]) is None):
+            return None
+        projected[0] = row[match]
+        return tuple(projected)
+
+    if serial_box is None or not projected[name_column]:
+        return None
+    if compact(projected[name_column]) in TOTAL_LABELS:
+        return tuple(projected)
+    match = _aligned_cell(serial_box, boxes)
+    if match is not None:
+        projected[serial_column] = row[match]
+    elif index == 0:
+        physical_name_box = boxes[_aligned_cell(name_box, boxes)]
+        projected[serial_column] = _printed_serial(lines, serial_box, physical_name_box, projected[name_column])
+    return tuple(projected) if projected[serial_column].isdecimal() else None
+
+
+def _continue_native_table(table, following, lines_by_page):
+    header = _open_header(table)
+    if header is None:
+        return table
+    header_index, positions = header
+    header_boxes = table.row_boxes[header_index]
+    page = table.page
+    rows = []
+    tops = []
+    for next_table in following:
+        # Only connect the last grid on one page to the first on the next.
+        if not next_table.row_boxes or next_table.page != page + 1:
+            break
+        page = next_table.page
+        for index in range(len(next_table.rows)):
+            row = _project_continuation(next_table, index, header_boxes, positions, lines_by_page.get(page, ()))
+            if row is None:
+                return table
+            tops.append(next_table.tops[index])
+            if any(compact(cell) in TOTAL_LABELS for cell in row):
+                if "serial" not in positions:
+                    detail = (*table.rows[header_index + 1:], *rows)
+                    if not detail or any(amount(entry[0]) is None for entry in detail):
+                        return table
+                    for column in positions.values():
+                        amounts = [amount(entry[column]) if entry[column] else ZERO for entry in detail]
+                        total = amount(row[column]) if row[column] else ZERO
+                        if total is None or None in amounts or abs(sum(amounts, ZERO) - total) > TOLERANCE:
+                            return table
+                return replace(table, rows=(*table.rows, *rows, row), tops=(*table.tops, *tops),
+                               extra_page=page, row_boxes=())
+            rows.append(row)
+    return table
+
+
+def _assessment_tables(pages):
+    tables = tuple(table for page in pages for table in page.tables)
+    lines_by_page = {page.lines[0].page: page.lines for page in pages if page.lines}
+    for index, table in enumerate(tables):
+        if (table.row_boxes and index + 1 < len(tables)
+                and tables[index + 1].page == table.page + 1):
+            table = _continue_native_table(table, tables[index + 1:], lines_by_page)
+        yield table
 
 
 def _positional_tables(pages):
@@ -106,6 +232,7 @@ def _positional_tables(pages):
 def _gst_summaries(tables):
     results = {}
     errors = {}
+    sources = {}
     for table in tables:
         section = ""
         columns = {}
@@ -113,6 +240,7 @@ def _gst_summaries(tables):
             title = _gst_section(_heading(row))
             if title:
                 section, columns = title, {}
+                sources.setdefault(section, table.source)
                 continue
             if not section:
                 continue
@@ -142,7 +270,10 @@ def _gst_summaries(tables):
                 results[section] = full, table.source
     for section in ("spares", "labour"):
         if section not in results:
-            errors.setdefault(section, f"{section.title()} GST summary total is missing from the survey PDF.")
+            source = sources.get(section)
+            issue = (f"{section.title()} GST summary total could not be verified for the table on {source}."
+                     if source else f"{section.title()} GST summary total is missing from the survey PDF.")
+            errors.setdefault(section, issue)
     if results:
         has_split = any(values["cgst"] or values["sgst"] for values, _ in results.values())
         has_integrated = any(values["igst"] for values, _ in results.values())
@@ -190,8 +321,7 @@ def _item_tables(tables, aliases, value_keys, kind):
                 continue
             serial = row[positions["serial"]].strip()
             name = row[positions["name"]].strip()
-            if any(compact(cell) in {"subtotal", "total", "subtotalbeforegst", "totalbeforegst", "grandtotal"}
-                   for cell in row):
+            if any(compact(cell) in TOTAL_LABELS for cell in row):
                 totals = {key: amount(row[positions[key]]) for key in known_total_keys}
                 if table.source not in sources:
                     sources.append(table.source)
@@ -242,7 +372,7 @@ def _item_tables(tables, aliases, value_keys, kind):
 
 def read_assessment(pages):
     """Return the same item inputs as Excel, plus traceable GST and review errors."""
-    tables = tuple(table for page in pages for table in page.tables)
+    tables = tuple(_assessment_tables(pages))
     layout_fallback = tuple(_positional_tables(pages))
     gst, errors = _gst_summaries(tables + layout_fallback)
     parts = []

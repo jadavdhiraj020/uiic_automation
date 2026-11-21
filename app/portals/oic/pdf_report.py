@@ -130,7 +130,7 @@ FIELDS = {
         "professional_fee": ("Professional Fee", "Professional Fees", "Survey Fee", "Survey Fees"),
         "traveling_expenses": ("Travelling Expenses", "Traveling Expenses", "Conveyance Charges", "Conveyance"),
         "daily_allowance": ("Daily Allowance", "Daily Allowances"),
-        "photo_charges": ("Photo Charges", "Photograph Charges", "Photography Charges"),
+        "photo_charges": ("Photo Charges", "Photograph Charges", "Photography Charges", "Photographs"),
         "re_inspection_charges": ("Re Inspection Charges", "Re-inspection Charges", "Reinspection Charges"),
         "misc_charge": ("Misc Charge", "Misc Charges", "Miscellaneous Charges"),
         "oicl_gst_number": ("OICL GST Number", "OICL GST No", "GST No of OICL"),
@@ -188,6 +188,15 @@ def _match_label(text, aliases):
 def _after(text, aliases):
     match = _match_label(text, aliases)
     return text[match.end():].lstrip(" .:=/-") if match else None
+
+
+def _raw_field_value(key, text, aliases):
+    raw = _after(text, aliases)
+    if key == "photo_charges" and raw is not None and raw == _after(text, ("Photographs",)):
+        # "Photographs 20 Rs 200" prints the photo count before the charge.
+        currency = re.search(r"(?:\b(?:Rs|INR)\.?\s*|₹\s*)(.+)$", raw, re.I)
+        return currency[1] if currency else None
+    return raw
 
 
 def _label_rows(rows, aliases):
@@ -308,12 +317,17 @@ def _set(claim, key, value, source):
 def _split_sections(lines):
     sections = defaultdict(list)
     section = "header"
+    fee_page = 0
     for line in lines:
         for group, pattern in SECTIONS:
             if pattern.match(line.text):
                 section = group
+                if group == "fees":
+                    fee_page = line.page
                 break
-        sections[section].append(line)
+        # An exported fee sheet has its own insured/vehicle labels. Keep its
+        # charge rows in the fee section through the end of the printed page.
+        sections["fees" if line.page == fee_page else section].append(line)
     return sections
 
 
@@ -323,7 +337,7 @@ def _read_field(claim, key, rows, aliases, *, warnings):
     for line in rows:
         if key == "workshop_name" and re.match(r"^workshop\s*(?:details|invoice|estimate|gst)\b", line.text, re.I):
             continue
-        raw = _after(line.text, aliases)
+        raw = _raw_field_value(key, line.text, aliases)
         if raw is None:
             continue
         value = _value(key, raw)
@@ -460,18 +474,22 @@ def _assessment_fields(claim, lines, labour, warnings):
              f"75% of Workshop Estimate · {claim._excel_coords['workshop_estimate_amount']}")
 
 
-def _document_identity(lines):
+def _document_identity(lines, *, fee_bill=False):
     fields = defaultdict(dict)
-    aliases = (*FIELDS["header"]["claim_no"], *FIELDS["header"]["policy_number"],
-               *FIELDS["vehicle"]["vehicle_registration_number"])
+    claim_labels = FIELDS["header"]["claim_no"]
+    policy_labels = FIELDS["header"]["policy_number"]
+    registration_labels = FIELDS["vehicle"]["vehicle_registration_number"]
+    if fee_bill:
+        policy_labels += ("C Note/Policy No.",)
+        registration_labels += ("Vehicle/Item",)
+    aliases = (*claim_labels, *policy_labels, *registration_labels)
     for line in _label_rows(lines, aliases):
         if getattr(line, "confidence", 1) < MIN_FIELD_CONFIDENCE:
             continue
-        for key in ("claim_no", "policy_number"):
-            configured = FIELDS["header"][key]
+        for key, configured in (("claim_no", claim_labels), ("policy_number", policy_labels)):
             if (raw := _after(line.text, configured)) and (value := _value(key, raw)):
                 fields[key].setdefault(compact(value), value)
-        if raw := _after(line.text, FIELDS["vehicle"]["vehicle_registration_number"]):
+        if raw := _after(line.text, registration_labels):
             if value := _registration(raw)[0]:
                 fields["vehicle_registration_number"].setdefault(compact(value), value)
     identity = {key: next(iter(values.values())) for key, values in fields.items() if len(values) == 1}
@@ -506,10 +524,15 @@ def _is_supporting_report(lines):
 def find_oic_report(folder, *, preferred=None, stop_cb=None):
     """Prefer a complete report by content, checking up to three pages with OCR when needed."""
     from app.data.pdf_report_reader import read_lines
+    from .printable_report import OIC_PRINTABLE_PDF
 
     files = []
     seen = set()
-    for path in sorted(Path(folder).iterdir(), key=lambda p: p.name.casefold()):
+
+    def candidate_order(path):
+        return path.name.casefold() == OIC_PRINTABLE_PDF, path.name.casefold()
+
+    for path in sorted(Path(folder).iterdir(), key=candidate_order):
         if stop_cb and stop_cb():
             raise InterruptedError("PDF report selection cancelled")
         if not path.is_file() or path.suffix.casefold() != ".pdf":
@@ -574,6 +597,8 @@ def find_oic_report(folder, *, preferred=None, stop_cb=None):
             files.append((rank, path, identity))
     if not files:
         return None
+    if any(rank[0] and path.name.casefold() != OIC_PRINTABLE_PDF for rank, path, _ in files):
+        files = [entry for entry in files if entry[1].name.casefold() != OIC_PRINTABLE_PDF]
     files.sort(key=lambda entry: entry[0], reverse=True)
     best_rank, best_path, best_identity = files[0]
     for rank, path, identity in files[1:]:
@@ -630,6 +655,14 @@ def read_oic_pdf_report(path, *, stop_cb=None):
             })
             configured[key] = (*aliases, *extra)
         rows = sections[group]
+        if group == "fees" and rows:
+            identity, conflicts = _document_identity(rows, fee_bill=True)
+            if conflicts or any(
+                getattr(claim, key) and compact(getattr(claim, key)) != compact(value)
+                for key, value in identity.items()
+            ):
+                warnings["fee_bill_identity"] = "The fee-bill page has different claim or vehicle details. Review the fees manually."
+                continue
         if group in {"vehicle", "driver", "workshop", "survey"} and not rows:
             rows = lines
             for key, aliases in configured.items():
@@ -792,7 +825,7 @@ def supplement_oic_pdf_fees(claim, folder, *, stop_cb=None):
         except (OSError, ValueError, PDFException, PdfminerException):
             claim._oic_pdf_review_warnings.append(f"Could not read optional fee bill {path.name}. Review or replace the file.")
             continue
-        identity, conflicts = _document_identity(rows)
+        identity, conflicts = _document_identity(rows, fee_bill=True)
         if conflicts:
             claim._oic_pdf_review_warnings.append(
                 f"Conflicting claim, policy, or vehicle identifiers in fee bill {path.name}. Review this bill."
@@ -803,7 +836,7 @@ def supplement_oic_pdf_fees(claim, folder, *, stop_cb=None):
             continue
         for key in fee_fields:
             for row in rows:
-                raw = _after(row.text, FIELDS["fees"][key])
+                raw = _raw_field_value(key, row.text, FIELDS["fees"][key])
                 if raw is not None and (value := _value(key, raw)):
                     candidates[key].append((value, f"{row.source} · {path.name}"))
     for key, values in candidates.items():
@@ -812,7 +845,12 @@ def supplement_oic_pdf_fees(claim, folder, *, stop_cb=None):
             _set(claim, key, *values[0])
         else:
             claim._oic_pdf_review_warnings.append(f"Matching fee bills disagree on {key.replace('_', ' ')}. Review the bill amounts.")
-    if not claim._excel_coords.get("professional_fee"):
-        claim._oic_pdf_review_warnings.append("Professional Fee was not found in the survey PDF or a matching fee bill.")
+    missing = [label for key, label in (
+        ("professional_fee", "Professional Fee"),
+        ("traveling_expenses", "Traveling Expenses"),
+        ("photo_charges", "Photo Charges"),
+    ) if not claim._excel_coords.get(key)]
+    if missing:
+        claim._oic_pdf_review_warnings.append(f"Fee amounts missing from the survey PDF and matching fee bills: {', '.join(missing)}.")
     if candidates:
         claim.calculate_derived_fields()

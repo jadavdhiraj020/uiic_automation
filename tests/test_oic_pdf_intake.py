@@ -232,3 +232,141 @@ def test_oic_intake_keeps_excel_priority_and_existing_field_mapping(tmp_path):
     assert claim.policy_number == "POL123456"
     assert claim.fitness_valid_upto == "17/09/2033"
     assert not getattr(claim, "_oic_pdf_review_errors", ())
+
+
+def test_oic_prefers_survey_pdf_over_generated_printable_copy(tmp_path):
+    report = tmp_path / "Excel Export.pdf"
+    printable = tmp_path / "survey_report_printable_copy.pdf"
+    stale = tuple(tuple(value.replace("DEMO1234", "OLD1234") for value in row) for row in SUMMARY)
+    _write_pdf(report, (SUMMARY, ITEMS))
+    _write_pdf(printable, (stale, ITEMS))
+
+    assert find_oic_report(tmp_path, preferred=printable) == str(report)
+
+    other = printable.rename(tmp_path / "Other Final Report.pdf")
+    with pytest.raises(ValueError, match="More than one claim report"):
+        find_oic_report(tmp_path)
+    report.unlink()
+    other.rename(printable)
+    assert find_oic_report(tmp_path) == str(printable)
+
+
+@pytest.mark.parametrize("separate_bill", [False, True])
+@pytest.mark.parametrize("photo_line, expected_charge", [
+    ("Photographs 20 Rs 200", "200"),
+    ("Photographs 20", ""),
+])
+def test_oic_reads_fee_amount_beside_photo_count(tmp_path, separate_bill, photo_line, expected_charge):
+    from app.portals.oic.pdf_report import supplement_oic_pdf_fees
+
+    report = tmp_path / "Final Survey Report.pdf"
+    fee_rows = (
+        ("Survey Fee Bill",),
+        ("Insured Details",),
+        ("Vehicle/Item: GJ06AB1234",),
+        ("C Note/Policy No.: POL555555",),
+        ("Professional Fee Rs 4260.97",),
+        ("Conveyance Charges Rs 1000",),
+        (photo_line,),
+    )
+    if separate_bill:
+        _write_pdf(report, (SUMMARY, ITEMS))
+        _write_pdf(tmp_path / "Survey Fee Bill.pdf", (fee_rows,))
+    else:
+        _write_pdf(report, (SUMMARY, ITEMS, fee_rows))
+    claim = extract_claim_data_from_report(str(report), portal_id="oic")
+    supplement_oic_pdf_fees(claim, tmp_path)
+
+    assert claim.professional_fee == "4260.97"
+    assert claim.traveling_expenses == "1000"
+    assert claim.photo_charges == expected_charge
+    assert any("Fee amounts missing" in warning for warning in claim._oic_pdf_review_warnings) == (not expected_charge)
+
+
+def test_oic_does_not_use_embedded_fee_bill_for_a_different_vehicle(tmp_path):
+    report = tmp_path / "Final Survey Report.pdf"
+    fee_rows = (
+        ("Survey Fee Bill",),
+        ("Vehicle/Item: GJ13AB1234",),
+        ("C Note/Policy No.: POL555555",),
+        ("Professional Fee Rs 4260.97",),
+    )
+    _write_pdf(report, (SUMMARY, ITEMS, fee_rows))
+    claim = extract_claim_data_from_report(str(report), portal_id="oic")
+
+    assert not claim.professional_fee
+    assert any("different claim or vehicle details" in warning for warning in claim._oic_pdf_review_warnings)
+
+
+def _ruled_table(page, rows, edges):
+    from app.portals.oic.pdf_layout import Table
+
+    tops = tuple(10 + 20 * index for index in range(len(rows)))
+    boxes = tuple(tuple((left, top, right, top + 20) for left, right in zip(edges, edges[1:]))
+                  for top in tops)
+    return Table(page, tops, rows, row_boxes=boxes)
+
+
+@pytest.mark.parametrize("printed_serial", ["2", "3", ""])
+def test_oic_preserves_continuation_rows_only_with_printed_serial(printed_serial):
+    from dataclasses import replace
+    from app.portals.oic.pdf_assessment import read_assessment
+    from app.portals.oic.pdf_layout import Line, Page
+
+    edges = (10, 25, 100, 160, 210, 260, 310, 365, 400)
+    start = _ruled_table(1, (
+        ("S.N.", "DESCRIPTION", "Estimate", "R/R", "DENTING", "C/W", "PAINT", "GST"),
+        ("1", "Door", "", "100", "0", "0", "500", "18"),
+    ), edges)
+    continuation = _ruled_table(2, (
+        ("", "Bonnet", "", "500", "100", "0", "900", "18"),
+        ("SUB TOTAL", "", "", "600", "100", "0", "1400", ""),
+    ), edges)
+    first, second = continuation.row_boxes
+    continuation = replace(continuation, row_boxes=(
+        (None, *first[1:]),
+        ((edges[0], second[0][1], edges[2], second[0][3]), None, *second[2:]),
+    ))
+    line = Line(2, 20, ((15, 50, f"{printed_serial} Bonnet".strip()), (180, 200, "500")))
+    _, labour, _, sources, errors = read_assessment((
+        Page((), (start,), 400), Page((line,), (continuation,), 400),
+    ))
+
+    if printed_serial == "2":
+        assert labour == {"rr": 600, "denting": 100, "cw": 0, "painting": 1400}
+        assert sources["labour"] == "PDF p1 + p2"
+    else:
+        assert not any(labour.values())
+        assert any("labour" in error for error in errors)
+
+
+@pytest.mark.parametrize("total, next_left, accepted", [
+    ("1000", 10, True),
+    ("1100", 10, False),
+    ("1000", 25, False),
+])
+def test_oic_gst_total_continuation_requires_matching_columns_and_amounts(total, next_left, accepted):
+    from app.portals.oic.pdf_assessment import read_assessment
+    from app.portals.oic.pdf_layout import Page
+
+    edges = (10, 75, 170, 230, 290, 350, 410)
+    summary = _ruled_table(1, (
+        ("GST Summary Spares", "", "", "", "", ""),
+        ("Tax %", "Taxable Amount", "CGST", "SGST", "IGST", "Total Amount"),
+        ("18", "1000", "90", "90", "", "1180"),
+    ), edges)
+    # Both possible totals are internally valid at 18%. Only 1000 agrees with the breakdown.
+    half_tax = "90" if total == "1000" else "99"
+    continuation = _ruled_table(2, (
+        ("Total", total, half_tax, half_tax, "0", ""),
+    ), (next_left, *edges[1:]))
+    _, _, gst, _, errors = read_assessment((
+        Page((), (summary,), 420), Page((), (continuation,), 420),
+    ))
+
+    if accepted:
+        assert gst["spares"][0]["taxable"] == 1000
+        assert gst["spares"][1] == "PDF p1 + p2"
+    else:
+        assert "spares" not in gst
+        assert any("Spares GST summary total" in error for error in errors)

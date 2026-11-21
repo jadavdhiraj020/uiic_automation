@@ -33,6 +33,7 @@ class Table:
     confidence: float = 1
     extra_page: int = 0
     row_scores: tuple[float, ...] = ()
+    row_boxes: tuple[tuple[tuple[float, float, float, float] | None, ...], ...] = ()
 
     @property
     def source(self):
@@ -242,7 +243,8 @@ def read_pages(path, *, stop_cb=None, max_pages=None):
                     for table in page.find_tables():
                         rows = tuple(tuple(_join_text(cell) for cell in row) for row in table.extract(x_tolerance=2))
                         if any(any(row) for row in rows):
-                            tables.append(Table(index, tuple(row.bbox[1] for row in table.rows), rows))
+                            tables.append(Table(index, tuple(row.bbox[1] for row in table.rows), rows,
+                                                row_boxes=tuple(tuple(row.cells) for row in table.rows)))
                 if regions or (not lines and bool(page.chars or page.images or page.curves)):
                     if renderer is None:
                         renderer = pypdfium2.PdfDocument(path)
@@ -341,7 +343,7 @@ def _join_print_tiles(pages):
                 extra = candidates[0]
                 rows = tuple(a + b for a, b in zip(table.rows, extra.rows))
                 scores = tuple(min(table.score(i), extra.score(i)) for i in range(len(rows)))
-                table = replace(table, rows=rows, extra_page=extra.page,
+                table = replace(table, rows=rows, extra_page=extra.page, row_boxes=(),
                                 confidence=min(table.confidence, extra.confidence), row_scores=scores)
             tables.append(table)
         joined.append(Page(tuple(sorted(lines, key=lambda line: line.top)), tuple(tables), left.width + right.width))
