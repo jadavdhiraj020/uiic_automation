@@ -51,7 +51,7 @@ def _nil_depreciation(claim):
 
 
 def depreciation_errors(claim):
-    """Return specific OIC upload blockers before launching the browser."""
+    """Return depreciation issues that prevent preparing the OIC workbook."""
     from_pdf = Path(str(getattr(claim, "source_report_path", "") or "")).suffix.lower() == ".pdf"
     review = "check the survey PDF and rescan the folder" if from_pdf else "check OIC Field Mapping and rescan the folder"
     nil_depreciation = _nil_depreciation(claim)
@@ -79,15 +79,32 @@ def prepared_upload_error(claim):
     pdf_errors = getattr(claim, "_oic_pdf_review_errors", [])
     if pdf_errors:
         return "\n".join(pdf_errors)
+    return _prepared_workbook_problem(claim)
+
+
+def _prepared_workbook_problem(claim):
     error = str(getattr(claim, "_oic_upload_error", "") or "").strip()
     if error:
         return f"OIC upload Excel could not be prepared: {error}"
     path = str(getattr(claim, "_oic_upload_path", "") or "").strip()
     invoice = str(getattr(claim, "_oic_upload_invoice", "") or "").strip()
     items = getattr(claim, "_oic_upload_items", None)
-    if not path or not Path(path).is_file() or not invoice or not items:
-        return "OIC upload Excel is missing. Rescan the claim folder before starting."
+    if not path or not os.path.isfile(path) or not invoice or not items:
+        return "The prepared OIC upload workbook is missing or incomplete."
     return ""
+
+
+def startup_review_notices(claim):
+    """Report issues before launch. Workbook checks still apply at upload."""
+    return {
+        title: message
+        for title, message in (
+            ("OIC Survey PDF Needs Review", "\n".join(getattr(claim, "_oic_pdf_review_errors", ()) or ())),
+            ("OIC Depreciation Needs Review", "\n".join(depreciation_errors(claim))),
+            ("OIC Upload Needs Review", _prepared_workbook_problem(claim)),
+        )
+        if message
+    }
 
 
 def _labour_totals(path, boundary_keyword):

@@ -40,7 +40,9 @@ from app.portals.oic.automation.ui_utils import (
     _get_oic_fill_settings,
 )
 from app.portals.oic.automation import selectors as S
-from app.portals.oic.automation.invoice_upload import import_invoice_workbook, invoice_import_is_ready
+from app.portals.oic.automation.invoice_upload import (
+    import_invoice_workbook, invoice_import_is_ready, manual_invoice_entry_is_ready,
+)
 from app.portals.oic.automation.recovery import (
     action_problem, current_recovery, field_decision, field_problem, field_was_handled, run_field, wait_until_ready,
 )
@@ -89,12 +91,25 @@ async def fill_assessment_of_loss(
             if stop_cb():
                 return False
             await capture_error_screenshot(page, "invoice_excel_upload", log)
-            if not await action_problem(
-                page, log, "Import invoice workbook", str(exc),
-                lambda: invoice_import_is_ready(page, claim._oic_upload_invoice, claim._oic_upload_items),
-                "Finish importing the expected invoice in Chrome and leave Assessment of Loss open.",
-            ):
+            invoice = getattr(claim, "_oic_upload_invoice", "")
+            items = getattr(claim, "_oic_upload_items", ())
+            recovery = current_recovery.get()
+            if recovery is None:
                 raise
+            if invoice and items:
+                await action_problem(
+                    page, log, "Import invoice workbook", str(exc),
+                    lambda: invoice_import_is_ready(page, invoice, items),
+                    "Finish importing the expected invoice in Chrome and leave Assessment of Loss open.",
+                )
+            else:
+                await recovery.pause(
+                    page, log, "Add the invoice and items in Chrome",
+                    "App3 has no prepared workbook to verify the invoice and items.",
+                    instruction="Add the correct invoice and all assessed items. Leave Assessment of Loss open, then click Continue.",
+                    confirmation_button="I added the invoice and items — continue",
+                    field_ready=lambda: manual_invoice_entry_is_ready(page),
+                )
             claim._oic_upload_failed = False
 
         # 2. Excess Section

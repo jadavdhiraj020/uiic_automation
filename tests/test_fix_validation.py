@@ -130,6 +130,77 @@ def test_start_blocked_until_previous_thread_finished():
     assert calls == ["status", "blocked"]
 
 
+@pytest.mark.parametrize("needs_review", [True, False])
+def test_oic_start_keeps_review_notices_advisory(monkeypatch, tmp_path, needs_review):
+    from app.ui import main_window
+
+    upload = tmp_path / "upload.xlsx"
+    if not needs_review:
+        upload.touch()
+    claim = SimpleNamespace(
+        _scan_context=SimpleNamespace(portal_id="oic", portal_display_name="OIC", claim_folder_path=str(tmp_path)),
+        _oic_pdf_review_errors=["Workshop Estimate Amount needs review."] if needs_review else [],
+        nil_depreciation="" if needs_review else "Yes",
+        _oic_upload_path=str(upload),
+        _oic_upload_invoice="INV1",
+        _oic_upload_items=["Bonnet"],
+    )
+    window = MagicMock()
+    del window.web_queue
+    window._close_requested = False
+    window._thread = window._worker = None
+    window._claim = claim
+    thread = MagicMock()
+    worker = MagicMock()
+    events = []
+    thread.start.side_effect = lambda: events.append("start")
+    window._show_oic_startup_review.side_effect = lambda notices: events.append(notices)
+    monkeypatch.setattr(main_window, "get_active_portal_id", lambda: "oic")
+    monkeypatch.setattr(main_window, "load_settings", lambda **_: {"username": "test", "password": "test"})
+    monkeypatch.setattr(main_window, "QThread", lambda: thread)
+    monkeypatch.setattr(main_window, "AutomationWorker", lambda *args, **kwargs: worker)
+
+    main_window.MainWindow._start_automation(window)
+
+    if needs_review:
+        assert list(events[0]) == [
+            "OIC Survey PDF Needs Review", "OIC Depreciation Needs Review", "OIC Upload Needs Review",
+        ]
+        assert events[1:] == ["start"]
+    else:
+        assert events == ["start"]
+    window._show_start_blocked_warning.assert_not_called()
+
+
+def test_oic_engine_reaches_browser_with_startup_review_notices(monkeypatch, tmp_path):
+    from app.automation import engine as engine_module
+    from app.licensing import verifier
+
+    class BrowserStartupReached(Exception):
+        pass
+
+    def start_browser():
+        raise BrowserStartupReached
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr(verifier, "require_valid_license", lambda: None)
+    monkeypatch.setattr(engine_module, "async_playwright", start_browser)
+    logs = []
+    engine = AutomationEngine(portal_id="oic", log_cb=logs.append, step_cb=lambda *_args: None)
+    claim = SimpleNamespace(
+        _oic_pdf_review_errors=["Workshop Estimate Amount needs review."],
+        nil_depreciation="",
+        _oic_upload_error="The workbook could not be written.",
+    )
+
+    with pytest.raises(BrowserStartupReached):
+        asyncio.run(engine.run_automation(claim, {}))
+
+    log = "\n".join(logs)
+    for title in ("OIC Survey PDF Needs Review", "OIC Depreciation Needs Review", "OIC Upload Needs Review"):
+        assert title in log
+
+
 # 1. Test thread-safety and backward-compatible stop event property
 def test_engine_thread_safety_event():
     # Instantiate engine with minimal mocks

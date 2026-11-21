@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from playwright.async_api import Error as PlaywrightError
 
-from app.portals.oic.automation.assessment_upload_excel import prepared_upload_error
+from app.portals.oic.automation.assessment_upload_excel import depreciation_errors, prepared_upload_error
 from app.portals.oic.automation.recovery import form_step_is_open, wait_until_ready
 
 
@@ -114,11 +114,34 @@ async def invoice_import_is_ready(page, invoice, items):
     return False
 
 
+async def manual_invoice_entry_is_ready(page):
+    """Check that OIC displays the manually added invoices and their items."""
+    if await _button_enabled(_upload_button(page, "View Validation Errors")):
+        return False
+    headings = page.locator(".p-accordion-header h6:visible").filter(
+        has_text=re.compile(r"\bInvoice Number\b", re.I),
+    )
+    invoices = [name.strip() for name in await headings.locator("b").all_inner_texts() if name.strip()]
+    if not invoices:
+        return False
+    for invoice in invoices:
+        state = await _invoice_state(page, invoice, [])
+        if state["count"] != 1:
+            return False
+        if not state["unexpected"]:
+            if not state["expanded"]:
+                await _open_invoice(page, invoice)
+            return False
+    return True
+
+
 async def import_invoice_workbook(page, claim, log, stop_cb):
     log._section = "Invoice Excel Upload"
     review_error = getattr(claim, "_oic_parts_review_error", "")
     if review_error:
         raise ValueError(f"OIC parts need review: {review_error}")
+    if errors := depreciation_errors(claim):
+        raise ValueError("\n".join(errors))
     if error := prepared_upload_error(claim):
         raise ValueError(error)
 

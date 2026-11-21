@@ -12,7 +12,7 @@ from app.automation.automation_logger import AutomationLogger
 from app.automation.engine import AutomationEngine
 from app.data.data_model import ClaimData
 from app.portals.oic.automation import assessment_of_loss_module, basic_details_module, document_upload_module, ui_utils
-from app.portals.oic.automation.invoice_upload import invoice_import_is_ready
+from app.portals.oic.automation.invoice_upload import import_invoice_workbook, invoice_import_is_ready
 from app.portals.oic.automation.popup_service import dismiss_portal_popup
 from app.portals.oic.automation.recovery import (
     OperatorRecovery, RecoveryPrompt, action_problem, current_recovery, form_step_is_open,
@@ -275,6 +275,57 @@ async def test_invoice_checkpoint_resumes_only_after_expected_items_are_present(
     await page.locator(".p-accordion-header b").last.evaluate("el => el.textContent = 'Bonnet'")
     run.recovery.respond(prompt.id, "fixed")
     assert await asyncio.wait_for(task, timeout=6)
+
+
+@pytest.mark.asyncio
+async def test_missing_prepared_workbook_allows_manual_invoice_and_resume(page, monkeypatch):
+    await page.set_content("""
+        <span aria-current="step">Assessment of Loss</span><input id="invoiceNumber">
+        <div class="p-accordion-tab">
+            <div class="p-accordion-header"><h6>Invoice Number <b>MANUAL</b></h6></div>
+            <div id="items"></div>
+        </div>
+    """)
+    run = RecoveryRun()
+    await run.recovery.bind_form(page, "loss")
+    module = assessment_of_loss_module
+    monkeypatch.setattr(module, "capture_error_screenshot", AsyncMock())
+    for name in ("_fill_excess_section", "_fill_salvage_section", "_fill_survey_charges",
+                 "_fill_recommendation_declaration", "_click_save_and_next_button"):
+        monkeypatch.setattr(module, name, AsyncMock(return_value=True))
+    claim = ClaimData(portal_id="oic", nil_depreciation="Yes")
+    claim._oic_upload_error = "The workbook could not be written."
+
+    token = current_recovery.set(run.recovery)
+    try:
+        task = asyncio.create_task(module.fill_assessment_of_loss(
+            page, claim, log=run.log, stop_cb=lambda: run.stopped, field_delay_ms=0,
+        ))
+    finally:
+        current_recovery.reset(token)
+
+    prompt = await run.next_prompt()
+    assert prompt.confirmation_button == "I added the invoice and items — continue"
+    assert not prompt.can_skip
+    module._fill_excess_section.assert_not_awaited()
+    run.recovery.respond(prompt.id, "fixed")
+    retry = await run.next_prompt()
+    assert retry.id == prompt.id
+    assert "skip" not in retry.instruction
+    await page.locator("#items").evaluate("""node => {
+        node.innerHTML = '<div class="p-accordion-header"><h6>Item Sub Type <b>Bonnet</b></h6></div>';
+    }""")
+    run.recovery.respond(prompt.id, "fixed")
+    assert await asyncio.wait_for(task, timeout=6)
+    module._fill_excess_section.assert_awaited_once()
+    assert not claim._oic_upload_failed
+
+
+@pytest.mark.asyncio
+async def test_workbook_import_rejects_unresolved_depreciation():
+    claim = ClaimData(portal_id="oic", nil_depreciation="")
+    with pytest.raises(ValueError, match="Nil Depreciation must be Yes or No"):
+        await import_invoice_workbook(None, claim, Mock(), lambda: False)
 
 
 @pytest.mark.asyncio

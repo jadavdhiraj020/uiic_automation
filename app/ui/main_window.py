@@ -53,6 +53,7 @@ from app.portals.registry import (
     get_active_portal,
     get_active_portal_id,
 )
+from app.portals.oic.automation.assessment_upload_excel import startup_review_notices
 
 from app.ui.worker import AutomationWorker
 from app.ui.components.settings_page import SettingsPage
@@ -673,14 +674,9 @@ class MainWindow(QMainWindow):
                     f"({self._scan_context.portal_id})."
                 )
             self.workspace_page.update_data(self._claim, self._scan_result)
-            pdf_needs_review = (
-                current_portal_id == "oic"
-                and str(getattr(self._claim, "source_report_path", "")).lower().endswith(".pdf")
-                and (getattr(self._claim, "_oic_pdf_review_errors", []) or getattr(self._claim, "_oic_upload_error", ""))
-            )
-            if pdf_needs_review:
+            if current_portal_id == "oic" and startup_review_notices(self._claim):
                 self.workspace_page.set_stage(1)
-                self._set_status("error", "PDF needs review")
+                self._set_status("ready", "Ready — review needed")
             else:
                 self._set_status("ready", "Ready")
         else:
@@ -732,6 +728,23 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
+    def _show_oic_startup_review(self, notices):
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("OIC review before starting")
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setTextFormat(Qt.TextFormat.PlainText)
+        dialog.setText("Some claim details need review.")
+        message = "\n\n".join(f"{title}\n{detail}" for title, detail in notices.items())
+        if len(message.splitlines()) > 10:
+            dialog.setDetailedText(message)
+            message = "\n".join(notices) + "\n\nOpen Show Details for the full list."
+        dialog.setInformativeText(
+            f"{message}\n\nClick Continue to start. Review unresolved issues in Chrome at the relevant step."
+        )
+        continue_button = dialog.addButton("Continue", QMessageBox.ButtonRole.AcceptRole)
+        dialog.setDefaultButton(continue_button)
+        dialog.exec()
+
     def _start_automation(self):
         def _warn(title: str, text: str):
             fn = getattr(self, "_show_start_blocked_warning", None)
@@ -778,7 +791,6 @@ class MainWindow(QMainWindow):
 
         self._switch_page(0)  # Workspace
         self.workspace_page.clear_logs()
-        self.log("Starting automation thread...")
 
         scan_context = getattr(self._claim, "_scan_context", None)
         if scan_context is None:
@@ -802,28 +814,6 @@ class MainWindow(QMainWindow):
 
         portal_id = scan_context.portal_id
         portal_display = getattr(scan_context, "portal_display_name", "") or portal_id.upper()
-        if portal_id == "oic":
-            from app.portals.oic.automation.assessment_upload_excel import depreciation_errors, prepared_upload_error
-            pdf_errors = getattr(self._claim, "_oic_pdf_review_errors", [])
-            if pdf_errors:
-                message = "\n".join(pdf_errors)
-                self._set_status("error", "OIC survey PDF needs review")
-                self.workspace_page.set_stage(1)
-                _warn("OIC Survey PDF Needs Review", message)
-                return
-            rate_errors = depreciation_errors(self._claim)
-            if rate_errors:
-                message = "\n".join(rate_errors)
-                self._set_status("error", "OIC depreciation needs review")
-                self.log(f"Start blocked: {message}")
-                _warn("OIC Depreciation Needs Review", message)
-                return
-            upload_error = prepared_upload_error(self._claim)
-            if upload_error:
-                self._set_status("error", "OIC upload Excel needs review")
-                self.log(f"Start blocked: {upload_error}")
-                _warn("OIC Upload Needs Review", upload_error)
-                return
         settings = load_settings(portal_id=portal_id)
         if hasattr(self, "web_queue"):
             try:
@@ -841,9 +831,19 @@ class MainWindow(QMainWindow):
             _warn("Credentials Missing", err)
             return
 
+        claim = self._claim
+        if portal_id == "oic" and (notices := startup_review_notices(claim)):
+            self._show_oic_startup_review(notices)
+            if self._close_requested or self._worker is not None or self._thread is not None:
+                return
+            if self._claim is not claim or get_active_portal_id() != portal_id:
+                _warn("Claim changed", "Review the current claim before starting automation.")
+                return
+
+        self.log("Starting automation thread...")
         self._thread = QThread()
         self._worker = AutomationWorker(
-            self._claim, settings_override=settings, portal_id=portal_id
+            claim, settings_override=settings, portal_id=portal_id
         )
         self._worker.moveToThread(self._thread)
 

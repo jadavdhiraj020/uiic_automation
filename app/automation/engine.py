@@ -681,24 +681,11 @@ class AutomationEngine:
                 "Claim Assessment",
             ]
 
-        # OIC's import template accepts only specific depreciation rates.
-        # Check before opening a browser, including non-UI entry points.
         if self.portal_id == "oic":
-            from app.portals.oic.automation.assessment_upload_excel import depreciation_errors, prepared_upload_error
-            pdf_errors = getattr(claim, "_oic_pdf_review_errors", [])
-            if pdf_errors:
-                message = "\n".join(pdf_errors)
-                self.log.error(f"OIC survey PDF needs review: {message}")
-                return AutomationRunResult(False, message)
-            rate_errors = depreciation_errors(claim)
-            if rate_errors:
-                message = "; ".join(rate_errors)
-                self.log.error(f"OIC upload cannot start: {message}")
-                return AutomationRunResult(False, message)
-            upload_error = prepared_upload_error(claim)
-            if upload_error:
-                self.log.error(f"OIC upload cannot start: {upload_error}")
-                return AutomationRunResult(False, upload_error)
+            from app.portals.oic.automation.assessment_upload_excel import startup_review_notices
+
+            for title, detail in startup_review_notices(claim).items():
+                self.log.warning(f"{title}. {' | '.join(detail.splitlines())}")
 
         field_delay = _setting_int(settings, "field_wait_ms", "field_delay_ms", 400)
 

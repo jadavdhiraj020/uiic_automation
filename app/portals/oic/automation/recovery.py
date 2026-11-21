@@ -285,8 +285,12 @@ class OperatorRecovery:
                 detail = "Chrome is showing a different claim."
                 guidance = "Open the original claim and step in Chrome, then click Continue."
             elif state == "field_pending":
-                detail = "The field is still empty or invalid."
-                guidance = "Correct it in Chrome, then click Continue. You can also skip this field."
+                if confirmation_button:
+                    detail = "App3 could not verify that this action is complete in Chrome."
+                    guidance = instruction or "Complete this action in Chrome, then click Continue."
+                else:
+                    detail = "The field is still empty or invalid."
+                    guidance = "Correct it in Chrome, then click Continue. You can also skip this field."
             else:
                 detail = f"App3 needs the original {portal} step to finish the remaining fields."
                 guidance = "Return to the original step in Chrome, close any portal messages, then click Continue."
