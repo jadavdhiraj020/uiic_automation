@@ -1298,7 +1298,8 @@ class ClaimData:
     def _preview_newindia(self) -> List[Tuple[str, str, bool, str]]:
         """New India preview — organized by form sections."""
         from app.portals.newindia.field_values import (
-            configured_pre_accident_condition, reinspection_document, workshop_gst_registered,
+            configured_pre_accident_condition, configured_quick_update_remarks, reinspection_document,
+            workshop_gst_registered,
         )
         from app.utils import load_automation_defaults
 
@@ -1337,6 +1338,7 @@ class ClaimData:
             ("Date of Survey",        self.date_of_survey,           True,  _src("date_of_survey")),
             ("Time of Survey",        self.time_of_survey,           True,  _src("time_of_survey")),
             ("Place of Survey",       self.place_of_survey,          True,  _src("place_of_survey")),
+            ("Remarks",               configured_quick_update_remarks(defaults), True, settings),
             ("Mobile No",             self.mobile_no,                True,  _src("mobile_no")),
             ("Email ID",              self.email_id,                 True,  _src("email_id")),
 
@@ -1394,7 +1396,6 @@ class ClaimData:
             ("Police Station",        self.police_station_name,      False, _src("police_station_name")),
             ("Informant Name",        self.name_of_informant,        False, _src("name_of_informant")),
             ("Sections of Law",       self.sections_of_law,          False, _src("sections_of_law")),
-            ("Remarks",               self.remarks,                  False, _src("remarks")),
             ("Driver Without License?", defaults.get("driver_without_license") or "No", True, settings),
             ("Previous Police Records?",self.any_previous_police_records, False, _src("any_previous_police_records")),
             ("Any TP Claim?",         self.is_there_any_tp_claim or (defaults.get("is_there_any_tp_claim") or "No"), True, _src("is_there_any_tp_claim") if self.is_there_any_tp_claim else settings),

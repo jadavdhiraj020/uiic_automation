@@ -3,12 +3,12 @@ from contextlib import contextmanager
 from typing import Callable
 from playwright.async_api import Page
 from app.portals.newindia.automation.ui_utils import (
-    fill_input_with_delay, click_radio_with_delay
+    click_radio_with_delay, fill_input_with_delay, format_date_ddmmyyyy,
 )
 from app.portals.newindia.automation.recovery import current_recovery
 from app.automation.automation_logger import AutomationLogger
 from app.data.data_model import clean_mobile_number
-from app.portals.newindia.field_values import parse_survey_time
+from app.portals.newindia.field_values import configured_quick_update_remarks, parse_survey_time
 from app.utils import load_automation_defaults
 
 # ── JavaScript helpers ────────────────────────────────────────────────────────
@@ -91,17 +91,16 @@ async def fill_quick_update_details(
     if stop_cb():
         return False
 
-    date_of_survey = str(getattr(claim_data, "date_of_survey", "") or "").strip()
+    date_of_survey = format_date_ddmmyyyy(getattr(claim_data, "date_of_survey", ""))
     if date_of_survey:
         with _review_field_failure(log, "Date of Survey"):
             options = await _radio_options(form, "dateOfSurveyRadio")
             option = next((item for item in options if item["value"] == date_of_survey), None)
-            if option:
-                await click_radio_with_delay(page, option["name"], date_of_survey, "Date of Survey",
-                                             log, field_delay_ms, source="Excel", scope=form)
-            else:
-                await click_radio_with_delay(page, "dateOfSurveyRadio", "Others", "Date of Survey (Others)",
-                                             log, field_delay_ms, source="Default", scope=form)
+            if option is None:
+                option = next(item for item in options if item["value"] == "Others")
+            await click_radio_with_delay(page, option["name"], option["value"], "Date of Survey",
+                                         log, field_delay_ms, source="Excel", scope=form)
+            if option["value"] == "Others":
                 await asyncio.sleep(0.8)
                 await fill_text('input[name="dateOfSurvey"]', date_of_survey, "Date of Survey")
     elif isinstance(log, AutomationLogger):
@@ -131,23 +130,18 @@ async def fill_quick_update_details(
     if stop_cb():
         return False
 
-    await fill_text('textarea[name="placeOfSurvey"]', getattr(claim_data, "place_of_survey", ""),
-                    "Place of Survey", only_if_shown=True)
-    await asyncio.sleep(0.4)
-
-    cashless = str(defaults.get("allow_cashless_claim", "Yes")).strip().casefold()
     bool_fields = [
-        ("radioDataCompleted", "Survey Completed", "Y"),
-        ("radioDrivingLicenseApplicable", "DL Applicable", "Y"),
-        ("radioDrivingLicense", "Driving License verified with original", "Y"),
-        ("radioRCbook", "RC Book verified with original", "Y"),
-        ("radioDrivingLicensePar", "Driving License verified through Parivahan", "Y"),
-        ("radioRCbookPar", "RC Book verified through Parivahan", "Y"),
-        ("isCloseProximityBreakIn", "Close Proximity / Break-In", "Y"),
-        ("inspectionReportUploaded", "Inspection Report Uploaded", "Y"),
-        ("radioAllowCashless", "Allow Cashless Claim", {"yes": "Y", "no": "N"}.get(cashless)),
+        ("radioDataCompleted", "Survey Completed", "survey_completed", "Yes"),
+        ("radioDrivingLicenseApplicable", "DL Applicable", None, "Yes"),
+        ("radioDrivingLicense", "Driving License verified with original", "dl_verified_with_original", "Yes"),
+        ("radioRCbook", "RC Book verified with original", "rc_verified_with_original", "Yes"),
+        ("radioDrivingLicensePar", "Driving License verified through Parivahan", "dl_verified_via_parivahan", "Yes"),
+        ("radioRCbookPar", "RC Book verified through Parivahan", "rc_verified_via_parivahan", "Yes"),
+        ("isCloseProximityBreakIn", "Close Proximity / Break-In", "close_proximity_break_in", "No"),
+        ("inspectionReportUploaded", "Inspection Report Uploaded", None, "Yes"),
+        ("radioAllowCashless", "Allow Cashless Claim", "allow_cashless_claim", "Yes"),
     ]
-    for group, label, value in bool_fields:
+    for group, label, setting, default_answer in bool_fields:
         if stop_cb():
             return False
         if group == "inspectionReportUploaded":
@@ -155,8 +149,10 @@ async def fill_quick_update_details(
         with _review_field_failure(log, label):
             options = await _radio_options(form, group)
             names = {item["name"] for item in options}
+            answer = defaults.get(setting, default_answer) if setting else default_answer
+            value = {"yes": "Y", "no": "N"}.get(str(answer).strip().casefold())
             if len(names) == 1 and value is not None:
-                source = "Automation Defaults" if group == "radioAllowCashless" else "Default"
+                source = "Automation Defaults" if setting else "Default"
                 await click_radio_with_delay(page, names.pop(), value, label, log, field_delay_ms,
                                              source=source, scope=form)
             elif names:
@@ -172,9 +168,8 @@ async def fill_quick_update_details(
     if stop_cb():
         return False
 
-    remarks = getattr(claim_data, "remarks", "") or getattr(claim_data, "surveyor_observation", "")
-    await fill_text('textarea[name="remarks"]', remarks or str(defaults.get("remarks_default") or "Ok"),
-                    "Remarks", source="Excel" if remarks else "Default")
+    await fill_text('textarea[name="remarks"]', configured_quick_update_remarks(defaults),
+                    "Remarks", source="Automation Defaults")
     await asyncio.sleep(0.4)
     if stop_cb():
         return False
@@ -198,6 +193,9 @@ async def fill_quick_update_details(
     await asyncio.sleep(0.4)
     if stop_cb():
         return False
+
+    await fill_text('textarea[name="placeOfSurvey"]', getattr(claim_data, "place_of_survey", ""),
+                    "Place of Survey", only_if_shown=True)
 
     if isinstance(log, AutomationLogger):
         log.outdent()

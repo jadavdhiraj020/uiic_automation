@@ -73,6 +73,11 @@ def configured_pre_accident_condition(defaults):
     return str(defaults.get("pre_accident_condition") or "").strip() or "always good"
 
 
+def configured_quick_update_remarks(defaults):
+    """Get the Remarks text shown in review and entered on Quick Update."""
+    return str(defaults.get("remarks_default") or "").strip() or "Yes"
+
+
 def normalize_vehicle_color(value):
     """Trim whitespace and cap New India Vehicle Color* to 9 characters."""
     if value is None:

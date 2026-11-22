@@ -138,25 +138,27 @@ Before NEFT Details and Claim Assessment, App3 waits for the cheque and invoice 
 
 ## 5. Quick Update
 
-| Field                             | Method              | How the value is decided                                                                                                                                        | If missing                       |
-| --------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
-| **Date of Survey**          | ðŸ”§ Cleaned    | DD/MM/YYYY. If the portal lists the same date as a choice, App3 picks it. Otherwise it picks "Others" and types the date.                                       | Left empty                       |
-| **Time of Survey**          | ðŸ”§ Cleaned    | 24-hour HH:MM. Looked for in the survey date cell (for example "27/04/2023 11:30 AM"), then the cells next to it, then a "Time" label. "4:15 PM" becomes 16:15. | Excel: "11:00". PDF: left empty. |
-| **Place of Survey**         | ðŸ“„ Direct     | From "Place of Survey" (Excel can fall back to "Address").                                                                                                      | Left empty                       |
-| Survey Completed                  | ðŸ”’ Fixed      | YES                                                                                                                                                             |                                  |
-| Driving Licence Applicable        | ðŸ”’ Fixed      | YES                                                                                                                                                             |                                  |
-| DL Verified with Original         | ðŸ”’ Fixed      | YES                                                                                                                                                             |                                  |
-| RC Verified with Original         | ðŸ”’ Fixed      | YES                                                                                                                                                             |                                  |
-| DL Verified on Parivahan          | ðŸ”’ Fixed      | YES                                                                                                                                                             |                                  |
-| RC Verified on Parivahan          | ðŸ”’ Fixed      | YES                                                                                                                                                             |                                  |
-| Close Proximity / Break-In        | ðŸ”’ Fixed      | YES                                                                                                                                                             |                                  |
-| Inspection Report Uploaded        | ðŸ”’ Fixed      | YES                                                                                                                                                             |                                  |
-| **Remarks**                 | ðŸ“„ Direct     | From "Remarks" or "Surveyor observation".                                                                                                                       | "Ok" (setting)                   |
-| **Mobile No**               | ðŸ”§ Cleaned    | 10 digits only. When the cell has more digits, App3 takes the 10-digit number starting with 5 to 9.                                                             | Left empty                       |
-| **Email ID**                | ðŸ“„ Direct     | Excel: the first email ending in ".com" on the first sheet, checking cell I4 first, then the email labels.                                                      | Left empty                       |
-| **Expected Date of Repair** | ðŸ§® Calculated | Same date as the Date of Survey.                                                                                                                                | Left empty                       |
+| Order | Portal field | Source and entry rule |
+| --- | --- | --- |
+| 1 | Date of Survey | Excel or PDF. App3 formats the date as DD/MM/YYYY and selects the matching preset. For example, 3/11/2026 selects the 03/11/2026 radio. If the date is outside the three choices, App3 selects **Others** and enters the date. |
+| 2 | Time of Survey | Extracted from the report. App3 writes HH:MM or HH:MM:SS according to the portal control. For example, 4:15 PM becomes 16:15 or 16:15:00. The existing Excel fallback is 11:00. |
+| 3 | Survey Completed | Automation Defaults, shipped **Yes**. With **No**, New India requires a Reason. App3 leaves the Reason for the operator and includes it in page review if the portal requires it and it is blank. |
+| 4 | DL Applicable | Selects **Yes** when this control is shown. It can reveal the driver's licence verification fields. |
+| 5 | Driving License verified with original | Automation Defaults, shipped **Yes**. |
+| 6 | RC Book verified with original | Automation Defaults, shipped **Yes**. |
+| 7 | Driving License verified through Parivahan | Automation Defaults, shipped **Yes**. |
+| 8 | RC Book verified through Parivahan | Automation Defaults, shipped **Yes**. |
+| 9 | Close Proximity / Break-In | Automation Defaults, shipped **No**. When the portal shows **Inspection Report Uploaded**, App3 selects **Yes** as before. |
+| 10 | Allow Cashless Claim | Automation Defaults, shipped **Yes**. |
+| 11 | Remarks | Uses **Remarks Default**, shipped text **Yes**. Extraction Review shows the same configured text. |
+| 12 | Mobile No of the Claimant | Uses the extracted 10-digit mobile number, if available. |
+| 13 | Email ID of the Claimant | Uses the extracted email, if available. |
+| 14 | Expected date of completion of repair | Uses the formatted Date of Survey, if available. |
+| 15 | Place of Survey | If shown, uses the extracted Place of Survey. Excel can fall back to Address. |
 
-The YES answers are only clicked when the portal does not already show YES.
+App3 keeps a radio already set to the configured answer. It continues filling the page when a field is missing or rejected. The existing Vehicle Photo Graph phase runs where shown, then App3 reviews unresolved issues together at **Next** before moving to **Additional Details**.
+
+[Quick Update entry](../app/portals/newindia/automation/quick_update_module.py) · [Shipped defaults](../app/portals/newindia/config/automation_defaults.json) · [Next and page review](../app/portals/newindia/automation/vehicle_photo_module.py)
 
 ---
 
@@ -417,11 +419,16 @@ By default, New India's **Logs** tab shows a compact icon-led stream: folder rea
 
 Under **Settings → Field Mapping**, New India shows **Delivery Order Date (Optional)** and **Delivery Order Time (Optional)**. When blank, both also show **OPTIONAL** in Extraction Review.
 
-These are in App3 Settings â†’ Automation Defaults for New India.
+These settings are under **Settings → Automation Defaults** for New India.
 
 | Setting                    | Default    | Affects                                                         |
 | -------------------------- | ---------- | --------------------------------------------------------------- |
-| Remarks                    | Ok         | Quick Update Remarks                                            |
+| Survey Completed           | Yes        | Quick Update, with a Reason required when set to No              |
+| DL / RC verified with original | Yes   | Quick Update, separate Yes/No settings for DL and RC             |
+| DL / RC verified through Parivahan | Yes | Quick Update, separate Yes/No settings for DL and RC             |
+| Close Proximity / Break-In | No         | Quick Update                                                    |
+| Allow Cashless Claim       | Yes        | Quick Update                                                    |
+| Remarks Default            | Yes        | Quick Update Remarks text                                       |
 | Missing text               | NA         | FIR Number, Police Station, Charged U/S MV Act, Charged U/S IPC |
 | Photo charges              | 200        | Survey Fee Bill Photos Amount                                   |
 | Assessment parts HSN code  | 8512       | Built assessment sheet, spare parts                             |
@@ -435,6 +442,8 @@ These are in App3 Settings â†’ Automation Defaults for New India.
 | Re-inspection required     | No         | Claim Assessment                                                |
 | Field wait                 | 600 ms     | Pause after each field                                          |
 | Manual login wait          | 45 seconds | Login                                                           |
+
+Saved workspace values take priority over the shipped defaults above. For example, a workspace that already saved Remarks Default as "Ok" keeps that text until you change it.
 
 Two settings are **not used** on New India today: **Observation default** (Remarks uses the Remarks setting) and **Table end words** (the sheet builder always stops at "sub total"). The 11:00 survey time is built in and has no New India setting.
 
@@ -450,7 +459,7 @@ These are not errors in App3's working. They are rules that may differ from what
 | 2  | Light goods vehicles                       | Any vehicle of 3,000 kg or less is marked Passenger Carrying (C), whatever the report says.                                                                                                                             |
 | 3  | Excess amounts                             | Compulsory, Voluntary and Imposed Excess are read but never entered.                                                                                                                                                    |
 | 4  | Vehicle Make and Primary Assessment amount | Both must be found before the run starts, but neither is typed on the portal.                                                                                                                                           |
-| 5  | Fixed answers                              | Vehicle parked = No, Vehicle details matching policy = Yes, Licence valid = Yes, Physically Verified ticked, and all eight Quick Update answers (including Close Proximity / Break-In) = YES, whatever the report says. |
+| 5  | Fixed answers | Quick Update uses editable defaults for Survey Completed, the four DL/RC verification answers, Close Proximity / Break-In, and Allow Cashless Claim. DL Applicable and Inspection Report Uploaded select Yes when shown. Vehicle parked still selects No, licence valid selects Yes, and Physically Verified is ticked. |
 | 6  | Work Approval Document                     | The invoice PDF goes in this slot, even when the folder has a cashless or non-cashless approval letter.                                                                                                                 |
 | 7  | Approval letter and cheque                 | Neither is uploaded anywhere: both are kept out of Claim Related Documents.                                                                                                                                             |
 | 8  | Dealer Name                                | Filled with the Registered Owner Name, not the workshop or dealer.                                                                                                                                                      |
@@ -555,7 +564,7 @@ Labels are tried left to right on every sheet. The value is the first real entry
 | Date of Survey                  | date of survey Â· date of servey Â· Date and Time of Survey Â· Survey Date                                                                                           |               |
 | Time of Survey                  | Time Â· time of survey Â· Survey Time Â· time of servey                                                                                                              | 11:00         |
 | Place of Survey                 | place of survey Â· place of servey Â· address                                                                                                                          |               |
-| Remarks                         | remarks Â· Remark Â· surveyor observation Â· OBERVATIONS/COMMENTS                                                                                                    | Ok            |
+| Remarks | Report labels remain available to extraction. Quick Update and Extraction Review use **Remarks Default** in Automation Defaults. | Yes (shipped) |
 | Mobile No                       | mobile no Â· mobile Â· Mobile: Â· surveyor_mobile                                                                                                                    |               |
 | Email ID                        | (first ".com" email, cell I4 first) Â· email id Â· email Â· e-mail:- Â· surveyor_email                                                                             |               |
 | Professional Fee                | professional fee Â· professional fees Â· survey fee Â· survey fees Â· Prof. Fee Â· Prof. Fees                                                                    |               |
