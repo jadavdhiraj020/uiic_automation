@@ -556,26 +556,38 @@ class ClaimData:
 
         portal_id = _get_active_portal_id(self.portal_id)
         if portal_id == "newindia":
-            # 3. Calculate Type of Vehicle based on Registered Laden Weight
-            weight_str = self.registered_laden_weight or ""
-            # Clean string: strip spaces, remove case-insensitive "kg", "kilogram", "kilograms"
-            cleaned = re.sub(r'(?i)\bkg\b|\bkilograms?\b|\s', '', weight_str).strip()
-            # Find any integer number in the cleaned string
-            match = re.search(r'\d+', cleaned)
-            if match:
-                try:
-                    weight_val = int(match.group(0))
-                    if weight_val > 3000:
-                        self.type_of_vehicle = "Goods Carrying (A)"
-                    else:
-                        self.type_of_vehicle = "Passenger Carrying (C)"
-                    self._excel_coords["type_of_vehicle"] = "Derived from Registered Laden Weight"
-                    self._excel_logs.append(f"  📊 type_of_vehicle: '{self.type_of_vehicle}' (Derived from Registered Laden Weight '{weight_str}')")
-                except Exception as exc:
-                    logger.warning("Failed to parse weight value %r: %s", weight_str, exc)
-            else:
-                if weight_str:
-                    logger.warning("No numeric digits found in Registered Laden Weight: %r", weight_str)
+            from app.portals.newindia.field_values import (
+                normalize_driver_license_number,
+                normalize_vehicle_color,
+                parse_survey_time,
+                resolve_newindia_license_type,
+                resolve_newindia_vehicle_type,
+            )
+
+            # 3. Map Type of Vehicle from Class of Vehicle, else derive from Registered Laden Weight
+            mapped_vehicle, vehicle_source = resolve_newindia_vehicle_type(
+                self.class_of_vehicle,
+                self.registered_laden_weight,
+                self.type_of_vehicle,
+            )
+            if mapped_vehicle:
+                self.type_of_vehicle = mapped_vehicle
+                if vehicle_source:
+                    self._excel_coords["type_of_vehicle"] = vehicle_source
+                    self._excel_logs.append(f"  📊 type_of_vehicle: '{self.type_of_vehicle}' ({vehicle_source})")
+            elif self.registered_laden_weight:
+                logger.warning("No numeric digits found in Registered Laden Weight: %r", self.registered_laden_weight)
+
+            # 3b. Map License Type of Driver from Class of Vehicle (with Excel fallback)
+            mapped_license, license_source = resolve_newindia_license_type(
+                self.class_of_vehicle,
+                self.license_type_of_driver,
+            )
+            if mapped_license:
+                self.license_type_of_driver = mapped_license
+                if license_source:
+                    self._excel_coords["license_type_of_driver"] = license_source
+                    self._excel_logs.append(f"  📊 license_type_of_driver: '{self.license_type_of_driver}' ({license_source})")
 
             # 4. Calculate Age of Driver based on dob_of_driver
             if self.dob_of_driver:
@@ -605,12 +617,6 @@ class ClaimData:
                             self._excel_logs.append(f"  📊 age_of_driver: '{self.age_of_driver}' (Derived from DOB '{dob_str}')")
                 except Exception as exc:
                     logger.warning("Failed to calculate age_of_driver from DOB %s: %s", self.dob_of_driver, exc)
-
-            from app.portals.newindia.field_values import (
-                normalize_driver_license_number,
-                normalize_vehicle_color,
-                parse_survey_time,
-            )
 
             raw_time = self.time_of_survey or self.time_hh
             if not self.time_of_survey and self.time_hh and self.time_mm:

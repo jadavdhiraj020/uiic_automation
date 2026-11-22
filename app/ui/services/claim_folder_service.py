@@ -43,6 +43,12 @@ class ScanRunContext:
     automation_defaults_paths: dict
 
 
+def _newindia_primary_workbook_error(exc):
+    if isinstance(exc, PermissionError):
+        return "Close auto_primary_assessment.xlsx if it is open in Excel, then rescan the claim folder."
+    return f"Primary Assessment workbook could not be prepared: {exc}"
+
+
 def _run_background_document_generation(
     portal_id: str,
     scan_result: object,
@@ -110,32 +116,31 @@ def _run_background_document_generation(
                 warn(f"Printable Excel/PDF generation failed: {print_exc}")
 
 
-    # Generated assessments are selected only from the current run.
+    # Only a workbook prepared by this scan is eligible for Assessment Upload.
     if portal_id == "newindia" and scan_result.excel_path and not is_cancelled():
         from app.data.assessment_generator import generate_primary_assessment_result
-        from app.portals.newindia.scan_outputs import is_scan_output
 
-        assessment_path = claim.assessment_files.get("assessment_excel")
-        if assessment_path and is_scan_output(assessment_path, portal_defaults or {}):
-            claim.assessment_files.pop("assessment_excel")
-        if "assessment_excel" not in claim.assessment_files:
-            output_dir = Path(scan_result.excel_path).parent
-            try:
-                existing = {os.path.normcase(str(path.absolute())) for path in output_dir.iterdir()}
-                generation = generate_primary_assessment_result(
-                    scan_result.excel_path, str(output_dir), stop_cb=is_cancelled,
-                )
-                for path in generation.generated_files:
-                    if os.path.isfile(path) and os.path.normcase(os.path.abspath(path)) not in existing:
-                        if path not in scan_result.generated_files:
-                            scan_result.generated_files.append(path)
-                if generation.output_path and not is_cancelled():
-                    claim.assessment_files["assessment_excel"] = generation.output_path
-                    bg_logger.info(f"Primary assessment refreshed: {Path(generation.output_path).name}")
-                elif not is_cancelled():
-                    warn(generation.message)
-            except Exception as exc:
-                warn(f"Primary assessment Excel skipped: {exc}")
+        claim.assessment_files.pop("assessment_excel", None)
+        output_dir = Path(scan_result.excel_path).parent
+        try:
+            existing = {os.path.normcase(str(path.absolute())) for path in output_dir.iterdir()}
+            generation = generate_primary_assessment_result(
+                scan_result.excel_path, str(output_dir), stop_cb=is_cancelled,
+            )
+            for path in generation.generated_files:
+                if os.path.isfile(path) and os.path.normcase(os.path.abspath(path)) not in existing:
+                    if path not in scan_result.generated_files:
+                        scan_result.generated_files.append(path)
+            if generation.output_path and not is_cancelled():
+                claim.assessment_files["assessment_excel"] = generation.output_path
+                claim._newindia_primary_assessment_error = ""
+                bg_logger.info(f"Primary assessment refreshed: {Path(generation.output_path).name}")
+            elif not is_cancelled():
+                claim._newindia_primary_assessment_error = generation.message
+                warn(generation.message)
+        except Exception as exc:
+            claim._newindia_primary_assessment_error = _newindia_primary_workbook_error(exc)
+            warn(claim._newindia_primary_assessment_error)
 
     if is_cancelled():
         bg_logger.info("Background document generation thread cancelled before completion.")
@@ -438,6 +443,8 @@ class ClaimFolderService:
             claim._scan_context = scan_context
             claim.claim_doc_files = scan_result.claim_doc_files
             claim.assessment_files = scan_result.assessment_files
+            if self.portal_id == "newindia":
+                claim.assessment_files.pop("assessment_excel", None)
             claim.upload_doc_files = scan_result.upload_doc_files
             claim._scan_result = scan_result
             claim.source_excel_path = scan_result.excel_path or ""
@@ -458,53 +465,51 @@ class ClaimFolderService:
             if self.portal_id == "newindia" and source_ext == ".pdf":
                 from app.data.assessment_generator import generate_primary_assessment_from_pdf_result
                 from app.portals.newindia.pdf_report import supplement_newindia_pdf_fees
-                from app.portals.newindia.scan_outputs import is_scan_output
 
                 supplement_newindia_pdf_fees(claim, folder, stop_cb=stop_cb)
                 if stop_cb and stop_cb():
                     return _cancel_after_service_generation("after_newindia_pdf_fees")
 
-                assessment_path = claim.assessment_files.get("assessment_excel")
-                if assessment_path and is_scan_output(assessment_path, _portal_defaults or {}):
-                    claim.assessment_files.pop("assessment_excel")
-
-                if "assessment_excel" not in claim.assessment_files:
-                    parts_rows, labour_rows = getattr(claim, "_newindia_pdf_assessment", ([], []))
-                    item_sources = getattr(claim, "_newindia_pdf_assessment_sources", {}) or {}
-                    assessment_err = str(getattr(claim, "_newindia_pdf_assessment_error", "") or "").strip()
-                    review_errors = [assessment_err] if assessment_err else []
-                    try:
-                        existing = {os.path.normcase(str(path.absolute())) for path in Path(folder).iterdir()}
-                    except OSError:
-                        existing = set()
-                    try:
-                        generation = generate_primary_assessment_from_pdf_result(
-                            parts_rows,
-                            labour_rows,
-                            report_source,
-                            folder,
-                            item_sources=item_sources,
-                            review_errors=review_errors,
-                            stop_cb=stop_cb,
+                claim.assessment_files.pop("assessment_excel", None)
+                parts_rows, labour_rows = getattr(claim, "_newindia_pdf_assessment", ([], []))
+                item_sources = getattr(claim, "_newindia_pdf_assessment_sources", {}) or {}
+                assessment_err = str(getattr(claim, "_newindia_pdf_assessment_error", "") or "").strip()
+                review_errors = [assessment_err] if assessment_err else []
+                try:
+                    existing = {os.path.normcase(str(path.absolute())) for path in Path(folder).iterdir()}
+                except OSError:
+                    existing = set()
+                try:
+                    generation = generate_primary_assessment_from_pdf_result(
+                        parts_rows,
+                        labour_rows,
+                        report_source,
+                        folder,
+                        item_sources=item_sources,
+                        review_errors=review_errors,
+                        stop_cb=stop_cb,
+                    )
+                    for path in generation.generated_files:
+                        if os.path.isfile(path) and os.path.normcase(os.path.abspath(path)) not in existing:
+                            _mark_generated_file(path)
+                    if generation.output_path:
+                        claim.assessment_files["assessment_excel"] = generation.output_path
+                        claim._newindia_primary_assessment_error = ""
+                        claim._newindia_pdf_assessment_error = ""
+                        logs.append(
+                            f"Primary assessment generated from PDF: {Path(generation.output_path).name} "
+                            f"({len(parts_rows)} parts, {len(labour_rows)} labour)"
                         )
-                        for path in generation.generated_files:
-                            if os.path.isfile(path) and os.path.normcase(os.path.abspath(path)) not in existing:
-                                _mark_generated_file(path)
-                        if generation.output_path:
-                            claim.assessment_files["assessment_excel"] = generation.output_path
-                            claim._newindia_pdf_assessment_error = ""
-                            logs.append(
-                                f"Primary assessment generated from PDF: {Path(generation.output_path).name} "
-                                f"({len(parts_rows)} parts, {len(labour_rows)} labour)"
-                            )
-                        else:
-                            if not getattr(claim, "_newindia_pdf_assessment_error", ""):
-                                claim._newindia_pdf_assessment_error = generation.message
-                            logs.append(f"Warning: {generation.message}")
-                    except Exception as exc:
+                    else:
                         if not getattr(claim, "_newindia_pdf_assessment_error", ""):
-                            claim._newindia_pdf_assessment_error = str(exc)
-                        logs.append(f"Warning: Primary assessment Excel from PDF skipped: {exc}")
+                            claim._newindia_pdf_assessment_error = generation.message
+                        claim._newindia_primary_assessment_error = generation.message
+                    logs.append(f"Warning: {generation.message}")
+                except Exception as exc:
+                    claim._newindia_primary_assessment_error = _newindia_primary_workbook_error(exc)
+                    if not getattr(claim, "_newindia_pdf_assessment_error", ""):
+                        claim._newindia_pdf_assessment_error = str(exc)
+                    logs.append(f"Warning: {claim._newindia_primary_assessment_error}")
 
                 logs.extend(f"New India PDF review: {issue}" for issue in getattr(claim, "_newindia_pdf_review_errors", ()))
                 logs.extend(f"Warning: {issue}" for issue in getattr(claim, "_newindia_pdf_review_warnings", ()))

@@ -1,7 +1,13 @@
+import asyncio
 import re
 from playwright.async_api import Page
 from app.data.data_model import ClaimData
-from app.portals.newindia.field_values import configured_pre_accident_condition, normalize_vehicle_color
+from app.portals.newindia.field_values import (
+    DEFAULT_TYPE_OF_BODY,
+    configured_pre_accident_condition,
+    normalize_vehicle_color,
+    resolve_newindia_vehicle_type,
+)
 from app.portals.newindia.automation.ui_utils import (
     CHANNEL_MARUTI,
     check_checkbox_with_delay, fill_input_with_delay, select_dropdown_with_delay, format_date_ddmmyyyy,
@@ -18,6 +24,8 @@ async def _select_with_fallback(
     label: str,
     log,
     field_delay_ms: int,
+    *,
+    source: str = "Excel",
 ) -> None:
     """Select a dropdown value using the primary selector or an Angular ng-model fallback."""
     try:
@@ -30,10 +38,10 @@ async def _select_with_fallback(
 
         sel_to_use = primary_selector
         try:
-            await page.wait_for_selector(primary_selector, state="visible", timeout=4000)
+            await page.locator(f":is({primary_selector}):visible").first.wait_for(state="visible", timeout=4000)
         except Exception:
             try:
-                await page.wait_for_selector(fallback_selector, state="visible", timeout=4000)
+                await page.locator(f":is({fallback_selector}):visible").first.wait_for(state="visible", timeout=4000)
                 sel_to_use = fallback_selector
                 if isinstance(log, AutomationLogger):
                     log.info(f"Using ng-model fallback for {label}.")
@@ -42,7 +50,7 @@ async def _select_with_fallback(
             except Exception:
                 sel_to_use = primary_selector
 
-        await select_dropdown_with_delay(page, sel_to_use, value, label, log, field_delay_ms, source="Excel")
+        await select_dropdown_with_delay(page, sel_to_use, value, label, log, field_delay_ms, source=source)
     except Exception:
         record_additional_issue(log, label)
 
@@ -103,20 +111,71 @@ async def _fill_optional_rc_field(
         record_additional_issue(log, label)
 
 
+_JS_INSPECT_BODY_DROPDOWN = r"""
+(select, [rawVal, fallbackVal]) => {
+    if (!select) return { disabled: false, currentValue: '', optionCount: 0, rawMatched: false, fallbackMatched: false };
+    const options = [...select.options].filter(option => option.value && !option.disabled);
+    const label = option => option.text.trim().toLowerCase();
+    const hasUniqueMatch = (txt) => {
+        const search = String(txt || '').trim().toLowerCase();
+        if (!search) return false;
+        const words = search.split(/\s+/).filter(word => word.length > 2);
+        const matches = options.filter(option => label(option) === search);
+        if (!matches.length) {
+            matches.push(...options.filter(option => label(option) && (label(option).includes(search) || search.includes(label(option)))));
+        }
+        if (!matches.length && words.length) {
+            matches.push(...options.filter(option => words.some(word => label(option).includes(word))));
+        }
+        return matches.length === 1;
+    };
+    const fb = String(fallbackVal || '').trim().toLowerCase();
+    let fallbackMatched = false;
+    if (fb) {
+        const exactFb = options.filter(option => label(option) === fb);
+        if (exactFb.length === 1) {
+            fallbackMatched = true;
+        } else {
+            const subFb = options.filter(option => label(option) && (label(option).includes(fb) || fb.includes(label(option))));
+            fallbackMatched = subFb.length === 1;
+        }
+    }
+    return {
+        disabled: Boolean(select.disabled),
+        currentValue: String(select.value || ''),
+        optionCount: options.length,
+        rawMatched: Boolean(rawVal && hasUniqueMatch(rawVal)),
+        fallbackMatched,
+    };
+}
+"""
+
+
 async def _fill_type_of_vehicle(
     page: Page,
     data: ClaimData,
     log,
     field_delay_ms: int,
 ) -> None:
+    val = str(getattr(data, "type_of_vehicle", "") or "").strip()
+    derived_inline = False
+    if not val:
+        val, inline_src = resolve_newindia_vehicle_type(
+            getattr(data, "class_of_vehicle", ""),
+            getattr(data, "registered_laden_weight", ""),
+        )
+        derived_inline = bool(inline_src)
+    coord = str(getattr(data, "_excel_coords", {}).get("type_of_vehicle", "") or "")
+    source = "Calculated" if (derived_inline or coord.startswith(("Mapped", "Derived"))) else "Excel"
     await _select_with_fallback(
         page,
         'select[name="Type of Vehicle"]',
         'select[data-ng-model*="typeOfVehicle"], select[ng-model*="typeOfVehicle"]',
-        data.type_of_vehicle,
+        val,
         "Type of Vehicle",
         log,
         field_delay_ms,
+        source=source,
     )
 
 
@@ -135,14 +194,52 @@ async def _fill_type_of_body_if_visible(
         if isinstance(log, AutomationLogger):
             log.field_skipped("Type of Body", reason="Not shown on this claim")
         return
+
+    raw_body = str(getattr(data, "type_of_body", "") or "").strip()
+    info = None
+    for step in range(4):
+        try:
+            info = await body_loc.first.evaluate(_JS_INSPECT_BODY_DROPDOWN, [raw_body, DEFAULT_TYPE_OF_BODY])
+        except Exception:
+            info = None
+            break
+        if info and info.get("optionCount", 0) > 0:
+            break
+        if step < 3:
+            await asyncio.sleep(0.15)
+
+    primary = 'select[name="Type of Body"]'
+    fallback = 'select[data-ng-model*="typeOfBody"], select[ng-model*="typeOfBody"]'
+
+    if info:
+        if info.get("disabled") and info.get("currentValue"):
+            if isinstance(log, AutomationLogger):
+                log.field_skipped("Type of Body", reason="Read-only on this claim")
+            return
+        if raw_body and info.get("rawMatched"):
+            await _select_with_fallback(
+                page, primary, fallback, raw_body, "Type of Body", log, field_delay_ms, source="Excel",
+            )
+            return
+        if info.get("fallbackMatched"):
+            msg = (
+                f"Type of Body '{raw_body}' not in dropdown — using '{DEFAULT_TYPE_OF_BODY}'."
+                if raw_body
+                else f"Type of Body blank — using '{DEFAULT_TYPE_OF_BODY}'."
+            )
+            if isinstance(log, AutomationLogger):
+                log.info(msg)
+            else:
+                log(f"   ℹ️ {msg}")
+            await _select_with_fallback(
+                page, primary, fallback, DEFAULT_TYPE_OF_BODY, "Type of Body", log, field_delay_ms, source="Fallback",
+            )
+            return
+
+    attempt = raw_body or DEFAULT_TYPE_OF_BODY
+    src = "Excel" if raw_body else "Fallback"
     await _select_with_fallback(
-        page,
-        'select[name="Type of Body"]',
-        'select[data-ng-model*="typeOfBody"], select[ng-model*="typeOfBody"]',
-        getattr(data, "type_of_body", ""),
-        "Type of Body",
-        log,
-        field_delay_ms,
+        page, primary, fallback, attempt, "Type of Body", log, field_delay_ms, source=src,
     )
 
 

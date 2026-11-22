@@ -89,7 +89,7 @@ All dates are entered on New India as **DD/MM/YYYY** (for example 15/01/2024), w
 | Cancelled Cheque               | NEFT Details (read only, never uploaded)                      | cancel_check, cancel_cheque, cancelled_cheque, cancelled, cheque, check, bank_detail, bank                                                                                  |
 | Work Approval Document         | Found, but not uploaded (see section 19)                      | cashless, caseless, non_cashless, non-cashless, noncashless, non cashless, non_caseless, non-caseless. If none is found, App3 copies the invoice as work_approval_fallback. |
 | Final invoice (PDF)            | Work Approval upload, Survey Fee Bill upload, invoice reading | final_invoice, invoice                                                                                                                                                      |
-| Primary assessment (Excel)     | Claim Assessment                                              | primary_assessment, primary assessment, assessment. If none, App3 builds one (section 12.3).                                                                                |
+| Primary assessment (Excel)     | Claim Assessment                                              | App3 prepares auto_primary_assessment.xlsx from the current scan (section 12.3).                                                                                |
 | Supplementary estimate (Excel) | Claim Assessment                                              | supplementary_estimate, supplementary estimate, estimate                                                                                                                    |
 | Driving Licence                | Document Upload                                               | dl, driving_license, driving_licence, driving license, driving licence, license                                                                                             |
 | Registration Certificate       | Document Upload                                               | rc, rc_book, registration_certificate, registration certificate, regn_cert                                                                                                  |
@@ -187,12 +187,12 @@ Fields are filled in each channel's top-to-bottom portal order (`Reference No` o
 | Reference No                            | 📄 Direct      | From "Reference No."                                                                                                                                                                                                                                                                         | Left empty   |
 | **Registered Owner Name**         | 📄 Direct      |                                                                                                                                                                                                                                                                                              | Blocks start |
 | **Registration Number** (4 boxes) | 🔧 Cleaned     | Spaces and dashes removed, capitals. Split into state letters / district number / series letters / number. GJ-01-AB-1234 → GJ / 01 / AB / 1234. GJ011234 → GJ / 01 / (empty) / 1234. A number that does not follow this pattern (for example BH series 22BH1234AA) is not entered. | Blocks start |
-| **Type of Vehicle**               | 🧮 Calculated  | From Registered Laden Weight: **over 3,000 kg → Goods Carrying (A)**, 3,000 kg or less → Passenger Carrying (C). The report's own "Type of Vehicle" is used only when the weight has no number in it.                                                                        | Blocks start |
+| **Type of Vehicle**               | 🧮 Mapped / Weight  | Mapped from **Class of Vehicle** via [`resolve_newindia_vehicle_type`](../app/portals/newindia/field_values.py): `M/cycle / scooter / two wheeler` → **Standard Two Wheeler**, `LMV Goods / LMV Transport` → **Goods Carrying (A)**, `Car / jeep / LMV (non-transport) / private car / SUV` → **Private Car**. For other classes, falls back to Registered Laden Weight (commas stripped; **> 3,000 kg → Goods Carrying (A)**, **≤ 3,000 kg → Passenger Carrying (C)**), then the report's own "Type of Vehicle". | Blocks start |
 | **Registration Date**             | 🔧 Cleaned     | DD/MM/YYYY                                                                                                                                                                                                                                                                                   | Blocks start |
 | **Engine No**                     | 📄 Direct      |                                                                                                                                                                                                                                                                                              | Blocks start |
 | **Chassis No**                    | 📄 Direct      |                                                                                                                                                                                                                                                                                              | Blocks start |
 | Physically Verified                     | 🔒 Fixed       | Ticked.                                                                                                                                                                                                                                                                                      |              |
-| Type of Body                            | 🔍 Optional          | Filled automatically when New India shows the dropdown; skipped silently when hidden (for example on Maruti). App3 never blocks start if missing.                                                                            | Left empty   |
+| Type of Body                            | 🔍 Fallback    | When New India displays `#typeOfBody`, matches Excel's **Type of Body** first; if unmatched or blank, auto-selects **Saloon** when **Saloon** exists in that dropdown (pauses for review if not). Skipped silently when hidden on the portal (for example on Maruti). | **Saloon** (if shown & available) |
 | **Class of Vehicle**              | 📄 Direct      | Typed as written.                                                                                                                                                                                                                                                                            | Blocks start |
 | Pre-Accident Condition                  | 📄 Direct      |                                                                                                                                                                                                                                                                                              | "Good"       |
 | Registered Laden Weight / Unladen Weight / Fitness Cert & Permit fields | 📄 / 🔧 Optional | Filled when visible on the portal form (commercial / non-PC claims). Laden/Unladen Weight also used to calculate Type of Vehicle.                                                                                                                                    | Left empty   |
@@ -214,7 +214,7 @@ Fields are filled in each channel's top-to-bottom portal order (`Reference No` o
 | --------------------------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------- |
 | Was the vehicle parked during accident?                               | 🔒 Fixed      | Always "No". The report's answer is read but not used.                                                          |                  |
 | Relationship of the driver with the Insured                           | 🔍 Matched    | From the report.                                                                                                | "Self" (setting) |
-| Licence Type of Driver                                                | 🔍 Matched    | From the report.                                                                                                | Left empty       |
+| Licence Type of Driver                                                | 🧮 Mapped     | Always checks **Class of Vehicle** first via [`resolve_newindia_license_type`](../app/portals/newindia/field_values.py): `Heavy passenger / HPV` → **Heavy Passenger Motor vehicle**, `Heavy goods / HGV / Truck / Goods carrier / Trans / LMV Goods-Transport` (beats `LMV` when both appear) → **Heavy Goods vehicle**, `M/Cycle / scooter / two wheeler` → **Motor Cycle with Gear**, `Car / jeep / private car / LMV / light motor vehicle / SUV` → **Light Motor Vehicle**. Falls back to the report's **License Type** only for unlisted classes (e.g. Auto Rickshaw). | Excel value / empty |
 | **DOB of Driver**                                               | 🔧 Cleaned    | DD/MM/YYYY                                                                                                      | Blocks start     |
 | **Driver Name**                                                 | 📄 Direct     |                                                                                                                 | Blocks start     |
 | **Age of Driver**                                               | 🧮 Calculated | Completed years from the date of birth to the **day of the run**. Replaces any age written in the report. | Blocks start     |
@@ -235,46 +235,6 @@ Fields follow each channel's top-to-bottom order:
 
 | Field                           | Method         | How the value is decided                                       | If missing     |
 | ------------------------------- | -------------- | -------------------------------------------------------------- | -------------- |
-| Is there any TP claim?          | 🔧 Cleaned     | "Yes" only when the report says Yes. Anything else becomes No. | "No"           |
-| FIR Number                      | 📄 Direct      |                                                                | "NA" (setting) |
-| FIR Date                        | 🔧 Cleaned     | DD/MM/YYYY                                                     | Left empty     |
-| Police Station Name             | 📄 Direct      |                                                                | "NA" (setting) |
-| Charged U/S Motor Vehicle Act   | 📄 Direct      |                                                                | "NA" (setting) |
-| Charged U/S IPC                 | 📄 Direct      |                                                                | "NA" (setting) |
-| Whether driver without licence? | 🔧 Cleaned     | Same rule.                                                     | "No"           |
-| Any previous police records     | 🔧 Cleaned     | Same rule.                                                     | "No"           |
-| Name of Informant               | 🚫 Not entered | Read only.                                                     |                |
-| Sections of Law                 | 🚫 Not entered | Read only.                                                     |                |
-
-| Type of Body                    | Type of Body · Body Type                                                                                                                                                 |               |
-
----
-
-## 8. Driver Details
-
-| Field                                                                 | Method              | How the value is decided                                                                                        | If missing       |
-| --------------------------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------- |
-| Was the vehicle parked during accident?                               | 🔒 Fixed      | Always "No". The report's answer is read but not used.                                                          |                  |
-| Relationship of the driver with the Insured                           | 🔍 Matched    | From the report.                                                                                                | "Self" (setting) |
-| Licence Type of Driver                                                | 🔍 Matched    | From the report.                                                                                                | Left empty       |
-| **DOB of Driver**                                               | 🔧 Cleaned    | DD/MM/YYYY                                                                                                      | Blocks start     |
-| **Driver Name**                                                 | 📄 Direct     |                                                                                                                 | Blocks start     |
-| **Age of Driver**                                               | 🧮 Calculated | Completed years from the date of birth to the **day of the run**. Replaces any age written in the report. | Blocks start     |
-| Is the licence valid for the type of vehicle on the date of accident? | 🔒 Fixed      | Yes                                                                                                             |                  |
-| Licence Issuing Authority                                             | 📄 Direct     |                                                                                                                 | Left empty       |
-| **Driving Licence Number**                                      | 📄 Direct     | Typed as written.                                                                                               | Blocks start     |
-| **Licence Issue Date**                                          | 🔧 Cleaned    | DD/MM/YYYY                                                                                                      | Blocks start     |
-| **Licence Expiry Date**                                         | 🔧 Cleaned    | DD/MM/YYYY                                                                                                      | Blocks start     |
-| Badge No                                                              | 📄 Direct     |                                                                                                                 | Left empty       |
-
----
-
-## 9. FIR Details
-
-Fields are filled in top-to-bottom portal order (`Is there any TP claim?` first in Row 1 column 1, then `FIR Number` through `Any previous police records`).
-
-| Field                           | Method               | How the value is decided                                       | If missing     |
-| ------------------------------- | -------------------- | -------------------------------------------------------------- | -------------- |
 | Is there any TP claim?          | 🔧 Cleaned     | "Yes" only when the report says Yes. Anything else becomes No. | "No"           |
 | FIR Number                      | 📄 Direct      |                                                                | "NA" (setting) |
 | FIR Date                        | 🔧 Cleaned     | DD/MM/YYYY                                                     | Left empty     |
@@ -333,7 +293,7 @@ App3 supports two New India Claim Assessment layouts: the **Non-Tie-Up** layout 
 | **Vendor/Tax Invoice Number**                                          | 📄 Direct            | From the report, else from the invoice PDF.                                                                                                    | Blocks start unless the invoice can supply it |
 | Nil Depreciation (Yes / No)                                            | 📄 Direct            | When Nil Depreciation radios appear on the portal, reads strict `Yes` or `No` from Excel (never matches *Nil Depreciation Amount*).         | Shows warning in Extraction Review & pause card |
 | Is there any primary estimate                                          | 🔒 Fixed             | Non-Tie-Up only: Yes                                                                                                                           |                                               |
-| Primary assessment sheet                                               | 📎 File              | Non-Tie-Up only: The assessment Excel from the folder, or the one App3 builds (12.3). Then Upload is clicked.                                  | Skipped with a warning                        |
+| Primary assessment sheet                                               | 📎 File              | Non-Tie-Up only. App3 uploads the workbook prepared by the current scan (12.3).                                  | Skipped with a warning                        |
 | Is there any supplementary estimate                                    | 🧮 Calculated        | Non-Tie-Up only: Yes when an estimate Excel is in the folder, otherwise No. The report's answer is not used.                                   |                                               |
 | Supplementary estimate sheet                                           | 📎 File              | Non-Tie-Up only: Uploaded only when the answer above is Yes.                                                                                   |                                               |
 | Painting work details                                                  | 🔍 Matched           | Non-Tie-Up only: Text containing "break", "labour" or "labor" → Break-up. Containing "consol" → Consolidated. Otherwise as written.            | Left empty                                    |
@@ -361,14 +321,23 @@ When New India displays the **Maruti / Tie-Up** part-wise assessment layout (ide
 
 1. **Invoice & Nil Depreciation header:** Sets **Whether the Workshop is GST Registered** → **Whether Payment invoice is in the name of NIA** → **Vendor/Tax Invoice Date** → **Vendor/Tax Invoice Number** → **Nil Depreciation (`Yes` / `No`)** → clicks top **Save** (`saveDetailsMaruti()`) and closes any confirmation modal. If `nil_depreciation` was missing from Excel while the radio buttons are shown, App3 records a review notice instead of guessing.
 2. **Nested accordions:** Expands **Claim Version 1 (Primary Estimates)** → **Claim Version 1 : Subversion 1** → **Assessment 1 (Pending)** in order (leaving any already-open section untouched).
-3. **Part rows → `Not Allowed`:** Loops through every editable row shown under **Assessment 1 (Pending)** one by one and sets **Allowed Service type** (`select#sel1`) to **Not Allowed**.
-4. **Submit or Save as Draft:** Waits briefly for the row table's **Submit** button (`saveMarutiAssesment(3, ...)`) to become visible and enabled. If available, clicks **Submit** and closes any confirmation popup; otherwise falls back to clicking **Save as Draft** (`saveMarutiAssesment(1, ...)`) and closes any confirmation popup. Never clicks a generic `Save` button in this step.
-5. **Summary box & bottom Save:** Fills **Net Salvage** (if non-zero) → **Towing Charges** (if non-zero) → **Additional Towing Charges** (`0` setting) → **Recommendations** (`Approved` setting) → **Whether Re-Inspection Required?** → clicks the bottom **Save** button (`saveMarutiExtraDeatils(...)`) and closes any confirmation popup.
-6. **Next:** Runs checkpoint review (surfacing any unresolved items such as missing Excel `Nil Depreciation`), clicks **Next**, closes any save confirmation popup, and opens **Document Upload**.
+3. **Dealer rows:** Sets **Allowed Service type** to **Not Allowed** on the original dealer rows in the pending table. App3 keeps matching assessment rows already present and uses blank editable rows when available.
+4. **Survey rows:** Adds one row per item prepared by the current scan. Item is **Metal**, **Plastic**, **Glass**, or **Labour**. App3 fills **Part Description**, leaves **Part No.** blank, enters the assessed amount in **MRP** and **Amount Allowed (GST Excluded)**, and enters **Quantity** as 1 because the source workbook supplies a line amount. It uses **Replace** for parts, **Allowed** for labour, and 0 for editable **Depreciation**. For example, a plastic bumper assessed at ₹3,000 gets one ₹3,000 row. R/R ₹300 plus Denting ₹700 gets one ₹1,000 labour row.
+5. **HSN/SAC and GST:** App3 selects the configured HSN/SAC from the portal suggestions. Shipped settings are 8512 for parts and 8729 for labour. The captured portal template makes **GST%** read-only and calculates it from HSN/SAC. App3 expects 0% from the assessment rules. If the portal returns a different rate, the review card shows the row and displayed value. App3 also lists other missing or rejected fields. **Continue** rechecks the existing rows before saving.
+6. **Save as Draft:** App3 requests a draft save after verifying the pending rows and waits for confirmation. It pauses in Chrome for the operator to review the draft. **Continue** resumes the existing summary fields and navigation to Document Upload. An unconfirmed draft stays open for inspection.
+7. **Summary and Next:** After the draft review, App3 fills the existing Net Salvage, Towing, Additional Towing, Recommendations and Re-Inspection fields, saves the summary, and runs the existing **Next** review before opening Document Upload.
+
+The new row controls were checked against the saved portal template and exercised in a local Chromium form. Live portal draft confirmation remains to be verified.
+
+[Maruti row mappings](../app/portals/newindia/automation/maruti_rows.py) · [Maruti draft and review](../app/portals/newindia/automation/claim_assessment_module.py)
 
 ### 12.3 How App3 builds the primary assessment sheet
 
-When the folder has no assessment Excel, App3 builds **auto_primary_assessment.xlsx** from the **first sheet** of the survey Excel, in the portal's own template (columns SlNo, category, description, partName, serviceType, estimatedAmount, billedAmount, assessedAmount, depreciationPercentage, hsnCode, gstPercentage). A short audit file is saved next to it.
+On each scan, App3 builds **auto_primary_assessment.xlsx** from the active worksheet saved in the survey Excel, or from verified assessment rows when the survey PDF is the source. It uses the same filename for each successful replacement and saves a short audit text file beside it. Non-Tie-Up uploads the workbook prepared by that scan. Maruti reads the rows locally for direct entry.
+
+If Excel locks the existing output, App3 keeps the existing file and skips its upload. The review message tells the operator to close the workbook and rescan. For example, if a new scan changes a bumper from ₹3,000 to ₹3,500 while Excel has the file open, the later successful rescan replaces the workbook with the ₹3,500 version.
+
+[Workbook preparation](../app/ui/services/claim_folder_service.py) · [Workbook format and audit](../app/data/assessment_generator.py)
 
 **Spare parts table.** Found by its header row: Sr/S.No, Description/Particulars/Item, Metal, Plastic, Glass (Estimated is optional). Each part row becomes:
 
@@ -432,8 +401,16 @@ A table whose header App3 is less than 80% sure of is skipped. If neither table 
 | Registration Number           | GJ-01-AB-1234                                              | GJ / 01 / AB / 1234    |
 | Odometer                      | "45,230 km"                                                | 45230                  |
 | Mobile                        | "+91 98765 43210"                                          | 9876543210             |
-| Type of Vehicle               | Laden weight 16200 kg                                      | Goods Carrying (A)     |
-| Type of Vehicle               | Laden weight 1450 kg                                       | Passenger Carrying (C) |
+| Type of Vehicle               | Class "Scooter / Two Wheeler"                              | Standard Two Wheeler   |
+| Type of Vehicle               | Class "Private Car / Jeep / LMV / SUV"                     | Private Car            |
+| Type of Vehicle               | Class "LMV - Transport / LMV Goods"                        | Goods Carrying (A)     |
+| Type of Vehicle               | Class "Truck", laden weight 12,000 kg (commas stripped)    | Goods Carrying (A)     |
+| Type of Vehicle               | Class "Auto Rickshaw", laden weight 800 kg                 | Passenger Carrying (C) |
+| Type of Body (when visible)   | "Coupe" (unmatched) or blank                               | Saloon                 |
+| Licence Type                  | Class "M/Cycle / Scooter / Two Wheeler"                    | Motor Cycle with Gear  |
+| Licence Type                  | Class "Car / Jeep / Private Car / LMV / SUV"               | Light Motor Vehicle    |
+| Licence Type                  | Class "HGV / Truck / Goods Carrier / Trans / LMV-Trans"    | Heavy Goods vehicle    |
+| Licence Type                  | Class "Heavy Passenger Vehicle / HPV"                      | Heavy Passenger Motor vehicle |
 | Age of Driver                 | DOB 10/05/1990, run on 21/11/2026                          | 36                     |
 | FIR Yes/No questions          | "yes" Â· "NO" Â· "N.A."                                | Yes Â· No Â· No    |
 | Painting work details         | "Labour break up"                                          | Break-up               |
@@ -516,8 +493,8 @@ These are not errors in App3's working. They are rules that may differ from what
 
 | #  | Point                                      | What App3 does today                                                                                                                                                                                                    |
 | -- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1  | Laden weight written with a comma          | "12,000 kg" is read as 12, so a goods vehicle is marked Passenger Carrying (C).                                                                                                                                         |
-| 2  | Light goods vehicles                       | Any vehicle of 3,000 kg or less is marked Passenger Carrying (C), whatever the report says.                                                                                                                             |
+| 1  | Commercial / unlisted laden weight        | Strips commas so `"12,000 kg"` is read as `12000`, giving `Goods Carrying (A)` when Class of Vehicle is unlisted/commercial. |
+| 2  | Light cars & two-wheelers                 | Cars (`Car / Jeep / LMV Non-Transport / Private Car / SUV`) map to `Private Car`, two-wheelers map to `Standard Two Wheeler`, and `LMV Goods / Transport` maps to `Goods Carrying (A)`. |
 | 3  | Excess amounts                             | Compulsory, Voluntary and Imposed Excess are read but never entered.                                                                                                                                                    |
 | 4  | Vehicle Make and Primary Assessment amount | Both must be found before the run starts, but neither is typed on the portal.                                                                                                                                           |
 | 5  | Fixed answers | Quick Update uses editable defaults for Survey Completed, the four DL/RC verification answers, Close Proximity / Break-In, and Allow Cashless Claim. DL Applicable and Inspection Report Uploaded select Yes when shown. Vehicle parked still selects No, licence valid selects Yes, and Physically Verified is ticked. |
@@ -555,6 +532,7 @@ Labels are tried left to right on every sheet. The value is the first real entry
 | Chassis No                      | Chassis No Â· Chassis Number Â· Ch No                                                                                                                                  |               |
 | Physically Verified             | Physically Verified Â· Physical Verification                                                                                                                             | Yes           |
 | Vehicle Make                    | Vehicle Make · Make of Vehicle · Make                                                                                                                                |               |
+| Type of Body                    | Type of Body · Body Type                                                                                                                                             | Saloon (when visible) |
 | Class of Vehicle                | Class of Vehicle · Vehicle Class                                                                                                                                        |               |
 | Pre-Accident Condition          | Pre-Accident Condition Â· Pre Accident Condition Â· Condition before Accident                                                                                          | Good          |
 | RTO Name                        | RTO Name Â· RTO Â· Registering Authority                                                                                                                               |               |

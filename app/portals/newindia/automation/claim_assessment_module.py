@@ -10,6 +10,15 @@ from playwright.async_api import Page
 
 from app.automation.automation_logger import AutomationLogger
 from app.data.data_model import ClaimData
+from app.portals.newindia.automation.maruti_rows import (
+    ROWS as _MARUTI_ROWS,
+    add_and_fill_row,
+    assign_existing_rows,
+    fill_blank_row,
+    read_maruti_items,
+    row_problems,
+    row_snapshot,
+)
 from app.portals.newindia.automation.popup_service import dismiss_portal_popup
 from app.portals.newindia.automation.recovery import _BLOCKING_DIALOGS, _TAB_STATE, current_recovery
 from app.portals.newindia.automation.ui_utils import (
@@ -331,6 +340,10 @@ async def _fill_estimate(page, log, data, delay_ms, stop_cb, *, primary):
         return
 
     path = data.assessment_files.get("assessment_excel" if primary else "estimate_excel", "")
+    preparation_error = getattr(data, "_newindia_primary_assessment_error", "")
+    if primary and not path and preparation_error:
+        record_review_issue(log, label, preparation_error)
+        return
     expected = "Yes" if primary or path else "No"
     await _select(page, log, dropdown, name, expected, delay_ms, source="Calculated", index=0)
     if stop_cb() or expected == "No":
@@ -538,7 +551,7 @@ async def _set_allowed_service_not_allowed(sel) -> bool:
     return current == "not allowed"
 
 
-async def _fill_maruti_assessment_rows(page: Page, log, delay_ms: int, stop_cb) -> None:
+async def _open_maruti_pending_assessment(page, log, stop_cb):
     tab = page.locator(_TAB)
     v1_body = await _expand_panel_matching(
         tab,
@@ -561,124 +574,211 @@ async def _fill_maruti_assessment_rows(page: Page, log, delay_ms: int, stop_cb) 
     if sv1_body is None or stop_cb():
         return
 
-    asmt_body = await _expand_panel_matching(
+    return await _expand_panel_matching(
         sv1_body,
-        (re.compile(r"Assessment\s*1\b", re.I), re.compile(r"Assessment\b.*Pending", re.I)),
+        (re.compile(r"Assessment\s*1\b.*\bPending\b", re.I),),
         "Assessment 1 (Pending)",
         log,
     )
-    if asmt_body is None or stop_cb():
-        return
 
-    rows = asmt_body.locator("table#example tbody tr")
-    for _ in range(10):
-        if await rows.count() or stop_cb():
-            break
-        await asyncio.sleep(0.3)
 
-    row_count = await rows.count()
-    if not row_count:
-        record_review_issue(
-            log, "Part-wise Assessment",
-            "New India shows no part-wise rows under Assessment 1 (Pending). Review in Chrome.",
-        )
-        return
+async def _review_maruti_rows(page, log, recovery, issues_for_table):
+    issues = await issues_for_table()
+    if not issues:
+        return True
+    for issue in issues:
+        if isinstance(log, AutomationLogger):
+            log.warning(issue)
+        elif log:
+            log(issue)
+    if recovery is None:
+        return False
 
-    recovery = current_recovery.get()
-    hud_counts = dict(
-        filled=getattr(recovery, "fields_filled", 0) if recovery is not None else 0,
-        failed=getattr(recovery, "fields_failed", 0) if recovery is not None else 0,
-        skipped=getattr(recovery, "fields_skipped", 0) if recovery is not None else 0,
+    async def ready():
+        return (await recovery._same_step(page, "three")
+                and not await page.locator(_BLOCKING_DIALOGS).count()
+                and not await issues_for_table())
+
+    async def describe():
+        return "", "\n".join(await issues_for_table())
+
+    return await recovery.pause(
+        page, log, "Review Maruti assessment rows", "\n".join(issues),
+        ready=ready, require_original=True, describe=describe,
+        instruction="Fix the listed rows in Chrome, then click Continue.",
+        confirmation_button="Continue",
     )
-    editable_count = 0
-    updated_count = 0
-    failed_rows = 0
 
-    for idx in range(row_count):
+
+async def _save_maruti_draft(page, body, log, stop_cb):
+    draft = body.locator(
+        'button[data-ng-click*=".saveMarutiAssesment(1,"]:visible, '
+        'button[ng-click*=".saveMarutiAssesment(1,"]:visible'
+    ).filter(has_text=re.compile(r"^\s*Save as Draft\s*$", re.I))
+    expand = body.locator(
+        'button[data-ng-click*=".expandMarutiTable("]:visible, '
+        'button[ng-click*=".expandMarutiTable("]:visible'
+    )
+    table = body.locator('table[id="example"]:visible')
+    if await draft.count() != 1 or await table.count() != 1 or stop_cb():
+        return False
+    try:
+        original = await table.element_handle(timeout=1500)
+    except Exception:
+        return False
+    if original is None:
+        return False
+    was_draft = await expand.count() == 1
+    try:
+        try:
+            await draft.click(timeout=3500)
+        except Exception:
+            # A timed-out click can still reach the portal. Check for confirmation once.
+            pass
         if stop_cb():
-            return
+            return False
+        confirmed = re.compile(r"\b(?:saved\s+successfully|successfully\s+saved|saved\s+as\s+draft)\b", re.I)
+        outcome = await dismiss_portal_popup(
+            page, log, max_wait_s=3, classify=True, context="Maruti Save as Draft",
+            expected_message=confirmed, success_message=confirmed,
+        )
+        if outcome == "success" and not await page.locator(_BLOCKING_DIALOGS).count():
+            return True
+
+        async def draft_visible():
+            if await page.locator(_BLOCKING_DIALOGS).count() or await expand.count() != 1:
+                return False
+            return not was_draft or not await original.evaluate("table => table.isConnected")
+
+        return await wait_until_ready(draft_visible, seconds=6, stopped=stop_cb)
+    finally:
+        with suppress(Exception):
+            await original.dispose()
+
+
+async def _fill_maruti_assessment_rows(page, items, log, stop_cb):
+    recovery = current_recovery.get()
+    if await page.locator(_BLOCKING_DIALOGS).count():
+        if recovery is None:
+            return False
+
+        async def message_closed():
+            return (await recovery._same_step(page, "three")
+                    and not await page.locator(_BLOCKING_DIALOGS).count())
+
+        if not await recovery.pause(
+            page, log, "Review Maruti header", "New India is showing a message before row entry.",
+            instruction="Review and close the portal message in Chrome, then click Continue.",
+            confirmation_button="Continue", ready=message_closed, require_original=True,
+        ):
+            return False
+    body = await _open_maruti_pending_assessment(page, log, stop_cb)
+    if body is None or stop_cb():
+        return False
+    rows = body.locator(_MARUTI_ROWS)
+    table = body.locator('table[id="example"]:visible')
+    if await table.count() != 1:
+        record_review_issue(log, "Part-wise Assessment", "New India did not show a single Pending assessment table.")
+        return False
+
+    headers = [re.sub(r"[^a-z]", "", text.casefold()) for text in await table.locator("thead th").all_text_contents()]
+    if len(headers) < 15 or headers[1:4] != ["item", "partno", "partdescription"]:
+        record_review_issue(log, "Part-wise Assessment", "New India did not show the expected Maruti item columns.")
+        return False
+    initial = await row_snapshot(rows)
+    if any(state["columns"] < 15 for state in initial):
+        record_review_issue(log, "Part-wise Assessment", "The visible assessment columns differ from the Maruti table.")
+        return False
+    assigned, dealers, blanks = assign_existing_rows(initial, items)
+    labels = [f"Survey item {idx + 1} ({item.description})" for idx, item in enumerate(items)]
+
+    # Mark only dealer rows. New and previously entered survey rows are handled separately.
+    for idx in dealers:
+        if stop_cb():
+            return False
         if recovery is not None:
             await recovery.wait_if_manually_paused(page, log)
-        sel = rows.nth(idx).locator('select[data-ng-model$=".vAllowedServiceType"], select#sel1').first
-        if not await sel.count() or await sel.is_disabled():
+        if initial[idx]["values"]["service"].strip().casefold() != "not allowed":
+            select = rows.nth(idx).locator('select[id="sel1"]:visible')
+            if await select.count() == 1 and await select.is_enabled():
+                if not await _set_allowed_service_not_allowed(select) and not stop_cb():
+                    await _set_allowed_service_not_allowed(select)
+
+    count = len(initial)
+    for idx, item in enumerate(items):
+        if stop_cb():
+            return False
+        if idx in assigned:
             continue
-        editable_count += 1
-        await update_field_hud(page, "Claim Assessment", f"Row {idx + 1}/{row_count} -> Not Allowed", "active", **hud_counts)
-
-        already = ""
-        with suppress(Exception):
-            already = await sel.evaluate(
-                "s => (s.options[s.selectedIndex]?.textContent || '').trim().toLowerCase()",
-                timeout=1000,
-            )
-        if already == "not allowed":
-            updated_count += 1
-            continue
-
-        ok = await _set_allowed_service_not_allowed(sel)
-        if not ok:
-            await asyncio.sleep(0.15)
-            ok = await _set_allowed_service_not_allowed(sel)
-        if ok:
-            updated_count += 1
+        if recovery is not None:
+            await recovery.wait_if_manually_paused(page, log)
+        if blanks:
+            row_index = blanks.pop(0)
+            assigned[idx] = row_index
+            await fill_blank_row(rows, row_index, item, stop_cb)
+        elif await add_and_fill_row(body, rows, count, item, stop_cb):
+            assigned[idx] = count
+            count += 1
         else:
-            failed_rows += 1
-        if delay_ms > 0:
-            await asyncio.sleep(min(delay_ms, 50) / 1000.0)
-
-    if stop_cb():
-        return
-
-    if failed_rows:
-        record_review_issue(log, "Allowed Service type", f"Could not set 'Not Allowed' on {failed_rows} row(s).")
-        await update_field_hud(page, "Claim Assessment", "Allowed Service type", "error", **hud_counts)
-    elif editable_count:
-        await update_field_hud(page, "Claim Assessment", f"Allowed Service type ({updated_count} rows)", "ok", **hud_counts)
-        if isinstance(log, AutomationLogger):
-            log.field_selected("Allowed Service type", f"Not Allowed ({updated_count}/{editable_count} rows)", source="Rule")
-        else:
-            log(f"  [OK] Selected 'Not Allowed' on {updated_count}/{editable_count} rows.")
-
-    submit_btn = asmt_body.locator(
-        'button[data-ng-click*="saveMarutiAssesment(3"], button[ng-click*="saveMarutiAssesment(3"]'
-    ).first
-    if not await submit_btn.count():
-        submit_btn = asmt_body.locator("button").filter(has_text=re.compile(r"^\s*Submit\s*$", re.I)).first
-
-    draft_btn = asmt_body.locator(
-        'button[data-ng-click*="saveMarutiAssesment(1"], button[ng-click*="saveMarutiAssesment(1"]'
-    ).first
-    if not await draft_btn.count():
-        draft_btn = asmt_body.locator("button").filter(has_text=re.compile(r"^\s*Save\s+as\s+Draft\s*$", re.I)).first
-
-    submit_ready = False
-    deadline = asyncio.get_running_loop().time() + 2.5
-    while not stop_cb():
-        with suppress(Exception):
-            if await submit_btn.count() and await submit_btn.is_visible() and not await submit_btn.is_disabled():
-                submit_ready = True
-                break
-        if asyncio.get_running_loop().time() >= deadline:
+            # A late Add Row must be inspected before any further click.
             break
-        await asyncio.sleep(0.25)
 
-    if stop_cb():
-        return
+    async def issues_for_table():
+        current = await row_snapshot(rows)
+        issues = []
+        for idx in dealers:
+            if idx >= len(current) or current[idx]["values"]["service"].strip().casefold() != "not allowed":
+                issues.append(f"Dealer row {idx + 1} — set Allowed Service type to Not Allowed.")
+        matches, _, _ = assign_existing_rows(current, items)
+        reserved = set(matches.values())
+        for idx, item in enumerate(items):
+            row_index = matches.get(idx)
+            if row_index is None:
+                candidate = assigned.get(idx)
+                if (candidate is not None and candidate < len(current)
+                        and candidate not in reserved and current[candidate]["added"]):
+                    row_index = candidate
+                    reserved.add(candidate)
+            state = current[row_index] if row_index is not None else None
+            problems = row_problems(state, item)
+            if problems:
+                issues.append(f"{labels[idx]} — " + ", ".join(problems))
+        for idx, state in enumerate(current):
+            if state["added"] and idx not in reserved:
+                issues.append(f"Portal row {idx + 1} — extra or unmatched row. Review it before saving.")
+        return issues
 
-    if submit_ready:
-        await _click_maruti_button(
-            page, log, submit_btn, "Assessment Submit",
-            context="Assessment Submit", stop_cb=stop_cb, wait_enabled_s=0.2,
-        )
-    else:
-        if isinstance(log, AutomationLogger):
-            log.info("Assessment Submit button did not become available; falling back to Save as Draft.")
-        else:
-            log("  [INFO] Submit button not available; clicking Save as Draft.")
-        await _click_maruti_button(
-            page, log, draft_btn, "Save as Draft",
-            context="Assessment Save as Draft", stop_cb=stop_cb, wait_enabled_s=2.0,
-        )
+    if stop_cb() or not await _review_maruti_rows(page, log, recovery, issues_for_table):
+        return False
+    if stop_cb() or (recovery is not None and not await recovery._same_step(page, "three")):
+        return False
+    if not await _save_maruti_draft(page, body, log, stop_cb):
+        if not stop_cb() and recovery is not None:
+            await recovery.pause(
+                page, log, "Save as Draft needs review", "New India did not confirm the Maruti draft.",
+                instruction="Review the draft in Chrome. Stop this run before trying a new assessment.",
+                require_original=True, stop_only=True,
+            )
+        return False
+    if recovery is None:
+        return False
+
+    reviewed = False
+
+    async def confirm_review():
+        nonlocal reviewed
+        reviewed = True
+
+    async def ready_to_continue():
+        return (reviewed and await recovery._same_step(page, "three")
+                and not await page.locator(_BLOCKING_DIALOGS).count())
+
+    return await recovery.pause(
+        page, log, "Maruti draft ready", "New India saved the assessment as a draft.",
+        instruction="Review the rows in Chrome. Click Continue here when you are ready to proceed.",
+        confirmation_button="Continue", require_original=True, ready=ready_to_continue,
+        on_continue=confirm_review,
+    )
 
 
 async def _fill_maruti_bottom_summary(page: Page, data: ClaimData, log, defaults: dict, delay_ms: int, stop_cb) -> None:
@@ -784,13 +884,25 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_c
             return False
 
         is_maruti = await _is_maruti_partwise(page, data)
+        if is_maruti:
+            try:
+                items = read_maruti_items(data.assessment_files.get("assessment_excel"))
+            except Exception as exc:
+                reason = getattr(data, "_newindia_primary_assessment_error", "") or str(exc)
+                record_review_issue(log, "Primary Assessment", reason)
+                if recovery is not None:
+                    await recovery.pause(
+                        page, log, "Primary Assessment needs review", reason,
+                        instruction="Stop this run, correct the report or workbook, and rescan the folder.",
+                        require_original=True, stop_only=True,
+                    )
+                return False
         await _fill_invoice_fields(page, data, log, defaults, field_delay_ms, stop_cb, is_maruti=is_maruti)
         if stop_cb():
             return False
 
         if is_maruti:
-            await _fill_maruti_assessment_rows(page, log, field_delay_ms, stop_cb)
-            if stop_cb():
+            if not await _fill_maruti_assessment_rows(page, items, log, stop_cb) or stop_cb():
                 return False
             await _fill_maruti_bottom_summary(page, data, log, defaults, field_delay_ms, stop_cb)
             if stop_cb():

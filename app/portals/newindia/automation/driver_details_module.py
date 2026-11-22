@@ -1,6 +1,9 @@
 from playwright.async_api import Page
 from app.data.data_model import ClaimData
-from app.portals.newindia.field_values import normalize_driver_license_number
+from app.portals.newindia.field_values import (
+    normalize_driver_license_number,
+    resolve_newindia_license_type,
+)
 from app.portals.newindia.automation.ui_utils import (
     click_radio_with_delay, fill_input_with_delay, select_dropdown_with_delay, format_date_ddmmyyyy,
     open_additional_section, record_additional_issue,
@@ -74,9 +77,15 @@ async def _fill_driver_details(page, data, log, stop_cb, field_delay_ms, default
 
     # 3. License Type of Driver
     try:
-        val = data.license_type_of_driver
+        val = str(getattr(data, "license_type_of_driver", "") or "").strip()
+        derived_inline = False
+        if not val:
+            val, inline_src = resolve_newindia_license_type(getattr(data, "class_of_vehicle", ""))
+            derived_inline = bool(inline_src)
+        coord = str(getattr(data, "_excel_coords", {}).get("license_type_of_driver", "") or "")
+        src = "Calculated" if (derived_inline or coord.startswith("Mapped")) else "Excel"
         if val:
-            await select_dropdown_with_delay(page, 'select[name="License Type of Driver"]', val, "License Type", log, field_delay_ms, source="Excel")
+            await select_dropdown_with_delay(page, 'select[name="License Type of Driver"]', val, "License Type", log, field_delay_ms, source=src)
         else:
             if isinstance(log, AutomationLogger):
                 log.field_skipped("License Type", reason="Missing from Excel")
