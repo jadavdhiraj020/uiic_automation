@@ -404,7 +404,6 @@
     "row_offset": 0,
     "col_offset": 1,
     "allow_literal_values": true,
-    "fallback_value": "No",
     "_mandatory": true
   },
   "ifsc_code": {

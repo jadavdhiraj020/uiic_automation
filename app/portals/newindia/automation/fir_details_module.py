@@ -112,15 +112,14 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
 
     # 8. Is there any TP claim? (Mandatory)
     try:
-        val = data.is_there_any_tp_claim
-        if val:
-            normalized = "Yes" if str(val).strip().lower() == "yes" else "No"
-            await select_dropdown_with_delay(page, 'select[name="Is there any TP claim?"]', normalized, "TP Claim", log, field_delay_ms, source="Excel")
-        else:
-            if isinstance(log, AutomationLogger):
-                log.field_skipped("TP Claim", reason="Missing from Excel")
-            else:
-                log("   ⚠️ Is there any TP claim missing from Excel.")
+        raw_val = data.is_there_any_tp_claim
+        val = raw_val or str(defaults.get("is_there_any_tp_claim") or "No")
+        source = "Excel" if raw_val else "Default"
+        normalized = "Yes" if str(val).strip().lower() == "yes" else "No"
+        await select_dropdown_with_delay(
+            page, 'select[name="Is there any TP claim?"]', normalized,
+            "TP Claim", log, field_delay_ms, source=source,
+        )
     except Exception:
         record_additional_issue(log, "Is there any TP claim?")
 

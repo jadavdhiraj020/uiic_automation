@@ -59,6 +59,7 @@ from app.portals.newindia.pdf_report import newindia_startup_review_notices
 from app.ui.worker import AutomationWorker
 from app.ui.components.settings_page import SettingsPage
 from app.ui.components.workspace_page import WorkspacePage
+from app.ui.components.recovery_dialog import RecoveryDialog
 
 CONFIG_DIR = resource_path("app", "config")
 
@@ -904,6 +905,9 @@ class MainWindow(QMainWindow):
             self._set_status("running", "Running")
             return
         self._set_status("running", "Paused for review")
+        if getattr(worker, "portal_id", None) == "newindia":
+            self._show_newindia_recovery(worker, prompt)
+            return
         dialog = getattr(self, "_oic_recovery_dialog", None)
         if dialog is None or dialog.prompt_id != prompt.id:
             self._dismiss_oic_recovery()
@@ -959,6 +963,32 @@ class MainWindow(QMainWindow):
         if not dialog.isActiveWindow():
             QApplication.alert(self, 5000)
 
+    def _show_newindia_recovery(self, worker, prompt):
+        """Show the New India pause card; repeated prompts for one pause refresh it in place."""
+        dialog = getattr(self, "_oic_recovery_dialog", None)
+        retry = dialog is not None and dialog.prompt_id == prompt.id
+        if dialog is None or not isinstance(dialog, RecoveryDialog):
+            self._dismiss_oic_recovery()
+            dialog = RecoveryDialog(self, portal_name="New India", accent="#EA580C")
+            self._oic_recovery_dialog = dialog
+
+            def respond(decision):
+                if self._worker is not worker or self._oic_recovery_dialog is not dialog:
+                    return
+                if getattr(dialog, "_busy", False):
+                    return
+                dialog.set_busy(True)
+                self._set_status("running", "Checking Chrome…")
+                worker.resume_oic(dialog.prompt_id, decision)
+
+            dialog.decision.connect(respond)
+            dialog.stop.connect(self._stop_automation)
+        dialog.show_prompt(prompt, retry=retry)
+        self._review_oic_button.setText("Show Pause Card")
+        self._review_oic_button.show()
+        if not dialog.isActiveWindow():
+            QApplication.alert(self, 5000)
+
     def _raise_oic_recovery(self):
         dialog = getattr(self, "_oic_recovery_dialog", None)
         if dialog:
@@ -967,6 +997,7 @@ class MainWindow(QMainWindow):
             dialog.activateWindow()
 
     def _dismiss_oic_recovery(self):
+        self._review_oic_button.setText("Review issue")
         self._review_oic_button.hide()
         dialog = getattr(self, "_oic_recovery_dialog", None)
         if dialog:

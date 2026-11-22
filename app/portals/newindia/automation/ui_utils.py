@@ -229,13 +229,17 @@ async def _check_entry(page, target, label, value, script, kind, log, delay_ms, 
     async def verified_manual_value():
         if await matches():
             return True
-        control = radio_group if kind == "radio" else target
-        if await control.count() != 1:
+        if kind == "radio":
+            group = radio_group if radio_group is not None else target
+            states = await group.evaluate_all(f"els => els.map({_JS_FIELD_STATE.strip()})")
+            return any(state and state["valid"] and not state.get("missing") and state["checked"] for state in states)
+        if await target.count() != 1:
             return False
-        current = await control.evaluate(_JS_FIELD_STATE, timeout=1000)
-        return bool(current and current["valid"] and str(current["value"]).strip()
-                    and (current["value"], current["checked"]) != rejected_value
-                    and (kind not in {"radio", "checkbox"} or current["checked"])
+        current = await target.evaluate(_JS_FIELD_STATE, timeout=1000)
+        value_text = str(current["value"]).strip() if current else ""
+        return bool(current and current["valid"] and not current.get("missing") and value_text
+                    and not value_text.startswith("?")
+                    and (kind != "checkbox" or current["checked"])
                     and (kind != "text" or current["viewValue"] is None
                          or _field_key(current["viewValue"], current["type"]) == _field_key(current["value"], current["type"])))
 

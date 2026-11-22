@@ -632,6 +632,7 @@ def _apply_newindia_defaults(claim: ClaimData, defaults: dict, mapping: dict, wa
         "re_inspection_required": ("reinspection_required", "No"),
         "is_gst_applicable": ("gst_applicable", "Yes"),
         "payment_invoice_in_name_of_nia": ("payment_invoice_in_company_name", "Yes"),
+        "is_there_any_tp_claim": ("is_there_any_tp_claim", "No"),
     }
     for field_name, cfg in mapping.items():
         if field_name.startswith("_") or not isinstance(cfg, dict):

@@ -22,7 +22,7 @@ _TAB_STATE = r"""
 () => {
     const tabs = [...document.querySelectorAll('li:is(#one,#two,#three,#four)')];
     const claimCrumb = [...document.querySelectorAll('li')].find(li =>
-        li.getClientRects().length && /^Claim\s+No\.?\s*:?\s*\d+\s*\/?$/i.test(li.textContent.trim()) &&
+        li.getClientRects().length && /^Claim\s+No\.?\s*:?\s*[^\s/]+\s*\/?$/i.test(li.textContent.trim()) &&
         tabs.some(tab => tab.textContent.trim() === li.nextElementSibling?.textContent.trim()));
     if (claimCrumb) {
         return tabs.find(tab => tab.textContent.trim() === claimCrumb.nextElementSibling.textContent.trim()).id;
@@ -37,7 +37,7 @@ _TAB_STATE = r"""
 
 _STEP_NAMES = {"one": "Quick Update", "two": "Additional Details",
                "three": "Claim Assessment", "four": "Document Upload"}
-_CONTINUE_BUTTON = "I fixed all fields — continue"
+_CONTINUE_BUTTON = "Continue"
 _PAGE_REVIEW_STEPS = ("one", "two", "three")
 
 _INVALID_FIELDS = r"""
@@ -46,9 +46,16 @@ _INVALID_FIELDS = r"""
     const quickUpdate = step === 'one';
     const additionalDetails = step === 'two';
     const assessment = step === 'three';
+    const documentUpload = step === 'four';
+    const activePane = claimForm?.querySelector('.tab-pane.active');
+    const feeBillControl = documentUpload
+        ? activePane?.querySelector('#isInvoiceInNameOfNIA, [data-ng-model*="surveyFeeBill"], [ng-model*="surveyFeeBill"]')
+        : null;
+    const feeBillPanel = feeBillControl ? (feeBillControl.closest('.panel') || activePane) : null;
     const root = quickUpdate ? [...document.querySelectorAll('[name="quickUpdateForm"]')].find(form =>
         !form.closest('.ng-hide, [hidden], [aria-hidden=true], .tab-pane:not(.active)')) :
-        (additionalDetails || assessment) ? claimForm?.querySelector('.tab-pane.active') : claimForm || document;
+        (additionalDetails || assessment) ? activePane :
+        documentUpload ? feeBillPanel : claimForm || document;
     if (!root) return [];
     const invalid = [];
     for (const field of root.querySelectorAll('input, select, textarea')) {
@@ -179,7 +186,7 @@ class NewIndiaRecovery(OperatorRecovery):
 
     async def pause(
         self, page, log, action, reason, *, ready=None, instruction=None, describe=None, section=None, stop_only=False,
-        confirmation_button="", require_original=False, field_ready=None, skip_button="", on_skip=None,
+        confirmation_button="", require_original=False, field_ready=None, skip_button="", on_skip=None, on_continue=None,
     ):
         from app.portals.newindia.automation.logging_utils import capture_newindia_screenshot
 
@@ -194,7 +201,8 @@ class NewIndiaRecovery(OperatorRecovery):
             page, log, action, reason,
             ready=ready, instruction=instruction, describe=describe, section=section,
             stop_only=stop_only, confirmation_button=confirmation_button,
-            require_original=require_original, field_ready=field_ready, skip_button=skip_button, on_skip=on_skip,
+            require_original=require_original, field_ready=field_ready,
+            skip_button=skip_button, on_skip=on_skip, on_continue=on_continue,
         )
         if result and not self.stopped() and hasattr(log, "info"):
             log.info(f"Resumed automation after '{sec_name}'.")
@@ -209,10 +217,12 @@ class NewIndiaRecovery(OperatorRecovery):
 
         async def unresolved(issue):
             check = issue.manual_value if accept_manual and issue.manual_value else issue.matches
-            if check:
-                with suppress(Exception):
-                    return not await check()
-            return True
+            if check is None:
+                return not accept_manual
+            try:
+                return not await check()
+            except Exception:
+                return True
 
         recorded = list(self.field_issues.values())
         pending = await asyncio.gather(*(unresolved(issue) for issue in recorded))
@@ -262,23 +272,38 @@ class NewIndiaRecovery(OperatorRecovery):
             )
         if issues:
             remaining = issues
+            confirmed = False
+            overridden = False
 
             async def ready():
                 nonlocal remaining
                 if not await self._same_step(page, source) or await page.locator(_BLOCKING_DIALOGS).count():
                     return False
-                remaining = await self._issues_on_page(page, source, accept_manual=True)
+                if overridden:
+                    return True
+                remaining = await self._issues_on_page(page, source, accept_manual=confirmed)
                 return not remaining
+
+            async def confirm_review():
+                nonlocal confirmed
+                confirmed = True
+
+            async def skip_review():
+                nonlocal overridden
+                overridden = True
 
             async def describe():
                 return "", self._format_issues(remaining)
 
             await self.pause(
-                page, log, "Review fields before saving", self._format_issues(issues),
+                page, log, "Review before saving", self._format_issues(issues),
                 section=section, ready=ready, require_original=True,
                 describe=describe,
-                instruction="Fix the listed fields in Chrome, then click Continue here.",
+                instruction="Fix the listed fields in Chrome, then click Continue.",
                 confirmation_button=_CONTINUE_BUTTON,
+                skip_button="Continue anyway",
+                on_skip=skip_review,
+                on_continue=confirm_review,
             )
         self.field_issues.clear()
         return True
@@ -306,11 +331,39 @@ class NewIndiaRecovery(OperatorRecovery):
             return 0
 
         async def at_destination():
-            return (await click_count() > 0 and await self._same_step(page, destination)
+            return (await self._same_step(page, destination)
                     and not await page.locator(_BLOCKING_DIALOGS).count())
 
         reason = "New India stayed on the current step after Next."
         skip_tried = False
+        retried = False
+
+        async def dismiss_save_popup():
+            dialogs = page.locator(_BLOCKING_DIALOGS)
+            if not await dialogs.count():
+                return
+            if after_click is not None:
+                with suppress(Exception):
+                    await after_click()
+            if not await dialogs.count():
+                return
+            dialog = dialogs.first
+            ok_btn = dialog.locator(
+                'button:visible, a.btn:visible, input[type="button"]:visible, input[type="submit"]:visible'
+            ).filter(has_text=re.compile(r"^\s*(?:ok|okay|close|done|got it)\s*$", re.I))
+            if await ok_btn.count():
+                with suppress(Exception):
+                    await ok_btn.first.click(timeout=2000)
+                return
+            swal_confirm = dialog.locator(".swal2-confirm:visible")
+            if await swal_confirm.count():
+                with suppress(Exception):
+                    await swal_confirm.first.click(timeout=2000)
+                return
+            footer_btns = dialog.locator(".modal-footer button:visible, .modal-footer a.btn:visible")
+            if await footer_btns.count() == 1:
+                with suppress(Exception):
+                    await footer_btns.first.click(timeout=2000)
 
         async def click_next():
             nonlocal reason
@@ -342,10 +395,28 @@ class NewIndiaRecovery(OperatorRecovery):
                     with suppress(Exception):
                         await after_click()
 
-        async def skip_and_try_next():
-            nonlocal skip_tried
-            skip_tried = True
+        async def continue_after_fix():
+            nonlocal retried
+            retried = True
+            if await self._same_step(page, destination):
+                if await page.locator(_BLOCKING_DIALOGS).count():
+                    await dismiss_save_popup()
+                return
+            if not await self._same_step(page, source) or await page.locator(_BLOCKING_DIALOGS).count():
+                return
+            if await self._issues_on_page(page, source, accept_manual=True):
+                return
             await click_next()
+            if await self._same_step(page, destination) and await page.locator(_BLOCKING_DIALOGS).count():
+                await dismiss_save_popup()
+
+        async def skip_and_try_next():
+            nonlocal skip_tried, retried
+            skip_tried = True
+            retried = True
+            await click_next()
+            if await self._same_step(page, destination) and await page.locator(_BLOCKING_DIALOGS).count():
+                await dismiss_save_popup()
 
         try:
             issues = await self._checkpoint_issues(page, source)
@@ -364,44 +435,39 @@ class NewIndiaRecovery(OperatorRecovery):
                         return True
                 issues = await self._issues_on_page(page, source)
 
-            described = False
-
             async def describe():
-                nonlocal described
-                accept_manual = described
-                described = True
                 if await self._same_step(page, source):
-                    current = await self._issues_on_page(page, source, accept_manual=True) if accept_manual else issues
+                    current = await self._issues_on_page(page, source, accept_manual=True) if retried else issues
                     if await page.locator(_BLOCKING_DIALOGS).count():
-                        message = "New India is showing a message. Check it in Chrome."
+                        message = "New India is showing a message. Close it in Chrome, then click Continue."
                         return "", f"{message}\n\n{self._format_issues(current)}" if current else message
                     if current:
                         detail = self._format_issues(current)
                         return "", f"{reason}\n\n{detail}" if skip_tried else detail
-                    return "", "Click Next in Chrome to save this page." if issues and not skip_tried else reason
+                    return "", reason if (skip_tried or retried) else f"Click Next in Chrome or click Continue to move to {title}."
                 if await self._same_step(page, destination):
                     if page_review and await page.locator(_BLOCKING_DIALOGS).count():
-                        return "", "Close the New India message in Chrome, then continue here."
+                        return "", "Close the New India message in Chrome, then click Continue."
                     invalid = await page.evaluate("key => window[key]?.invalid || []", key)
                     if invalid:
                         remaining = self._format_issues([(field["section"], field["name"], field["reason"])
                                                         for field in invalid])
                         return "", f"Return to {section} in Chrome and fix these fields before clicking Next.\n\n{remaining}"
-                return "", f"Wait for {title} to open for the original claim."
+                return "", f"Wait for {title} to open in Chrome, then click Continue."
 
             advanced = await self.pause(
-                page, log, f"Review {section}" if page_review else "Review fields before Next" if issues else "Next",
+                page, log, f"Review {section}" if (page_review or issues) else f"Move to {title}",
                 self._format_issues(issues) if issues else reason, ready=at_destination,
                 require_original=True, section=section, describe=describe,
-                instruction=("Fix the listed fields and click Next in Chrome. "
-                             "Close any confirmation message, then continue here. "
-                             "Or let App3 try Next with the current values.") if page_review else (
-                    f"Fix any listed fields in Chrome and click Next. "
-                    f"When {title} opens, close any save message and click Continue here."
+                instruction=(
+                    "Fix the listed fields in Chrome, then click Continue (automation will click Next for you)."
+                    if issues else
+                    f"Finish any popups or click Next in Chrome, then click Continue to move to {title}."
                 ),
-                confirmation_button="I fixed it — continue" if page_review else _CONTINUE_BUTTON if issues else "",
-                skip_button="Skip and try Next" if page_review else "",
+                confirmation_button=_CONTINUE_BUTTON,
+                skip_button="Skip & Try Next" if page_review else "",
                 on_skip=skip_and_try_next if page_review else None,
+                on_continue=continue_after_fix,
             )
             self.field_issues.clear()
             return advanced

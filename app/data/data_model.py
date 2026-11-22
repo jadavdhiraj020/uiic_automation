@@ -1399,7 +1399,7 @@ class ClaimData:
             ("Remarks",               self.remarks,                  False, _src("remarks")),
             ("Driver Without License?", defaults.get("driver_without_license") or "No", True, settings),
             ("Previous Police Records?",self.any_previous_police_records, False, _src("any_previous_police_records")),
-            ("Any TP Claim?",         self.is_there_any_tp_claim,    True,  _src("is_there_any_tp_claim")),
+            ("Any TP Claim?",         self.is_there_any_tp_claim or (defaults.get("is_there_any_tp_claim") or "No"), True, _src("is_there_any_tp_claim") if self.is_there_any_tp_claim else settings),
 
             # ── Bank Details ────────────────────────────────
             ("Payment To",            self.bank_payment_to or "Unknown",          True,  _src("bank_payment_to")),

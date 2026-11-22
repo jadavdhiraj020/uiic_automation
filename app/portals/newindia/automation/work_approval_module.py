@@ -4,6 +4,7 @@ import os
 from playwright.async_api import Page
 from app.data.data_model import ClaimData
 from app.portals.newindia.automation.ui_utils import (
+    check_checkbox_with_delay,
     fill_input_with_delay,
     select_dropdown_with_delay,
     open_additional_section,
@@ -318,6 +319,20 @@ async def _fill_work_approval_inner(
                 log("  ⚠️ Cause and Nature of Accident missing from data; skipping.")
     except Exception:
         record_additional_issue(log, "Cause and Nature of Accident")
+
+    if stop_cb(): return False
+
+    try:
+        await check_checkbox_with_delay(
+            page,
+            'input[name="Disclaimer -CheckBox"]',
+            "The details furnished above are verified by me and found in order",
+            log,
+            field_delay_ms,
+            source="Calculated",
+        )
+    except Exception:
+        record_additional_issue(log, "The details furnished above are verified by me and found in order")
 
     if stop_cb(): return False
 

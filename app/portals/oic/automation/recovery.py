@@ -193,7 +193,7 @@ class OperatorRecovery:
 
     async def pause(
         self, page, log, action, reason, *, ready=None, instruction=None, describe=None, section=None, stop_only=False,
-        confirmation_button="", require_original=False, field_ready=None, skip_button="", on_skip=None,
+        confirmation_button="", require_original=False, field_ready=None, skip_button="", on_skip=None, on_continue=None,
     ):
         portal = self.portal_name
         section = section or getattr(log, "_section", None) or portal
@@ -241,6 +241,8 @@ class OperatorRecovery:
             if ready is not None:
                 if decision == "skip" and on_skip is not None:
                     await on_skip()
+                elif decision == "fixed" and on_continue is not None:
+                    await on_continue()
                 if await wait_until_ready(ready, seconds=3, stopped=self.stopped):
                     log.info(f"{portal} resumed at {section} after confirming {action} in Chrome.")
                     self.notify(None)
