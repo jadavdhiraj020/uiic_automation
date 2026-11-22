@@ -53,112 +53,138 @@ logger = logging.getLogger(__name__)
 
 # ── JavaScript helpers (same portal, one set of JS) ───────────────────────────
 
-# Detect any visible Angular-UI modal overlay and return metadata
-_JS_DETECT_POPUP = r"""
-fullBody => {
-    // Angular-UI Bootstrap modal (primary NIA pattern)
-    const modal = document.querySelector(
-        '.modal.in, .modal[style*="display: block"], .modal[style*="display:block"]'
-    );
-    if (modal) {
-        const header = modal.querySelector('.modal-header, .modal-title');
-        const body   = modal.querySelector('.modal-body')?.innerText.trim() || '';
-        return {
-            found: true,
-            type:  'modal',
-            title: header ? header.innerText.trim() : '',
-            body:  fullBody ? body : body.substring(0, 200)
-        };
+_JS_VISIBLE_HELPER = r"""
+const _visible = el => {
+    if (!el || !el.getClientRects().length) return false;
+    const style = getComputedStyle(el);
+    return style.visibility !== 'hidden' && style.display !== 'none';
+};
+const _cleanBodyText = bodyEl => {
+    if (!bodyEl) return '';
+    const clone = bodyEl.cloneNode(true);
+    for (const node of clone.querySelectorAll(
+        '.modal-footer, button, a.btn, input[type="button"], input[type="submit"], .close, script, style'
+    )) {
+        node.remove();
     }
-    // SweetAlert / custom overlay (rare but possible)
-    const swal = document.querySelector('.swal2-container, .sweet-overlay');
-    if (swal) return { found: true, type: 'swal', title: '', body: '' };
-    // NG-dialog
-    const ngd = document.querySelector('.ngdialog.ngdialog-open');
-    if (ngd) return { found: true, type: 'ngdialog', title: '', body: '' };
-    return { found: false };
-}
+    const stripped = (clone.textContent || '').replace(/\s+/g, ' ').trim();
+    if (stripped) return stripped;
+    return (bodyEl.innerText || bodyEl.textContent || '').replace(/\s+/g, ' ').trim();
+};
+const _findVisiblePopup = () => {
+    const modals = [...document.querySelectorAll(
+        '.modal.in, .modal[style*="display: block"], .modal[style*="display:block"]'
+    )].reverse();
+    const modal = modals.find(_visible);
+    if (modal) return { node: modal, type: 'modal' };
+    const swal = [...document.querySelectorAll('.swal2-popup, .sweet-alert')].reverse().find(_visible);
+    if (swal) return { node: swal, type: 'swal' };
+    const ngd = [...document.querySelectorAll('.ngdialog.ngdialog-open')].reverse().find(_visible);
+    if (ngd) return { node: ngd, type: 'ngdialog' };
+    return null;
+};
 """
 
-# Dismiss the modal by clicking the first available button (priority order)
-_JS_DISMISS_POPUP = r"""
-() => {
+# Detect any visible Angular-UI modal overlay and return metadata
+_JS_DETECT_POPUP = r"fullBody => {" + _JS_VISIBLE_HELPER + r"""
+    const found = _findVisiblePopup();
+    if (!found) return { found: false };
+    const node = found.node;
+    const header = node.querySelector('.modal-header, .modal-title, .swal2-title');
+    const bodyEl = node.querySelector('.modal-body, .swal2-html-container, .swal2-content, .ngdialog-message') || node;
+    const body = _cleanBodyText(bodyEl);
+    return {
+        found: true,
+        type: found.type,
+        title: header ? header.innerText.trim() : '',
+        body: fullBody ? body : body.substring(0, 200)
+    };
+}"""
+
+# Dismiss the topmost visible modal by clicking the safest close/OK button inside it
+_JS_DISMISS_POPUP = r"() => {" + _JS_VISIBLE_HELPER + r"""
+    const found = _findVisiblePopup();
+    if (!found) return { ok: false, err: 'no visible popup' };
+    const popup = found.node;
+    const clickable = btn => btn && !btn.disabled && _visible(btn)
+        && !/\bsubmit\b/i.test((btn.innerText || btn.textContent || btn.value || '').trim());
+
     // Priority 1: NIA-specific coverChangeObj cancel button
-    const cancelBtn = document.querySelector(
+    const cancelBtn = popup.querySelector(
         'button[data-ng-click*="coverChangeObj.cancel"], button[ng-click*="coverChangeObj.cancel"]'
     );
-    if (cancelBtn && cancelBtn.offsetParent !== null) {
+    if (clickable(cancelBtn)) {
         cancelBtn.click();
         return { ok: true, via: 'coverCancel' };
     }
 
-    // Priority 2: generic OK / confirm / close / yes in any visible modal
+    // Priority 2: scoped OK / confirm / close / single footer button inside visible modal
     const selectors = [
-        '.modal.in button[data-ng-click*="ok"]',
-        '.modal.in button[ng-click*="ok"]',
-        '.modal.in button[data-ng-click*="confirm"]',
-        '.modal.in button[ng-click*="confirm"]',
-        '.modal.in button[data-ng-click*="close"]',
-        '.modal.in button[ng-click*="close"]',
-        '.modal.in .modal-footer button:last-child',
-        '.modal[style*="display: block"] .modal-footer button:last-child',
-        '.modal[style*="display:block"] .modal-footer button:last-child',
-        '.swal2-container button.swal2-confirm',
-        '.sweet-alert button.confirm',
-        '.ngdialog.ngdialog-open button',
-        'button.confirm',
+        'button[data-ng-click*="ok"]',
+        'button[ng-click*="ok"]',
+        'button[data-ng-click*="confirm"]',
+        'button[ng-click*="confirm"]',
+        'button[data-ng-click*="close"]',
+        'button[ng-click*="close"]',
+        '.modal-footer button:last-child',
         'button.swal2-confirm',
+        'button.confirm',
     ];
     for (const sel of selectors) {
-        const btn = document.querySelector(sel);
-        if (btn && btn.offsetParent !== null) {
+        const btn = [...popup.querySelectorAll(sel)].find(clickable);
+        if (btn) {
             btn.click();
             return { ok: true, via: sel };
         }
     }
 
-    // Priority 3: X close icon on any visible modal header
-    const closeX = document.querySelector('.modal.in .close, .modal.in button.close');
-    if (closeX && closeX.offsetParent !== null) {
+    // Priority 3: X close icon on the visible modal header
+    const closeX = [...popup.querySelectorAll('.close, button.close, [data-dismiss="modal"]')].find(clickable);
+    if (closeX) {
         closeX.click();
         return { ok: true, via: 'closeX' };
     }
 
-    // Priority 4: text fallback for visible popup buttons
-    const allBtns = document.querySelectorAll(
-        '.modal-content button, .modal-footer button, .modal button, ' +
-        '.swal2-container button, .sweet-alert button, .ngdialog.ngdialog-open button'
-    );
+    // Priority 4: safe text fallback inside the visible popup (never blind 'submit')
+    const allBtns = popup.querySelectorAll('button, a.btn, input[type="button"]');
     for (const btn of allBtns) {
-        const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
-        if ((text === 'ok' || text === 'yes' || text === 'close' || text === 'submit') &&
-            btn.offsetParent !== null) {
+        const text = (btn.innerText || btn.textContent || btn.value || '').trim().toLowerCase();
+        if ((text === 'ok' || text === 'okay' || text === 'yes' || text === 'close') && clickable(btn)) {
             btn.click();
             return { ok: true, via: 'genericText' };
         }
     }
 
+    if (found.type === 'ngdialog') {
+        const ngBtn = [...popup.querySelectorAll('button')].find(clickable);
+        if (ngBtn) {
+            ngBtn.click();
+            return { ok: true, via: 'ngdialogButton' };
+        }
+    }
+
     return { ok: false, err: 'no dismissible button found' };
-}
-"""
+}"""
 
 
-_JS_CLOSE_CONFIRMED_POPUP = r"""
-body => {
+_JS_CLOSE_CONFIRMED_POPUP = r"body => {" + _JS_VISIBLE_HELPER + r"""
     const dialogs = document.querySelectorAll(
         '.modal.in, .modal[style*="display: block"], .modal[style*="display:block"]'
     );
-    const dialog = [...dialogs].find(el => el.getClientRects().length &&
-        el.querySelector('.modal-body')?.innerText.trim() === body);
-    const buttons = dialog ? [...dialog.querySelectorAll('button')].filter(btn =>
-        !btn.disabled && btn.getClientRects().length) : [];
-    const closeButton = buttons.find(btn => /^(?:ok|okay|close|continue)$/i.test(btn.innerText.trim())) ||
-        buttons.find(btn => btn.matches('button.close, button[data-ng-click*="coverChangeObj.cancel"], button[ng-click*="coverChangeObj.cancel"]'));
+    const dialog = [...dialogs].reverse().find(el => {
+        if (!_visible(el)) return false;
+        const bodyEl = el.querySelector('.modal-body');
+        return _cleanBodyText(bodyEl) === body || (bodyEl?.innerText || '').trim() === body;
+    });
+    const buttons = dialog ? [...dialog.querySelectorAll('button, a.btn, input[type="button"], input[type="submit"]')].filter(
+        btn => !btn.disabled && _visible(btn)
+    ) : [];
+    const closeButton = buttons.find(btn => /^(?:ok|okay|close|continue)$/i.test((btn.innerText || btn.textContent || btn.value || '').trim())) ||
+        buttons.find(btn => btn.matches('button.close, .close, [data-dismiss="modal"], button[data-ng-click*="coverChangeObj.cancel"], button[ng-click*="coverChangeObj.cancel"]'));
     if (!closeButton) return { ok: false };
     closeButton.click();
     return { ok: true, via: 'confirmedDialog' };
-}
-"""
+}"""
 
 
 # ── Popup tag classification ───────────────────────────────────────────────────
@@ -215,6 +241,7 @@ async def dismiss_portal_popup(
     verify_closed: bool = True,
     expected_message: Optional[re.Pattern[str]] = None,
     success_message: Optional[re.Pattern[str]] = None,
+    detail_out: Optional[dict] = None,
 ) -> Union[str, bool]:
     """
     Poll for and dismiss any visible NIA portal modal.
@@ -265,15 +292,19 @@ async def dismiss_portal_popup(
         ptype = popup_info.get("type", "modal")
         title = popup_info.get("title", "")
         body  = popup_info.get("body", "")
+        tag   = _classify_popup(body) if body else "other"
+        if detail_out is not None:
+            detail_out.update({"title": title, "body": body, "tag": tag, "dismissed": False})
         if expected_message is not None and not expected_message.search(body):
             _log_open_popup(log, ctx, popup_info)
             return None if classify else False
-        tag   = _classify_popup(body) if body else "other"
         if success_message is not None:
             if success_message.search(body):
                 tag = "success"
             elif tag == "success":
                 tag = "other"
+            if detail_out is not None:
+                detail_out["tag"] = tag
 
         display_body = (body or title or "Notification shown").replace("\n", " ").strip()[:140]
         if tag in ("size_error", "duplicate_error"):
@@ -308,22 +339,36 @@ async def dismiss_portal_popup(
 
         # ── Verify closure (optional retry) ───────────────────────────────────
         if verify_closed:
-            await asyncio.sleep(0.8)  # let Angular animate the modal out
+            want_full = bool(expected_message or success_message)
+            still_open: dict = {"found": False}
+            for _ in range(6):
+                await asyncio.sleep(0.2)
+                try:
+                    still_open = await page.evaluate(_JS_DETECT_POPUP, want_full)
+                except Exception:
+                    still_open = {"found": False}
+                    break
+                if not still_open.get("found"):
+                    break
+                if expected_message is not None and still_open.get("body") != body:
+                    _log_open_popup(log, ctx, still_open)
+                    if detail_out is not None:
+                        detail_out["dismissed"] = True
+                    return tag if classify else True
             try:
-                still_open: dict = await page.evaluate(_JS_DETECT_POPUP, expected_message is not None)
                 if still_open.get("found"):
-                    if expected_message is not None and still_open.get("body") != body:
-                        _log_open_popup(log, ctx, still_open)
-                        return tag if classify else True
                     _log_msg(log, "warning", f"Portal popup still open{ctx} — retrying...")
                     await capture_before_dismiss(page)
                     if expected_message is None:
                         await page.evaluate(_JS_DISMISS_POPUP)
                     else:
                         await page.evaluate(_JS_CLOSE_CONFIRMED_POPUP, body)
-                    await asyncio.sleep(0.8)
-                    # Check again
-                    final_check: dict = await page.evaluate(_JS_DETECT_POPUP)
+                    final_check: dict = {"found": False}
+                    for _ in range(4):
+                        await asyncio.sleep(0.2)
+                        final_check = await page.evaluate(_JS_DETECT_POPUP, want_full)
+                        if not final_check.get("found"):
+                            break
                     if final_check.get("found"):
                         _log_msg(log, "warning", f"Portal popup stayed open{ctx} — continuing.")
                     else:
@@ -335,6 +380,8 @@ async def dismiss_portal_popup(
         else:
             _log_msg(log, "success", f"Closed portal message{ctx}.")
 
+        if detail_out is not None:
+            detail_out["dismissed"] = True
         return tag if classify else True
 
     # ── No popup appeared within timeout ──────────────────────────────────────

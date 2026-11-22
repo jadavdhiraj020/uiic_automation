@@ -69,14 +69,6 @@
     "allow_text_values": true,
     "_mandatory": true
   },
-  "type_of_body": {
-    "sheet": "ALL",
-    "search_labels": ["Type of Body", "Body Type"],
-    "row_offset": 0,
-    "col_offset": 1,
-    "allow_text_values": true,
-    "_mandatory": true
-  },
   "class_of_vehicle": {
     "sheet": "ALL",
     "search_labels": ["Class of Vehicle", "Vehicle Class"],
@@ -469,6 +461,7 @@
     "_mandatory": true
   },
   "delivery_order_date": {
+    "display_name": "Delivery Order Date",
     "sheet": "ALL",
     "search_labels": ["Delivery Order Date"],
     "row_offset": 0,
@@ -478,6 +471,7 @@
     "_mandatory": false
   },
   "delivery_order_time": {
+    "display_name": "Delivery Order Time",
     "sheet": "ALL",
     "search_labels": ["Delivery Order Time"],
     "row_offset": 0,

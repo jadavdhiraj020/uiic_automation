@@ -1,5 +1,6 @@
 import asyncio
 import json
+from contextlib import suppress
 from typing import Callable, Optional
 from playwright.async_api import Page
 import re
@@ -8,6 +9,7 @@ from decimal import Decimal, InvalidOperation
 
 
 from app.automation.automation_logger import AutomationLogger, _ts
+from app.portals.newindia.automation.logging_utils import newindia_operator_reason
 from app.portals.newindia.automation.recovery import current_recovery
 from app.portals.oic.automation.recovery import wait_until_ready
 
@@ -31,6 +33,9 @@ def record_additional_issue(
 
 
 async def open_additional_section(page, title, log, *, optional=False):
+    recovery = current_recovery.get()
+    if recovery is not None:
+        await recovery.wait_if_manually_paused(page, log)
     heading = additional_section(page, title)
     try:
         if optional and not await heading.count():
@@ -74,13 +79,15 @@ _JS_FILL = r"""
 
 _JS_SELECT = r"""
 (select, txt) => {
-    if (!select) return { ok: false, err: 'not_found' };
+    if (!select) return { ok: false, err: 'not_found', optionCount: 0, suggestions: [] };
 
     select.scrollIntoView({ behavior: 'auto', block: 'center' });
 
     const search = txt.trim().toLowerCase();
     const options = [...select.options].filter(option => option.value && !option.disabled);
+    const optionCount = options.length;
     const label = option => option.text.trim().toLowerCase();
+    const cleanText = option => option.text.replace(/\s+/g, ' ').trim();
     const words = search.split(/\s+/).filter(word => word.length > 2);
     const matches = options.filter(option => label(option) === search);
     if (!matches.length && search) {
@@ -89,7 +96,13 @@ _JS_SELECT = r"""
     if (!matches.length) {
         matches.push(...options.filter(option => words.some(word => label(option).includes(word))));
     }
-    if (matches.length !== 1) return {ok: false, err: matches.length ? 'ambiguous' : 'no_match'};
+    if (matches.length !== 1) {
+        const err = matches.length ? 'ambiguous' : 'no_match';
+        const suggestions = err === 'ambiguous'
+            ? matches.slice(0, 3).map(cleanText)
+            : (optionCount <= 6 ? options.slice(0, 3).map(cleanText) : []);
+        return { ok: false, err, optionCount, suggestions };
+    }
     const [{value: matchedValue, text: matchedText}] = matches;
     if (select.value !== matchedValue) {
         select.value = matchedValue;
@@ -107,7 +120,7 @@ _JS_SELECT = r"""
             }
         } catch(e) {}
     }
-    return {ok: true, text: matchedText, value: matchedValue};
+    return {ok: true, text: matchedText, value: matchedValue, optionCount};
 }
 """
 
@@ -146,6 +159,250 @@ _JS_TRIGGER_CHANGE = r"""
 }
 """
 
+# ── Chrome Live Field HUD & Highlighting ──────────────────────────────────────
+
+_JS_HUD_STYLE_CSS = """
+[data-app3-field-state="active"] {
+    outline: 2.5px solid #2563EB !important;
+    outline-offset: 2px !important;
+    box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.22) !important;
+    border-radius: 4px !important;
+}
+[data-app3-field-state="retry"] {
+    outline: 2.5px solid #D97706 !important;
+    outline-offset: 2px !important;
+    box-shadow: 0 0 0 4px rgba(217, 119, 6, 0.22) !important;
+    border-radius: 4px !important;
+}
+[data-app3-field-state="ok"] {
+    outline: 2px solid #16A34A !important;
+    outline-offset: 2px !important;
+    box-shadow: 0 0 0 4px rgba(22, 163, 74, 0.18) !important;
+    border-radius: 4px !important;
+}
+[data-app3-field-state="error"] {
+    outline: 2.5px solid #DC2626 !important;
+    outline-offset: 2px !important;
+    box-shadow: 0 0 0 4px rgba(220, 38, 38, 0.22) !important;
+    background-color: #FEF2F2 !important;
+    border-radius: 4px !important;
+}
+#__app3-ni-hud {
+    position: fixed !important;
+    left: 16px !important;
+    bottom: 16px !important;
+    z-index: 2147483000 !important;
+    pointer-events: none !important;
+    max-width: 360px !important;
+    background: rgba(15, 23, 42, 0.94) !important;
+    color: #F8FAFC !important;
+    border: 1px solid rgba(148, 163, 184, 0.35) !important;
+    border-radius: 10px !important;
+    padding: 8px 12px !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.35) !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 2px !important;
+}
+#__app3-ni-hud .app3-hud-row {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    color: #F8FAFC !important;
+    font-size: 12.5px !important;
+    font-weight: 600 !important;
+    line-height: 1.3 !important;
+}
+#__app3-ni-hud .app3-hud-dot {
+    width: 8px !important;
+    height: 8px !important;
+    border-radius: 999px !important;
+    flex-shrink: 0 !important;
+}
+#__app3-ni-hud .app3-hud-title {
+    color: #F8FAFC !important;
+    font-weight: 600 !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+}
+#__app3-ni-hud .app3-hud-meta {
+    font-size: 11px !important;
+    color: #CBD5E1 !important;
+    padding-left: 16px !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+}
+"""
+
+_JS_UPDATE_HUD = """
+(payload) => {
+    if (!document.body && !document.documentElement) return;
+    if (!document.getElementById('__app3-ni-hud-style')) {
+        const style = document.createElement('style');
+        style.id = '__app3-ni-hud-style';
+        style.textContent = %s;
+        (document.head || document.documentElement).appendChild(style);
+    }
+    let hud = document.getElementById('__app3-ni-hud');
+    if (!hud) {
+        hud = document.createElement('div');
+        hud.id = '__app3-ni-hud';
+        hud.setAttribute('aria-hidden', 'true');
+        hud.innerHTML = '<div class="app3-hud-row"><span class="app3-hud-dot"></span><span class="app3-hud-title"></span></div><div class="app3-hud-meta"></div>';
+        (document.body || document.documentElement).appendChild(hud);
+    }
+    const colors = { active: '#3B82F6', retrying: '#F59E0B', retry: '#F59E0B', ok: '#22C55E', failed: '#EF4444', paused: '#EA580C' };
+    const verbs = { active: 'Filling', retrying: 'Retrying', retry: 'Retrying', ok: 'Filled', failed: 'Needs review', paused: 'Paused' };
+    const st = String(payload?.state || 'active');
+    const lbl = String(payload?.label || '').trim();
+    const verb = verbs[st] || 'Working';
+    const title = lbl ? `${verb}: ${lbl}` : verb;
+    const dot = hud.querySelector('.app3-hud-dot');
+    const titleEl = hud.querySelector('.app3-hud-title');
+    const metaEl = hud.querySelector('.app3-hud-meta');
+    hud.style.setProperty('color', '#F8FAFC', 'important');
+    if (dot) dot.style.background = colors[st] || '#3B82F6';
+    if (titleEl) {
+        titleEl.style.setProperty('color', '#F8FAFC', 'important');
+        titleEl.textContent = title;
+    }
+    const parts = [];
+    if (payload?.section) parts.push(String(payload.section));
+    const filled = Number(payload?.filled || 0);
+    const failed = Number(payload?.failed || 0);
+    parts.push(`✓ ${filled}`);
+    if (failed > 0) parts.push(`⚠ ${failed}`);
+    if (metaEl) {
+        metaEl.style.setProperty('color', '#CBD5E1', 'important');
+        metaEl.textContent = parts.join('  ·  ');
+    }
+}
+""" % json.dumps(_JS_HUD_STYLE_CSS)
+
+_JS_MARK_FIELD = """
+(el, state) => {
+    if (!el) return;
+    if (!document.getElementById('__app3-ni-hud-style')) {
+        const style = document.createElement('style');
+        style.id = '__app3-ni-hud-style';
+        style.textContent = %s;
+        (document.head || document.documentElement).appendChild(style);
+    }
+    for (const prev of document.querySelectorAll('[data-app3-field-state]')) {
+        const prevState = prev.getAttribute('data-app3-field-state');
+        if (prevState === 'active' || prevState === 'retry' || prev === el) {
+            prev.removeAttribute('data-app3-field-state');
+        }
+    }
+    if (el.dataset.app3OkTimer) {
+        clearTimeout(Number(el.dataset.app3OkTimer));
+        delete el.dataset.app3OkTimer;
+    }
+    const targetNode = (el.type === 'radio' && !el.getClientRects().length)
+        ? ([...(el.labels || [])].find(l => l.getClientRects().length) || el)
+        : el;
+    try {
+        targetNode.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'nearest' });
+    } catch (e) {}
+    el.setAttribute('data-app3-field-state', state);
+    if (state === 'ok') {
+        const timerId = setTimeout(() => {
+            if (el.getAttribute('data-app3-field-state') === 'ok') {
+                el.removeAttribute('data-app3-field-state');
+            }
+            delete el.dataset.app3OkTimer;
+        }, 750);
+        el.dataset.app3OkTimer = String(timerId);
+    } else if (state === 'error' && !el.dataset.app3ErrListener) {
+        el.dataset.app3ErrListener = '1';
+        const clearOnEdit = () => {
+            if (el.getAttribute('data-app3-field-state') === 'error') {
+                el.removeAttribute('data-app3-field-state');
+            }
+        };
+        el.addEventListener('input', clearOnEdit);
+        el.addEventListener('change', clearOnEdit);
+    }
+}
+""" % json.dumps(_JS_HUD_STYLE_CSS)
+
+_JS_CLEAR_HUD = """
+(clearErrors) => {
+    const hud = document.getElementById('__app3-ni-hud');
+    if (hud) hud.remove();
+    for (const node of document.querySelectorAll('[data-app3-field-state]')) {
+        const st = node.getAttribute('data-app3-field-state');
+        if (clearErrors || st !== 'error') {
+            node.removeAttribute('data-app3-field-state');
+        }
+    }
+}
+"""
+
+_JS_TRIGGER_ELEMENT_CHANGE = """
+(el) => {
+    if (!el) return;
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    try {
+        const s = angular.element(el).scope();
+        if (s && s.$apply) s.$apply();
+        else {
+            let p = el.parentElement;
+            while (p) {
+                const ps = angular.element(p).scope();
+                if (ps && ps.$apply) { ps.$apply(); break; }
+                p = p.parentElement;
+            }
+        }
+    } catch (e) {}
+    el.dispatchEvent(new Event('blur', { bubbles: true }));
+}
+"""
+
+
+async def update_field_hud(page, section, label, state, *, filled=0, failed=0, skipped=0):
+    """Show the current field action and progress pill inside Chrome safely."""
+    if not page or page.is_closed():
+        return
+    with suppress(Exception):
+        await asyncio.wait_for(
+            page.evaluate(
+                _JS_UPDATE_HUD,
+                {
+                    "section": section or "",
+                    "label": label or "",
+                    "state": state,
+                    "filled": filled,
+                    "failed": failed,
+                    "skipped": skipped,
+                },
+            ),
+            timeout=1.5,
+        )
+
+
+async def clear_field_hud(page, *, clear_errors=False):
+    """Remove the Chrome progress pill and temporary highlights safely."""
+    if not page or page.is_closed():
+        return
+    with suppress(Exception):
+        await asyncio.wait_for(page.evaluate(_JS_CLEAR_HUD, bool(clear_errors)), timeout=1.5)
+
+
+async def _mark_field(target, state: str):
+    with suppress(Exception):
+        if await target.count() >= 1:
+            await asyncio.wait_for(target.first.evaluate(_JS_MARK_FIELD, state), timeout=1.0)
+
+
+def _short_val(val) -> str:
+    text = " ".join(str(val or "").split())
+    return text if len(text) <= 36 else text[:33] + "..."
+
+
 # ── Python Helpers ────────────────────────────────────────────────────────────
 
 _JS_FIELD_STATE = """
@@ -155,6 +412,25 @@ el => {
     const model = window.angular?.element(el)?.controller('ngModel');
     const errors = Object.keys(model?.$error || {}).filter(code => model.$error[code]);
     const selected = el.selectedOptions?.[0];
+    const valid = (!el.willValidate || el.validity.valid) && !errors.length && !model?.$pending &&
+                  (Boolean(model) || el.getAttribute('aria-invalid') !== 'true');
+    const missing = Boolean(el.validity?.valueMissing || errors.includes('required'));
+    const hasInvalidState = !valid || missing || el.classList.contains('ng-invalid') || Boolean(el.closest('.has-error'));
+    let portalError = '';
+    const box = el.closest('.form-group, td') || el.parentElement;
+    if (box) {
+        const msgSelectors = hasInvalidState
+            ? '.help-block, .text-danger, .error, [ng-message], [data-ng-message], .invalid-feedback, span.err'
+            : '.text-danger, .error, [ng-message], [data-ng-message], .invalid-feedback, span.err, .has-error .help-block';
+        for (const node of box.querySelectorAll(msgSelectors)) {
+            if (!visible(node) || node.querySelector('input, select, textarea')) continue;
+            const msg = (node.innerText || node.textContent || '').replace(/\\s+/g, ' ').trim();
+            if (msg && msg !== '*' && !msg.startsWith('http')) {
+                portalError = msg.slice(0, 90);
+                break;
+            }
+        }
+    }
     return {
         value: el.value,
         identity: [el.type === 'radio' ? '' : el.id, el.name],
@@ -162,9 +438,9 @@ el => {
         viewValue: ['string', 'number'].includes(typeof model?.$viewValue) ? String(model.$viewValue) : null,
         checked: ['radio', 'checkbox'].includes(el.type) ? el.checked : null,
         editable: !el.readOnly && !el.matches(':disabled'),
-        valid: (!el.willValidate || el.validity.valid) && !errors.length && !model?.$pending &&
-               (Boolean(model) || el.getAttribute('aria-invalid') !== 'true'),
-        missing: el.validity?.valueMissing || errors.includes('required'),
+        valid,
+        missing,
+        portalError,
         option: selected && !selected.disabled ? selected.text : ''
     };
 }
@@ -201,8 +477,21 @@ def _text_matches_field(state, value, *, numeric=False):
 async def _check_entry(page, target, label, value, script, kind, log, delay_ms, source,
                        radio_group=None, numeric=False):
     recovery = current_recovery.get()
+    if recovery is not None:
+        await recovery.wait_if_manually_paused(page, log)
+    section = getattr(log, "_section", None) or ""
     selected_value = str(value)
     shown = str(value)
+    tried_short = _short_val(value) if (str(value or "").strip() and kind != "checkbox") else ""
+
+    async def emit_progress(progress_state: str):
+        if recovery is not None and hasattr(recovery, "report_field_progress"):
+            recovery.report_field_progress(section, label, progress_state, value=tried_short)
+        filled = getattr(recovery, "fields_filled", 0) if recovery is not None else 0
+        failed = getattr(recovery, "fields_failed", 0) if recovery is not None else 0
+        skipped = getattr(recovery, "fields_skipped", 0) if recovery is not None else 0
+        await update_field_hud(page, section, label, progress_state, filled=filled, failed=failed, skipped=skipped)
+
     async def matches():
         nonlocal state
         if await target.count() != 1:
@@ -245,13 +534,18 @@ async def _check_entry(page, target, label, value, script, kind, log, delay_ms, 
 
     state = None
     option_set = False
-    reason = "App3 could not find this field in the current section."
+    err = ""
+    suggestions = []
+    option_count = None
+    reason = "Could not find this field on this page."
     if recovery is not None and recovery.stopped():
         raise asyncio.CancelledError
+    await emit_progress("active")
     try:
         ready_state = "attached" if kind in {"radio", "checkbox"} else "visible"
         await target.wait_for(state=ready_state, timeout=5000)
         reason = "New India did not keep this value."
+        await _mark_field(target, "active")
         valid = await matches()
         if not valid and state and state["editable"]:
             result = await target.evaluate(script, str(value), timeout=5000)
@@ -259,38 +553,89 @@ async def _check_entry(page, target, label, value, script, kind, log, delay_ms, 
                 selected_value = result["value"]
                 shown = result["text"]
                 option_set = True
-            if result and result.get("err") == "no_match":
-                reason = "The supplied value does not match an available option."
-            elif result and result.get("err") == "ambiguous":
-                reason = "More than one option matches. Select the correct one in Chrome."
+            err = (result or {}).get("err", "")
+            suggestions = (result or {}).get("suggestions") or []
+            option_count = (result or {}).get("optionCount")
             await asyncio.sleep(max(delay_ms / 1000, 0.12))
             valid = await wait_until_ready(
-                matches, seconds=1, stopped=recovery.stopped if recovery else lambda: False,
+                matches, seconds=0.9, stopped=recovery.stopped if recovery else lambda: False,
             )
+
+            retryable = bool(
+                not valid and state and state["editable"]
+                and (err not in ("no_match", "ambiguous") or (kind == "dropdown" and option_count == 0))
+            )
+            if retryable:
+                await _mark_field(target, "retry")
+                await emit_progress("retrying")
+                await asyncio.sleep(0.4)
+                if recovery is not None and recovery.stopped():
+                    raise asyncio.CancelledError
+                if kind == "text":
+                    try:
+                        await target.click(timeout=1500)
+                        await target.fill(str(value), timeout=2000)
+                        await target.evaluate(_JS_TRIGGER_ELEMENT_CHANGE, timeout=1500)
+                    except Exception:
+                        await target.evaluate(script, str(value), timeout=5000)
+                else:
+                    result = await target.evaluate(script, str(value), timeout=5000)
+                    if result and result.get("value") is not None:
+                        selected_value = result["value"]
+                        shown = result["text"]
+                        option_set = True
+                    err = (result or {}).get("err", "")
+                    suggestions = (result or {}).get("suggestions") or []
+                    option_count = (result or {}).get("optionCount")
+                valid = await wait_until_ready(
+                    matches, seconds=1.0, stopped=recovery.stopped if recovery else lambda: False,
+                )
         if valid:
+            await _mark_field(target, "ok")
+            await emit_progress("ok")
             log_verified()
             return
-        if state and reason == "New India did not keep this value.":
-            if state["missing"] and not str(state["value"]).strip():
-                reason = "New India requires a value for this field."
-            elif not state["valid"]:
-                reason = "New India marked this field invalid. Check the message beside it in Chrome."
-            elif not state["editable"]:
-                reason = "This field is read-only and needs review in Chrome."
+    except asyncio.CancelledError:
+        raise
     except Exception:
         # A portal rerender can interrupt the write after accepting it.
-        if reason != "App3 could not find this field in the current section.":
+        if reason != "Could not find this field on this page.":
             if await wait_until_ready(matches, seconds=0.6):
+                await _mark_field(target, "ok")
+                await emit_progress("ok")
                 log_verified()
                 return
+
+    await _mark_field(target, "error")
+    if err == "no_match":
+        opts = ", ".join(s for s in suggestions if s)
+        base = "Not in dropdown list"
+        reason = f"{base} (options: {opts})" if opts and len(f"{base} (options: {opts})") <= 85 else base
+    elif err == "ambiguous":
+        opts = ", ".join(s for s in suggestions if s)
+        base = "Multiple matches — pick one"
+        reason = f"{base} ({opts})" if opts and len(f"{base} ({opts})") <= 85 else base
+    elif state and state.get("portalError"):
+        reason = newindia_operator_reason(state["portalError"], "New India marked this field invalid.")
+    elif state:
+        if state["missing"] and not str(state["value"]).strip():
+            reason = "New India requires a value for this field."
+        elif not state["valid"]:
+            reason = "New India marked this field invalid."
+        elif not state["editable"]:
+            reason = "Field is locked (read-only)."
+        else:
+            reason = "New India did not keep this value."
+
+    await emit_progress("failed")
     if recovery is not None:
-        rejected_value = (state["value"], state["checked"]) if state else None
         recovery.record_field_issue(
             log, label, reason, matches=matches, manual_value=verified_manual_value,
             identity=tuple(state["identity"]) if state else None,
+            attempted_value=tried_short, source=source or "",
         )
     elif isinstance(log, AutomationLogger):
-        log.field_failed(label, reason)
+        log.field_failed(label, f"{reason} (tried '{tried_short}')" if tried_short else reason)
     elif log:
         log(f"[{_ts()}] {label}: {reason}")
 
@@ -377,6 +722,9 @@ async def upload_file_via_input(
     Returns True if file was attached successfully, False otherwise.
     """
     import os
+    recovery = current_recovery.get()
+    if recovery is not None:
+        await recovery.wait_if_manually_paused(page, log)
     if not file_path or not os.path.exists(file_path):
         if isinstance(log, AutomationLogger):
             log.upload_failed(label, f"File not found: {file_path}")

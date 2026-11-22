@@ -58,7 +58,7 @@ Every field is tagged with one method:
 
 All dates are entered on New India as **DD/MM/YYYY** (for example 15/01/2024), whatever form they had in the report.
 
-> **Big difference from OIC:** on New India, App3 does **not** stop and wait for you when a field cannot be filled. It writes a line in the log and carries on (see section 17). Always review the form before final submission.
+> On New India, App3 attempts the remaining fields on the page and reviews unresolved issues at **Next** (see section 17). Review the form before final submission.
 
 ---
 
@@ -76,7 +76,7 @@ All dates are entered on New India as **DD/MM/YYYY** (for example 15/01/2024), w
 **How a report value is accepted**
 
 - Number-type fields (registration, engine, chassis, dates, amounts) ignore cells that hold only words with no digits, such as "Lifetime" or "Attached".
-- Text fields (names, body type, colour, cause of accident, RTO and similar) accept any text.
+- Text fields (names, colour, cause of accident, RTO and similar) accept any text.
 - Yes/No fields accept "Yes" or "No" as written.
 - Every field whose name contains "date" or "DOB" is converted to DD/MM/YYYY when it is read. Tax Paid Upto is not (see section 19).
 
@@ -128,7 +128,7 @@ Before NEFT Details and Claim Assessment, App3 waits for the cheque and invoice 
 | --------------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | Username        | âš™ï¸ Setting | From New India settings in App3.                                                                                                    |
 | Password        | âš™ï¸ Setting | From New India settings in App3.                                                                                                    |
-| reCAPTCHA       | ðŸ§® Calculated  | App3 ticks "I'm not a robot". If Google shows a picture puzzle, you solve it and click Login in Chrome within 45 seconds (setting). |
+| reCAPTCHA       | ðŸ§® Calculated  | App3 ticks "I'm not a robot". If Google shows a picture puzzle, you solve it and click Login in Chrome within 45 seconds (setting). If sign-in takes longer, App3 pauses with the floating card instead of failing so you can finish signing in and click **Continue**. |
 | Worklist        | ðŸ”’ Fixed       | Opens the Worklist menu.                                                                                                            |
 | Filter Criteria | ðŸ”’ Fixed       | "Claim No."                                                                                                                         |
 | Claim No        | ðŸ“„ Direct      | Typed letter by letter, then Filter is clicked. Blocks start if missing.                                                            |
@@ -175,29 +175,30 @@ The YES answers are only clicked when the portal does not already show YES.
 
 ## 7. Registration Certificate Details
 
+Fields are filled in top-to-bottom portal order (`Reference No` outside the accordion, then `Registered Owner Name` → `Registration Number` → `Type of Vehicle` → `Date of Registration` → `Engine No` → `Chassis No` → `Physically Verified` → `Class of Vehicle` → `Pre-Accident Condition` → optional Laden/Unladen Weight & Fitness/Permit fields → `Route/Area of Operation` → `Tax Paid Upto` → `RTO Name` → `Transfer Date` → `Odometer Reading` → `Vehicle Color` → `Vehicle Color Type` → `Type of Fuel`). `Type of Body` is no longer present in the live portal and is skipped by App3.
+
 | Field                                   | Method               | How the value is decided                                                                                                                                                                                                                                                                     | If missing   |
 | --------------------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
-| Reference No                            | ðŸ“„ Direct      | From "Reference No."                                                                                                                                                                                                                                                                         | Left empty   |
-| **Registered Owner Name**         | ðŸ“„ Direct      |                                                                                                                                                                                                                                                                                              | Blocks start |
-| **Registration Number** (4 boxes) | ðŸ”§ Cleaned     | Spaces and dashes removed, capitals. Split into state letters / district number / series letters / number. GJ-01-AB-1234 â†’ GJ / 01 / AB / 1234. GJ011234 â†’ GJ / 01 / (empty) / 1234. A number that does not follow this pattern (for example BH series 22BH1234AA) is not entered. | Blocks start |
-| **Registration Date**             | ðŸ”§ Cleaned     | DD/MM/YYYY                                                                                                                                                                                                                                                                                   | Blocks start |
-| **Engine No**                     | ðŸ“„ Direct      |                                                                                                                                                                                                                                                                                              | Blocks start |
-| **Chassis No**                    | ðŸ“„ Direct      |                                                                                                                                                                                                                                                                                              | Blocks start |
-| Physically Verified                     | ðŸ”’ Fixed       | Ticked.                                                                                                                                                                                                                                                                                      |              |
-| **Type of Body**                  | ðŸ” Matched     | From the report.                                                                                                                                                                                                                                                                             | Blocks start |
-| **Class of Vehicle**              | ðŸ“„ Direct      | Typed as written.                                                                                                                                                                                                                                                                            | Blocks start |
-| Pre-Accident Condition                  | ðŸ“„ Direct      |                                                                                                                                                                                                                                                                                              | "Good"       |
-| Route/Area of Operation                 | ðŸ“„ Direct      |                                                                                                                                                                                                                                                                                              | Left empty   |
-| Tax Paid Upto                           | ðŸ“„ Direct      | Typed as read, not converted to DD/MM/YYYY.                                                                                                                                                                                                                                                  | Left empty   |
-| **RTO Name**                      | ðŸ“„ Direct      |                                                                                                                                                                                                                                                                                              | Blocks start |
-| Transfer Date                           | ðŸ”§ Cleaned     | DD/MM/YYYY                                                                                                                                                                                                                                                                                   | Left empty   |
-| **Odometer Reading**              | ðŸ”§ Cleaned     | Digits only. "45,230 km" â†’ 45230.                                                                                                                                                                                                                                                       | Blocks start |
-| **Vehicle Color**                 | ðŸ“„ Direct      |                                                                                                                                                                                                                                                                                              | Blocks start |
-| Vehicle Color Type                      | ðŸ“„ Direct      |                                                                                                                                                                                                                                                                                              | "Solid"      |
-| **Type of Vehicle**               | ðŸ§® Calculated  | From Registered Laden Weight: **over 3,000 kg â†’ Goods Carrying (A)**, 3,000 kg or less â†’ Passenger Carrying (C). The report's own "Type of Vehicle" is used only when the weight has no number in it.                                                                        | Blocks start |
-| **Type of Fuel**                  | ðŸ” Matched     | From the report.                                                                                                                                                                                                                                                                             | Blocks start |
-| Vehicle Make                            | ðŸš« Not entered | Read and required before start, but never typed.                                                                                                                                                                                                                                             | Blocks start |
-| Registered Laden Weight                 | ðŸš« Not entered | Only used to work out Type of Vehicle.                                                                                                                                                                                                                                                       | Blocks start |
+| Reference No                            | 📄 Direct      | From "Reference No."                                                                                                                                                                                                                                                                         | Left empty   |
+| **Registered Owner Name**         | 📄 Direct      |                                                                                                                                                                                                                                                                                              | Blocks start |
+| **Registration Number** (4 boxes) | 🔧 Cleaned     | Spaces and dashes removed, capitals. Split into state letters / district number / series letters / number. GJ-01-AB-1234 → GJ / 01 / AB / 1234. GJ011234 → GJ / 01 / (empty) / 1234. A number that does not follow this pattern (for example BH series 22BH1234AA) is not entered. | Blocks start |
+| **Type of Vehicle**               | 🧮 Calculated  | From Registered Laden Weight: **over 3,000 kg → Goods Carrying (A)**, 3,000 kg or less → Passenger Carrying (C). The report's own "Type of Vehicle" is used only when the weight has no number in it.                                                                        | Blocks start |
+| **Registration Date**             | 🔧 Cleaned     | DD/MM/YYYY                                                                                                                                                                                                                                                                                   | Blocks start |
+| **Engine No**                     | 📄 Direct      |                                                                                                                                                                                                                                                                                              | Blocks start |
+| **Chassis No**                    | 📄 Direct      |                                                                                                                                                                                                                                                                                              | Blocks start |
+| Physically Verified                     | 🔒 Fixed       | Ticked.                                                                                                                                                                                                                                                                                      |              |
+| **Class of Vehicle**              | 📄 Direct      | Typed as written.                                                                                                                                                                                                                                                                            | Blocks start |
+| Pre-Accident Condition                  | 📄 Direct      |                                                                                                                                                                                                                                                                                              | "Good"       |
+| Registered Laden Weight / Unladen Weight / Fitness Cert & Permit fields | 📄 / 🔧 Optional | Filled when visible on the portal form (commercial / non-PC claims). Laden/Unladen Weight also used to calculate Type of Vehicle.                                                                                                                                    | Left empty   |
+| Route/Area of Operation                 | 📄 Direct      |                                                                                                                                                                                                                                                                                              | Left empty   |
+| Tax Paid Upto                           | 📄 Direct      | Typed as read, not converted to DD/MM/YYYY.                                                                                                                                                                                                                                                  | Left empty   |
+| **RTO Name**                      | 📄 Direct      |                                                                                                                                                                                                                                                                                              | Blocks start |
+| Transfer Date                           | 🔧 Cleaned     | DD/MM/YYYY                                                                                                                                                                                                                                                                                   | Left empty   |
+| **Odometer Reading**              | 🔧 Cleaned     | Digits only. "45,230 km" → 45230.                                                                                                                                                                                                                                                       | Blocks start |
+| **Vehicle Color**                 | 📄 Direct      |                                                                                                                                                                                                                                                                                              | Blocks start |
+| Vehicle Color Type                      | 📄 Direct      |                                                                                                                                                                                                                                                                                              | "Solid"      |
+| **Type of Fuel**                  | 🔍 Matched     | From the report.                                                                                                                                                                                                                                                                             | Blocks start |
+| Vehicle Make                            | 🚫 Not entered | Read and required before start, but never typed.                                                                                                                                                                                                                                             | Blocks start |
 
 ---
 
@@ -205,35 +206,37 @@ The YES answers are only clicked when the portal does not already show YES.
 
 | Field                                                                 | Method              | How the value is decided                                                                                        | If missing       |
 | --------------------------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------- |
-| Was the vehicle parked during accident?                               | ðŸ”’ Fixed      | Always "No". The report's answer is read but not used.                                                          |                  |
-| Relationship of the driver with the Insured                           | ðŸ” Matched    | From the report.                                                                                                | "Self" (setting) |
-| Licence Type of Driver                                                | ðŸ” Matched    | From the report.                                                                                                | Left empty       |
-| **DOB of Driver**                                               | ðŸ”§ Cleaned    | DD/MM/YYYY                                                                                                      | Blocks start     |
-| **Driver Name**                                                 | ðŸ“„ Direct     |                                                                                                                 | Blocks start     |
-| **Age of Driver**                                               | ðŸ§® Calculated | Completed years from the date of birth to the **day of the run**. Replaces any age written in the report. | Blocks start     |
-| Is the licence valid for the type of vehicle on the date of accident? | ðŸ”’ Fixed      | Yes                                                                                                             |                  |
-| Licence Issuing Authority                                             | ðŸ“„ Direct     |                                                                                                                 | Left empty       |
-| **Driving Licence Number**                                      | ðŸ“„ Direct     | Typed as written.                                                                                               | Blocks start     |
-| **Licence Issue Date**                                          | ðŸ”§ Cleaned    | DD/MM/YYYY                                                                                                      | Blocks start     |
-| **Licence Expiry Date**                                         | ðŸ”§ Cleaned    | DD/MM/YYYY                                                                                                      | Blocks start     |
-| Badge No                                                              | ðŸ“„ Direct     |                                                                                                                 | Left empty       |
+| Was the vehicle parked during accident?                               | 🔒 Fixed      | Always "No". The report's answer is read but not used.                                                          |                  |
+| Relationship of the driver with the Insured                           | 🔍 Matched    | From the report.                                                                                                | "Self" (setting) |
+| Licence Type of Driver                                                | 🔍 Matched    | From the report.                                                                                                | Left empty       |
+| **DOB of Driver**                                               | 🔧 Cleaned    | DD/MM/YYYY                                                                                                      | Blocks start     |
+| **Driver Name**                                                 | 📄 Direct     |                                                                                                                 | Blocks start     |
+| **Age of Driver**                                               | 🧮 Calculated | Completed years from the date of birth to the **day of the run**. Replaces any age written in the report. | Blocks start     |
+| Is the licence valid for the type of vehicle on the date of accident? | 🔒 Fixed      | Yes                                                                                                             |                  |
+| Licence Issuing Authority                                             | 📄 Direct     |                                                                                                                 | Left empty       |
+| **Driving Licence Number**                                      | 📄 Direct     | Typed as written.                                                                                               | Blocks start     |
+| **Licence Issue Date**                                          | 🔧 Cleaned    | DD/MM/YYYY                                                                                                      | Blocks start     |
+| **Licence Expiry Date**                                         | 🔧 Cleaned    | DD/MM/YYYY                                                                                                      | Blocks start     |
+| Badge No                                                              | 📄 Direct     |                                                                                                                 | Left empty       |
 
 ---
 
 ## 9. FIR Details
 
+Fields are filled in top-to-bottom portal order (`Is there any TP claim?` first in Row 1 column 1, then `FIR Number` through `Any previous police records`).
+
 | Field                           | Method               | How the value is decided                                       | If missing     |
 | ------------------------------- | -------------------- | -------------------------------------------------------------- | -------------- |
-| FIR Number                      | ðŸ“„ Direct      |                                                                | "NA" (setting) |
-| FIR Date                        | ðŸ”§ Cleaned     | DD/MM/YYYY                                                     | Left empty     |
-| Police Station Name             | ðŸ“„ Direct      |                                                                | "NA" (setting) |
-| Charged U/S Motor Vehicle Act   | ðŸ“„ Direct      |                                                                | "NA" (setting) |
-| Charged U/S IPC                 | ðŸ“„ Direct      |                                                                | "NA" (setting) |
-| Whether driver without licence? | ðŸ”§ Cleaned     | "Yes" only when the report says Yes. Anything else becomes No. | "No"           |
-| Any previous police records     | ðŸ”§ Cleaned     | Same rule.                                                     | "No"           |
-| Is there any TP claim?          | ðŸ”§ Cleaned     | Same rule.                                                     | "No"           |
-| Name of Informant               | ðŸš« Not entered | Read only.                                                     |                |
-| Sections of Law                 | ðŸš« Not entered | Read only.                                                     |                |
+| Is there any TP claim?          | 🔧 Cleaned     | "Yes" only when the report says Yes. Anything else becomes No. | "No"           |
+| FIR Number                      | 📄 Direct      |                                                                | "NA" (setting) |
+| FIR Date                        | 🔧 Cleaned     | DD/MM/YYYY                                                     | Left empty     |
+| Police Station Name             | 📄 Direct      |                                                                | "NA" (setting) |
+| Charged U/S Motor Vehicle Act   | 📄 Direct      |                                                                | "NA" (setting) |
+| Charged U/S IPC                 | 📄 Direct      |                                                                | "NA" (setting) |
+| Whether driver without licence? | 🔧 Cleaned     | Same rule.                                                     | "No"           |
+| Any previous police records     | 🔧 Cleaned     | Same rule.                                                     | "No"           |
+| Name of Informant               | 🚫 Not entered | Read only.                                                     |                |
+| Sections of Law                 | 🚫 Not entered | Read only.                                                     |                |
 
 ---
 
@@ -294,7 +297,11 @@ The cheque is only read when IFSC Code or Account Number is missing from the rep
 | Compulsory, Voluntary and Imposed Excess                               | ðŸš« Not entered | Read only.                                                                                                                                     |                                               |
 | Primary Assessment amount                                              | ðŸš« Not entered | Required before start. The portal takes the figures from the uploaded sheet.                                                                   | Blocks start                                  |
 | No. of invoices, Salvage invoice mapping, GST Applicable, Verification | ðŸš« Not entered | Read only.                                                                                                                                     |                                               |
-| Next                                                                   | ðŸ”’ Fixed       | Clicked, and retried once. If Document Upload still does not open, the run stops and the log names the portal fields still marked as required. |                                               |
+| Next                                                                   | ðŸ”’ Fixed       | App3 checks unresolved fields before clicking Next. If Document Upload does not open, App3 pauses for review. |                                               |
+
+**Delivery Order Date and Delivery Order Time** are optional for App3's Claim Assessment flow. The [Excel mapping](../app/portals/newindia/config/field_mapping.json) reads each value one column to the right of its label on the same row. App3 fills either value independently when it is available and usable.
+
+For example, if Excel has `15/01/2026` for the date and the time is blank, App3 fills the date and leaves the time empty. If both are blank, App3 skips both and leaves them off the [pause popup](../app/portals/newindia/automation/recovery.py), even when the portal shows asterisks. New India still controls whether **Next** is available.
 
 ### 12.2 How App3 builds the primary assessment sheet
 
@@ -327,10 +334,10 @@ A table whose header App3 is less than 80% sure of is skipped. If neither table 
 | 3   | Claim Form               | Claim form file                   |
 | 4   | Claim Related Documents  | One merged PDF of all other files |
 
-- A row is added only for a file that was found, so the numbering shifts when one is missing.
+- A row is added only for a file that was found, so the numbering shifts when one is missing. For multi-document batches (1..9+ rows), App3 clicks the `+` icon inside `mandatoryDocForm`, scrolls the row dropdown into view, matches by value or visible label in 3 passes, dispatches Angular change events before file attachment so per-type size limits update immediately, and compresses oversized files as a safety net.
 - **Claim Related Documents** holds every other PDF and picture in the folder that is not used elsewhere. App3's own outputs are left out, and Word, Excel and text files cannot be merged.
 - Chassis and odometer photos, the cheque, the approval letter, the invoice and the assessment sheets are **not** in the merged PDF.
-- After all rows are attached, App3 clicks Upload once and waits up to 30 seconds for the portal.
+- After all rows are attached and verified, App3 strictly locates the Mandatory **Upload** button inside `mandatoryDocForm` (never Reset, Non-Mandatory Upload, or Survey Fee Bill Upload) and confirms completion via inline banners, per-row `Successful` indicators, confirmation modals, or an increase in the `Uploaded Documents` table count. If New India shows an alert instead of confirming, the portal alert message is shown on the floating review card with a **Continue** button. See [document upload module](../app/portals/newindia/automation/document_upload_module.py).
 
 ---
 
@@ -381,9 +388,9 @@ A table whose header App3 is less than 80% sure of is skipped. If neither table 
 
 ### 16.1 These block the start
 
-The run does not start when any of these 27 values is missing:
+The run does not start when any of these 26 values is missing:
 
-Claim Number Â· Registered Owner Name Â· Vehicle Registration Number Â· Date of Registration Â· Engine No Â· Chassis No Â· Vehicle Make Â· Type of Body Â· Class of Vehicle Â· RTO Name Â· Odometer Reading Â· Vehicle Color Â· Registered Laden Weight Â· Type of Vehicle Â· Type of Fuel Â· Cause/Nature of Accident Â· Driver Name Â· DOB of Driver Â· Age of Driver Â· Driver License Number Â· Driver License Issue Date Â· Driver License Expiry Date Â· IFSC Code Â· Account Number Â· Vendor/Tax Invoice Date Â· Vendor/Tax Invoice Number Â· Primary Assessment
+Claim Number · Registered Owner Name · Vehicle Registration Number · Date of Registration · Engine No · Chassis No · Vehicle Make · Class of Vehicle · RTO Name · Odometer Reading · Vehicle Color · Registered Laden Weight · Type of Vehicle · Type of Fuel · Cause/Nature of Accident · Driver Name · DOB of Driver · Age of Driver · Driver License Number · Driver License Issue Date · Driver License Expiry Date · IFSC Code · Account Number · Vendor/Tax Invoice Date · Vendor/Tax Invoice Number · Primary Assessment
 
 - Odometer Reading and Primary Assessment may be 0. For the other fields, 0 counts as missing.
 - Invoice Number and Date do not block the start when they will be read from the invoice PDF. IFSC Code and Account Number do not block the start when they will be read from the cheque. The run stops later if that reading does not deliver them.
@@ -396,18 +403,19 @@ Vehicle Details Mismatch Remarks Â· Route/Area of Operation Â· Tax Paid Upto
 
 ## 17. When a field cannot be filled
 
-New India works differently from OIC:
+While filling fields one by one, App3 shows a compact live progress badge in Chrome (bottom-left corner, forced high-contrast white text `#F8FAFC !important` so portal rules cannot darken it) alongside color rings on the active field (blue while filling, amber on automatic retry, brief green when verified, and red on failure until edited in Chrome) and updates the App3 top status bar with the active section, field name, and running counts (`✓` filled / `⚠` failed).
 
-1. App3 waits up to 5 seconds for each field to appear. If it does not, App3 writes the field name in the log and **moves on**.
-2. Typed values are **not read back** after filling.
-3. Dropdowns are matched in three passes: exact text, then partial text either way, then any word of 3 or more letters. The **first** option that matches is chosen.
-4. The run only stops when a whole step fails, for example: the claim cannot be found, Claim Assessment does not reach Document Upload, the Survey Fee Bill Submit button is missing, or the cheque or invoice reading is not ready.
+If a field does not stick on the first attempt (or a cascading dropdown has no options yet), App3 automatically retries it once (using native typing + blur/change events for text inputs) before recording a failure. It continues trying the remaining fields on **Quick Update**, **Additional Details**, and **Claim Assessment**. At **Next**, it checks what the current page retained and shows one compact floating pause card (`RecoveryDialog`) near the top-right corner of the screen without pulling the desktop app over Chrome (with a fixed-height header, escaped `&` button text such as **Skip & Try Next**, and a **Show Chrome** button). Blank **Delivery Order Date** and **Delivery Order Time** are skipped during that check. Modals whose OK button lives inside `.modal-body` (such as `"Claim job details updated successfully"`) have button text stripped during confirmation matching so `advance_next` closes confirmed save popups cleanly without an extra pause.
 
-So after every run, check the log for skipped fields and look over the form in Chrome.
+Each failed item on the card shows the section, field name, a **Tried: value (source)** pill with a 1-click **Copy** button, and either New India's inline error text or available dropdown options when a choice did not match. Fix the listed fields in Chrome and click **Continue** in the card (use **Show Chrome** on the card header if Chrome is covered or minimized, or **Show Pause Card** in App3 if the card is hidden). Clicking **Continue** rechecks Chrome, clicks **Next** automatically when ready, and waits briefly to dismiss any delayed save popup. When offered, **Skip & Try Next** attempts to move ahead with current values. You can also click **Pause** in the App3 toolbar at any time to edit Chrome calmly and click **Resume** when ready. App3 checks that the next page opened for the same claim. When all steps finish, App3 leaves Chrome open and shows a green **"All Steps Complete — Ready for Review"** floating card (**Show Chrome** + **Done (Keep Chrome Open)**). See [field fill & Chrome HUD](../app/portals/newindia/automation/ui_utils.py), [page review and resume](../app/portals/newindia/automation/recovery.py), [popup dismissal](../app/portals/newindia/automation/popup_service.py), [pause card](../app/ui/components/recovery_dialog.py), [main window](../app/ui/main_window.py), [automation engine](../app/automation/engine.py), and [browser launch & focus](../app/portals/oic/automation/review_browser.py).
+
+By default, New India's **Logs** tab shows a compact icon-led stream: folder readiness, step banners, per-step completion summaries (counts of filled, skipped, uploaded, and issue items), manual action prompts, warnings/errors, and the final headline summary. Detailed per-field values, skipped reasons, folder-scan lines, retries, and screenshots remain hidden from the default view (available anytime in App3 by ticking **Show details** on the **Logs** tab) while still being written in full to the claim `.json` / `.txt` log files and session log file. See [structured logger](../app/automation/automation_logger.py), [logs table & Show details toggle](../app/ui/components/workspace_page.py), and [main window logging](../app/ui/main_window.py).
 
 ---
 
 ## 18. Settings you can change
+
+Under **Settings → Field Mapping**, New India shows **Delivery Order Date (Optional)** and **Delivery Order Time (Optional)**. When blank, both also show **OPTIONAL** in Extraction Review.
 
 These are in App3 Settings â†’ Automation Defaults for New India.
 
@@ -476,9 +484,8 @@ Labels are tried left to right on every sheet. The value is the first real entry
 | Engine No                       | Engine No Â· Engine Number Â· Eng No                                                                                                                                   |               |
 | Chassis No                      | Chassis No Â· Chassis Number Â· Ch No                                                                                                                                  |               |
 | Physically Verified             | Physically Verified Â· Physical Verification                                                                                                                             | Yes           |
-| Vehicle Make                    | Vehicle Make Â· Make of Vehicle Â· Make                                                                                                                                |               |
-| Type of Body                    | Type of Body Â· Body Type                                                                                                                                                |               |
-| Class of Vehicle                | Class of Vehicle Â· Vehicle Class                                                                                                                                        |               |
+| Vehicle Make                    | Vehicle Make · Make of Vehicle · Make                                                                                                                                |               |
+| Class of Vehicle                | Class of Vehicle · Vehicle Class                                                                                                                                        |               |
 | Pre-Accident Condition          | Pre-Accident Condition Â· Pre Accident Condition Â· Condition before Accident                                                                                          | Good          |
 | RTO Name                        | RTO Name Â· RTO Â· Registering Authority                                                                                                                               |               |
 | Odometer Reading                | Odometer Reading Â· Odometer Â· KM Reading                                                                                                                             |               |

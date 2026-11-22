@@ -104,6 +104,7 @@ async def _get_active_page(
     stop_cb: Callable[[], bool] = lambda: False,
     portal_id: str = "uiic",
     log_cb=None,  # backwards-compat alias for log
+    portal_url: str = "",
 ) -> Optional[Page]:
     """
     Establish which page to work on after login.
@@ -116,10 +117,22 @@ async def _get_active_page(
     if captured_pages is None:
         captured_pages = []
     if portal_id in ("newindia", "oic"):
-        # New India & OIC usually don't open a new tab immediately after login.
-        # We just return the last active page in the context.
+        # New India & OIC usually navigate in place or open a single portal tab.
         await asyncio.sleep(1.0)
-        return context.pages[-1] if context.pages else None
+        alive = [p for p in context.pages if not p.is_closed()]
+        if not alive:
+            return None
+        if portal_url:
+            from app.portals.oic.automation.recovery import same_origin
+
+            same = [p for p in alive if same_origin(p, portal_url)]
+            if portal_id == "newindia":
+                non_login = [p for p in same if "intermediarylogin.html" not in (p.url or "").casefold()]
+                if non_login:
+                    return non_login[-1]
+            if same:
+                return same[-1]
+        return alive[-1]
 
     # UIIC specific logic: wait for the Surveyor tab
     start_t = time.time()
@@ -232,6 +245,7 @@ class AutomationEngine:
         log_cb: Callable[[str], None] = print,
         step_cb: Callable[[int, str], None] = lambda i, s: None,
         recovery_cb=None,
+        field_cb=None,
     ):
         def safe_log_cb(msg):
             try:
@@ -249,11 +263,25 @@ class AutomationEngine:
             except Exception:
                 pass
 
+        def safe_field_cb(info):
+            if field_cb is None:
+                return
+            try:
+                field_cb(info)
+            except RuntimeError:
+                pass
+            except Exception:
+                pass
+
         self.portal_id = portal_id
         self.log_cb = safe_log_cb
         self.step_cb = safe_step_cb
+        self.field_cb = safe_field_cb if field_cb is not None else None
         self._stop_event = threading.Event()
         self.log = AutomationLogger("ENGINE", self.log_cb, portal_id=self.portal_id)
+        self._recovery_cb = recovery_cb
+        self._manual_review_prompt_id: Optional[str] = None
+        self._manual_review_done = threading.Event()
         self._oic_recovery = None
         self._newindia_recovery = None
         if portal_id == "oic" and recovery_cb is not None:
@@ -263,24 +291,48 @@ class AutomationEngine:
         elif portal_id == "newindia" and recovery_cb is not None:
             from app.portals.newindia.automation.recovery import NewIndiaRecovery
 
-            self._newindia_recovery = NewIndiaRecovery(recovery_cb, self._stop_event.is_set)
+            self._newindia_recovery = NewIndiaRecovery(
+                recovery_cb, self._stop_event.is_set, field_progress_cb=self.field_cb,
+            )
 
     def resume_oic(self, prompt_id, decision):
+        if self._manual_review_prompt_id and prompt_id == self._manual_review_prompt_id:
+            self._manual_review_done.set()
+            return
         recovery = self._oic_recovery or self._newindia_recovery
         if recovery is not None:
             recovery.respond(prompt_id, decision)
+
+    def request_pause(self) -> bool:
+        recovery = self._oic_recovery or self._newindia_recovery
+        return bool(recovery is not None and recovery.request_manual_pause())
+
+    def resume_pause(self) -> bool:
+        recovery = self._oic_recovery or self._newindia_recovery
+        return bool(recovery is not None and recovery.resume_manual_pause())
+
+    def focus_chrome(self) -> None:
+        recovery = self._oic_recovery or self._newindia_recovery
+        if recovery is not None:
+            recovery.focus_chrome()
 
     async def _run_oic_phase(self, page, label, operation, ready, instruction, *, section=None, describe=None,
                              form_transition=False):
         """Resume past a failed page action only after reaching its destination."""
         if self._oic_recovery is None:
             return await operation()
-        from app.portals.oic.automation.recovery import wait_until_ready
+        from app.portals.oic.automation.recovery import BLOCKING_DIALOG, wait_until_ready
 
         async def verified():
             if form_transition and not await self._oic_recovery.is_original_document(page, allow_route_change=True):
                 return False
             return await ready()
+
+        async def dismiss_popup_on_continue():
+            if await page.locator(BLOCKING_DIALOG).count():
+                from app.portals.oic.automation.popup_service import dismiss_portal_popup
+
+                await dismiss_portal_popup(page, self.log, max_wait_s=1.0, context="after Continue")
 
         try:
             succeeded = await operation()
@@ -301,6 +353,7 @@ class AutomationEngine:
         return await self._oic_recovery.pause(
             page, self.log, label, "OIC did not open the expected page.", ready=verified,
             instruction=instruction, section=section, describe=describe, require_original=form_transition,
+            on_continue=dismiss_popup_on_continue,
         )
 
     @property
@@ -609,26 +662,52 @@ class AutomationEngine:
 
     async def _wait_for_manual_review(self, browser: Browser):
         """
-        Wait for either the user to close the browser manually OR
-        the 'request_stop' flag to be set via the UI.
+        Wait for either the user to close the browser manually, dismiss the
+        final review card, OR click Stop in App3.
         """
         self.log_cb("⏳ Browser left open for manual review. Click Stop when done.")
-        while not self._stop_requested:
-            try:
-                # If all contexts are closed, user closed browser
-                if len(browser.contexts) == 0:
-                    self.log_cb("Browser window was closed manually.")
+        self._manual_review_done.clear()
+        self._manual_review_prompt_id = None
+        if self._recovery_cb is not None:
+            from uuid import uuid4
+            from app.portals.oic.automation.recovery import RecoveryPrompt
+
+            prompt_id = uuid4().hex
+            self._manual_review_prompt_id = prompt_id
+            with suppress(Exception):
+                self._recovery_cb(RecoveryPrompt(
+                    id=prompt_id,
+                    section="Final Review",
+                    action="All Steps Complete — Ready for Review",
+                    reason="Automation has finished filling the portal. Chrome is open so you can review everything and submit manually.",
+                    can_skip=False,
+                    instruction="Check the filled details in Chrome and submit manually when ready. Click Done here when finished — Chrome will stay open.",
+                    confirmation_button="Done (Keep Chrome Open)",
+                    kind="complete",
+                ))
+        try:
+            while not self._stop_requested and not self._manual_review_done.is_set():
+                try:
+                    # If all contexts are closed, user closed browser
+                    if len(browser.contexts) == 0:
+                        self.log_cb("Browser window was closed manually.")
+                        break
+                    # If all pages in all contexts are closed, user closed browser
+                    all_pages = []
+                    for ctx in browser.contexts:
+                        all_pages.extend(ctx.pages)
+                    if len(all_pages) == 0:
+                        self.log_cb("Browser window was closed manually.")
+                        break
+                except Exception:
                     break
-                # If all pages in all contexts are closed, user closed browser
-                all_pages = []
-                for ctx in browser.contexts:
-                    all_pages.extend(ctx.pages)
-                if len(all_pages) == 0:
-                    self.log_cb("Browser window was closed manually.")
-                    break
-            except Exception:
-                break
-            await asyncio.sleep(1)
+                await asyncio.sleep(0.4)
+        finally:
+            had_prompt = self._manual_review_prompt_id is not None
+            self._manual_review_prompt_id = None
+            if had_prompt and self._recovery_cb is not None:
+                with suppress(Exception):
+                    self._recovery_cb(None)
 
     async def run_automation(
         self, claim: ClaimData, settings: Optional[dict] = None
@@ -731,6 +810,36 @@ class AutomationEngine:
                 monitor = SubmissionMonitor(**web_submission)
                 await monitor.install(context)
             page = context.pages[0] if review_recovery is not None and context.pages else await context.new_page()
+            _install_native_dialog_handler = None
+            if review_recovery is not None:
+                review_recovery.attach_browser(page, getattr(browser, "_app3_review_pid", None))
+                attached_dialog_pages = set()
+
+                def _install_native_dialog_handler(target_page):
+                    page_id = id(target_page)
+                    if page_id in attached_dialog_pages:
+                        return
+                    attached_dialog_pages.add(page_id)
+
+                    async def _on_dialog(dialog):
+                        try:
+                            msg = " ".join(str(dialog.message or "").split())[:140]
+                            if dialog.type == "alert":
+                                self.log.info(f"Closed browser alert: {msg}" if msg else "Closed browser alert.")
+                                await dialog.accept()
+                            else:
+                                self.log.warning(
+                                    f"Dismissed browser {dialog.type}: {msg}" if msg else f"Dismissed browser {dialog.type}."
+                                )
+                                await dialog.dismiss()
+                        except Exception:
+                            pass
+
+                    with suppress(Exception):
+                        target_page.on("dialog", lambda d: asyncio.ensure_future(_on_dialog(d)))
+
+                _install_native_dialog_handler(page)
+                context.on("page", _install_native_dialog_handler)
             if self._oic_recovery is not None:
                 from app.portals.oic.automation.recovery import (
                     assessment_claim_mismatch, current_recovery, form_step_is_open, same_origin,
@@ -772,9 +881,13 @@ class AutomationEngine:
             }
 
             async def _monitor_health():
-                """Closes automation if the user manually closes the tab mid-run."""
+                """Closes automation if the user manually closes Chrome or all portal tabs mid-run."""
                 while not self._stop_requested:
                     try:
+                        if not browser.is_connected():
+                            self.log.warning("Chrome window was closed. Stopping automation.")
+                            self.request_stop()
+                            break
                         alive = [pg for pg in context.pages if not pg.is_closed()]
                         if not alive:
                             now = time.time()
@@ -809,7 +922,7 @@ class AutomationEngine:
                         health_state["empty_pages_since"] = None
 
                         active = alive[-1]
-                        if active.url.startswith("chrome-error://") and self._oic_recovery is None:
+                        if active.url.startswith("chrome-error://") and review_recovery is None:
                             self.log.error(
                                 "CIRCUIT BREAKER: Network disconnected or 502/504 error. Aborting run."
                             )
@@ -983,6 +1096,7 @@ class AutomationEngine:
                     return do_login(page, settings=login_settings, log=self.log, stop_cb=self._check_stop)
 
                 login_started = time.time()
+                authenticated_ni_page = None
                 if self._oic_recovery is not None:
                     success = await self._run_oic_phase(
                         page, "Login", login, signed_in,
@@ -990,6 +1104,42 @@ class AutomationEngine:
                     )
                 else:
                     success = await login()
+                    if self._newindia_recovery is not None and not success and not self._check_stop():
+                        from app.portals.oic.automation.recovery import same_origin
+
+                        portal_url = settings.get("portal_url", "")
+
+                        async def newindia_signed_in():
+                            nonlocal authenticated_ni_page
+                            for candidate in reversed(context.pages):
+                                if candidate.is_closed() or not same_origin(candidate, portal_url):
+                                    continue
+                                if "intermediarylogin.html" in (candidate.url or "").casefold():
+                                    continue
+                                with suppress(Exception):
+                                    if await candidate.locator("input#userName:visible").count() == 0:
+                                        authenticated_ni_page = candidate
+                                        return True
+                            return False
+
+                        if await newindia_signed_in() or await self._newindia_recovery.pause(
+                            page,
+                            self.log,
+                            "Complete New India Login",
+                            "Login did not finish within the wait time. Complete CAPTCHA and sign in inside Chrome.",
+                            section="Login",
+                            ready=newindia_signed_in,
+                            instruction="Finish signing in inside Chrome until Dashboard or Worklist loads, then click Continue.",
+                            confirmation_button="Continue",
+                        ):
+                            success = True
+                            if authenticated_ni_page is not None:
+                                page = authenticated_ni_page
+                                self._newindia_recovery.attach_browser(
+                                    page, getattr(browser, "_app3_review_pid", None)
+                                )
+                            if not self._check_stop():
+                                await asyncio.sleep(1.5)
                 if not success:
                     message = (
                         "Automation stopped by user."
@@ -1017,9 +1167,12 @@ class AutomationEngine:
 
                 if self._oic_recovery is not None:
                     page = authenticated_page
+                elif authenticated_ni_page is not None:
+                    page = authenticated_ni_page
                 else:
                     page = await _get_active_page(
-                        context, self.log, [], self._check_stop, portal_id=self.portal_id
+                        context, self.log, [], self._check_stop,
+                        portal_id=self.portal_id, portal_url=settings.get("portal_url", ""),
                     )
                 if page is None:
                     message = (
@@ -1119,6 +1272,10 @@ class AutomationEngine:
                     return AutomationRunResult(False, message)
 
                 page = claim_page
+                if review_recovery is not None:
+                    review_recovery.attach_browser(page, getattr(browser, "_app3_review_pid", None))
+                    if _install_native_dialog_handler is not None:
+                        _install_native_dialog_handler(page)
                 if self.portal_id == "oic":
                     self.log.info("The OIC assessment tab is open.")
                 else:
@@ -1177,6 +1334,8 @@ class AutomationEngine:
                     from app.portals.newindia.automation.logging_utils import capture_newindia_screenshot
 
                     async def _run_ni_phase(step_idx: int, phase_num: int, title: str, coro_fn):
+                        if self._newindia_recovery is not None:
+                            await self._newindia_recovery.wait_if_manually_paused(page, self.log, title)
                         self.step_cb(step_idx, steps[step_idx])
                         self.log.section = title
                         self.log.phase_banner(phase_num, total_steps, title)
@@ -1339,6 +1498,8 @@ class AutomationEngine:
                         "Total New India Workflow", show_duration=True
                     )
                     self.log.write_run_summary("Completed", "All New India steps finished.")
+                    from app.portals.newindia.automation.ui_utils import clear_field_hud
+                    await clear_field_hud(page, clear_errors=False)
                     await self._wait_for_manual_review(browser)
                     return AutomationRunResult(True, "New India phases complete.")
 
@@ -1362,6 +1523,7 @@ class AutomationEngine:
 
                         async def fill_form():
                             if self._oic_recovery is not None:
+                                await self._oic_recovery.wait_if_manually_paused(page, self.log, section)
                                 if not await oic_step(source):
                                     await self._oic_recovery.pause(
                                         page, self.log, f"Open {section}", "The expected OIC step is not open.",

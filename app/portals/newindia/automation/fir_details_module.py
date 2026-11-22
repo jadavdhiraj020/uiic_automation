@@ -27,7 +27,22 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
     if stop_cb():
         return False
 
-    # 1. FIR Number
+    # 1. Is there any TP claim? (Row 1 Col 1 - Mandatory)
+    try:
+        raw_val = data.is_there_any_tp_claim
+        val = raw_val or str(defaults.get("is_there_any_tp_claim") or "No")
+        source = "Excel" if raw_val else "Default"
+        normalized = "Yes" if str(val).strip().lower() == "yes" else "No"
+        await select_dropdown_with_delay(
+            page, 'select[name="Is there any TP claim?"]', normalized,
+            "TP Claim", log, field_delay_ms, source=source,
+        )
+    except Exception:
+        record_additional_issue(log, "Is there any TP claim?")
+
+    if stop_cb(): return False
+
+    # 2. FIR Number
     try:
         val = data.fir_number or missing_text_default
         src = "Excel" if data.fir_number else "Default"
@@ -107,21 +122,6 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
                 log(f"   ⏭️ [Previous Police Records] — Optional, not in Excel. Skipping.")
     except Exception:
         record_additional_issue(log, "Previous Police Records")
-
-    if stop_cb(): return False
-
-    # 8. Is there any TP claim? (Mandatory)
-    try:
-        raw_val = data.is_there_any_tp_claim
-        val = raw_val or str(defaults.get("is_there_any_tp_claim") or "No")
-        source = "Excel" if raw_val else "Default"
-        normalized = "Yes" if str(val).strip().lower() == "yes" else "No"
-        await select_dropdown_with_delay(
-            page, 'select[name="Is there any TP claim?"]', normalized,
-            "TP Claim", log, field_delay_ms, source=source,
-        )
-    except Exception:
-        record_additional_issue(log, "Is there any TP claim?")
 
     if isinstance(log, AutomationLogger):
         log.outdent()

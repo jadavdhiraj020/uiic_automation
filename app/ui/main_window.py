@@ -4,6 +4,7 @@ Modularized version delegating to component classes.
 """
 
 import os
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -87,6 +88,8 @@ class MainWindow(QMainWindow):
         self._thread = None
         self._close_requested = False
         self._automation_stopping = False
+        self._manual_pause_active = False
+        self._manual_pause_pending = False
         self._claim = None
         self._scan_result = None
         self._log_file = None
@@ -177,8 +180,10 @@ class MainWindow(QMainWindow):
         # Stack
         self.stack = QStackedWidget()
         self.workspace_page = WorkspacePage()
+        self.workspace_page.set_portal(get_active_portal_id() or "uiic")
         self.workspace_page.browse_clicked.connect(self._browse_folder)
         self.workspace_page.start_clicked.connect(self._start_automation)
+        self.workspace_page.pause_clicked.connect(self._toggle_pause_automation)
         self.workspace_page.stop_clicked.connect(self._stop_automation)
         self.workspace_page.export_log_clicked.connect(self._export_log)
         self.settings_page = SettingsPage(append_log_cb=self._append_log)
@@ -601,7 +606,11 @@ class MainWindow(QMainWindow):
         self.workspace_page.doc_status_label.setText(
             "📁 Indexing and extracting documents via OCR... Please wait."
         )
-        self._append_log(f"📁 Starting background scan for: {folder}")
+        if portal_id == "newindia":
+            self._append_log("📂 Scanning claim folder... \u200bFolder Scan")
+            self._append_log(f"📁 Starting background scan for: {folder} \u200bFolder Scan\u200c")
+        else:
+            self._append_log(f"📁 Starting background scan for: {folder}")
 
         # Disable buttons to prevent concurrent triggers
         self.workspace_page.btn_start.setEnabled(False)
@@ -661,8 +670,12 @@ class MainWindow(QMainWindow):
         self._active_scan_folder = ""
 
         # Log all lines produced by the scanner service
-        for line in result.log_lines:
-            self._append_log(line)
+        if current_portal_id == "newindia":
+            for line in result.log_lines:
+                self._append_log(f"{line} \u200bFolder Scan\u200c")
+        else:
+            for line in result.log_lines:
+                self._append_log(line)
 
         # Process success/failure
         if result.success:
@@ -670,11 +683,27 @@ class MainWindow(QMainWindow):
             self._scan_result = result.scan_result
             self._scan_context = getattr(result.claim, "_scan_context", None)
             if self._scan_context:
-                self._append_log(
+                isolation_msg = (
                     "[Portal Isolation] Scan locked to "
                     f"{self._scan_context.portal_display_name} "
                     f"({self._scan_context.portal_id})."
                 )
+                if current_portal_id == "newindia":
+                    self._append_log(f"{isolation_msg} \u200bFolder Scan\u200c")
+                else:
+                    self._append_log(isolation_msg)
+            if current_portal_id == "newindia":
+                claim_no = getattr(result.claim, "claim_no", "") or "Unknown"
+                try:
+                    errors, _warnings = result.claim.validate()
+                except Exception:
+                    errors = []
+                if errors:
+                    self._append_log(
+                        f"⚠️ Folder ready — Claim {claim_no} ({len(errors)} missing item(s)) \u200bFolder Scan"
+                    )
+                else:
+                    self._append_log(f"✅ Folder ready — Claim {claim_no} \u200bFolder Scan")
             self.workspace_page.update_data(self._claim, self._scan_result)
             if current_portal_id == "oic" and startup_review_notices(self._claim):
                 self.workspace_page.set_stage(1)
@@ -855,7 +884,12 @@ class MainWindow(QMainWindow):
                 _warn("Claim changed", "Review the current claim before starting automation.")
                 return
 
-        self.log("Starting automation thread...")
+        if portal_id == "newindia":
+            self._append_log("Starting automation thread... \u200bStartup\u200c")
+        else:
+            self.log("Starting automation thread...")
+        self._manual_pause_active = False
+        self._manual_pause_pending = False
         self._thread = QThread()
         self._worker = AutomationWorker(
             claim, settings_override=settings, portal_id=portal_id
@@ -872,16 +906,22 @@ class MainWindow(QMainWindow):
         self._worker.step_signal.connect(self.workspace_page.set_step)
         if portal_id in {"oic", "newindia"}:
             self._worker.recovery_signal.connect(self._show_oic_recovery)
+        if portal_id == "newindia":
+            self._worker.field_signal.connect(self._on_field_progress)
 
         self.workspace_page.set_automation_running(True)
         self._set_portal_selector_locked(
             True,
             "Automation is running. Please stop the current automation before switching portal.",
         )
-        self._append_log(
+        isolation_lock_msg = (
             "[Portal Isolation] Portal switching is disabled while automation is running. "
             "Stop the current automation before switching portal."
         )
+        if portal_id == "newindia":
+            self._append_log(f"{isolation_lock_msg} \u200bStartup\u200c")
+        else:
+            self._append_log(isolation_lock_msg)
         self._write_portal_audit_event(
             "portal_switch_locked_for_automation",
             portal_id=portal_id,
@@ -896,18 +936,78 @@ class MainWindow(QMainWindow):
         if hasattr(self, "web_queue"):
             self.web_queue.refresh()
 
+    def _on_field_progress(self, info):
+        worker = self._worker
+        if not worker or self._automation_stopping or self._close_requested:
+            return
+        if (getattr(self, "_oic_recovery_dialog", None) is not None
+                or self._manual_pause_pending or self._manual_pause_active):
+            return
+        if not isinstance(info, dict):
+            return
+        section = str(info.get("section") or "").strip()
+        field = str(info.get("field") or "").strip()
+        state = str(info.get("state") or "active")
+        filled = int(info.get("filled") or 0)
+        failed = int(info.get("failed") or 0)
+        core = (
+            f"{section} · {field}"
+            if (section and field and section.casefold() != field.casefold())
+            else (field or section or "Filling")
+        )
+        prefix = "Retrying " if state == "retrying" else ""
+        label = f"{prefix}{core}"
+        if len(label) > 36:
+            label = label[:33] + "..."
+        counts = f"  ✓{filled}" + (f" · ⚠{failed}" if failed else "")
+        self._set_status("running", f"{label}{counts}")
+
+    def _toggle_pause_automation(self):
+        worker = self._worker
+        if not worker or self._automation_stopping or self._close_requested:
+            return
+        if self._manual_pause_active:
+            self._manual_pause_active = False
+            self.workspace_page.btn_pause.setEnabled(False)
+            self._set_status("running", "Resuming…")
+            if hasattr(worker, "resume"):
+                worker.resume()
+            return
+        if not self._manual_pause_pending and hasattr(worker, "pause") and worker.pause():
+            self._manual_pause_pending = True
+            self.workspace_page.set_automation_paused(False, pending=True)
+            self._set_status("running", "Pausing after current step…")
+
     def _show_oic_recovery(self, prompt):
         worker = self._worker
         if not worker or self._automation_stopping or self._close_requested:
             return
         if prompt is None:
             self._dismiss_oic_recovery()
+            self._manual_pause_active = False
+            self._manual_pause_pending = False
+            self.workspace_page.set_automation_paused(False)
             self._set_status("running", "Running")
             return
-        self._set_status("running", "Paused for review")
-        if getattr(worker, "portal_id", None) == "newindia":
-            self._show_newindia_recovery(worker, prompt)
+        portal_id = getattr(worker, "portal_id", None)
+        if portal_id in {"newindia", "oic"}:
+            if getattr(prompt, "kind", "pause") == "complete":
+                self._manual_pause_active = False
+                self._manual_pause_pending = False
+                self.workspace_page.set_automation_paused(False)
+                self.workspace_page.btn_pause.setEnabled(False)
+                self._set_status("running", "Ready for final review")
+                self._show_recovery_card(worker, prompt)
+                self._review_oic_button.setText("Show Review Card")
+                return
+            manual_pause = prompt.action == "Automation Paused"
+            self._manual_pause_active = manual_pause
+            self._manual_pause_pending = False
+            self.workspace_page.set_automation_paused(True, manual=manual_pause)
+            self._set_status("running", "Paused by user" if manual_pause else "Paused for review")
+            self._show_recovery_card(worker, prompt)
             return
+        self._set_status("running", "Paused for review")
         dialog = getattr(self, "_oic_recovery_dialog", None)
         if dialog is None or dialog.prompt_id != prompt.id:
             self._dismiss_oic_recovery()
@@ -964,12 +1064,25 @@ class MainWindow(QMainWindow):
             QApplication.alert(self, 5000)
 
     def _show_newindia_recovery(self, worker, prompt):
-        """Show the New India pause card; repeated prompts for one pause refresh it in place."""
+        """Backwards-compatible alias delegating to the shared floating pause card."""
+        self._show_recovery_card(worker, prompt)
+
+    def _show_recovery_card(self, worker, prompt):
+        """Show a detached always-on-top pause card for New India or OIC without raising the main window."""
+        portal_id = getattr(worker, "portal_id", None) or "newindia"
+        portal_name, accent = ("OIC", "#2563EB") if portal_id == "oic" else ("New India", "#EA580C")
+        if portal_id == "oic" and not prompt.stop_only and not prompt.confirmation_button:
+            prompt = replace(
+                prompt,
+                confirmation_button="I fixed it — continue" if prompt.can_skip else "Continue",
+            )
         dialog = getattr(self, "_oic_recovery_dialog", None)
         retry = dialog is not None and dialog.prompt_id == prompt.id
-        if dialog is None or not isinstance(dialog, RecoveryDialog):
+        if dialog is None or not isinstance(dialog, RecoveryDialog) or dialog._portal_name != portal_name:
             self._dismiss_oic_recovery()
-            dialog = RecoveryDialog(self, portal_name="New India", accent="#EA580C")
+            dialog = RecoveryDialog(
+                None, portal_name=portal_name, accent=accent, anchor_screen=self.screen(),
+            )
             self._oic_recovery_dialog = dialog
 
             def respond(decision):
@@ -977,24 +1090,33 @@ class MainWindow(QMainWindow):
                     return
                 if getattr(dialog, "_busy", False):
                     return
+                if getattr(dialog, "_kind", "pause") == "complete" or decision == "done":
+                    worker.resume_oic(dialog.prompt_id, decision)
+                    self._dismiss_oic_recovery()
+                    return
                 dialog.set_busy(True)
                 self._set_status("running", "Checking Chrome…")
                 worker.resume_oic(dialog.prompt_id, decision)
 
             dialog.decision.connect(respond)
             dialog.stop.connect(self._stop_automation)
-        dialog.show_prompt(prompt, retry=retry)
+            if hasattr(worker, "focus_chrome"):
+                dialog.focus_chrome.connect(worker.focus_chrome)
+        dialog.show_prompt(prompt, retry=retry, anchor_screen=self.screen())
         self._review_oic_button.setText("Show Pause Card")
         self._review_oic_button.show()
-        if not dialog.isActiveWindow():
-            QApplication.alert(self, 5000)
+        if prompt.action != "Automation Paused" and getattr(prompt, "kind", "pause") != "complete" and not dialog.isActiveWindow():
+            QApplication.alert(self, 3000)
 
     def _raise_oic_recovery(self):
         dialog = getattr(self, "_oic_recovery_dialog", None)
         if dialog:
-            dialog.showNormal()
-            dialog.raise_()
-            dialog.activateWindow()
+            if isinstance(dialog, RecoveryDialog):
+                dialog.bring_to_front(activate=True)
+            else:
+                dialog.showNormal()
+                dialog.raise_()
+                dialog.activateWindow()
 
     def _dismiss_oic_recovery(self):
         self._review_oic_button.setText("Review issue")
@@ -1012,8 +1134,11 @@ class MainWindow(QMainWindow):
             self._scan_worker.request_stop()
         if self._worker:
             self._automation_stopping = True
+            self._manual_pause_active = False
+            self._manual_pause_pending = False
             self._dismiss_oic_recovery()
             self._worker.stop()
+            self.workspace_page.btn_pause.setEnabled(False)
             self.workspace_page.btn_stop.setEnabled(False)
             self.workspace_page.btn_start.setEnabled(False)
             self._set_status("running", "Stopping...")
@@ -1023,6 +1148,8 @@ class MainWindow(QMainWindow):
 
     def _on_automation_ui_reset(self, success, message):
         """Called when automation finishes — updates UI. Thread may still be winding down."""
+        self._manual_pause_active = False
+        self._manual_pause_pending = False
         self._dismiss_oic_recovery()
         self._last_success = success
         self._last_message = message
@@ -1179,8 +1306,12 @@ class MainWindow(QMainWindow):
             if not self._close_requested:
                 self._close_requested = True
                 self._automation_stopping = bool(self._thread)
+                self._manual_pause_active = False
+                self._manual_pause_pending = False
+                self._dismiss_oic_recovery()
                 self._set_status("running", "Stopping...")
                 self.workspace_page.btn_start.setEnabled(False)
+                self.workspace_page.btn_pause.setEnabled(False)
                 self.workspace_page.btn_stop.setEnabled(False)
                 if self._worker:
                     self._worker.stop()
@@ -1193,6 +1324,7 @@ class MainWindow(QMainWindow):
                 self.log("Stopping background work before closing...")
             return
 
+        self._dismiss_oic_recovery()
         if hasattr(self, "web_queue"):
             self.web_queue.shutdown()
 

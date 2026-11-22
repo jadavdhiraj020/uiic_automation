@@ -449,8 +449,13 @@ class SettingsPage(QWidget):
         entries = [(k, v) for k, v in m.items() if not k.startswith("_")]
         self.mapping_table.setRowCount(len(entries))
         for i, (fn, cfg) in enumerate(entries):
-            self.mapping_table.setItem(i, 0, QTableWidgetItem(fn))
-            self.mapping_table.item(i, 0).setFlags(Qt.ItemFlag.ItemIsEnabled)
+            display_name = cfg.get("display_name")
+            if display_name and cfg.get("_mandatory") is False:
+                display_name = f"{display_name} (Optional)"
+            field_item = QTableWidgetItem(display_name or fn)
+            field_item.setData(Qt.ItemDataRole.UserRole, fn)
+            field_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            self.mapping_table.setItem(i, 0, field_item)
             raw_labels = cfg.get("search_labels")
             if not raw_labels:
                 raw_label = cfg.get("search_label", "")
@@ -531,6 +536,8 @@ class SettingsPage(QWidget):
                 item = self.mapping_table.item(i, col)
                 if item:
                     values.append(item.text().lower())
+                    if col == 0:
+                        values.append(item.data(Qt.ItemDataRole.UserRole).lower())
                 widget = self.mapping_table.cellWidget(i, col)
                 if isinstance(widget, QComboBox):
                     values.append(widget.currentText().lower())
@@ -704,7 +711,7 @@ class SettingsPage(QWidget):
             m = load_field_mapping(portal_id=self._portal_id)
             nm = {k: v for k, v in m.items() if k.startswith("_")}
             for r in range(self.mapping_table.rowCount()):
-                fn = self.mapping_table.item(r, 0).text()
+                fn = self.mapping_table.item(r, 0).data(Qt.ItemDataRole.UserRole)
                 lt = self.mapping_table.item(r, 1).text().strip()
                 
                 # Get values from widgets

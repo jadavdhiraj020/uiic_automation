@@ -537,11 +537,11 @@ If a required slot (1, 2, 3) cannot be uploaded, App3 pauses so you can attach t
 
 App3 does not guess silently. When a value is missing, unclear, or OIC does not keep it:
 
-1. App3 stops on that field and shows the **field name** and the **reason** in plain English.
-2. You correct the field in Chrome.
-3. You continue (or skip the field), and App3 carries on from where it stopped.
+1. App3 pauses and shows a floating always-on-top card (`RecoveryDialog`) near the top-right corner of the screen (with the **field name** and **reason** in plain English) without pulling the desktop app over Chrome.
+2. You correct the field in Chrome (click **Show Chrome** on the card header if Chrome is covered or minimized, or **Show Pause Card** in App3 to bring the card forward).
+3. Click **Continue** (or **Skip this field** / **Stop automation**), and App3 acknowledges any benign save/info popup and carries on from where it stopped.
 
-Every typed value is read back after filling. Dropdowns pick an exact match first; a partial match is used only when there is exactly one possible option.
+You can also click **Pause** in the App3 toolbar mid-run to pause between fields/steps for manual edits in Chrome, then click **Resume** on the card or in the toolbar. Every typed value is read back after filling. Dropdowns pick an exact match first; a partial match is used only when there is exactly one possible option. When all automated steps finish, App3 keeps Chrome open and shows a green **"All Steps Complete — Ready for Review"** floating card (`RecoveryDialog`) with **Show Chrome** and **Done (Keep Chrome Open)** so you can review and submit manually without hunting for a log message. See [OIC recovery](../app/portals/oic/automation/recovery.py), [pause card](../app/ui/components/recovery_dialog.py), [main window](../app/ui/main_window.py), [automation engine](../app/automation/engine.py), and [browser launch & focus](../app/portals/oic/automation/review_browser.py).
 
 ---
 

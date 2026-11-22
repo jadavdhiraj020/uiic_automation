@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+import threading
 from contextlib import suppress
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -9,6 +10,18 @@ from uuid import uuid4
 from urllib.parse import urlsplit
 
 from app.portals.oic.automation import selectors as S
+from app.portals.oic.automation.review_browser import bring_browser_window_to_front, focus_chrome
+
+
+class _NullLogger:
+    def info(self, *_args, **_kwargs):
+        pass
+
+    def warning(self, *_args, **_kwargs):
+        pass
+
+    def error(self, *_args, **_kwargs):
+        pass
 
 
 current_recovery = ContextVar("oic_recovery", default=None)
@@ -131,6 +144,7 @@ class RecoveryPrompt:
     stop_only: bool = False
     confirmation_button: str = ""
     skip_button: str = ""
+    kind: str = "pause"
 
 
 class OperatorRecovery:
@@ -145,6 +159,84 @@ class OperatorRecovery:
         self.transition_started = False
         self.claim_number = None
         self.policy_number = None
+        self.browser_pid = None
+        self.active_page = None
+        self._loop = None
+        self._manual_pause_requested = threading.Event()
+        self._manual_paused = False
+
+    def attach_browser(self, page, browser_pid=None):
+        if page is not None:
+            self.active_page = page
+        if browser_pid is not None:
+            self.browser_pid = browser_pid
+        with suppress(RuntimeError):
+            self._loop = asyncio.get_running_loop()
+
+    def focus_chrome(self):
+        bring_browser_window_to_front(self.browser_pid)
+        loop = self._loop
+        page = self.active_page
+        if loop is None or loop.is_closed() or page is None:
+            return
+
+        def _raise_tab():
+            if not page.is_closed():
+                asyncio.ensure_future(focus_chrome(page, self.browser_pid))
+
+        with suppress(RuntimeError):
+            loop.call_soon_threadsafe(_raise_tab)
+
+    def request_manual_pause(self) -> bool:
+        if self.stopped() or self.pending is not None or self._manual_paused:
+            return False
+        self._manual_pause_requested.set()
+        return True
+
+    def resume_manual_pause(self) -> bool:
+        self._manual_pause_requested.clear()
+        pending = self.pending
+        if pending is not None and pending[0].action == "Automation Paused":
+            self.respond(pending[0].id, "fixed")
+            return True
+        return False
+
+    async def wait_if_manually_paused(self, page=None, log=None, section=None) -> None:
+        if not self._manual_pause_requested.is_set():
+            return
+        if self.stopped():
+            raise asyncio.CancelledError
+        if self._manual_paused or self.pending is not None:
+            return
+        self._manual_paused = True
+        target_page = page if page is not None else self.active_page
+        active_log = log or _NullLogger()
+        sec_name = section or getattr(active_log, "_section", None) or "Paused by Operator"
+        manual_confirmed = False
+
+        async def manual_ready():
+            return manual_confirmed and not (target_page and target_page.is_closed())
+
+        async def clear_manual():
+            nonlocal manual_confirmed
+            manual_confirmed = True
+            self._manual_pause_requested.clear()
+
+        try:
+            await self.pause(
+                target_page,
+                active_log,
+                "Automation Paused",
+                "You paused automation. Make any changes you need in Chrome.",
+                section=sec_name,
+                ready=manual_ready,
+                instruction="Review or edit Chrome, then click Resume here or in the app.",
+                confirmation_button="Resume",
+                on_continue=clear_manual,
+            )
+        finally:
+            self._manual_paused = False
+            self._manual_pause_requested.clear()
 
     async def bind_form(self, page, step):
         """Remember this document before editing the form."""
@@ -202,6 +294,10 @@ class OperatorRecovery:
         title = action
         prompt_id = uuid4().hex
         first_prompt = True
+        with suppress(RuntimeError):
+            self._loop = asyncio.get_running_loop()
+        if page is not None:
+            self.active_page = page
         while not self.stopped():
             if describe:
                 with suppress(Exception):
@@ -213,8 +309,7 @@ class OperatorRecovery:
             if self.stopped():
                 break
             if first_prompt and page and not page.is_closed():
-                with suppress(Exception):
-                    await asyncio.wait_for(page.bring_to_front(), timeout=2)
+                await focus_chrome(page, self.browser_pid)
             prompt = RecoveryPrompt(
                 prompt_id, section, title, detail,
                 not stop_only and (on_skip is not None if ready is not None else not confirmation_button),
@@ -229,9 +324,18 @@ class OperatorRecovery:
                 first_prompt = False
                 self.notify(prompt)
                 while not self.stopped() and not result.done():
+                    if require_original and page and page.is_closed():
+                        break
                     await asyncio.wait({result}, timeout=0.2)
                 if self.stopped():
                     break
+                if not result.done():
+                    detail = "The original tab was closed or reloaded."
+                    guidance = "Stop this run and review Chrome."
+                    stop_only = True
+                    describe = None
+                    log.warning(f"{portal} is still paused at {section} — {action}. {detail}")
+                    continue
                 decision = result.result()
             finally:
                 self.pending = None
@@ -240,9 +344,19 @@ class OperatorRecovery:
 
             if ready is not None:
                 if decision == "skip" and on_skip is not None:
-                    await on_skip()
+                    try:
+                        await on_skip()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        log.warning(f"{portal} skip action hit a temporary Chrome error: {exc}")
                 elif decision == "fixed" and on_continue is not None:
-                    await on_continue()
+                    try:
+                        await on_continue()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        log.warning(f"{portal} continue action hit a temporary Chrome error: {exc}")
                 if await wait_until_ready(ready, seconds=3, stopped=self.stopped):
                     log.info(f"{portal} resumed at {section} after confirming {action} in Chrome.")
                     self.notify(None)
@@ -351,6 +465,9 @@ def field_decision(page, log, label):
 
 
 async def run_field(page, log, label, operation):
+    recovery = current_recovery.get()
+    if recovery is not None:
+        await recovery.wait_if_manually_paused(page, log)
     if field_was_handled(page, log, label):
         return None
     try:

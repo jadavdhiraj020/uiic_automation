@@ -1,12 +1,15 @@
 UIIC Surveyor Automation — Fatal Crash Report
 ============================================================
 Traceback (most recent call last):
-  File "C:\Users\jadav\Coding\uiic_automation\main.py", line 256, in <module>
+  File "C:\Users\jadav\Coding\uiic_automation\main.py", line 285, in <module>
     main()
-  File "C:\Users\jadav\Coding\uiic_automation\main.py", line 237, in main
-    from app.ui.main_window import MainWindow
-  File "C:\Users\jadav\Coding\uiic_automation\app\ui\main_window.py", line 949
-    self._log_file.write(f"[{today} {match.group(1)}] {identity} {match.group(2).replace(chr(10), '\\n')}\n")
-                                                                                                            ^
-SyntaxError: f-string expression part cannot include a backslash
+  File "C:\Users\jadav\Coding\uiic_automation\main.py", line 254, in main
+    window = MainWindow()
+  File "C:\Users\jadav\Coding\uiic_automation\app\ui\main_window.py", line 106, in __init__
+    self._setup_ui()
+  File "C:\Users\jadav\Coding\uiic_automation\app\ui\main_window.py", line 182, in _setup_ui
+    self.workspace_page = WorkspacePage()
+  File "C:\Users\jadav\Coding\uiic_automation\app\ui\components\workspace_page.py", line 909, in __init__
+    self.validation_bar = self.data_panel.validation_bar
+AttributeError: 'DataReviewPanel' object has no attribute 'validation_bar'
 

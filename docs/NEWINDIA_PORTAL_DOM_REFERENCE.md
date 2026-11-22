@@ -197,17 +197,17 @@ All sections below live in Bootstrap accordions (`is-open`). **Note:** Sections 
 #### 4.1 Header Summary Accordion (Read-Only Tables)
 - **Additional Details** outer accordion displays read-only reference tables for **Workshop**, **Service Advisor**, **Claim Reported Branch**, and **Insured**.
 
-#### 4.2 Registration Certificate Details Accordion
+#### 4.2 Registration Certificate Details Accordion *(Live Row Order: Owner Name → Reg No 1..4 → Type of Vehicle → Date of Reg → Engine/Chassis/Physically Verified → Make/Model (disabled)/Class/Pre-Accident Cond → Reg Laden/Unladen Wt & Fitness/Permit → Route/Tax/RTO/Transfer/Odometer/Color/Color Type/Type of Fuel)*
 | Field | ID / Name | `data-ng-model` (`surveyorData.worklist.additionalDetails.*`) | Notes & Options |
 | :--- | :--- | :--- | :--- |
-| Reference Number | `name="Reference No"` | `.refernceNo` | Note spelling `refernceNo`! Max 30 |
+| Reference Number | `name="Reference No"` | `.refernceNo` | Note spelling `refernceNo`! Max 30 *(outside accordion)* |
 | Registered Owner Name* | `name="Registered Owner Name"` | `.registeredOwnerName` | Required, max 50 |
 | Vehicle Registration No. (4 boxes) | `name="registrationNo1"`, `registrationNo2`, `registrationNo3`, `registrationNo4` | `.registrationNo1`..`4` | `registrationNo2 == 'BH' && surveyorData.reg34BHFlag` switches `reg3`/`reg4` maxlength between `(3,4)` and `(4,2)` |
 | Date of Registration | `name="registrationDate"` (`ng-if="efgFlag == 0"`) | `.dateOfReg` | `dd/MM/yyyy` datepicker |
 | Engine No.* / Chassis No.* | `name="Engine no"`, `name="Chassis no"` | `.engineNo`, `.chasisNo` | Note spelling `chasisNo`! Required, max 25 |
 | Physically Verified* | `#checkBox` (`name="Physically Verified -checkBox"`) | `.physicallyVerified` | Checkbox (required) |
 | Vehicle Make* / Model* | `name="Vehicle Make"`, `name="Model"` | `.vehicleMake`, `.vehicleModel` | Disabled in template (pre-filled from policy) |
-| Type of Body* | **`#typeOfBody`** (`name="Type of Body"`, 7 `ng-if` product branches!) | `.typeOfBody` | Dynamic `ng-options` (`typeOfBodyPC`, `typeOfBodyTW`, `typeOfBodyCVA`..`CVF`): `string:Sedan`, `string:Saloon`, `string:SUV`, `string:Mini Hatchback`, `string:Pickup Truck`, etc. |
+| ~~Type of Body*~~ *(removed on live portal)* | **`#typeOfBody`** (`name="Type of Body"`, legacy 7 `ng-if` branches) | `.typeOfBody` | Removed from current live portal form; App3 no longer extracts or fills this field for New India |
 | Class of Vehicle* / Pre-Accident Condition* | `name="Class of Vehicle"`, `name="Pre-Accident Condition"` | `.classOfVehicle`, `.preAccCondition` | Required, max 120 |
 | Reg Laden Wt / Unladen Wt | `.regLadenWt`, `.unLadenWt` | `.regLadenWt`, `.unLadenWt` | `ng-if="productCode != 'PC'"` (hidden for Private Car!), max 10 |
 | Fitness Cert No. / Valid Upto / Permit No. / Permit Valid Upto | `name="fitnessCertNo"`, `name="permitValidUpto"`, etc. | `.fitnessCertNo`, `.fitnessCertValidUpto`, `.permitNo`, `.permitValidUpto` | Shown when `productCode != 'PC'`; required when `claimTypeNM == 'Maruti' && productCode == 'CV'` |
@@ -227,7 +227,7 @@ All sections below live in Bootstrap accordions (`is-open`). **Note:** Sections 
 | Is DL valid for type of vehicle on date of accident?* | Radios `#radioisDlValidForType{{$index}}` | `.isDlValidForType` | `Y` / `N` |
 | License Issuing Authority* / DL No.* / Issue Date* / Expiry Date* / Badge No. | `name="License Issuing Authority"`, `name="Driver driving License Number"`, `name="Driver driving License Issue Date"`, `name="Driver driving License Expiry Date"`, `.badgeNo` | `.licenseIssueAuth`, `.driverLicenseNo`, `.drivingLicenseDate`, `.driverLicenseExpDate`, `.badgeNo` | `bfgFlag == 0` required on auth/no/dates; Badge optional (max 20) |
 
-#### 4.4 FIR Details Accordion
+#### 4.4 FIR Details Accordion *(Live Row Order: `Is there any TP claim?` Row 1 Col 1 → `FIR/GDR No.` → `FIR Date` → `Police Station` → `Charged U/S MV Act` → `Charged U/S IPC` → `Whether driver without license?` → `Any Previous Police Records?`)*
 | Field | ID / Name | `data-ng-model` (`surveyorData.worklist.additionalDetails.*`) | Notes |
 | :--- | :--- | :--- | :--- |
 | FIR/GDR No. / FIR Date / Police Station / Charged U/S MV Act / Charged U/S IPC | `name="firDate"` + `placeholder` labels (`FIR/GDR No.`, `Police Station`, etc.) | `.firNo`, `.firDate`, `.policeStation`, `.chargedUSMotorVehAct`, `.chargedUSIPC` | Optional text inputs + `dd/MM/yyyy` datepicker |

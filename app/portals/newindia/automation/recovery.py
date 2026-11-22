@@ -64,6 +64,10 @@ _INVALID_FIELDS = r"""
             field.matches(':disabled, [readonly]') ||
             field.closest('.ng-hide, .hidden, [hidden], [aria-hidden=true], .tab-pane:not(.active), .modal')) continue;
 
+        // These fields can be required for a Delivery Order submission, but are optional at Claim Assessment Next.
+        const deliveryOrderField = assessment && field.matches('input[name="Delivery Order Date"], input[name="Delivery Order Time"]');
+        if (deliveryOrderField && !field.value.trim()) continue;
+
         // Closed accordions still belong to the current tab and can block Next.
         const collapsed = field.closest('.panel-collapse.collapse:not(.in)');
         const visibleGroup = collapsed?.closest('.panel')?.querySelector('.panel-heading');
@@ -76,7 +80,7 @@ _INVALID_FIELDS = r"""
         const errors = model?.$error || {};
         const pageReview = quickUpdate || additionalDetails || assessment;
         const useNative = !pageReview || !model;
-        const missing = Boolean(errors.required || (useNative && field.validity?.valueMissing) ||
+        const missing = !deliveryOrderField && Boolean(errors.required || (useNative && field.validity?.valueMissing) ||
             (assessment && !model && field.classList.contains('ng-invalid-required')));
         const failed = model?.$invalid || (useNative && field.willValidate && !field.validity.valid) ||
             (assessment && !model && field.classList.contains('ng-invalid')) ||
@@ -92,7 +96,8 @@ _INVALID_FIELDS = r"""
             (pageReview && group?.querySelector('label:not(.hidden)'));
         const label = [...(field.labels || [])].find(el => !el.closest('.hidden'));
         const column = cell && cell.closest('table').tHead?.rows[0]?.cells[cell.cellIndex];
-        let name = ((assessment && field.id === 'recommendations' && 'Recommendations') ||
+        let name = ((deliveryOrderField && field.name) ||
+                      (assessment && field.id === 'recommendations' && 'Recommendations') ||
                       (assessment && field.type === 'radio' && field.name) || title?.textContent ||
                       column?.textContent || (field.type === 'radio' && field.name) ||
                       label?.textContent || field.name || field.id || '')
@@ -152,19 +157,47 @@ class _FieldIssue:
     matches: Callable[[], Awaitable[bool]] | None
     manual_value: Callable[[], Awaitable[bool]] | None
     identity: tuple[str, str] | None
+    attempted_value: str = ""
+    source: str = ""
 
 
 class NewIndiaRecovery(OperatorRecovery):
-    def __init__(self, notify, stopped):
+    def __init__(self, notify, stopped, *, field_progress_cb=None):
         super().__init__(notify, stopped, portal_name="New India")
         self.field_issues = {}
+        self._field_progress_cb = field_progress_cb
+        self.fields_filled = 0
+        self.fields_failed = 0
+        self.fields_skipped = 0
 
     async def bind_claim(self, page, claim_number):
         self.field_issues.clear()
+        self.fields_filled = 0
+        self.fields_failed = 0
+        self.fields_skipped = 0
         self.claim_number = str(claim_number or "").strip()
         self.form_marker = uuid4().hex
         self.claim_url = page.url
         await page.evaluate("marker => { window.__app3NewIndiaClaim = marker; }", self.form_marker)
+
+    def report_field_progress(self, section: str, field: str, state: str, *, value: str = "") -> None:
+        if state == "ok":
+            self.fields_filled += 1
+        elif state == "failed":
+            self.fields_failed += 1
+        elif state == "skipped":
+            self.fields_skipped += 1
+        if self._field_progress_cb is not None:
+            with suppress(Exception):
+                self._field_progress_cb({
+                    "section": section or "",
+                    "field": field or "",
+                    "state": state,
+                    "value": value or "",
+                    "filled": self.fields_filled,
+                    "failed": self.fields_failed,
+                    "skipped": self.fields_skipped,
+                })
 
     async def is_original_document(self, page, *, allow_route_change=False):
         if page.is_closed():
@@ -178,25 +211,40 @@ class NewIndiaRecovery(OperatorRecovery):
         label = re.compile(rf"^\s*Claim\s+No\.?\s*:?\s*{number}\s*/?\s*$", re.I)
         return bool(await page.locator("li:visible").filter(has_text=label).count())
 
-    def record_field_issue(self, log, label, reason, *, matches=None, manual_value=None, identity=None):
+    def record_field_issue(
+        self, log, label, reason, *, matches=None, manual_value=None, identity=None,
+        attempted_value="", source="",
+    ):
         section = getattr(log, "_section", None) or ""
-        self.field_issues[section, label] = _FieldIssue(section, label, reason, matches, manual_value, identity)
+        attempted = str(attempted_value or "")
+        src = str(source or "")
+        self.field_issues[section, label] = _FieldIssue(
+            section, label, reason, matches, manual_value, identity,
+            attempted_value=attempted, source=src,
+        )
         if hasattr(log, "field_failed"):
-            log.field_failed(label, reason)
+            log_reason = f"{reason} (tried '{attempted}')" if attempted else reason
+            log.field_failed(label, log_reason)
 
     async def pause(
         self, page, log, action, reason, *, ready=None, instruction=None, describe=None, section=None, stop_only=False,
         confirmation_button="", require_original=False, field_ready=None, skip_button="", on_skip=None, on_continue=None,
     ):
         from app.portals.newindia.automation.logging_utils import capture_newindia_screenshot
+        from app.portals.newindia.automation.ui_utils import update_field_hud
 
         sec_name = section or getattr(log, "_section", None) or "New India"
         summary_reason = " | ".join(line.strip() for line in str(reason or "").splitlines() if line.strip())
         if hasattr(log, "warning"):
             log.warning(f"Paused at '{sec_name}' ({action}) — {summary_reason[:220]}")
-        await capture_newindia_screenshot(
-            page, f"paused_{sec_name}", log, reason=action, claim_no=self.claim_number or ""
+        await update_field_hud(
+            page, sec_name, action or "Paused for review", "paused",
+            filled=self.fields_filled, failed=self.fields_failed, skipped=self.fields_skipped,
         )
+        if action != "Automation Paused":
+            await capture_newindia_screenshot(
+                page, f"paused_{sec_name}", log, reason=action, claim_no=self.claim_number or ""
+            )
         result = await super().pause(
             page, log, action, reason,
             ready=ready, instruction=instruction, describe=describe, section=section,
@@ -256,13 +304,30 @@ class NewIndiaRecovery(OperatorRecovery):
             raise asyncio.CancelledError
         return issues
 
-    @staticmethod
-    def _format_issues(issues):
-        return "\n".join(f"• {section + ' / ' if section else ''}{label} — {reason}"
-                         for section, label, reason in issues)
+    def _format_issues(self, issues):
+        lines = []
+        for item in issues:
+            if len(item) >= 5:
+                section, label, reason, attempted, source = item[:5]
+            else:
+                section, label, reason = item[:3]
+                recorded = self.field_issues.get((section, label))
+                attempted = recorded.attempted_value if recorded else ""
+                source = recorded.source if recorded else ""
+            val_tag = ""
+            if str(attempted or "").strip():
+                src = f" · {source}" if str(source or "").strip() else ""
+                val_tag = f" [Value: {attempted}{src}]"
+            prefix = f"{section} / " if section else ""
+            lines.append(f"• {prefix}{label}{val_tag} — {reason}")
+        return "\n".join(lines)
 
     async def review_before_save(self, page, log, *, source):
         """Review the last tab before the existing Fee Bill save action."""
+        from app.portals.newindia.automation.ui_utils import clear_field_hud
+
+        from app.portals.newindia.automation.ui_utils import clear_field_hud
+
         section = _STEP_NAMES[source]
         issues = await self._checkpoint_issues(page, source)
         if not await self._same_step(page, source):
@@ -306,12 +371,15 @@ class NewIndiaRecovery(OperatorRecovery):
                 on_continue=confirm_review,
             )
         self.field_issues.clear()
+        await clear_field_hud(page, clear_errors=True)
         return True
 
     async def advance_next(
         self, page, log, selector, *, source, destination, title, after_click=None, button_text="",
         confirm_before_transition=False,
     ):
+        from app.portals.newindia.automation.ui_utils import clear_field_hud
+
         section = _STEP_NAMES[source]
         page_review = source in _PAGE_REVIEW_STEPS
         if self.stopped():
@@ -330,9 +398,27 @@ class NewIndiaRecovery(OperatorRecovery):
                 return await page.evaluate("key => window[key]?.clicks ?? 0", key)
             return 0
 
+        rejected_dialog_body = None
+
         async def at_destination():
-            return (await self._same_step(page, destination)
-                    and not await page.locator(_BLOCKING_DIALOGS).count())
+            nonlocal rejected_dialog_body
+            if not await self._same_step(page, destination):
+                return False
+            dialogs = page.locator(_BLOCKING_DIALOGS)
+            if not await dialogs.count():
+                rejected_dialog_body = None
+                return True
+            if after_click is not None:
+                dialog_text = None
+                with suppress(Exception):
+                    dialog_text = " ".join((await dialogs.first.inner_text(timeout=500)).split())
+                if dialog_text and dialog_text != rejected_dialog_body:
+                    with suppress(Exception):
+                        await after_click()
+                    if not await dialogs.count():
+                        return True
+                    rejected_dialog_body = dialog_text
+            return False
 
         reason = "New India stayed on the current step after Next."
         skip_tried = False
@@ -345,25 +431,52 @@ class NewIndiaRecovery(OperatorRecovery):
             if after_click is not None:
                 with suppress(Exception):
                     await after_click()
-            if not await dialogs.count():
+            elif await dialogs.count():
+                dialog = dialogs.first
+                ok_btn = dialog.locator(
+                    'button:visible, a.btn:visible, input[type="button"]:visible, input[type="submit"]:visible'
+                ).filter(has_text=re.compile(r"^\s*(?:ok|okay|close|done|got it)\s*$", re.I))
+                if await ok_btn.count():
+                    with suppress(Exception):
+                        await ok_btn.first.click(timeout=2000)
+                else:
+                    swal_confirm = dialog.locator(".swal2-confirm:visible")
+                    if await swal_confirm.count():
+                        with suppress(Exception):
+                            await swal_confirm.first.click(timeout=2000)
+                    else:
+                        footer_btns = dialog.locator(".modal-footer button:visible, .modal-footer a.btn:visible")
+                        if await footer_btns.count() == 1:
+                            with suppress(Exception):
+                                await footer_btns.first.click(timeout=2000)
+            await wait_until_ready(
+                lambda: _dialogs_cleared(), seconds=1.5, stopped=self.stopped,
+            )
+
+        async def _dialogs_cleared():
+            return (not await page.locator(_BLOCKING_DIALOGS).count()
+                    and not await page.locator(".modal-backdrop.in:visible").count())
+
+        async def wait_after_next():
+            loop = asyncio.get_running_loop()
+            trans_deadline = loop.time() + 3.0
+            while not self.stopped() and loop.time() < trans_deadline:
+                if await self._same_step(page, destination):
+                    break
+                if await page.locator(_BLOCKING_DIALOGS).count():
+                    return
+                await asyncio.sleep(0.15)
+            if not await self._same_step(page, destination) or self.stopped():
                 return
-            dialog = dialogs.first
-            ok_btn = dialog.locator(
-                'button:visible, a.btn:visible, input[type="button"]:visible, input[type="submit"]:visible'
-            ).filter(has_text=re.compile(r"^\s*(?:ok|okay|close|done|got it)\s*$", re.I))
-            if await ok_btn.count():
-                with suppress(Exception):
-                    await ok_btn.first.click(timeout=2000)
-                return
-            swal_confirm = dialog.locator(".swal2-confirm:visible")
-            if await swal_confirm.count():
-                with suppress(Exception):
-                    await swal_confirm.first.click(timeout=2000)
-                return
-            footer_btns = dialog.locator(".modal-footer button:visible, .modal-footer a.btn:visible")
-            if await footer_btns.count() == 1:
-                with suppress(Exception):
-                    await footer_btns.first.click(timeout=2000)
+            # Angular save modals can appear right after the tab switch renders.
+            if not await page.locator(_BLOCKING_DIALOGS).count():
+                popup_deadline = loop.time() + 0.6
+                while not self.stopped() and loop.time() < popup_deadline:
+                    if await page.locator(_BLOCKING_DIALOGS).count():
+                        break
+                    await asyncio.sleep(0.15)
+            if await page.locator(_BLOCKING_DIALOGS).count():
+                await dismiss_save_popup()
 
         async def click_next():
             nonlocal reason
@@ -407,16 +520,14 @@ class NewIndiaRecovery(OperatorRecovery):
             if await self._issues_on_page(page, source, accept_manual=True):
                 return
             await click_next()
-            if await self._same_step(page, destination) and await page.locator(_BLOCKING_DIALOGS).count():
-                await dismiss_save_popup()
+            await wait_after_next()
 
         async def skip_and_try_next():
             nonlocal skip_tried, retried
             skip_tried = True
             retried = True
             await click_next()
-            if await self._same_step(page, destination) and await page.locator(_BLOCKING_DIALOGS).count():
-                await dismiss_save_popup()
+            await wait_after_next()
 
         try:
             issues = await self._checkpoint_issues(page, source)
@@ -429,9 +540,11 @@ class NewIndiaRecovery(OperatorRecovery):
             if not issues:
                 await click_next()
                 if await click_count():
+                    await wait_after_next()
                     if await wait_until_ready(at_destination, seconds=4, stopped=self.stopped):
                         log.info(f"{title} opened after Next.")
                         self.field_issues.clear()
+                        await clear_field_hud(page, clear_errors=True)
                         return True
                 issues = await self._issues_on_page(page, source)
 
@@ -470,6 +583,8 @@ class NewIndiaRecovery(OperatorRecovery):
                 on_continue=continue_after_fix,
             )
             self.field_issues.clear()
+            if advanced:
+                await clear_field_hud(page, clear_errors=True)
             return advanced
         finally:
             if not page.is_closed():

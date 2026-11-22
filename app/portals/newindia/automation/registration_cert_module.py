@@ -9,6 +9,43 @@ from app.portals.newindia.automation.ui_utils import (
 from app.automation.automation_logger import AutomationLogger
 from app.utils import load_automation_defaults
 
+async def _select_with_fallback(
+    page: Page,
+    primary_selector: str,
+    fallback_selector: str,
+    value: str,
+    label: str,
+    log,
+    field_delay_ms: int,
+) -> None:
+    """Select a dropdown value using the primary selector or an Angular ng-model fallback."""
+    try:
+        if not value:
+            if isinstance(log, AutomationLogger):
+                log.field_skipped(label, reason="Missing from Excel")
+            else:
+                log(f"   ⚠️ {label} missing from Excel.")
+            return
+
+        sel_to_use = primary_selector
+        try:
+            await page.wait_for_selector(primary_selector, state="visible", timeout=4000)
+        except Exception:
+            try:
+                await page.wait_for_selector(fallback_selector, state="visible", timeout=4000)
+                sel_to_use = fallback_selector
+                if isinstance(log, AutomationLogger):
+                    log.info(f"Using ng-model fallback for {label}.")
+                else:
+                    log(f"   ℹ️ [{label}] using ng-model fallback selector.")
+            except Exception:
+                sel_to_use = primary_selector
+
+        await select_dropdown_with_delay(page, sel_to_use, value, label, log, field_delay_ms, source="Excel")
+    except Exception:
+        record_additional_issue(log, label)
+
+
 async def _fill_optional_rc_field(
     page: Page,
     selector: str,
@@ -160,7 +197,20 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
 
     if stop_cb(): return False
 
-    # 3. Date of Registration (Optional)
+    # 3. Type of Vehicle (Row 1 Col 4 - Mandatory)
+    await _select_with_fallback(
+        page,
+        'select[name="Type of Vehicle"]',
+        'select[data-ng-model*="typeOfVehicle"], select[ng-model*="typeOfVehicle"]',
+        data.type_of_vehicle,
+        "Type of Vehicle",
+        log,
+        field_delay_ms,
+    )
+
+    if stop_cb(): return False
+
+    # 4. Date of Registration (Optional)
     try:
         val = data.date_of_registration
         if val:
@@ -216,22 +266,7 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
 
     if stop_cb(): return False
 
-    # 8. Type of Body (Dropdown - Mandatory)
-    try:
-        val = data.type_of_body
-        if val:
-            await select_dropdown_with_delay(page, 'select[name="Type of Body"]', val, "Type of Body", log, field_delay_ms, source="Excel")
-        else:
-            if isinstance(log, AutomationLogger):
-                log.field_skipped("Type of Body", reason="Missing from Excel")
-            else:
-                log(f"   ⚠️ Type Of Body missing from Excel.")
-    except Exception:
-        record_additional_issue(log, "Type of Body")
-
-    if stop_cb(): return False
-
-    # 9. Class of Vehicle (Text field - Mandatory)
+    # 8. Class of Vehicle (Text field - Mandatory)
     try:
         val = data.class_of_vehicle
         if val:
@@ -255,6 +290,71 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
         )
     except Exception:
         record_additional_issue(log, "Pre-Accident Condition")
+
+    optional_rc_fields = (
+        (
+            'input[data-ng-model="surveyorData.worklist.additionalDetails.regLadenWt"]',
+            'input[ng-model="surveyorData.worklist.additionalDetails.regLadenWt"]',
+            getattr(data, "registered_laden_weight", ""),
+            "Registered Laden Weight",
+            "digits",
+            10,
+        ),
+        (
+            'input[data-ng-model="surveyorData.worklist.additionalDetails.unLadenWt"]',
+            'input[ng-model="surveyorData.worklist.additionalDetails.unLadenWt"]',
+            getattr(data, "unladen_weight", ""),
+            "Unladen Weight",
+            "digits",
+            10,
+        ),
+        (
+            'input[name="Fitness Cert.No."]',
+            'input[data-ng-model="surveyorData.worklist.additionalDetails.fitnessCertNo"]',
+            getattr(data, "fitness_cert_no", ""),
+            "Fitness Cert. No.",
+            "text",
+            20,
+        ),
+        (
+            'input[name="Fitness Cert. valid Upto"]',
+            'input[data-ng-model="surveyorData.worklist.additionalDetails.fitnessCertValidUpto"]',
+            getattr(data, "fitness_valid_upto", ""),
+            "Fitness Cert. Valid Upto",
+            "date",
+            None,
+        ),
+        (
+            'input[name="Permit No."]',
+            'input[data-ng-model="surveyorData.worklist.additionalDetails.permitNo"]',
+            getattr(data, "permit_number", ""),
+            "Permit No.",
+            "text",
+            20,
+        ),
+        (
+            'input[name="Permit Valid Upto"]',
+            'input[data-ng-model="surveyorData.worklist.additionalDetails.permitValidUpto"]',
+            getattr(data, "permit_valid_upto", ""),
+            "Permit Valid Upto",
+            "date",
+            None,
+        ),
+    )
+    for primary_sel, fallback_sel, field_val, field_label, field_kind, max_len in optional_rc_fields:
+        if stop_cb():
+            return False
+        await _fill_optional_rc_field(
+            page,
+            primary_sel,
+            fallback_sel,
+            field_val,
+            field_label,
+            log,
+            field_delay_ms,
+            kind=field_kind,
+            max_len=max_len,
+        )
 
     if stop_cb(): return False
 
@@ -371,132 +471,16 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
 
     if stop_cb(): return False
 
-    # 18. Type of Vehicle (Dropdown - Mandatory)
-    try:
-        val = data.type_of_vehicle
-        if val:
-            _veh_sel = 'select[name="Type of Vehicle"]'
-            _veh_sel_fb = 'select[data-ng-model*="typeOfVehicle"], select[ng-model*="typeOfVehicle"]'
-
-            try:
-                await page.wait_for_selector(_veh_sel, state="visible", timeout=4000)
-                sel_to_use = _veh_sel
-            except Exception:
-                try:
-                    await page.wait_for_selector(_veh_sel_fb, state="visible", timeout=4000)
-                    sel_to_use = _veh_sel_fb
-                    if isinstance(log, AutomationLogger):
-                        log.info("Using ng-model fallback for Vehicle Type.")
-                    else:
-                        log(f"   ℹ️ [Type of Vehicle] using ng-model fallback selector.")
-                except Exception:
-                    sel_to_use = _veh_sel 
-
-            await select_dropdown_with_delay(page, sel_to_use, val, "Type of Vehicle", log, field_delay_ms, source="Excel")
-        else:
-            if isinstance(log, AutomationLogger):
-                log.field_skipped("Type of Vehicle", reason="Missing from Excel")
-            else:
-                log(f"   ⚠️ Type Of Vehicle missing from Excel.")
-    except Exception:
-        record_additional_issue(log, "Type of Vehicle")
-
-    if stop_cb(): return False
-
     # 19. Type of Fuel (Dropdown - Mandatory)
-    try:
-        val = data.type_of_fuel
-        if val:
-            _fuel_sel    = 'select[name="Type of fuel"]'
-            _fuel_sel_fb = 'select[data-ng-model*="typeOfFuel"], select[ng-model*="typeOfFuel"]'
-
-            try:
-                await page.wait_for_selector(_fuel_sel, state="visible", timeout=4000)
-                sel_to_use = _fuel_sel
-            except Exception:
-                try:
-                    await page.wait_for_selector(_fuel_sel_fb, state="visible", timeout=4000)
-                    sel_to_use = _fuel_sel_fb
-                    if isinstance(log, AutomationLogger):
-                        log.info("Using ng-model fallback for Fuel Type.")
-                    else:
-                        log(f"   ℹ️ [Type of Fuel] using ng-model fallback selector.")
-                except Exception:
-                    sel_to_use = _fuel_sel
-
-            await select_dropdown_with_delay(page, sel_to_use, val, "Type of Fuel", log, field_delay_ms, source="Excel")
-        else:
-            if isinstance(log, AutomationLogger):
-                log.field_skipped("Type of Fuel", reason="Missing from Excel")
-            else:
-                log(f"   ⚠️ Type Of Fuel missing from Excel.")
-    except Exception:
-        record_additional_issue(log, "Type of Fuel")
-
-    optional_rc_fields = (
-        (
-            'input[data-ng-model="surveyorData.worklist.additionalDetails.regLadenWt"]',
-            'input[ng-model="surveyorData.worklist.additionalDetails.regLadenWt"]',
-            getattr(data, "registered_laden_weight", ""),
-            "Registered Laden Weight",
-            "digits",
-            10,
-        ),
-        (
-            'input[data-ng-model="surveyorData.worklist.additionalDetails.unLadenWt"]',
-            'input[ng-model="surveyorData.worklist.additionalDetails.unLadenWt"]',
-            getattr(data, "unladen_weight", ""),
-            "Unladen Weight",
-            "digits",
-            10,
-        ),
-        (
-            'input[name="Fitness Cert.No."]',
-            'input[data-ng-model="surveyorData.worklist.additionalDetails.fitnessCertNo"]',
-            getattr(data, "fitness_cert_no", ""),
-            "Fitness Cert. No.",
-            "text",
-            20,
-        ),
-        (
-            'input[name="Fitness Cert. valid Upto"]',
-            'input[data-ng-model="surveyorData.worklist.additionalDetails.fitnessCertValidUpto"]',
-            getattr(data, "fitness_valid_upto", ""),
-            "Fitness Cert. Valid Upto",
-            "date",
-            None,
-        ),
-        (
-            'input[name="Permit No."]',
-            'input[data-ng-model="surveyorData.worklist.additionalDetails.permitNo"]',
-            getattr(data, "permit_number", ""),
-            "Permit No.",
-            "text",
-            20,
-        ),
-        (
-            'input[name="Permit Valid Upto"]',
-            'input[data-ng-model="surveyorData.worklist.additionalDetails.permitValidUpto"]',
-            getattr(data, "permit_valid_upto", ""),
-            "Permit Valid Upto",
-            "date",
-            None,
-        ),
+    await _select_with_fallback(
+        page,
+        'select[name="Type of fuel"]',
+        'select[data-ng-model*="typeOfFuel"], select[ng-model*="typeOfFuel"]',
+        data.type_of_fuel,
+        "Type of Fuel",
+        log,
+        field_delay_ms,
     )
-    for primary_sel, fallback_sel, field_val, field_label, field_kind, max_len in optional_rc_fields:
-        if stop_cb():
-            return False
-        await _fill_optional_rc_field(
-            page,
-            primary_sel,
-            fallback_sel,
-            field_val,
-            field_label,
-            log,
-            field_delay_ms,
-            kind=field_kind,
-            max_len=max_len,
-        )
 
     if isinstance(log, AutomationLogger):
         log.success("Registration Certificate Details phase completed.")

@@ -345,6 +345,36 @@ QPushButton#btnStop:hover {
 
 QPushButton#btnStop:disabled { color: #CBD5E1; border-color: #E2E8F0; }
 
+/* PAUSE / RESUME — Amber outline when running, solid green when paused */
+QPushButton#btnPause {
+    background-color: #FFFBEB;
+    color: #B45309;
+    border: 1px solid #FCD34D;
+    font-weight: 700;
+    padding: 8px 16px;
+    border-radius: 6px;
+}
+
+QPushButton#btnPause:hover {
+    background-color: #FEF3C7;
+}
+
+QPushButton#btnPause[paused="true"] {
+    background-color: #16A34A;
+    color: #FFFFFF;
+    border: 1px solid #15803D;
+}
+
+QPushButton#btnPause[paused="true"]:hover {
+    background-color: #15803D;
+}
+
+QPushButton#btnPause:disabled {
+    background-color: #F8FAFC;
+    color: #CBD5E1;
+    border-color: #E2E8F0;
+}
+
 /* BROWSE — Solid dark */
 QPushButton#btnBrowse {
     background-color: #0F172A;

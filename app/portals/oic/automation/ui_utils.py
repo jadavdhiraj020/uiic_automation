@@ -126,6 +126,8 @@ _JS_CLICK_RADIO = r"""
 
 async def advance_form(page, log, selector, button_name, destination, stop_cb, screenshot_name):
     recovery = current_recovery.get()
+    if recovery is not None:
+        await recovery.wait_if_manually_paused(page, log)
 
     async def ready():
         if recovery is not None and not await recovery.is_original_document(page, allow_route_change=True):
@@ -186,6 +188,9 @@ async def fill_input_with_delay(
     log, delay_ms: int = 30, source: Optional[str] = None
 ):
     """Angular-aware instant or typed text fill with configurable inter-field delay."""
+    recovery = current_recovery.get()
+    if recovery is not None:
+        await recovery.wait_if_manually_paused(page, log)
     if field_was_handled(page, log, label):
         return
     try:
@@ -230,6 +235,9 @@ async def select_dropdown_with_delay(
     log, delay_ms: int = 30, source: Optional[str] = None
 ):
     """Standard <select> dropdown helper with 3-pass matching and configurable delay."""
+    recovery = current_recovery.get()
+    if recovery is not None:
+        await recovery.wait_if_manually_paused(page, log)
     if field_was_handled(page, log, label):
         return
     try:
@@ -266,6 +274,9 @@ async def click_radio_with_delay(
     log, delay_ms: int = 30, source: Optional[str] = None
 ):
     """Click radio via label with delay."""
+    recovery = current_recovery.get()
+    if recovery is not None:
+        await recovery.wait_if_manually_paused(page, log)
     if field_was_handled(page, log, label):
         return
     try:

@@ -194,6 +194,7 @@ class StructuredLogsPanel(QWidget):
         super().__init__(parent)
         self._entries = []
         self._auto_scroll = True
+        self._portal_id = "uiic"
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 18, 24, 18)
         root.setSpacing(10)
@@ -205,6 +206,12 @@ class StructuredLogsPanel(QWidget):
         title.setObjectName("workspaceHeading")
         title_lay.addWidget(title)
         title_lay.addStretch()
+        self.show_details_check = QCheckBox("Show details")
+        self.show_details_check.setChecked(False)
+        self.show_details_check.setToolTip("Show every field and step-by-step debug log (New India)")
+        self.show_details_check.toggled.connect(self._apply_filters)
+        self.show_details_check.setVisible(False)
+        title_lay.addWidget(self.show_details_check)
         self.auto_scroll_check = QCheckBox("Auto-scroll")
         self.auto_scroll_check.setChecked(True)
         self.auto_scroll_check.toggled.connect(self._set_auto_scroll)
@@ -278,12 +285,18 @@ class StructuredLogsPanel(QWidget):
             )
         return "\n".join(rows)
 
+    def set_portal(self, portal_id: str):
+        self._portal_id = (portal_id or "uiic").lower()
+        self.show_details_check.setVisible(self._portal_id == "newindia")
+        self._apply_filters()
+
     def _set_auto_scroll(self, checked):
         self._auto_scroll = checked
 
     def _parse_entry(self, text, portal_id, phase, context=None):
         raw = "" if text is None else str(text)
-        plain = html.unescape(re.sub(r"<[^>]+>", " ", raw)).strip()
+        is_detail = "\u200c" in raw
+        plain = html.unescape(re.sub(r"<[^>]+>", " ", raw)).replace("\u200c", "").strip()
 
         # Extract zero-width space section metadata first
         inferred_phase = phase or "General"
@@ -291,7 +304,7 @@ class StructuredLogsPanel(QWidget):
             parts = plain.split("\u200b")
             plain = parts[0]
             if len(parts) > 1 and parts[1].strip():
-                inferred_phase = parts[1].strip()
+                inferred_phase = parts[1].replace("\u200c", "").strip()
 
         ts_match = re.search(r"\[(\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\]", plain)
         timestamp = ts_match.group(1) if ts_match else datetime.now().strftime("%H:%M:%S.%f")[:-3]
@@ -309,7 +322,7 @@ class StructuredLogsPanel(QWidget):
             level = "Error"
         elif any(x in lower for x in ("warning", "missing", "⚠")):
             level = "Warning"
-        elif any(x in lower for x in ("success", "complete", "completed", "✅")):
+        elif any(x in lower for x in ("success", "complete", "completed", "✅", "🏁")):
             level = "Success"
         elif any(x in lower for x in ("retry", "attempt", "🔄")):
             level = "Retry"
@@ -333,6 +346,7 @@ class StructuredLogsPanel(QWidget):
             "phase": inferred_phase or "General",
             "message": plain,
             "context": details,
+            "detail": is_detail,
             "search": " ".join([timestamp, level, str(context.get("portal") or portal_id or ""), inferred_phase or "", plain, *details.values()]).lower(),
         }
 
@@ -395,9 +409,12 @@ class StructuredLogsPanel(QWidget):
 
     def _apply_filters(self, *_args):
         text = self.search_input.text().strip().lower()
+        show_details = self.show_details_check.isChecked()
         for row, entry in enumerate(self._entries):
             visible = True
-            if text and text not in entry["search"]:
+            if entry.get("portal") == "NEWINDIA" and entry.get("detail") and not show_details:
+                visible = False
+            elif text and text not in entry["search"]:
                 visible = False
             self.table.setRowHidden(row, not visible)
         if self._auto_scroll and not text:
@@ -802,6 +819,7 @@ class DocumentReviewPanel(QWidget):
 class WorkspacePage(QWidget):
     browse_clicked = pyqtSignal()
     start_clicked = pyqtSignal()
+    pause_clicked = pyqtSignal()
     stop_clicked = pyqtSignal()
     export_log_clicked = pyqtSignal()
 
@@ -839,12 +857,19 @@ class WorkspacePage(QWidget):
         self.btn_start.setObjectName("btnStart")
         self.btn_start.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_start.clicked.connect(self.start_clicked.emit)
+        self.btn_pause = QPushButton("Pause")
+        self.btn_pause.setObjectName("btnPause")
+        self.btn_pause.setProperty("paused", False)
+        self.btn_pause.setEnabled(False)
+        self.btn_pause.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_pause.clicked.connect(self.pause_clicked.emit)
         self.btn_stop = QPushButton("Stop")
         self.btn_stop.setObjectName("btnStop")
         self.btn_stop.setEnabled(False)
         self.btn_stop.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_stop.clicked.connect(self.stop_clicked.emit)
         al.addWidget(self.btn_start)
+        al.addWidget(self.btn_pause)
         al.addWidget(self.btn_stop)
         rail_lay.addWidget(actions)
 
@@ -881,11 +906,13 @@ class WorkspacePage(QWidget):
         self.stat_docs = self.folder_panel.stat_docs
         self.stat_missing = self.folder_panel.stat_missing
         self.stat_status = self.folder_panel.stat_status
-        self.validation_bar = self.data_panel.validation_bar
+        self.validation_chips = self.data_panel.validation_chips
+        self.validation_bar = self.data_panel.validation_chips
         self.log_output = self.logs_drawer.log_output
 
     def set_portal(self, portal_id):
         self._portal_id = portal_id or "uiic"
+        self.logs_panel.set_portal(self._portal_id)
 
     def set_stage(self, idx: int):
         self.stack.setCurrentIndex(idx)
@@ -946,9 +973,30 @@ class WorkspacePage(QWidget):
         self.rail.set_stage_state(2, "pending")
         self.document_panel.update_data(self._scan_result)
 
+    def set_automation_paused(self, paused: bool, *, pending: bool = False, manual: bool = True):
+        if pending:
+            self.btn_pause.setText("Pausing…")
+            self.btn_pause.setEnabled(False)
+            self.btn_pause.setProperty("paused", False)
+        elif paused:
+            self.btn_pause.setText("Resume" if manual else "Paused")
+            self.btn_pause.setEnabled(manual)
+            self.btn_pause.setProperty("paused", bool(manual))
+        else:
+            self.btn_pause.setText("Pause")
+            self.btn_pause.setEnabled(self._portal_id in {"newindia", "oic"})
+            self.btn_pause.setProperty("paused", False)
+        self.btn_pause.style().unpolish(self.btn_pause)
+        self.btn_pause.style().polish(self.btn_pause)
+
     def set_automation_running(self, running: bool):
         self.btn_start.setEnabled(not running)
         self.btn_stop.setEnabled(running)
+        self.btn_pause.setText("Pause")
+        self.btn_pause.setProperty("paused", False)
+        self.btn_pause.setEnabled(running and self._portal_id in {"newindia", "oic"})
+        self.btn_pause.style().unpolish(self.btn_pause)
+        self.btn_pause.style().polish(self.btn_pause)
         self._current_phase = "Startup" if running else "General"
         self.rail.set_stage_state(3, "active" if running else "done")
         self.set_stage(3)
@@ -956,6 +1004,11 @@ class WorkspacePage(QWidget):
     def set_automation_finished(self, success: bool):
         self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(False)
+        self.btn_pause.setText("Pause")
+        self.btn_pause.setProperty("paused", False)
+        self.btn_pause.setEnabled(False)
+        self.btn_pause.style().unpolish(self.btn_pause)
+        self.btn_pause.style().polish(self.btn_pause)
         self._current_phase = "Finished" if success else "Stopped"
         self.rail.set_stage_state(3, "done" if success else "failed")
         self.set_stage(3)

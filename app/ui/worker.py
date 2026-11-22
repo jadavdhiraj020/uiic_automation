@@ -7,6 +7,7 @@ class AutomationWorker(QObject):
     step_signal = pyqtSignal(int, str)
     done_signal = pyqtSignal(bool, str)
     recovery_signal = pyqtSignal(object)
+    field_signal = pyqtSignal(object)
 
     def __init__(self, claim, settings_override=None, portal_id: str = "uiic"):
         super().__init__()
@@ -27,6 +28,8 @@ class AutomationWorker(QObject):
             recovery_options = {}
             if self.portal_id in {"oic", "newindia"}:
                 recovery_options["recovery_cb"] = self.recovery_signal.emit
+            if self.portal_id == "newindia":
+                recovery_options["field_cb"] = self.field_signal.emit
             self._engine = AutomationEngine(
                 log_cb    = lambda msg: self.log_signal.emit(msg),
                 step_cb   = lambda i, s: self.step_signal.emit(i, s),
@@ -66,6 +69,20 @@ class AutomationWorker(QObject):
     def resume_oic(self, prompt_id, decision):
         if self._engine and not self._stop_event.is_set():
             self._engine.resume_oic(prompt_id, decision)
+
+    def pause(self) -> bool:
+        if self._engine and not self._stop_event.is_set():
+            return self._engine.request_pause()
+        return False
+
+    def resume(self) -> bool:
+        if self._engine and not self._stop_event.is_set():
+            return self._engine.resume_pause()
+        return False
+
+    def focus_chrome(self) -> None:
+        if self._engine and not self._stop_event.is_set():
+            self._engine.focus_chrome()
 
 
 class FolderScanWorker(QObject):
