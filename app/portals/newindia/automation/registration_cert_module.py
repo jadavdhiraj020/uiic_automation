@@ -3,8 +3,9 @@ from playwright.async_api import Page
 from app.data.data_model import ClaimData
 from app.portals.newindia.field_values import configured_pre_accident_condition, normalize_vehicle_color
 from app.portals.newindia.automation.ui_utils import (
+    CHANNEL_MARUTI,
     check_checkbox_with_delay, fill_input_with_delay, select_dropdown_with_delay, format_date_ddmmyyyy,
-    open_additional_section, record_additional_issue,
+    open_additional_section, record_additional_issue, resolve_newindia_channel,
 )
 from app.automation.automation_logger import AutomationLogger
 from app.utils import load_automation_defaults
@@ -102,6 +103,49 @@ async def _fill_optional_rc_field(
         record_additional_issue(log, label)
 
 
+async def _fill_type_of_vehicle(
+    page: Page,
+    data: ClaimData,
+    log,
+    field_delay_ms: int,
+) -> None:
+    await _select_with_fallback(
+        page,
+        'select[name="Type of Vehicle"]',
+        'select[data-ng-model*="typeOfVehicle"], select[ng-model*="typeOfVehicle"]',
+        data.type_of_vehicle,
+        "Type of Vehicle",
+        log,
+        field_delay_ms,
+    )
+
+
+async def _fill_type_of_body_if_visible(
+    page: Page,
+    data: ClaimData,
+    log,
+    field_delay_ms: int,
+) -> None:
+    body_loc = page.locator(
+        'select[name="Type of Body"]:visible, '
+        'select[data-ng-model*="typeOfBody"]:visible, '
+        'select[ng-model*="typeOfBody"]:visible'
+    )
+    if not await body_loc.count():
+        if isinstance(log, AutomationLogger):
+            log.field_skipped("Type of Body", reason="Not shown on this claim")
+        return
+    await _select_with_fallback(
+        page,
+        'select[name="Type of Body"]',
+        'select[data-ng-model*="typeOfBody"], select[ng-model*="typeOfBody"]',
+        getattr(data, "type_of_body", ""),
+        "Type of Body",
+        log,
+        field_delay_ms,
+    )
+
+
 async def fill_registration_cert_details(page: Page, data: ClaimData, log, stop_cb, field_delay_ms: int = 600) -> bool:
     if stop_cb(): return False
 
@@ -197,18 +241,13 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
 
     if stop_cb(): return False
 
-    # 3. Type of Vehicle (Row 1 Col 4 - Mandatory)
-    await _select_with_fallback(
-        page,
-        'select[name="Type of Vehicle"]',
-        'select[data-ng-model*="typeOfVehicle"], select[ng-model*="typeOfVehicle"]',
-        data.type_of_vehicle,
-        "Type of Vehicle",
-        log,
-        field_delay_ms,
-    )
+    is_maruti = resolve_newindia_channel(page, data) == CHANNEL_MARUTI
 
-    if stop_cb(): return False
+    # 3. Type of Vehicle (Maruti: Row 1 Col 4 right after Reg No; Non-Tie-Up fills before Fuel)
+    if is_maruti:
+        await _fill_type_of_vehicle(page, data, log, field_delay_ms)
+        if stop_cb():
+            return False
 
     # 4. Date of Registration (Optional)
     try:
@@ -263,6 +302,10 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
             await check_checkbox_with_delay(page, selector, "Physically Verified", log, field_delay_ms, source="Calculated")
     except Exception:
         record_additional_issue(log, "Physically Verified")
+
+    if stop_cb(): return False
+
+    await _fill_type_of_body_if_visible(page, data, log, field_delay_ms)
 
     if stop_cb(): return False
 
@@ -470,6 +513,11 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
         record_additional_issue(log, "Vehicle Color Type")
 
     if stop_cb(): return False
+
+    if not is_maruti:
+        await _fill_type_of_vehicle(page, data, log, field_delay_ms)
+        if stop_cb():
+            return False
 
     # 19. Type of Fuel (Dropdown - Mandatory)
     await _select_with_fallback(

@@ -4,11 +4,18 @@ from typing import Callable
 from playwright.async_api import Error as PlaywrightError, Page
 
 from app.automation.automation_logger import AutomationLogger
+from app.portals.newindia.automation.ui_utils import (
+    CHANNEL_MARUTI,
+    CHANNEL_NON_TIE_UP,
+    CHANNEL_UNSUPPORTED,
+    classify_newindia_channel,
+)
 from app.portals.oic.automation.recovery import same_origin, wait_until_ready
 
 
 SEL_NAV_WORKLIST = "li#navlink-worklist a:visible"
 SEL_FILTER_DROPDOWN = "select#searchType:visible"
+SEL_CLAIM_TYPE_DROPDOWN = "select#claimType:visible"
 SEL_CLAIM_INPUT = "input#filterWorklistClaimNo:visible"
 SEL_FILTER_BTN = "button[data-ng-click*='filterClaims']:visible"
 SEL_CLAIM_CARD = ".card-claim:visible"
@@ -18,9 +25,35 @@ QUICK_UPDATE = 'h4.headerClip:visible'
 SEARCH_TIMEOUT_S = 15
 FORM_TIMEOUT_S = 20
 
+_JS_READ_WORKLIST_CHANNEL = """
+() => {
+    const sel = document.querySelector('select#claimType');
+    const opt = sel && sel.selectedIndex >= 0 ? sel.options[sel.selectedIndex] : null;
+    let sessionType = '';
+    try { sessionType = sessionStorage.getItem('claimTypeNM') || ''; } catch (e) {}
+    return {
+        present: Boolean(sel),
+        value: sel ? (sel.value || '') : '',
+        text: opt ? (opt.textContent || '').trim() : '',
+        sessionType,
+    };
+}
+"""
+
 
 class ClaimNavigationError(RuntimeError):
     """An operator-facing failure while locating or opening a New India claim."""
+
+
+class UnsupportedClaimChannelError(ClaimNavigationError):
+    """Raised when New India assigns the claim to an OEM channel not automated yet."""
+
+    def __init__(self, claim_no: str, channel_name: str):
+        self.claim_no = claim_no
+        self.channel_name = channel_name or "This channel"
+        super().__init__(
+            f"{self.channel_name} is not supported yet — only Non-Tie-Up and Maruti claims are automated."
+        )
 
 
 async def navigate_to_claim(
@@ -29,6 +62,8 @@ async def navigate_to_claim(
     settings: dict,
     log=print,
     stop_cb: Callable[[], bool] = lambda: False,
+    *,
+    channel_out: dict | None = None,
 ) -> Page | None:
     """Filter the Worklist and continue only after opening the same claim."""
     claim_no = str(claim_no or "").strip()
@@ -93,6 +128,27 @@ async def navigate_to_claim(
         if stop_cb():
             return None
 
+        raw_channel = {"present": False, "value": "", "text": "", "sessionType": ""}
+        try:
+            raw_channel = await page.evaluate(_JS_READ_WORKLIST_CHANNEL)
+        except Exception:
+            pass
+        dd_code, dd_label = classify_newindia_channel(raw_channel.get("value", ""), raw_channel.get("text", ""))
+        ss_code, ss_label = classify_newindia_channel(raw_channel.get("sessionType", ""))
+        if ss_code == CHANNEL_UNSUPPORTED:
+            wl_code = CHANNEL_UNSUPPORTED
+            wl_label = dd_label if dd_code == CHANNEL_UNSUPPORTED else ss_label
+        elif dd_code:
+            wl_code, wl_label = dd_code, dd_label
+        else:
+            wl_code, wl_label = ss_code, ss_label
+
+        if wl_code == CHANNEL_UNSUPPORTED:
+            info(f"Worklist channel detected: {wl_label} (not automated yet).")
+            raise UnsupportedClaimChannelError(claim_no, wl_label)
+        if wl_code:
+            info(f"Worklist channel detected: {wl_label}.")
+
         info(f"Found 1 matching claim card ({claim_no}). Clicking Edit...")
         edit = matching.locator(SEL_CLAIM_EDIT_BTN)
         origin_url = page.url
@@ -130,7 +186,19 @@ async def navigate_to_claim(
         finally:
             page.remove_listener("popup", record_popup)
 
-        success(f"Quick Update opened for claim {claim_no}.")
+        url_code, url_label = classify_newindia_channel(url=getattr(claim_page, "url", "") or "")
+        if url_code == CHANNEL_UNSUPPORTED:
+            raise UnsupportedClaimChannelError(claim_no, url_label)
+        final_code = url_code if url_code in {CHANNEL_NON_TIE_UP, CHANNEL_MARUTI} else (wl_code or CHANNEL_NON_TIE_UP)
+        final_label = url_label if url_code in {CHANNEL_NON_TIE_UP, CHANNEL_MARUTI} else (wl_label or "Non-Tie-Up")
+        if channel_out is not None:
+            channel_out.update({
+                "code": final_code,
+                "label": final_label,
+                "raw": raw_channel.get("text") or raw_channel.get("value") or raw_channel.get("sessionType") or "",
+            })
+
+        success(f"Quick Update opened for claim {claim_no} ({final_label}).")
         return claim_page
     except PlaywrightError as exc:
         raise ClaimNavigationError(failure) from exc

@@ -1,11 +1,27 @@
 from playwright.async_api import Page
 from app.data.data_model import ClaimData
 from app.portals.newindia.automation.ui_utils import (
+    CHANNEL_MARUTI,
     fill_input_with_delay, select_dropdown_with_delay,
-    open_additional_section, record_additional_issue,
+    open_additional_section, record_additional_issue, resolve_newindia_channel,
 )
 from app.automation.automation_logger import AutomationLogger
 from app.utils import load_automation_defaults
+
+
+async def _fill_tp_claim(page: Page, data: ClaimData, defaults: dict, log, field_delay_ms: int) -> None:
+    try:
+        raw_val = data.is_there_any_tp_claim
+        val = raw_val or str(defaults.get("is_there_any_tp_claim") or "No")
+        source = "Excel" if raw_val else "Default"
+        normalized = "Yes" if str(val).strip().lower() == "yes" else "No"
+        await select_dropdown_with_delay(
+            page, 'select[name="Is there any TP claim?"]', normalized,
+            "TP Claim", log, field_delay_ms, source=source,
+        )
+    except Exception:
+        record_additional_issue(log, "Is there any TP claim?")
+
 
 async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_delay_ms: int = 600) -> bool:
     if stop_cb(): return False
@@ -27,20 +43,12 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
     if stop_cb():
         return False
 
-    # 1. Is there any TP claim? (Row 1 Col 1 - Mandatory)
-    try:
-        raw_val = data.is_there_any_tp_claim
-        val = raw_val or str(defaults.get("is_there_any_tp_claim") or "No")
-        source = "Excel" if raw_val else "Default"
-        normalized = "Yes" if str(val).strip().lower() == "yes" else "No"
-        await select_dropdown_with_delay(
-            page, 'select[name="Is there any TP claim?"]', normalized,
-            "TP Claim", log, field_delay_ms, source=source,
-        )
-    except Exception:
-        record_additional_issue(log, "Is there any TP claim?")
-
-    if stop_cb(): return False
+    is_maruti = resolve_newindia_channel(page, data) == CHANNEL_MARUTI
+    if is_maruti:
+        # Maruti shows "Is there any TP claim?" at Row 1 Col 1; Non-Tie-Up shows it at the end.
+        await _fill_tp_claim(page, data, defaults, log, field_delay_ms)
+        if stop_cb():
+            return False
 
     # 2. FIR Number
     try:
@@ -122,6 +130,9 @@ async def fill_fir_details(page: Page, data: ClaimData, log, stop_cb, field_dela
                 log(f"   ⏭️ [Previous Police Records] — Optional, not in Excel. Skipping.")
     except Exception:
         record_additional_issue(log, "Previous Police Records")
+
+    if not is_maruti and not stop_cb():
+        await _fill_tp_claim(page, data, defaults, log, field_delay_ms)
 
     if isinstance(log, AutomationLogger):
         log.outdent()

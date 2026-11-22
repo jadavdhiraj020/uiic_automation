@@ -14,6 +14,70 @@ from app.portals.newindia.automation.recovery import current_recovery
 from app.portals.oic.automation.recovery import wait_until_ready
 
 
+CHANNEL_NON_TIE_UP = "non_tie_up"
+CHANNEL_MARUTI = "maruti"
+CHANNEL_UNSUPPORTED = "unsupported"
+
+_OEM_ROUTE_LABELS = {
+    "worklistsurveyhyundai": "Hyundai",
+    "worklistsurveyhyundaihiib": "Hyundai HIIB",
+    "worklistsurveytata": "Tata Motors",
+    "worklistsurveykia": "Kia",
+    "worklistsurveyhero": "Hero MotoCorp",
+    "worklistsurveyashokleyland": "Ashok Leyland",
+    "worklistsurveyroyalenfield": "Royal Enfield",
+    "worklistsurveymorrisgarage": "Morris Garage",
+    "worklistsurveymorrisgaragemgd2c": "Morris Garage",
+    "worklistsurveymorrisgaragelockton": "Morris Garage",
+}
+
+
+def classify_newindia_channel(raw_value: str = "", label: str = "", url: str = "") -> tuple[str, str]:
+    """Classify a New India claim channel from a Worklist selection or route URL."""
+    low_url = str(url or "").strip().lower()
+    if low_url:
+        route_match = re.search(r"#/(worklistsurvey[a-z0-9]*)", low_url)
+        if route_match:
+            slug = route_match.group(1)
+            if slug == "worklistsurveynew":
+                return CHANNEL_NON_TIE_UP, "Non-Tie-Up"
+            if slug == "worklistsurvey":
+                return CHANNEL_MARUTI, "Maruti"
+            return CHANNEL_UNSUPPORTED, _OEM_ROUTE_LABELS.get(
+                slug, slug.removeprefix("worklistsurvey").strip().title() or "OEM Tie-Up",
+            )
+
+    raw = re.sub(r"^(?:string|object|number):", "", str(raw_value or "").strip(), flags=re.I).strip()
+    lbl = " ".join(str(label or "").split()).strip()
+    combined = f"{raw} {lbl}".lower()
+    if not combined.strip():
+        return "", ""
+
+    if raw.lower() in {"nonmaruticlaim", "nm", "non_tie_up"} or any(
+        token in combined for token in ("non tie", "non-tie", "nontie", "nonmaruti")
+    ):
+        return CHANNEL_NON_TIE_UP, "Non-Tie-Up"
+    if "maruti" in combined:
+        return CHANNEL_MARUTI, "Maruti"
+    return CHANNEL_UNSUPPORTED, (lbl or raw)
+
+
+def resolve_newindia_channel(page=None, data=None) -> str:
+    """Resolve the active New India channel ('non_tie_up' or 'maruti')."""
+    recovery = current_recovery.get()
+    for candidate in (
+        getattr(data, "_newindia_channel", "") if data is not None else "",
+        getattr(recovery, "claim_channel", "") if recovery is not None else "",
+    ):
+        if candidate in {CHANNEL_NON_TIE_UP, CHANNEL_MARUTI}:
+            return candidate
+    if page is not None:
+        code, _ = classify_newindia_channel(url=getattr(page, "url", "") or "")
+        if code in {CHANNEL_NON_TIE_UP, CHANNEL_MARUTI}:
+            return code
+    return CHANNEL_NON_TIE_UP
+
+
 def additional_section(page, title):
     return page.locator('form[name="workListForm"] .tab-pane.active a.accordion-toggle:visible').filter(
         has_text=re.compile(rf"^\s*{re.escape(title)}(?:\s+\d+)?\s*$", re.I),

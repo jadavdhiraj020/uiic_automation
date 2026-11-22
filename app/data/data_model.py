@@ -1353,6 +1353,7 @@ class ClaimData:
             ("Chassis No",            self.chassis_no,               True,  _src("chassis_no")),
             ("Physically Verified",   self.physically_verified,      True,  _src("physically_verified")),
             ("Vehicle Make",          self.vehicle_make,             True,  _src("vehicle_make")),
+            ("Type of Body",          self.type_of_body,             False, _src("type_of_body")),
             ("Class of Vehicle",      self.class_of_vehicle,         True,  _src("class_of_vehicle")),
             ("Pre-Accident Cond.",    configured_pre_accident_condition(defaults), True, settings),
             ("RTO Name",              self.rto_name,                 True,  _src("rto_name")),

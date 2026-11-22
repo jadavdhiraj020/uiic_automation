@@ -1207,15 +1207,49 @@ class AutomationEngine:
                     from app.portals.newindia.automation.logging_utils import capture_newindia_screenshot
                     from app.portals.newindia.automation.navigation_module import (
                         ClaimNavigationError,
+                        UnsupportedClaimChannelError,
                         navigate_to_claim,
                     )
+                    from app.portals.newindia.automation.ui_utils import classify_newindia_channel
 
                     self.log.section = "Worklist Navigation"
                     nav_started = time.time()
+                    channel_info: dict = {}
                     try:
                         claim_page = await navigate_to_claim(
                             page, claim.claim_no, settings=settings, log=self.log, stop_cb=self._check_stop,
+                            channel_out=channel_info,
                         )
+                    except UnsupportedClaimChannelError as exc:
+                        if self._check_stop():
+                            self.log.write_run_summary("Stopped by User", "Automation stopped by user.")
+                            return AutomationRunResult(False, "Automation stopped by user.")
+                        msg = str(exc)
+                        self.log.warning(msg)
+                        await capture_newindia_screenshot(
+                            page, "unsupported_channel", self.log, reason=msg, claim_no=claim.claim_no
+                        )
+                        self.log.record_step_result(
+                            "Worklist Navigation", False, time.time() - nav_started, reason=msg
+                        )
+                        if self._newindia_recovery is not None:
+                            self._newindia_recovery.attach_browser(page, getattr(browser, "_app3_review_pid", None))
+                            self.log.write_run_summary("Unsupported Channel", msg)
+                            await self._newindia_recovery.pause(
+                                page,
+                                self.log,
+                                f"{exc.channel_name} — Not Supported Yet",
+                                msg,
+                                section="Worklist Navigation",
+                                stop_only=True,
+                                instruction=(
+                                    f"Only Non-Tie-Up and Maruti claims are automated right now. "
+                                    f"Complete claim {claim.claim_no} manually in Chrome, then click Stop automation (Chrome stays open)."
+                                ),
+                            )
+                        else:
+                            self.log.write_run_summary("Unsupported Channel", msg)
+                        return AutomationRunResult(False, msg)
                     except ClaimNavigationError as exc:
                         if self._check_stop():
                             self.log.write_run_summary("Stopped by User", "Automation stopped by user.")
@@ -1291,10 +1325,20 @@ class AutomationEngine:
 
                 # --- NEW INDIA PORTAL PHASES ---
                 if self.portal_id == "newindia":
+                    if not channel_info.get("code"):
+                        code, label = classify_newindia_channel(url=page.url)
+                        if code:
+                            channel_info.update({"code": code, "label": label})
+                    claim._newindia_channel = channel_info.get("code", "") or "non_tie_up"
+                    claim._newindia_channel_label = channel_info.get("label", "") or "Non-Tie-Up"
+                    self.log.info(f"Using New India {claim._newindia_channel_label} flow.")
+
                     if self._newindia_recovery is not None:
                         from app.portals.newindia.automation.recovery import current_recovery
 
                         await self._newindia_recovery.bind_claim(page, claim.claim_no)
+                        self._newindia_recovery.claim_channel = claim._newindia_channel
+                        self._newindia_recovery.claim_channel_label = claim._newindia_channel_label
                         recovery_token = current_recovery.set(self._newindia_recovery)
                         resources.callback(current_recovery.reset, recovery_token)
 
@@ -1410,7 +1454,10 @@ class AutomationEngine:
                     # Phase 8: NEFT Details
                     async def _phase_neft():
                         if not await additional_section(page, "NEFT Details").count():
-                            self.log.info("NEFT Details is not shown for this claim.")
+                            if getattr(claim, "_newindia_channel", "") == "maruti":
+                                self.log.info("Maruti claim — NEFT Details is not shown; skipping.")
+                            else:
+                                self.log.info("NEFT Details is not shown for this claim.")
                             return not self._check_stop()
                         if not await self._wait_for_deferred_ocr(
                             claim,

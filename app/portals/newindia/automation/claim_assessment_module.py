@@ -13,6 +13,7 @@ from app.data.data_model import ClaimData
 from app.portals.newindia.automation.popup_service import dismiss_portal_popup
 from app.portals.newindia.automation.recovery import _BLOCKING_DIALOGS, _TAB_STATE, current_recovery
 from app.portals.newindia.automation.ui_utils import (
+    CHANNEL_NON_TIE_UP,
     _JS_FIELD_STATE,
     _JS_TRIGGER_ELEMENT_CHANGE,
     _text_matches_field,
@@ -20,6 +21,7 @@ from app.portals.newindia.automation.ui_utils import (
     fill_input_with_delay,
     open_additional_section,
     record_additional_issue as record_review_issue,
+    resolve_newindia_channel,
     select_dropdown_with_delay,
     update_field_hud,
     upload_file_via_input,
@@ -470,7 +472,7 @@ async def _fill_amounts(page, data, log, defaults, delay_ms, stop_cb):
                          str(defaults.get("recommendations") or "Approved"), delay_ms, source="Default")
 
 
-async def _is_maruti_partwise(page: Page) -> bool:
+async def _is_maruti_partwise(page: Page, data: ClaimData | None = None) -> bool:
     if await page.locator(f"{_in_assessment(_PRIMARY_ESTIMATE)}:visible").count():
         return False
     marker = (
@@ -479,6 +481,8 @@ async def _is_maruti_partwise(page: Page) -> bool:
     )
     if await page.locator(f"{_in_assessment(marker)}:visible").count():
         return True
+    if resolve_newindia_channel(page, data) == CHANNEL_NON_TIE_UP:
+        return False
     return bool(
         await page.locator(_in_assessment(".panel-heading:visible"))
         .filter(has_text=re.compile(r"Claim\s+Version", re.I))
@@ -779,7 +783,7 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_c
         if not await _wait_for_assessment_form(page, log, recovery, stop_cb) or stop_cb():
             return False
 
-        is_maruti = await _is_maruti_partwise(page)
+        is_maruti = await _is_maruti_partwise(page, data)
         await _fill_invoice_fields(page, data, log, defaults, field_delay_ms, stop_cb, is_maruti=is_maruti)
         if stop_cb():
             return False

@@ -166,6 +166,8 @@ class NewIndiaRecovery(OperatorRecovery):
         super().__init__(notify, stopped, portal_name="New India")
         self.field_issues = {}
         self._field_progress_cb = field_progress_cb
+        self.claim_channel = ""
+        self.claim_channel_label = ""
         self.fields_filled = 0
         self.fields_failed = 0
         self.fields_skipped = 0

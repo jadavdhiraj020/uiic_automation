@@ -69,6 +69,15 @@
     "allow_text_values": true,
     "_mandatory": true
   },
+  "type_of_body": {
+    "display_name": "Type of Body",
+    "sheet": "ALL",
+    "search_labels": ["Type of Body", "Body Type"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
   "class_of_vehicle": {
     "sheet": "ALL",
     "search_labels": ["Class of Vehicle", "Vehicle Class"],

@@ -138,6 +138,7 @@ _NEWINDIA_METADATA = PortalUiMetadata(
                 "Chassis No",
                 "Physically Verified",
                 "Vehicle Make",
+                "Type of Body",
                 "Class of Vehicle",
                 "Pre-Accident Cond.",
                 "RTO Name",

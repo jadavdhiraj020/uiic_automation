@@ -124,15 +124,16 @@ Before NEFT Details and Claim Assessment, App3 waits for the cheque and invoice 
 
 ## 4. Login and finding the claim
 
-| Field           | Method               | How it is filled                                                                                                                    |
-| --------------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Username        | âš™ï¸ Setting | From New India settings in App3.                                                                                                    |
-| Password        | âš™ï¸ Setting | From New India settings in App3.                                                                                                    |
-| reCAPTCHA       | ðŸ§® Calculated  | App3 ticks "I'm not a robot". If Google shows a picture puzzle, you solve it and click Login in Chrome within 45 seconds (setting). If sign-in takes longer, App3 pauses with the floating card instead of failing so you can finish signing in and click **Continue**. |
-| Worklist        | ðŸ”’ Fixed       | Opens the Worklist menu.                                                                                                            |
-| Filter Criteria | ðŸ”’ Fixed       | "Claim No."                                                                                                                         |
-| Claim No        | ðŸ“„ Direct      | Typed letter by letter, then Filter is clicked. Blocks start if missing.                                                            |
-| Edit            | ðŸ”’ Fixed       | Opens the first claim in the results.                                                                                               |
+| Field           | Method         | How it is filled                                                                                                                                                                                                 |
+| --------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Username        | ⚙️ Setting     | From New India settings in App3.                                                                                                                                                                                 |
+| Password        | ⚙️ Setting     | From New India settings in App3.                                                                                                                                                                                 |
+| reCAPTCHA       | 🧮 Calculated  | App3 ticks "I'm not a robot". If Google shows a picture puzzle, you solve it and click Login in Chrome within 45 seconds (setting). If sign-in takes longer, App3 pauses with the floating card instead of failing. |
+| Worklist        | 🔒 Fixed       | Opens the Worklist menu.                                                                                                                                                                                         |
+| Filter Criteria | 🔒 Fixed       | Selects `"Claim No."`.                                                                                                                                                                                           |
+| Claim No        | 📄 Direct      | Enters the extracted claim number and clicks **Filter**. Blocks start if missing.                                                                                                                                |
+| Channel Check   | 🔍 Auto-detect | Reads New India's auto-selected Worklist channel dropdown (`#claimType`) and `sessionStorage.claimTypeNM`, then cross-checks the opened URL: **`Non Tie-up claims`** routes to the Non-Tie-Up order, **`Maruti`** routes to the Maruti order, and any other channel (**`Hyundai HIIB`**, **`Kia`**, **`Marine Cargo claims`**, etc.) pauses with a **Not Supported Yet** popup while keeping Chrome open. |
+| Edit            | 🔒 Fixed       | Opens the matching claim card in Chrome.                                                                                                                                                                         |
 
 ---
 
@@ -142,19 +143,19 @@ Before NEFT Details and Claim Assessment, App3 waits for the cheque and invoice 
 | --- | --- | --- |
 | 1 | Date of Survey | Excel or PDF. App3 formats the date as DD/MM/YYYY and selects the matching preset. For example, 3/11/2026 selects the 03/11/2026 radio. If the date is outside the three choices, App3 selects **Others** and enters the date. |
 | 2 | Time of Survey | Extracted from the report. App3 writes HH:MM or HH:MM:SS according to the portal control. For example, 4:15 PM becomes 16:15 or 16:15:00. The existing Excel fallback is 11:00. |
-| 3 | Survey Completed | Automation Defaults, shipped **Yes**. With **No**, New India requires a Reason. App3 leaves the Reason for the operator and includes it in page review if the portal requires it and it is blank. |
-| 4 | DL Applicable | Selects **Yes** when this control is shown. It can reveal the driver's licence verification fields. |
-| 5 | Driving License verified with original | Automation Defaults, shipped **Yes**. |
-| 6 | RC Book verified with original | Automation Defaults, shipped **Yes**. |
-| 7 | Driving License verified through Parivahan | Automation Defaults, shipped **Yes**. |
-| 8 | RC Book verified through Parivahan | Automation Defaults, shipped **Yes**. |
-| 9 | Close Proximity / Break-In | Automation Defaults, shipped **No**. When the portal shows **Inspection Report Uploaded**, App3 selects **Yes** as before. |
-| 10 | Allow Cashless Claim | Automation Defaults, shipped **Yes**. |
-| 11 | Remarks | Uses **Remarks Default**, shipped text **Yes**. Extraction Review shows the same configured text. |
-| 12 | Mobile No of the Claimant | Uses the extracted 10-digit mobile number, if available. |
-| 13 | Email ID of the Claimant | Uses the extracted email, if available. |
-| 14 | Expected date of completion of repair | Uses the formatted Date of Survey, if available. |
-| 15 | Place of Survey | If shown, uses the extracted Place of Survey. Excel can fall back to Address. |
+| 3 | Place of Survey *(Non-Tie-Up)* | If shown on the claim page, uses the extracted Place of Survey (Excel can fall back to Address). Skipped automatically on Maruti where absent. |
+| 4 | Survey Completed | Automation Defaults, shipped **Yes**. With **No**, New India requires a Reason. App3 leaves the Reason for the operator and includes it in page review if the portal requires it and it is blank. |
+| 5 | DL Applicable | Selects **Yes** when this control is shown. It can reveal the driver's licence verification fields. |
+| 6 | Driving License verified with original | Automation Defaults, shipped **Yes**. |
+| 7 | RC Book verified with original | Automation Defaults, shipped **Yes**. |
+| 8 | Driving License verified through Parivahan | Automation Defaults, shipped **Yes**. |
+| 9 | RC Book verified through Parivahan | Automation Defaults, shipped **Yes**. |
+| 10 | Close Proximity / Break-In | Automation Defaults, shipped **No**. When the portal shows **Inspection Report Uploaded**, App3 selects **Yes** as before. |
+| 11 | Allow Cashless Claim | Automation Defaults, shipped **Yes**. |
+| 12 | Remarks | Uses **Remarks Default**, shipped text **Yes**. Extraction Review shows the same configured text. |
+| 13 | Mobile No of the Claimant | Uses the extracted 10-digit mobile number, if available. |
+| 14 | Email ID of the Claimant | Uses the extracted email, if available. |
+| 15 | Expected date of completion of repair | Uses the formatted Date of Survey, if available. |
 
 App3 keeps a radio already set to the configured answer. It continues filling the page when a field is missing or rejected. The existing Vehicle Photo Graph phase runs where shown, then App3 reviews unresolved issues together at **Next** before moving to **Additional Details**.
 
@@ -177,7 +178,9 @@ App3 keeps a radio already set to the configured answer. It continues filling th
 
 ## 7. Registration Certificate Details
 
-Fields are filled in top-to-bottom portal order (`Reference No` outside the accordion, then `Registered Owner Name` → `Registration Number` → `Type of Vehicle` → `Date of Registration` → `Engine No` → `Chassis No` → `Physically Verified` → `Class of Vehicle` → `Pre-Accident Condition` → optional Laden/Unladen Weight & Fitness/Permit fields → `Route/Area of Operation` → `Tax Paid Upto` → `RTO Name` → `Transfer Date` → `Odometer Reading` → `Vehicle Color` → `Vehicle Color Type` → `Type of Fuel`). `Type of Body` is no longer present in the live portal and is skipped by App3.
+Fields are filled in each channel's top-to-bottom portal order (`Reference No` outside the accordion, then):
+- **Maruti:** `Registered Owner Name` → `Registration Number` → `Type of Vehicle` → `Date of Registration` → `Engine No` → `Chassis No` → `Physically Verified` → optional `Type of Body` *(skipped silently when hidden)* → `Class of Vehicle` → `Pre-Accident Condition` → optional Weight & Fitness/Permit fields → `Route/Area of Operation` → `Tax Paid Upto` → `RTO Name` → `Transfer Date` → `Odometer Reading` → `Vehicle Color` → `Vehicle Color Type` → `Type of Fuel`.
+- **Non-Tie-Up:** `Registered Owner Name` → `Registration Number` → `Date of Registration` → `Engine No` → `Chassis No` → `Physically Verified` → optional `Type of Body` *(filled when shown on the portal)* → `Class of Vehicle` → `Pre-Accident Condition` → optional Weight & Fitness/Permit fields → `Route/Area of Operation` → `Tax Paid Upto` → `RTO Name` → `Transfer Date` → `Odometer Reading` → `Vehicle Color` → `Vehicle Color Type` → `Type of Vehicle` → `Type of Fuel`.
 
 | Field                                   | Method               | How the value is decided                                                                                                                                                                                                                                                                     | If missing   |
 | --------------------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
@@ -189,6 +192,7 @@ Fields are filled in top-to-bottom portal order (`Reference No` outside the acco
 | **Engine No**                     | 📄 Direct      |                                                                                                                                                                                                                                                                                              | Blocks start |
 | **Chassis No**                    | 📄 Direct      |                                                                                                                                                                                                                                                                                              | Blocks start |
 | Physically Verified                     | 🔒 Fixed       | Ticked.                                                                                                                                                                                                                                                                                      |              |
+| Type of Body                            | 🔍 Optional          | Filled automatically when New India shows the dropdown; skipped silently when hidden (for example on Maruti). App3 never blocks start if missing.                                                                            | Left empty   |
 | **Class of Vehicle**              | 📄 Direct      | Typed as written.                                                                                                                                                                                                                                                                            | Blocks start |
 | Pre-Accident Condition                  | 📄 Direct      |                                                                                                                                                                                                                                                                                              | "Good"       |
 | Registered Laden Weight / Unladen Weight / Fitness Cert & Permit fields | 📄 / 🔧 Optional | Filled when visible on the portal form (commercial / non-PC claims). Laden/Unladen Weight also used to calculate Type of Vehicle.                                                                                                                                    | Left empty   |
@@ -201,6 +205,48 @@ Fields are filled in top-to-bottom portal order (`Reference No` outside the acco
 | Vehicle Color Type                      | 📄 Direct      |                                                                                                                                                                                                                                                                                              | "Solid"      |
 | **Type of Fuel**                  | 🔍 Matched     | From the report.                                                                                                                                                                                                                                                                             | Blocks start |
 | Vehicle Make                            | 🚫 Not entered | Read and required before start, but never typed.                                                                                                                                                                                                                                             | Blocks start |
+
+---
+
+## 8. Driver Details
+
+| Field                                                                 | Method              | How the value is decided                                                                                        | If missing       |
+| --------------------------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------- |
+| Was the vehicle parked during accident?                               | 🔒 Fixed      | Always "No". The report's answer is read but not used.                                                          |                  |
+| Relationship of the driver with the Insured                           | 🔍 Matched    | From the report.                                                                                                | "Self" (setting) |
+| Licence Type of Driver                                                | 🔍 Matched    | From the report.                                                                                                | Left empty       |
+| **DOB of Driver**                                               | 🔧 Cleaned    | DD/MM/YYYY                                                                                                      | Blocks start     |
+| **Driver Name**                                                 | 📄 Direct     |                                                                                                                 | Blocks start     |
+| **Age of Driver**                                               | 🧮 Calculated | Completed years from the date of birth to the **day of the run**. Replaces any age written in the report. | Blocks start     |
+| Is the licence valid for the type of vehicle on the date of accident? | 🔒 Fixed      | Yes                                                                                                             |                  |
+| Licence Issuing Authority                                             | 📄 Direct     |                                                                                                                 | Left empty       |
+| **Driving Licence Number**                                      | 📄 Direct     | Typed as written.                                                                                               | Blocks start     |
+| **Licence Issue Date**                                          | 🔧 Cleaned    | DD/MM/YYYY                                                                                                      | Blocks start     |
+| **Licence Expiry Date**                                         | 🔧 Cleaned    | DD/MM/YYYY                                                                                                      | Blocks start     |
+| Badge No                                                              | 📄 Direct     |                                                                                                                 | Left empty       |
+
+---
+
+## 9. FIR Details
+
+Fields follow each channel's top-to-bottom order:
+- **Maruti:** `Is there any TP claim?` first in Row 1 Col 1, then `FIR Number` → `FIR Date` → `Police Station Name` → `Charged U/S MV Act` → `Charged U/S IPC` → `Whether driver without licence?` → `Any previous police records`.
+- **Non-Tie-Up:** `FIR Number` → `FIR Date` → `Police Station Name` → `Charged U/S MV Act` → `Charged U/S IPC` → `Whether driver without licence?` → `Any previous police records` → `Is there any TP claim?` last.
+
+| Field                           | Method         | How the value is decided                                       | If missing     |
+| ------------------------------- | -------------- | -------------------------------------------------------------- | -------------- |
+| Is there any TP claim?          | 🔧 Cleaned     | "Yes" only when the report says Yes. Anything else becomes No. | "No"           |
+| FIR Number                      | 📄 Direct      |                                                                | "NA" (setting) |
+| FIR Date                        | 🔧 Cleaned     | DD/MM/YYYY                                                     | Left empty     |
+| Police Station Name             | 📄 Direct      |                                                                | "NA" (setting) |
+| Charged U/S Motor Vehicle Act   | 📄 Direct      |                                                                | "NA" (setting) |
+| Charged U/S IPC                 | 📄 Direct      |                                                                | "NA" (setting) |
+| Whether driver without licence? | 🔧 Cleaned     | Same rule.                                                     | "No"           |
+| Any previous police records     | 🔧 Cleaned     | Same rule.                                                     | "No"           |
+| Name of Informant               | 🚫 Not entered | Read only.                                                     |                |
+| Sections of Law                 | 🚫 Not entered | Read only.                                                     |                |
+
+| Type of Body                    | Type of Body · Body Type                                                                                                                                                 |               |
 
 ---
 

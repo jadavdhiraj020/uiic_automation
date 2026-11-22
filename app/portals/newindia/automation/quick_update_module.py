@@ -130,6 +130,13 @@ async def fill_quick_update_details(
     if stop_cb():
         return False
 
+    await fill_text('textarea[name="placeOfSurvey"]', getattr(claim_data, "place_of_survey", ""),
+                    "Place of Survey", only_if_shown=True)
+
+    await asyncio.sleep(0.4)
+    if stop_cb():
+        return False
+
     bool_fields = [
         ("radioDataCompleted", "Survey Completed", "survey_completed", "Yes"),
         ("radioDrivingLicenseApplicable", "DL Applicable", None, "Yes"),
@@ -190,12 +197,6 @@ async def fill_quick_update_details(
 
     await fill_text('input[data-ng-model$=".quickUpdate.expectedDateOfRepair"]', date_of_survey,
                     "Expected date of completion of repair")
-    await asyncio.sleep(0.4)
-    if stop_cb():
-        return False
-
-    await fill_text('textarea[name="placeOfSurvey"]', getattr(claim_data, "place_of_survey", ""),
-                    "Place of Survey", only_if_shown=True)
 
     if isinstance(log, AutomationLogger):
         log.outdent()
