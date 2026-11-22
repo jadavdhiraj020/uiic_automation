@@ -1006,6 +1006,9 @@ class ClaimData:
             if not val or str(val).strip() in ("", "0"):
                 warnings.append(f"{label} not found — optional")
 
+        if str(getattr(self, "nil_depreciation", "") or "").strip().lower() not in {"yes", "no", "y", "n"}:
+            warnings.append("Nil Depreciation (Yes/No) not found in Excel — verify in Claim Assessment")
+
         if not self.claim_doc_files:
             warnings.append("No claim documents found in folder")
 
@@ -1423,6 +1426,7 @@ class ClaimData:
             ("GST Applicable?",       self.is_gst_applicable,        True,  _src("is_gst_applicable")),
             ("Invoice Date",          _inv_val(self.vendor_invoice_date), True, _inv_src("vendor_invoice_date")),
             ("Invoice Number",        _inv_val(self.vendor_invoice_number), True, _inv_src("vendor_invoice_number")),
+            ("Nil Depreciation",      self.nil_depreciation,       False, _src("nil_depreciation")),
             ("Primary Assessment (₹)",self.primary_assessment,       True,  _src("primary_assessment")),
             ("Supplementary Est.?",   self.is_supplementary_estimate, True, _src("is_supplementary_estimate")),
             ("Painting Details",      self.painting_work_details,    True,  _src("painting_work_details")),

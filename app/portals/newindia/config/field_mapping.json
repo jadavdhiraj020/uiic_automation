@@ -536,6 +536,16 @@
     "allow_text_values": true,
     "_mandatory": true
   },
+  "nil_depreciation": {
+    "display_name": "Nil Depreciation (Yes / No)",
+    "sheet": "ALL",
+    "search_labels": ["Nil Depreciation", "Nil Dep", "Zero Depreciation", "Zero Dep"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "allow_literal_values": true,
+    "allow_text_values": true,
+    "_mandatory": false
+  },
   "nil_depreciation_amount": {
     "sheet": "ALL",
     "search_labels": ["Nil Depreciation (Zero Dep) Amount", "Zero Dep Amount", "Nil Depreciation Amount"],

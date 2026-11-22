@@ -265,7 +265,8 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                   oic_labels: bool = False,
                   relaxed_punctuation: bool = False,
                   cell_parser=None,
-                  standard_towing_only: bool = False) -> Tuple[Optional[str], Optional[str]]:
+                  standard_towing_only: bool = False,
+                  skip_amount_labels: bool = False) -> Tuple[Optional[str], Optional[str]]:
     """
     Find label text anywhere in the sheet. Then:
       1. Move row_offset rows down.
@@ -320,6 +321,8 @@ def _search_label(sheet, label: str, row_offset: int, col_offset: int,
                 # Word-boundary check: prevent "TOTAL" matching "SUBTOTAL"
                 idx = match.start() if match else cell_str.find(label_lower)
                 if standard_towing_only and (idx or cell_str.startswith(("additional towing", "addl towing", "addl. towing"))):
+                    continue
+                if skip_amount_labels and "amount" in cell_str:
                     continue
                 before_ok = (idx == 0) or not cell_str[idx - 1].isalnum()
                 after_end = match.end() if match else idx + len(label_lower)
@@ -620,6 +623,17 @@ def _parse_workshop_gst_amount(value):
     return format(parsed, "f") if parsed is not None else None
 
 
+def _parse_nil_depreciation(value):
+    if value is None or isinstance(value, bool):
+        return None
+    cleaned = str(value).strip().rstrip(".:- ").lower()
+    if cleaned in {"yes", "y"}:
+        return "Yes"
+    if cleaned in {"no", "n"}:
+        return "No"
+    return None
+
+
 def _parse_time_string(val: str) -> Optional[Tuple[str, str]]:
     """
     Parse a string for a valid time, converting to 24-hour (HH, MM).
@@ -818,6 +832,7 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
         "delivery_order_date": _parse_delivery_order_date,
         "delivery_order_time": _parse_delivery_order_time,
         "workshop_gst_amount": _parse_workshop_gst_amount,
+        "nil_depreciation": _parse_nil_depreciation,
     } if portal_id == "newindia" else {}
 
     for field_name, cfg in mapping.items():
@@ -889,6 +904,7 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
                             relaxed_punctuation=relaxed_punctuation,
                             cell_parser=cell_parser,
                             standard_towing_only=portal_id == "newindia" and field_name == "towing_additional_charges",
+                            skip_amount_labels=portal_id == "newindia" and field_name == "nil_depreciation",
                         )
                         if value:
                             sh_name = getattr(sh, "name", "Sheet") if sheet_name == "ALL" else sheet_name

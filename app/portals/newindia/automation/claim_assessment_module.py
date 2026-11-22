@@ -1,5 +1,7 @@
 """Fill the active New India Claim Assessment page, then review it at Next."""
 
+import asyncio
+import json
 import os
 import re
 from contextlib import suppress
@@ -12,11 +14,14 @@ from app.portals.newindia.automation.popup_service import dismiss_portal_popup
 from app.portals.newindia.automation.recovery import _BLOCKING_DIALOGS, _TAB_STATE, current_recovery
 from app.portals.newindia.automation.ui_utils import (
     _JS_FIELD_STATE,
+    _JS_TRIGGER_ELEMENT_CHANGE,
     _text_matches_field,
+    click_radio_with_delay,
     fill_input_with_delay,
     open_additional_section,
     record_additional_issue as record_review_issue,
     select_dropdown_with_delay,
+    update_field_hud,
     upload_file_via_input,
 )
 from app.portals.newindia.field_values import parse_amount, reinspection_document, workshop_gst_registered
@@ -31,6 +36,20 @@ _NEXT_BUTTON = (
     'button#saveClaimAssesment[ng-click*=".saveAssesment("]'
 )
 _NEXT = f"{_TAB} :is({_NEXT_BUTTON})"
+_MARUTI_HEADER_SAVE = (
+    'button#saveClaimAssesment[data-ng-click*="saveDetailsMaruti("], '
+    'button#saveClaimAssesment[ng-click*="saveDetailsMaruti("]'
+)
+_MARUTI_EXTRA_SAVE = (
+    'button#saveClaimAssesment[data-ng-click*="saveMarutiExtraDeatils("], '
+    'button#saveClaimAssesment[ng-click*="saveMarutiExtraDeatils("]'
+)
+_MARUTI_SAVE_CONFIRMED = re.compile(
+    r"\A\s*(?![\s\S]*\b(?:not|cannot|unable|failed|failure|invalid|error|rejected|"
+    r"unsuccessful|mandatory|required|please\s+(?:enter|select|fill))\b)"
+    r"[\s\S]*\b(?:saved|updated|submitted|success|successfully|draft)\b",
+    re.I,
+)
 _SAVE_CONFIRMED = re.compile(
     r"^\s*claim\s+(?:job\s+details|assessment(?:\s+details)?)\s+"
     r"(?:(?:have|has)\s+been\s+)?"
@@ -146,7 +165,129 @@ async def _select(page, log, selector, label, value, delay_ms, *, source, index=
         await _review_failed_field(log, label, target, value, dropdown=True)
 
 
-async def _fill_invoice_fields(page, data, log, defaults, delay_ms, stop_cb):
+async def _close_maruti_action_popup(page: Page, log, *, context: str, max_wait_s: float = 4.0) -> tuple[bool, str]:
+    detail: dict = {}
+    await dismiss_portal_popup(
+        page, log, max_wait_s=max_wait_s, context=context,
+        expected_message=_MARUTI_SAVE_CONFIRMED, detail_out=detail,
+    )
+    if not await page.locator(_BLOCKING_DIALOGS).count():
+        return True, ""
+    body = " ".join(str(detail.get("body") or "").split())[:160]
+    return False, body or f"New India showed a message after {context}. Review Chrome and continue."
+
+
+async def _click_maruti_button(
+    page: Page, log, button, label: str, *, context: str, stop_cb, wait_enabled_s: float = 3.0,
+) -> bool:
+    recovery = current_recovery.get()
+    if recovery is not None:
+        await recovery.wait_if_manually_paused(page, log)
+    deadline = asyncio.get_running_loop().time() + wait_enabled_s
+    ready = False
+    while not stop_cb():
+        with suppress(Exception):
+            if await button.count() and await button.is_visible() and not await button.is_disabled():
+                ready = True
+                break
+        if asyncio.get_running_loop().time() >= deadline:
+            break
+        await asyncio.sleep(0.25)
+
+    if stop_cb():
+        return False
+
+    hud_counts = dict(
+        filled=getattr(recovery, "fields_filled", 0) if recovery is not None else 0,
+        failed=getattr(recovery, "fields_failed", 0) if recovery is not None else 0,
+        skipped=getattr(recovery, "fields_skipped", 0) if recovery is not None else 0,
+    )
+    if not ready:
+        record_review_issue(log, label, f"New India did not enable the {label} button.")
+        await update_field_hud(page, "Claim Assessment", label, "error", **hud_counts)
+        return False
+
+    try:
+        await update_field_hud(page, "Claim Assessment", label, "active", **hud_counts)
+        await button.scroll_into_view_if_needed()
+        await button.click(timeout=5000)
+    except Exception:
+        record_review_issue(log, label, f"App3 could not click {label} in Chrome.")
+        await update_field_hud(page, "Claim Assessment", label, "error", **hud_counts)
+        return False
+
+    ok, err_msg = await _close_maruti_action_popup(page, log, context=context)
+    if not ok:
+        record_review_issue(log, label, err_msg)
+        await update_field_hud(page, "Claim Assessment", label, "error", **hud_counts)
+        return False
+
+    await update_field_hud(page, "Claim Assessment", label, "ok", **hud_counts)
+    if isinstance(log, AutomationLogger):
+        log.success(f"{label} completed.")
+    else:
+        log(f"  [OK] {label} completed.")
+    return True
+
+
+async def _fill_nil_depreciation_radio(page: Page, data: ClaimData, log, delay_ms: int) -> None:
+    radios = page.locator(_in_assessment(
+        'input[type="radio"][name="Nil Depreciation"]:visible, '
+        'input[type="radio"][data-ng-model$=".nilDepreciation"]:visible'
+    ))
+    if not await radios.count():
+        return
+
+    raw = str(getattr(data, "nil_depreciation", "") or "").strip().lower()
+    if raw in {"yes", "y"}:
+        code, display = "Y", "Yes"
+    elif raw in {"no", "n"}:
+        code, display = "N", "No"
+    else:
+        msg = "Nil Depreciation (Yes/No) was not found in Excel. Select or verify Yes/No in Chrome."
+        if isinstance(log, AutomationLogger):
+            log.warning(msg)
+        else:
+            log(f"  [WARN] {msg}")
+        record_review_issue(log, "Nil Depreciation", msg)
+        return
+
+    radio_name = (await radios.first.get_attribute("name")) or "Nil Depreciation"
+    scope = page.locator(_TAB)
+    named_target = scope.locator(f'input[type="radio"][name={json.dumps(radio_name)}][value={json.dumps(code)}]')
+    try:
+        if await named_target.count() == 1:
+            await click_radio_with_delay(
+                page, radio_name, code, "Nil Depreciation", log, delay_ms, source="Excel", scope=scope,
+            )
+            return
+        fallback_target = scope.locator(
+            f'input[type="radio"][data-ng-model$=".nilDepreciation"][value={json.dumps(code)}]:visible'
+        ).first
+        await fallback_target.scroll_into_view_if_needed()
+        if not await fallback_target.is_checked():
+            await fallback_target.click(timeout=3000)
+            with suppress(Exception):
+                await fallback_target.evaluate(_JS_TRIGGER_ELEMENT_CHANGE, timeout=1500)
+        if not await fallback_target.is_checked():
+            raise RuntimeError("Nil Depreciation radio stayed unchecked")
+        if isinstance(log, AutomationLogger):
+            log.field_filled("Nil Depreciation", display, source="Excel")
+    except Exception:
+        record_review_issue(log, "Nil Depreciation", f"Could not select '{display}' for Nil Depreciation in Chrome.")
+
+
+async def _fill_invoice_fields(page, data, log, defaults, delay_ms, stop_cb, *, is_maruti: bool = False):
+    workshop = 'select[data-ng-model$=".isWorkshopGstRegistered"], select#isWorkshopGstRegistered'
+    if await page.locator(f"{_in_assessment(workshop)}:visible").count():
+        # One GST amount belongs to the first invoice.
+        await _select(page, log, workshop, "Whether the Workshop is GST Registered",
+                      workshop_gst_registered(data.workshop_gst_amount), delay_ms,
+                      source="Excel GST amount" if data.workshop_gst_amount else "GST amount absent", index=0)
+
+    if stop_cb():
+        return
+
     count = await page.locator(f"{_in_assessment(_PAYMENT_INVOICE)}:visible").count()
     for index in range(count):
         if stop_cb():
@@ -156,15 +297,6 @@ async def _fill_invoice_fields(page, data, log, defaults, delay_ms, stop_cb):
             label = f"Invoice {index + 1} / {label}"
         await _select(page, log, _PAYMENT_INVOICE, label, str(defaults.get("payment_invoice_in_company_name") or "Yes"),
                       delay_ms, source="Default", index=index)
-
-    if stop_cb():
-        return
-    workshop = 'select[data-ng-model$=".isWorkshopGstRegistered"], select#isWorkshopGstRegistered'
-    if await page.locator(f"{_in_assessment(workshop)}:visible").count():
-        # One GST amount belongs to the first invoice.
-        await _select(page, log, workshop, "Whether the Workshop is GST Registered",
-                      workshop_gst_registered(data.workshop_gst_amount), delay_ms,
-                      source="Excel GST amount" if data.workshop_gst_amount else "GST amount absent", index=0)
 
     for field, model, label in (
         ("vendor_invoice_date", "vendorTaxInvoiceDate", "Vendor/Tax Invoice Date"),
@@ -176,6 +308,15 @@ async def _fill_invoice_fields(page, data, log, defaults, delay_ms, stop_cb):
         suffix = '[name$="0"]' if count > 1 else ""
         await _fill_text(page, log, f'input[data-ng-model$=".{model}"]{suffix}',
                          label, getattr(data, field), delay_ms)
+
+    if stop_cb():
+        return
+    await _fill_nil_depreciation_radio(page, data, log, delay_ms)
+    if is_maruti and not stop_cb():
+        save_btn = page.locator(f"{_in_assessment(_MARUTI_HEADER_SAVE)}:visible").first
+        await _click_maruti_button(
+            page, log, save_btn, "Claim Assessment Save", context="Header Save", stop_cb=stop_cb,
+        )
 
 
 async def _fill_estimate(page, log, data, delay_ms, stop_cb, *, primary):
@@ -284,27 +425,22 @@ async def _fill_delivery_order_fields(page, data, log, delay_ms, stop_cb):
         await _fill_text(page, log, f'{order_form} input[name="{label}"]', label, value, delay_ms)
 
 
-async def _review_part_wise_assessment(page, log):
-    # Maruti uses its part-wise editor and does not expose the Non-Tie-Up workbook import.
-    if await page.locator(f"{_in_assessment(_PRIMARY_ESTIMATE)}:visible").count():
-        return
-    editor = ('button#saveClaimAssesment[data-ng-click*=".saveDetailsMaruti("], '
-              'button#saveClaimAssesment[ng-click*=".saveDetailsMaruti("]')
-    if not await page.locator(f"{_in_assessment(editor)}:visible").count():
-        return
-    rows = page.locator(_in_assessment("table#example tbody tr")).filter(
-        has=page.locator('select[id="vItem"], input[data-ng-model*="approvalAmount" i]'),
-    )
+async def _fill_additional_towing(page, log, defaults, delay_ms):
+    towing = 'input#additionalTowingCharges:not(:disabled):not([readonly])'
+    if await page.locator(f"{_in_assessment(towing)}:visible").count():
+        amount = parse_amount(str(defaults.get("additional_towing_charges") or "0"))
+        if amount is None or amount < 0:
+            record_review_issue(log, "Additional Towing Charges", "Automation Defaults needs a non-negative amount.")
+        else:
+            await _fill_text(page, log, towing, "Additional Towing Charges", format(amount, "f"), delay_ms,
+                             source="Default", numeric=True)
 
-    async def rows_present():
-        return bool(await rows.count())
 
-    if not await rows_present():
-        record_review_issue(
-            log, "Part-wise Assessment",
-            "New India shows no part-wise rows. Review or enter the assessment items in Chrome.",
-            matches=rows_present,
-        )
+async def _fill_reinspection(page, data, log, delay_ms):
+    reinspection = "select#whetherReinspectionRequired"
+    if await page.locator(f"{_in_assessment(reinspection)}:visible").count():
+        await _select(page, log, reinspection, "Whether Re-Inspection Required?",
+                      "Yes" if reinspection_document(data) else "No", delay_ms, source="Folder scan")
 
 
 async def _fill_amounts(page, data, log, defaults, delay_ms, stop_cb):
@@ -325,25 +461,249 @@ async def _fill_amounts(page, data, log, defaults, delay_ms, stop_cb):
 
     if stop_cb():
         return
-    towing = 'input#additionalTowingCharges:not(:disabled):not([readonly])'
-    if await page.locator(f"{_in_assessment(towing)}:visible").count():
-        amount = parse_amount(str(defaults.get("additional_towing_charges") or "0"))
-        if amount is None or amount < 0:
-            record_review_issue(log, "Additional Towing Charges", "Automation Defaults needs a non-negative amount.")
-        else:
-            await _fill_text(page, log, towing, "Additional Towing Charges", format(amount, "f"), delay_ms,
-                             source="Default", numeric=True)
-
+    await _fill_additional_towing(page, log, defaults, delay_ms)
     if stop_cb():
         return
-    reinspection = "select#whetherReinspectionRequired"
-    if await page.locator(f"{_in_assessment(reinspection)}:visible").count():
-        await _select(page, log, reinspection, "Whether Re-Inspection Required?",
-                      "Yes" if reinspection_document(data) else "No", delay_ms, source="Folder scan")
-
+    await _fill_reinspection(page, data, log, delay_ms)
     if not stop_cb():
         await _fill_text(page, log, "textarea#recommendations", "Recommendations",
                          str(defaults.get("recommendations") or "Approved"), delay_ms, source="Default")
+
+
+async def _is_maruti_partwise(page: Page) -> bool:
+    if await page.locator(f"{_in_assessment(_PRIMARY_ESTIMATE)}:visible").count():
+        return False
+    marker = (
+        f"{_MARUTI_HEADER_SAVE}, {_MARUTI_EXTRA_SAVE}, "
+        'select[data-ng-model$=".vAllowedServiceType"], select#sel1'
+    )
+    if await page.locator(f"{_in_assessment(marker)}:visible").count():
+        return True
+    return bool(
+        await page.locator(_in_assessment(".panel-heading:visible"))
+        .filter(has_text=re.compile(r"Claim\s+Version", re.I))
+        .count()
+    )
+
+
+async def _expand_panel_matching(container, patterns: tuple[re.Pattern[str], ...], label: str, log):
+    panels = container.locator(".panel")
+    count = await panels.count()
+    for pattern in patterns:
+        for idx in range(count):
+            panel = panels.nth(idx)
+            heading = panel.locator(":scope > .panel-heading").first
+            if not await heading.count() or not await heading.is_visible():
+                continue
+            heading_text = " ".join((await heading.inner_text()).split())
+            if not pattern.search(heading_text):
+                continue
+            collapse = panel.locator(":scope > .panel-collapse").first
+            if not await collapse.count():
+                continue
+            if not await collapse.is_visible():
+                toggle = heading.locator("a.accordion-toggle").first
+                click_target = toggle if await toggle.count() and await toggle.is_visible() else heading
+                await click_target.scroll_into_view_if_needed()
+                await click_target.click(timeout=5000)
+                await collapse.wait_for(state="visible", timeout=5000)
+            return collapse
+    record_review_issue(log, label, f"App3 could not open '{label}' in Chrome.")
+    return None
+
+
+async def _set_allowed_service_not_allowed(sel) -> bool:
+    with suppress(Exception):
+        await sel.scroll_into_view_if_needed()
+    selected = False
+    for kwargs in ({"label": "Not Allowed"}, {"value": "Not Allowed"}):
+        with suppress(Exception):
+            await sel.select_option(timeout=3000, **kwargs)
+            selected = True
+            break
+    if not selected:
+        return False
+    with suppress(Exception):
+        await sel.evaluate(_JS_TRIGGER_ELEMENT_CHANGE, timeout=1500)
+    current = ""
+    with suppress(Exception):
+        current = await sel.evaluate(
+            "s => (s.options[s.selectedIndex]?.textContent || s.value || '').trim().toLowerCase()",
+            timeout=1000,
+        )
+    return current == "not allowed"
+
+
+async def _fill_maruti_assessment_rows(page: Page, log, delay_ms: int, stop_cb) -> None:
+    tab = page.locator(_TAB)
+    v1_body = await _expand_panel_matching(
+        tab,
+        (
+            re.compile(r"Claim\s+Version\s*1\b.*Primary\s+Estimates|Claim\s+Version\s*1\b(?!\s*:?\s*Sub\s*version)", re.I),
+            re.compile(r"Claim\s+Version\b(?!\s*:?\s*Sub\s*version)", re.I),
+        ),
+        "Claim Version 1 (Primary Estimates)",
+        log,
+    )
+    if v1_body is None or stop_cb():
+        return
+
+    sv1_body = await _expand_panel_matching(
+        v1_body,
+        (re.compile(r"Sub\s*version\s*1\b", re.I), re.compile(r"Sub\s*version\b", re.I)),
+        "Claim Version 1 : Subversion 1",
+        log,
+    )
+    if sv1_body is None or stop_cb():
+        return
+
+    asmt_body = await _expand_panel_matching(
+        sv1_body,
+        (re.compile(r"Assessment\s*1\b", re.I), re.compile(r"Assessment\b.*Pending", re.I)),
+        "Assessment 1 (Pending)",
+        log,
+    )
+    if asmt_body is None or stop_cb():
+        return
+
+    rows = asmt_body.locator("table#example tbody tr")
+    for _ in range(10):
+        if await rows.count() or stop_cb():
+            break
+        await asyncio.sleep(0.3)
+
+    row_count = await rows.count()
+    if not row_count:
+        record_review_issue(
+            log, "Part-wise Assessment",
+            "New India shows no part-wise rows under Assessment 1 (Pending). Review in Chrome.",
+        )
+        return
+
+    recovery = current_recovery.get()
+    hud_counts = dict(
+        filled=getattr(recovery, "fields_filled", 0) if recovery is not None else 0,
+        failed=getattr(recovery, "fields_failed", 0) if recovery is not None else 0,
+        skipped=getattr(recovery, "fields_skipped", 0) if recovery is not None else 0,
+    )
+    editable_count = 0
+    updated_count = 0
+    failed_rows = 0
+
+    for idx in range(row_count):
+        if stop_cb():
+            return
+        if recovery is not None:
+            await recovery.wait_if_manually_paused(page, log)
+        sel = rows.nth(idx).locator('select[data-ng-model$=".vAllowedServiceType"], select#sel1').first
+        if not await sel.count() or await sel.is_disabled():
+            continue
+        editable_count += 1
+        await update_field_hud(page, "Claim Assessment", f"Row {idx + 1}/{row_count} -> Not Allowed", "active", **hud_counts)
+
+        already = ""
+        with suppress(Exception):
+            already = await sel.evaluate(
+                "s => (s.options[s.selectedIndex]?.textContent || '').trim().toLowerCase()",
+                timeout=1000,
+            )
+        if already == "not allowed":
+            updated_count += 1
+            continue
+
+        ok = await _set_allowed_service_not_allowed(sel)
+        if not ok:
+            await asyncio.sleep(0.15)
+            ok = await _set_allowed_service_not_allowed(sel)
+        if ok:
+            updated_count += 1
+        else:
+            failed_rows += 1
+        if delay_ms > 0:
+            await asyncio.sleep(min(delay_ms, 50) / 1000.0)
+
+    if stop_cb():
+        return
+
+    if failed_rows:
+        record_review_issue(log, "Allowed Service type", f"Could not set 'Not Allowed' on {failed_rows} row(s).")
+        await update_field_hud(page, "Claim Assessment", "Allowed Service type", "error", **hud_counts)
+    elif editable_count:
+        await update_field_hud(page, "Claim Assessment", f"Allowed Service type ({updated_count} rows)", "ok", **hud_counts)
+        if isinstance(log, AutomationLogger):
+            log.field_selected("Allowed Service type", f"Not Allowed ({updated_count}/{editable_count} rows)", source="Rule")
+        else:
+            log(f"  [OK] Selected 'Not Allowed' on {updated_count}/{editable_count} rows.")
+
+    submit_btn = asmt_body.locator(
+        'button[data-ng-click*="saveMarutiAssesment(3"], button[ng-click*="saveMarutiAssesment(3"]'
+    ).first
+    if not await submit_btn.count():
+        submit_btn = asmt_body.locator("button").filter(has_text=re.compile(r"^\s*Submit\s*$", re.I)).first
+
+    draft_btn = asmt_body.locator(
+        'button[data-ng-click*="saveMarutiAssesment(1"], button[ng-click*="saveMarutiAssesment(1"]'
+    ).first
+    if not await draft_btn.count():
+        draft_btn = asmt_body.locator("button").filter(has_text=re.compile(r"^\s*Save\s+as\s+Draft\s*$", re.I)).first
+
+    submit_ready = False
+    deadline = asyncio.get_running_loop().time() + 2.5
+    while not stop_cb():
+        with suppress(Exception):
+            if await submit_btn.count() and await submit_btn.is_visible() and not await submit_btn.is_disabled():
+                submit_ready = True
+                break
+        if asyncio.get_running_loop().time() >= deadline:
+            break
+        await asyncio.sleep(0.25)
+
+    if stop_cb():
+        return
+
+    if submit_ready:
+        await _click_maruti_button(
+            page, log, submit_btn, "Assessment Submit",
+            context="Assessment Submit", stop_cb=stop_cb, wait_enabled_s=0.2,
+        )
+    else:
+        if isinstance(log, AutomationLogger):
+            log.info("Assessment Submit button did not become available; falling back to Save as Draft.")
+        else:
+            log("  [INFO] Submit button not available; clicking Save as Draft.")
+        await _click_maruti_button(
+            page, log, draft_btn, "Save as Draft",
+            context="Assessment Save as Draft", stop_cb=stop_cb, wait_enabled_s=2.0,
+        )
+
+
+async def _fill_maruti_bottom_summary(page: Page, data: ClaimData, log, defaults: dict, delay_ms: int, stop_cb) -> None:
+    for field, selector, label in (
+        ("net_salvage", "input#netSlavage", "Net Salvage"),
+        ("towing_additional_charges", "input#towingCharges", "Towing Charges"),
+    ):
+        if stop_cb():
+            return
+        value = str(getattr(data, field) or "").strip()
+        if value != "0":
+            await _fill_text(page, log, selector, label, value, delay_ms)
+
+    if stop_cb():
+        return
+    await _fill_additional_towing(page, log, defaults, delay_ms)
+    if stop_cb():
+        return
+    await _fill_text(page, log, "textarea#recommendations", "Recommendations",
+                     str(defaults.get("recommendations") or "Approved"), delay_ms, source="Default")
+    if stop_cb():
+        return
+    await _fill_reinspection(page, data, log, delay_ms)
+    if stop_cb():
+        return
+    save_btn = page.locator(f"{_in_assessment(_MARUTI_EXTRA_SAVE)}:visible").first
+    await _click_maruti_button(
+        page, log, save_btn, "Claim Assessment Details Save", context="Bottom Details Save", stop_cb=stop_cb,
+    )
 
 
 async def _close_save_confirmation(page, log, *, context="Claim Assessment Next", max_wait_s=5.0):
@@ -418,7 +778,21 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_c
             return await _advance_assessment(page, log, stop_cb)
         if not await _wait_for_assessment_form(page, log, recovery, stop_cb) or stop_cb():
             return False
-        await _fill_invoice_fields(page, data, log, defaults, field_delay_ms, stop_cb)
+
+        is_maruti = await _is_maruti_partwise(page)
+        await _fill_invoice_fields(page, data, log, defaults, field_delay_ms, stop_cb, is_maruti=is_maruti)
+        if stop_cb():
+            return False
+
+        if is_maruti:
+            await _fill_maruti_assessment_rows(page, log, field_delay_ms, stop_cb)
+            if stop_cb():
+                return False
+            await _fill_maruti_bottom_summary(page, data, log, defaults, field_delay_ms, stop_cb)
+            if stop_cb():
+                return False
+            return await _advance_assessment(page, log, stop_cb)
+
         for primary in (True, False):
             if stop_cb():
                 return False
@@ -439,7 +813,6 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_c
         await _fill_amounts(page, data, log, defaults, field_delay_ms, stop_cb)
         if stop_cb():
             return False
-        await _review_part_wise_assessment(page, log)
         return await _advance_assessment(page, log, stop_cb)
     finally:
         if isinstance(log, AutomationLogger):

@@ -207,6 +207,7 @@ _NEWINDIA_METADATA = PortalUiMetadata(
                 "GST Applicable?",
                 "Invoice Date",
                 "Invoice Number",
+                "Nil Depreciation",
                 "Primary Assessment (₹)",
                 "Supplementary Est.?",
                 "Painting Details",
