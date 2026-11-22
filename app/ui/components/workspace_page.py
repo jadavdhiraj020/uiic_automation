@@ -32,6 +32,7 @@ from app.ui.components.widgets import (
     stat_card as _stat_card,
 )
 from app.ui.components.table_clipboard import attach_row_copy_on_double_click
+from app.ui.components.review_chips import ReviewChips
 from app.ui.portal_ui_metadata import get_portal_ui_metadata
 
 
@@ -488,10 +489,8 @@ class DataReviewPanel(QWidget):
         heading.addWidget(self.open_pdf_button)
         self.lay.addLayout(heading)
 
-        self.validation_bar = QLabel("")
-        self.validation_bar.setWordWrap(True)
-        self.validation_bar.setVisible(False)
-        self.lay.addWidget(self.validation_bar)
+        self.validation_chips = ReviewChips(self)
+        self.lay.addWidget(self.validation_chips)
 
         search, self.preview_search_input = _search_row(
             "Filter extracted data by field, value, source, or status...",
@@ -524,7 +523,7 @@ class DataReviewPanel(QWidget):
         self.open_pdf_button.setVisible(review_pdf)
 
         if not claim:
-            self.validation_bar.setVisible(False)
+            self.validation_chips.set_issues()
             self.empty_label.parentWidget().setVisible(True)
             self.no_results_card.setVisible(False)
             self.lay.addStretch()
@@ -533,30 +532,9 @@ class DataReviewPanel(QWidget):
         self.empty_label.parentWidget().setVisible(False)
         errors, warnings = claim.validate()
         upload_warning = getattr(claim, "_oic_upload_warning", "") if portal_id == "oic" else ""
-        if errors:
-            title = "Review the survey PDF before starting" if review_pdf else "MISSING FIELDS - Review before starting"
-            message = title + "\n" + "\n".join(f"  - {e}" for e in errors)
-            if upload_warning:
-                message += "\n\n" + upload_warning
-            self.validation_bar.setText(message)
-            self.validation_bar.setObjectName("validationError")
-            self.validation_bar.setStyleSheet("")
-            self.validation_bar.style().unpolish(self.validation_bar)
-            self.validation_bar.style().polish(self.validation_bar)
-            self.validation_bar.setVisible(True)
-        elif warnings:
-            optional = [warning for warning in warnings if warning != upload_warning]
-            messages = ([upload_warning] if upload_warning else [])
-            if optional:
-                messages.append("Optional fields missing: " + " | ".join(optional))
-            self.validation_bar.setText("\n".join(messages))
-            self.validation_bar.setObjectName("validationWarn")
-            self.validation_bar.setStyleSheet("")
-            self.validation_bar.style().unpolish(self.validation_bar)
-            self.validation_bar.style().polish(self.validation_bar)
-            self.validation_bar.setVisible(True)
-        else:
-            self.validation_bar.setVisible(False)
+        if upload_warning and upload_warning not in warnings:
+            warnings = [upload_warning, *warnings]
+        self.validation_chips.set_issues(errors, warnings, survey_pdf=review_pdf)
 
         all_fields = claim.all_fields_for_preview()
         self._rows = list(all_fields)

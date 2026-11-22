@@ -889,6 +889,27 @@ QPushButton#btnSettingsReset:hover {
     border-color: #94A3B8;
 }
 
+#reviewChipHeading {
+    color: #475569;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QLabel#reviewChip {
+    background-color: #FFFBEB;
+    border: 1px solid #FCD34D;
+    color: #92400E;
+    border-radius: 8px;
+    padding: 3px 9px;
+    font-weight: 600;
+}
+
+QLabel#reviewChip[critical="true"] {
+    background-color: #FEF2F2;
+    border-color: #FCA5A5;
+    color: #991B1B;
+}
+
 #validationError {
     background-color: #FFF7ED;
     color: #C2410C;

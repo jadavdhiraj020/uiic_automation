@@ -501,6 +501,8 @@ If a required slot (1, 2, 3) cannot be uploaded, App3 pauses so you can attach t
 
 ## 11. Checks before the run starts
 
+**Extraction Review** shows short chips above the field table. Red chips mark critical issues and amber chips mark optional fields or other warnings. Hover over a field or workbook chip to read the full message.
+
 ### 11.1 These block the start
 
 - Policy Number **and** Claim Number are both missing.

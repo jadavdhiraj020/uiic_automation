@@ -377,6 +377,8 @@ A table whose header App3 is less than 80% sure of is skipped. If neither table 
 
 ## 16. Checks before the run starts
 
+**Extraction Review** shows missing or flagged fields as short chips above the field table. Red chips mark critical issues and amber chips mark optional fields or other warnings. The full message appears when you hover over a chip.
+
 ### 16.1 These block the start
 
 The run does not start when any of these 27 values is missing:
