@@ -9,6 +9,7 @@ from decimal import Decimal, InvalidOperation
 
 
 from app.automation.automation_logger import AutomationLogger, _ts
+from app.automation.debug_recorder import debug_snapshot
 from app.portals.newindia.automation.logging_utils import newindia_operator_reason
 from app.portals.newindia.automation.recovery import current_recovery
 from app.portals.oic.automation.recovery import wait_until_ready
@@ -482,6 +483,15 @@ async def _check_entry(page, target, label, value, script, kind, log, delay_ms, 
             reason = "New India did not keep this value."
 
     await emit_progress("failed")
+    if getattr(log, "_debug_recorder", None) is not None:
+        # AI debug report only (Logs-tab switch ON): read-only look at this field before it is recorded.
+        await debug_snapshot(
+            log, page, target=target, label=label, reason=reason,
+            extra={
+                "Field type": kind, "Tried value": tried_short, "Portal error code": err,
+                "Close matches": suggestions, "Options in list": option_count, "Source": source or "",
+            },
+        )
     if recovery is not None:
         recovery.record_field_issue(
             log, label, reason, matches=matches, manual_value=verified_manual_value,

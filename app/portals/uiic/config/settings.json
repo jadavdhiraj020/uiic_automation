@@ -3,7 +3,6 @@
   "username": "",
   "password": "",
   "claim_type": "Non Maruti",
-  "browser_headless": false,
   "browser_slow_mo_ms": 400,
   "timeout_ms": 4000,
   "captcha_max_retries": 2,

@@ -1,3 +1,11 @@
+# Asking the user questions
+
+Before you ask, clarify, confirm, or offer a choice, read and follow [`.agents/skills/ClarifyBeforeAsk/SKILL.md`](.agents/skills/ClarifyBeforeAsk/SKILL.md).
+
+- Always ask the user when a choice about scope, behavior, values, errors, output, or the deliverable is not explicitly stated. Do not guess, infer, or fill gaps from docs or code.
+- State your understanding of the request first so the user can confirm it is correct.
+- Use the skill's format: current flow, after the change, 2–3 examples with synthetic values, then one question with a recommended option first.
+
 # Portal field and logic documentation
 
 Keep the New India Assurance and Oriental Insurance Company portal guides aligned with the implementation.

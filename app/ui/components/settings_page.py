@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel,
     QPushButton, QStackedWidget, QScrollArea, QGridLayout,
     QLineEdit, QTableWidget, QHeaderView, QFileDialog, QMessageBox,
-    QTableWidgetItem, QComboBox, QSpinBox, QCheckBox
+    QTableWidgetItem, QComboBox, QSpinBox
 )
 import os
 import json
@@ -121,10 +121,6 @@ class SettingsPage(QWidget):
         l.addWidget(_f("Portal URL"))
         self.inp_url = QLineEdit(); self.inp_url.setObjectName("settingsInput"); self.inp_url.setMinimumHeight(40); l.addWidget(self.inp_url)
         
-        # New inputs for previously hidden settings
-        self.chk_headless = QCheckBox("Run Browser Headless (Invisible)"); self.chk_headless.setObjectName("settingsFieldLabel")
-        l.addWidget(self.chk_headless)
-
         l.addWidget(_f("Slow-Mo (ms) - Time between clicks"))
         self.inp_slowmo = QLineEdit(); self.inp_slowmo.setObjectName("settingsInput"); self.inp_slowmo.setMinimumHeight(40); l.addWidget(self.inp_slowmo)
         
@@ -333,8 +329,6 @@ class SettingsPage(QWidget):
         self.inp_username.setText(s.get("username", ""))
         self.inp_password.setText(s.get("password", ""))
         self.inp_url.setText(s.get("portal_url", ""))
-        
-        self.chk_headless.setChecked(s.get("browser_headless", False))
         
         self.inp_slowmo.setText(str(s.get("browser_slow_mo_ms", 400)))
         self.inp_timeout.setText(str(s.get("timeout_ms", 4000)))
@@ -579,7 +573,6 @@ class SettingsPage(QWidget):
                 "username": self.inp_username.text().strip(),
                 "password": self.inp_password.text().strip(),
                 "portal_url": self.inp_url.text().strip(),
-                "browser_headless": self.chk_headless.isChecked(),
                 "browser_slow_mo_ms": _int_from_input(self.inp_slowmo, "Slow-Mo (ms)", 400),
                 "timeout_ms": _int_from_input(self.inp_timeout, "Timeout (ms)", 4000),
                 "captcha_max_retries": _int_from_input(self.inp_captcha, "Captcha Max Retries", 2),

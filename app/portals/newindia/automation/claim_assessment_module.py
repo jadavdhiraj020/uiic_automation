@@ -545,6 +545,21 @@ async def _retry_maruti_not_allowed(select):
             await select.select_option(value=value, timeout=1500)
 
 
+async def _retry_maruti_dealer_item(select):
+    with suppress(Exception):
+        value = await select.evaluate("""field => {
+            if (field.disabled || !field.getClientRects().length) return null;
+            const validItems = new Set(['labour', 'glass', 'painting', 'plastic', 'metal', 'denting', 'misc', 'spare', 'other']);
+            const cur = (field.value || '').trim().toLowerCase();
+            if (validItems.has(cur)) return null;
+            const options = [...field.options].filter(option => !option.matches(':disabled') &&
+                (option.value === 'Spare' || option.textContent.trim() === 'Spare'));
+            return options.length === 1 ? options[0].value : null;
+        }""", timeout=1000)
+        if value is not None:
+            await select.select_option(value=value, timeout=1500)
+
+
 async def _mark_maruti_dealer_rows(page, rows, initial, dealers, log, stop_cb):
     recovery = current_recovery.get()
     pending = [idx for idx in dealers if not dealer_not_allowed(initial[idx])]
@@ -579,6 +594,9 @@ async def _mark_maruti_dealer_rows(page, rows, initial, dealers, log, stop_cb):
         select = rows.nth(idx).locator('select[id="sel1"]:visible')
         if await select.count() == 1:
             await _retry_maruti_not_allowed(select)
+        item_select = rows.nth(idx).locator('select[id="vItem"]:visible')
+        if await item_select.count() == 1:
+            await _retry_maruti_dealer_item(item_select)
 
 
 async def _open_maruti_pending_assessment(page, log, stop_cb):
@@ -926,7 +944,10 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_c
         is_maruti = await _is_maruti_partwise(page, data)
         if is_maruti:
             try:
-                items = read_maruti_items(data.assessment_files.get("assessment_excel"))
+                items = read_maruti_items(
+                    data.assessment_files.get("assessment_excel"),
+                    source_excel_path=getattr(data, "source_excel_path", None),
+                )
             except Exception as exc:
                 reason = getattr(data, "_newindia_primary_assessment_error", "") or str(exc)
                 record_review_issue(log, "Primary Assessment", reason)

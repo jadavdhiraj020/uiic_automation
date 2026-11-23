@@ -325,6 +325,11 @@ class OperatorRecovery:
                         await capture_portal_screenshot(
                             page, "oic", f"paused_{section}", log, reason=title, claim_no=self.claim_number or "",
                         )
+                if title != "Automation Paused" and not stop_only and getattr(log, "_debug_recorder", None) is not None:
+                    # AI debug report only (Logs-tab switch ON): read-only page snapshot for this pause.
+                    from app.automation.debug_recorder import debug_snapshot
+
+                    await debug_snapshot(log, page, label=title, reason=f"Paused at {section}: {detail}")
                 await focus_chrome(page, self.browser_pid)
             prompt = RecoveryPrompt(
                 prompt_id, section, title, detail,

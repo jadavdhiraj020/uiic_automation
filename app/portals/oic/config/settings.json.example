@@ -3,7 +3,6 @@
   "username": "",
   "password": "",
   "claim_type": "Motor",
-  "browser_headless": false,
   "browser_slow_mo_ms": 150,
   "timeout_ms": 4000,
   "captcha_max_retries": 5,

@@ -3478,7 +3478,7 @@ class WebQueuePage(QWidget):
             raise ValueError(f"{portal.upper()} login credentials are not configured. Please open Settings and enter the username and password.")
         creds = {key: settings.get(key, "") for key in ("username", "password", "surveyor_code")}
         return {
-            **creds, "browser_headless": False,
+            **creds,
             "_web_submission": {
                 "case_id": current["job"]["case_id"],
                 "automation_dispatch_id": _dispatch_id(current),

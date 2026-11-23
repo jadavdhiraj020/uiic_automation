@@ -163,12 +163,12 @@ def _detect_parts_header(sheet) -> HeaderDetection:
     """
     keyword_schema = {
         "sn":        ["s.n", "sr", "sl", "s.no", "sr.no", "sn", "serial"],
-        "part_desc": ["description", "discription", "part name", "particular",
-                      "part desc", "item description", "nomenclature", "item"],
+        "part_desc": ["description", "discription", "parts name", "part name", "particular",
+                      "parts desc", "part desc", "item description", "nomenclature", "item"],
         "estimated": ["estimated", "estimate", "est amount", "est amt", "est."],
-        "metal":     ["metal"],
-        "plastic":   ["plastic"],
-        "glass":     ["glass"],
+        "metal":     ["metal", "m-age", "mage"],
+        "plastic":   ["plastic", "p-50", "p50"],
+        "glass":     ["glass", "g-0", "g0"],
     }
 
     expected_keys = ["sn", "part_desc", "estimated", "metal", "plastic", "glass"]
@@ -449,10 +449,11 @@ def _extract_parts_rows(
                 raw = sheet.cell(row=r, column=col).value if col else None
                 if value is None and raw is not None and str(raw).strip().casefold() not in ("", "na", "n.a.", "n/a", "-", "nil", "none"):
                     raise OicPartsReviewError(f"OIC parts row {r} has an unreadable {name} amount; review '{part_name}'")
-            # Zero means the material is not used for this item.
-            metal_val = metal_val if metal_val is not None and metal_val > 0 else None
-            plastic_val = plastic_val if plastic_val is not None and plastic_val > 0 else None
-            glass_val = glass_val if glass_val is not None and glass_val > 0 else None
+
+        # Zero or negative means the material is not used for this item.
+        metal_val = metal_val if metal_val is not None and metal_val > 0 else None
+        plastic_val = plastic_val if plastic_val is not None and plastic_val > 0 else None
+        glass_val = glass_val if glass_val is not None and glass_val > 0 else None
 
         # Count how many material columns have values
         material_values = []
@@ -585,19 +586,23 @@ def _extract_labour_rows(
                 audit_lines.append(f"Labour row {r}: skipped summary row '{labour_name}'")
             continue
 
-        # Collect all valid labour amount columns
+        # Collect all positive labour amount columns
         found_columns = []
         for key in labour_amount_keys:
             col = col_map.get(key)
             if col is not None:
                 val = _clean_numeric(sheet.cell(row=r, column=col).value)
-                if val is not None:
+                if val is not None and val > 0:
                     found_columns.append((key, val))
 
         if not found_columns:
             if audit_lines is not None:
                 audit_lines.append(f"Labour row {r}: skipped no valid labour amount for '{labour_name}'")
             continue
+
+        est_col = col_map.get("estimated")
+        est_val = _clean_numeric(sheet.cell(row=r, column=est_col).value) if est_col else None
+        est_amt = est_val if est_val is not None and est_val > 0 else 0
 
         found_key = found_columns[0][0]
         total_billed = sum(val for _, val in found_columns)
@@ -619,7 +624,7 @@ def _extract_labour_rows(
             "description": "Labor charges for Repairing and Alignment",
             "part_name": labour_name,
             "service_type": "ALLOW",
-            "estimated_amount": 0,
+            "estimated_amount": est_amt,
             "billed_amount": total_billed,
             "assessed_amount": total_billed,
             "depreciation_pct": 0,
@@ -635,6 +640,149 @@ def _extract_labour_rows(
         logger.debug("Labour row %d: %s | amt=%.2f | col=%s", r, labour_name, total_billed, found_key)
 
     return rows
+
+
+def _find_painting_column(sheet, header_row: int, col_map: Dict[str, int]) -> Optional[int]:
+    """Locate the PAINT / PAINTING column on the detected Labour header row."""
+    if "painting" in col_map:
+        return col_map["painting"]
+    start_col = col_map.get("sn", 1)
+    for col in range(start_col, sheet.max_column + 1):
+        val = sheet.cell(row=header_row, column=col).value
+        if val is not None and re.search(r"\bpaint(?:ing)?\b", str(val), re.I):
+            return col
+    return None
+
+
+def _detect_paint_depreciation_pct(sheet, after_row: int = 1) -> float:
+    """Detect the sheet's paint material / paint depreciation percentage (e.g. 12.5).
+
+    Returns 0.0 when no paint depreciation row or Nil Depreciation applies.
+    """
+    # Check if the sheet explicitly specifies Nil Depreciation = Yes
+    for r in range(1, sheet.max_row + 1):
+        for c in range(1, sheet.max_column + 1):
+            raw = sheet.cell(row=r, column=c).value
+            if raw is None:
+                continue
+            low = str(raw).strip().lower()
+            if low in ("nil depreciation", "nil dep", "zero depreciation", "zero dep"):
+                for nc in range(c + 1, min(c + 7, sheet.max_column + 1)):
+                    nval = sheet.cell(row=r, column=nc).value
+                    if nval is None or str(nval).strip() in ("", ":"):
+                        continue
+                    if str(nval).strip().lower() in ("yes", "y", "true", "1"):
+                        return 0.0
+                    break
+
+    search_start = max(1, after_row)
+    for r in range(search_start, min(search_start + 35, sheet.max_row + 1)):
+        for c in range(1, sheet.max_column + 1):
+            raw = sheet.cell(row=r, column=c).value
+            if raw is None:
+                continue
+            text = str(raw).strip()
+            low = text.lower()
+            if "paint" in low and ("less" in low or "dep" in low or "material" in low or "discount" in low):
+                # 1. Check cell to the left (e.g. col 1 = 12.5, col 2 = '% LESS COST OF PAINT MATERIAL / PAINT DEP.')
+                for prev_c in range(c - 1, 0, -1):
+                    pval = _clean_numeric(sheet.cell(row=r, column=prev_c).value)
+                    if pval is not None:
+                        if 0 <= pval < 100:
+                            return float(pval)
+                        break
+                # 2. Check inline percentage inside the label text (e.g. 'Less 12.5% Paint Dep.')
+                m = re.search(r"(\d+(?:\.\d+)?)\s*%", text)
+                if m:
+                    pct = float(m.group(1))
+                    if 0 <= pct < 100:
+                        return pct
+    return 0.0
+
+
+def extract_painting_rows(
+    sheet,
+    header_row: int,
+    col_map: Dict[str, int],
+    hsn_code="998714",
+    audit_lines: Optional[List[str]] = None,
+    boundary_keyword: str = "sub total",
+) -> List[dict]:
+    """Extract per-item Painting rows from the Labour table's PAINT column.
+
+    Each row with PAINT > 0 produces a Painting item dictionary whose
+    assessed amount is reduced by the sheet's paint depreciation percentage
+    (e.g. 12.5% on row '12.5 | % LESS COST OF PAINT MATERIAL / PAINT DEP.').
+    """
+    paint_col = _find_painting_column(sheet, header_row, col_map)
+    if not paint_col:
+        return []
+
+    desc_col = col_map.get("labour_desc")
+    est_col = col_map.get("estimated")
+    _boundary_variants: set = set()
+    for _token in boundary_keyword.split("|"):
+        _t = _token.strip().lower()
+        if _t:
+            _boundary_variants.add(_t)
+            _boundary_variants.add(_t.replace(" ", ""))
+
+    raw_items: List[tuple[int, str, float, float]] = []
+    stop_r = sheet.max_row
+    for r in range(header_row + 1, sheet.max_row + 1):
+        row_texts = [
+            str(sheet.cell(row=r, column=c).value).strip().lower()
+            for c in range(1, sheet.max_column + 1)
+            if sheet.cell(row=r, column=c).value is not None
+        ]
+        if any(t in _boundary_variants for t in row_texts):
+            stop_r = r
+            break
+
+        name_raw = sheet.cell(row=r, column=desc_col).value if desc_col else None
+        if name_raw is None or str(name_raw).strip() == "":
+            continue
+        item_name = str(name_raw).strip()
+        if _is_summary_row(item_name):
+            continue
+
+        paint_val = _clean_numeric(sheet.cell(row=r, column=paint_col).value)
+        if paint_val is None or paint_val <= 0:
+            continue
+
+        est_val = _clean_numeric(sheet.cell(row=r, column=est_col).value) if est_col else None
+        est_amt = est_val if est_val is not None and est_val > 0 else 0.0
+        raw_items.append((r, item_name, paint_val, est_amt))
+
+    if not raw_items:
+        return []
+
+    paint_dep_pct = _detect_paint_depreciation_pct(sheet, after_row=stop_r)
+    factor = (100.0 - paint_dep_pct) / 100.0
+    painting_rows: List[dict] = []
+    for r, item_name, paint_val, est_amt in raw_items:
+        net_paint = round(paint_val * factor, 2)
+        if net_paint <= 0:
+            continue
+        painting_rows.append({
+            "category": "Painting",
+            "description": "Painting",
+            "part_name": item_name,
+            "service_type": "REPAIR",
+            "estimated_amount": est_amt,
+            "billed_amount": paint_val,
+            "assessed_amount": net_paint,
+            "depreciation_pct": 0,
+            "hsn_code": hsn_code,
+            "gst_pct": 0,
+            "labour_column": "painting",
+        })
+        if audit_lines is not None:
+            audit_lines.append(
+                f"Painting row {r}: added '{item_name}' gross={paint_val} "
+                f"paint_dep={paint_dep_pct}% assessed={net_paint} hsn={hsn_code}"
+            )
+    return painting_rows
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -246,10 +246,11 @@ All configuration lives in `app/config/`. These files control how the applicatio
 
 ### 📄 `settings.json` — Application Settings
 
+Portal automation opens Chrome visibly in UIIC, New India, and OIC.
+
 | Key | Default | Description |
 |:----|:--------|:------------|
 | `portal_url` | `https://portal.uiic.in/...` | UIIC portal login URL |
-| `browser_headless` | `false` | Run browser visibly (`false`) or hidden (`true`) |
 | `browser_slow_mo_ms` | `100` | Delay between browser actions (ms) — increase for stability |
 | `captcha_max_retries` | `5` | Maximum CAPTCHA solve attempts before failing |
 

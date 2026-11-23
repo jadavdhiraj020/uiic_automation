@@ -189,12 +189,15 @@ class StructuredLogsPanel(QWidget):
     copy_clicked = pyqtSignal()
     clear_clicked = pyqtSignal()
     export_clicked = pyqtSignal()
+    debug_mode_toggled = pyqtSignal(bool)
+    copy_ai_debug_clicked = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._entries = []
         self._auto_scroll = True
         self._portal_id = "uiic"
+        self._ai_debug_path = ""
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 18, 24, 18)
         root.setSpacing(10)
@@ -216,6 +219,17 @@ class StructuredLogsPanel(QWidget):
         self.auto_scroll_check.setChecked(True)
         self.auto_scroll_check.toggled.connect(self._set_auto_scroll)
         title_lay.addWidget(self.auto_scroll_check)
+        # AI debug report: session-only switch, always OFF when App3 opens.
+        self.debug_mode_check = QCheckBox("AI debug report")
+        self.debug_mode_check.setChecked(False)
+        self.debug_mode_check.setToolTip(
+            "Save one extra report for AI troubleshooting on the next run: the exact code place,\n"
+            "the real error text, browser errors and failed portal calls, a quick read-only page\n"
+            "snapshot at each problem, run settings and the end of the log. Passwords stay hidden.\n"
+            "Works for UIIC, OIC and New India. Starts OFF every time App3 opens."
+        )
+        self.debug_mode_check.toggled.connect(self.debug_mode_toggled.emit)
+        title_lay.addWidget(self.debug_mode_check)
         root.addWidget(title_row)
 
         filters = QWidget()
@@ -235,10 +249,15 @@ class StructuredLogsPanel(QWidget):
         self.btn_export.setObjectName("logsSmallBtn")
         self.btn_export.setToolTip("Export logs")
         self.btn_export.clicked.connect(self.export_clicked.emit)
+        self.btn_copy_ai_debug = QPushButton("Copy AI Debug")
+        self.btn_copy_ai_debug.setObjectName("logsSmallBtn")
+        self.btn_copy_ai_debug.clicked.connect(self.copy_ai_debug_clicked.emit)
+        self.set_ai_debug_report("")
         fl.addWidget(search, 1)
         fl.addWidget(self.btn_copy)
         fl.addWidget(self.btn_clear)
         fl.addWidget(self.btn_export)
+        fl.addWidget(self.btn_copy_ai_debug)
         root.addWidget(filters)
 
         self.table = QTableWidget(0, 4)
@@ -292,6 +311,20 @@ class StructuredLogsPanel(QWidget):
 
     def _set_auto_scroll(self, checked):
         self._auto_scroll = checked
+
+    def set_ai_debug_report(self, path: str = ""):
+        """Enable "Copy AI Debug" once the current run has written its report."""
+        self._ai_debug_path = str(path or "")
+        self.btn_copy_ai_debug.setEnabled(bool(self._ai_debug_path))
+        self.btn_copy_ai_debug.setToolTip(
+            f"Copy the AI debug report ({os.path.basename(self._ai_debug_path)}) to paste into an AI assistant"
+            if self._ai_debug_path
+            else "Turn on 'AI debug report' and run the automation to create a report"
+        )
+
+    def set_debug_switch_locked(self, locked: bool):
+        """The switch applies per run, so it is locked while a run is active."""
+        self.debug_mode_check.setEnabled(not locked)
 
     def _parse_entry(self, text, portal_id, phase, context=None):
         raw = "" if text is None else str(text)
@@ -822,6 +855,8 @@ class WorkspacePage(QWidget):
     pause_clicked = pyqtSignal()
     stop_clicked = pyqtSignal()
     export_log_clicked = pyqtSignal()
+    ai_debug_mode_toggled = pyqtSignal(bool)
+    copy_ai_debug_clicked = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -898,6 +933,8 @@ class WorkspacePage(QWidget):
         self.logs_panel.copy_clicked.connect(lambda: QApplication.clipboard().setText(self.logs_panel.log_text(visible_only=True)))
         self.logs_panel.clear_clicked.connect(self.clear_logs)
         self.logs_panel.export_clicked.connect(self.export_log_clicked.emit)
+        self.logs_panel.debug_mode_toggled.connect(self.ai_debug_mode_toggled.emit)
+        self.logs_panel.copy_ai_debug_clicked.connect(self.copy_ai_debug_clicked.emit)
 
         # Compatibility handles used by MainWindow during the migration.
         self.inp_folder = self.folder_panel.inp_folder
@@ -992,6 +1029,7 @@ class WorkspacePage(QWidget):
     def set_automation_running(self, running: bool):
         self.btn_start.setEnabled(not running)
         self.btn_stop.setEnabled(running)
+        self.logs_panel.set_debug_switch_locked(running)
         self.btn_pause.setText("Pause")
         self.btn_pause.setProperty("paused", False)
         self.btn_pause.setEnabled(running and self._portal_id in {"newindia", "oic"})
@@ -1004,6 +1042,7 @@ class WorkspacePage(QWidget):
     def set_automation_finished(self, success: bool):
         self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(False)
+        self.logs_panel.set_debug_switch_locked(False)
         self.btn_pause.setText("Pause")
         self.btn_pause.setProperty("paused", False)
         self.btn_pause.setEnabled(False)

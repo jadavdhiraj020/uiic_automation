@@ -33,19 +33,6 @@ def _setting_int(
         return default
 
 
-def _setting_bool(settings: dict, key: str, default: bool = False) -> bool:
-    value = settings.get(key, default)
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "off"}:
-            return False
-    return bool(value)
-
-
 class AutomationRunResult:
     def __init__(self, success: bool, message: str):
         self.success = success
@@ -246,6 +233,8 @@ class AutomationEngine:
         step_cb: Callable[[int, str], None] = lambda i, s: None,
         recovery_cb=None,
         field_cb=None,
+        debug_mode: bool = False,
+        debug_report_cb=None,
     ):
         def safe_log_cb(msg):
             try:
@@ -279,6 +268,9 @@ class AutomationEngine:
         self.field_cb = safe_field_cb if field_cb is not None else None
         self._stop_event = threading.Event()
         self.log = AutomationLogger("ENGINE", self.log_cb, portal_id=self.portal_id)
+        # AI debug report (Logs tab switch). Fixed for the whole run; OFF by default.
+        self._debug_mode = bool(debug_mode)
+        self._debug_report_cb = debug_report_cb
         self._recovery_cb = recovery_cb
         self._manual_review_prompt_id: Optional[str] = None
         self._manual_review_done = threading.Event()
@@ -294,6 +286,52 @@ class AutomationEngine:
             self._newindia_recovery = NewIndiaRecovery(
                 recovery_cb, self._stop_event.is_set, field_progress_cb=self.field_cb,
             )
+
+    def _start_ai_debug_report(self, claim, settings) -> None:
+        """Attach the AI debug report recorder. Only called when the switch is ON."""
+        try:
+            from app.automation.debug_recorder import AIDebugRecorder
+
+            def safe_report_cb(path):
+                if self._debug_report_cb is None:
+                    return
+                try:
+                    self._debug_report_cb(path)
+                except Exception:
+                    pass
+
+            recorder = AIDebugRecorder(
+                self.portal_id,
+                getattr(claim, "claim_no", "") or "",
+                self.log._json_log_file,
+                on_report_path=safe_report_cb,
+            )
+            recorder.set_context(settings=settings, claim=claim)
+            self.log.attach_debug_recorder(recorder)
+            recorder.note_info("Startup", "AI debug report started")
+            self.log.info(f"AI debug report is ON: {os.path.basename(recorder.report_path)}")
+        except Exception as exc:
+            # The report is an extra; never let it stop a run.
+            logger.warning("AI debug report could not start: %s", exc)
+
+    def _attach_ai_debug_browser(self, context) -> None:
+        """AI debug report only: listen (read-only) to browser errors. No-op when the switch is OFF."""
+        recorder = getattr(self.log, "_debug_recorder", None)
+        if recorder is None:
+            return
+        try:
+            recorder.attach_browser(context)
+        except Exception as exc:
+            logger.warning("AI debug report could not watch the browser: %s", exc)
+
+    def _stop_ai_debug_browser(self) -> None:
+        recorder = getattr(self.log, "_debug_recorder", None)
+        if recorder is None:
+            return
+        try:
+            recorder.stop_browser_capture()
+        except Exception:
+            pass
 
     def resume_oic(self, prompt_id, decision):
         if self._manual_review_prompt_id and prompt_id == self._manual_review_prompt_id:
@@ -383,11 +421,26 @@ class AutomationEngine:
             return True
         return False
 
-    def _start_deferred_ocr_jobs(self, claim: ClaimData) -> None:
+    def _start_deferred_ocr_jobs(self, claim: ClaimData, *, cheque_only: bool = False) -> None:
         """Start invoice and cheque OCR jobs requested during folder processing."""
-        if getattr(claim, "_deferred_ocr_started", False):
+        start_invoice = (
+            not cheque_only
+            and getattr(claim, "_pending_invoice_ocr", False)
+            and getattr(claim, "_pending_invoice_pdf_path", None)
+            and getattr(claim, "_deferred_invoice_ocr_event", None) is None
+        )
+        cheque_event = getattr(claim, "_deferred_cheque_ocr_event", None)
+        start_cheque = (
+            (cheque_event is None or cheque_event.is_set())
+            and getattr(claim, "_pending_cheque_ocr", False)
+            and getattr(claim, "_pending_cheque_path", None)
+            and (
+                not str(claim.ifsc_code or "").strip()
+                or not str(claim.account_number or "").strip()
+            )
+        )
+        if not (start_invoice or start_cheque):
             return
-        claim._deferred_ocr_started = True
         claim_lock = getattr(claim, "_deferred_ocr_claim_lock", None)
         if claim_lock is None:
             claim_lock = threading.RLock()
@@ -433,9 +486,7 @@ class AutomationEngine:
             setattr(claim, f"_deferred_{kind}_ocr_thread", thread)
             thread.start()
 
-        if getattr(claim, "_pending_invoice_ocr", False) and getattr(
-            claim, "_pending_invoice_pdf_path", None
-        ):
+        if start_invoice:
 
             def _invoice_job() -> None:
                 self.log.info("Deferred Workshop Invoice OCR started in background.")
@@ -514,9 +565,7 @@ class AutomationEngine:
 
             _start_job("invoice", _invoice_job)
 
-        if getattr(claim, "_pending_cheque_ocr", False) and getattr(
-            claim, "_pending_cheque_path", None
-        ):
+        if start_cheque:
 
             def _cheque_job() -> None:
                 self.log.info("Deferred Cheque OCR started in background.")
@@ -538,8 +587,10 @@ class AutomationEngine:
                         log=ocr_log_fn,
                         excel_ifsc=getattr(claim, "ifsc_code", None) or "",
                         excel_account=getattr(claim, "account_number", None) or "",
-                        stop_cb=self._check_stop,
+                        stop_cb=self._stop_event.is_set,
                     )
+                    if self._stop_event.is_set():
+                        return
                     cheque_details = ocr_result.details
                     if ocr_result.status == "unsupported":
                         self.log.warning(ocr_result.message)
@@ -592,7 +643,9 @@ class AutomationEngine:
                     _set_claim_status("_deferred_cheque_ocr_error", str(exc))
                     self.log.warning(f"Deferred Cheque OCR failed: {exc}")
                 finally:
-                    _set_claim_status("_pending_cheque_ocr", False)
+                    # A stopped run may retry after this thread has exited.
+                    if not self._stop_event.is_set():
+                        _set_claim_status("_pending_cheque_ocr", False)
 
             _start_job("cheque", _cheque_job)
 
@@ -768,6 +821,22 @@ class AutomationEngine:
 
         field_delay = _setting_int(settings, "field_wait_ms", "field_delay_ms", 400)
 
+        def initialize_run_log():
+            self.log.set_claim_context(
+                claim.claim_no, self.portal_id, log_file_path=getattr(claim, "_scan_log_file", None)
+            )
+            if getattr(claim, "correlation_id", None):
+                self.log.correlation_id = claim.correlation_id
+            if getattr(claim, "_scan_logs", None):
+                self.log.write_historical_logs(claim._scan_logs)
+            if self._debug_mode:
+                self._start_ai_debug_report(claim, settings)
+
+        if self.portal_id == "newindia":
+            initialize_run_log()
+            self.log.section = "Startup"
+            self._start_deferred_ocr_jobs(claim, cheque_only=True)
+
         async with async_playwright() as p, AsyncExitStack() as resources:
             async def close_resource(resource, name):
                 try:
@@ -793,7 +862,7 @@ class AutomationEngine:
                 context = browser.contexts[0]
             else:
                 browser = await browser_type.launch(
-                    headless=_setting_bool(settings, "browser_headless", False),
+                    headless=False,
                     args=launch_args,
                     slow_mo=slow_mo,
                 )
@@ -942,15 +1011,9 @@ class AutomationEngine:
             health_task = asyncio.create_task(_monitor_health())
 
             try:
-                # Dynamically set the claim context on the logger for structured JSON logs
-                log_path = getattr(claim, "_scan_log_file", None)
-                self.log.set_claim_context(
-                    claim.claim_no, self.portal_id, log_file_path=log_path
-                )
-                if hasattr(claim, "correlation_id") and claim.correlation_id:
-                    self.log.correlation_id = claim.correlation_id
-                if hasattr(claim, "_scan_logs") and claim._scan_logs:
-                    self.log.write_historical_logs(claim._scan_logs)
+                if self.portal_id != "newindia":
+                    initialize_run_log()
+                self._attach_ai_debug_browser(context)
 
                 # Wait for background document/assessment generation to finish
                 bg_thread = getattr(claim, "_background_generation_thread", None)
@@ -1818,6 +1881,7 @@ class AutomationEngine:
                         pass
                 return AutomationRunResult(False, "OIC automation could not continue safely. Check Chrome.")
             finally:
+                self._stop_ai_debug_browser()
                 if health_task:
                     if not health_task.done():
                         health_task.cancel()

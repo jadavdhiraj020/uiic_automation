@@ -153,6 +153,7 @@ async def capture_portal_screenshot(
     except Exception:
         return None
 
+    filepath: Optional[str] = None
     try:
         pid = str(portal_id or "uiic").strip().lower() or "uiic"
         shots_dir = ensure_dir(automation_logs_dir(pid, "screenshots"))
@@ -188,7 +189,12 @@ async def capture_portal_screenshot(
             log.record_screenshot(step_name, filepath, reason=reason, page_url=page_url)
         elif callable(log):
             log(f"📸 Screenshot saved ({step_name}): {os.path.basename(filepath)}")
-
-        return filepath
     except Exception:
-        return None
+        filepath = None
+
+    if getattr(log, "_debug_recorder", None) is not None:
+        # AI debug report only (Logs-tab switch ON): read-only page snapshot next to the screenshot.
+        from app.automation.debug_recorder import debug_snapshot
+
+        await debug_snapshot(log, page, label=step_name, reason=reason, screenshot=filepath or "")
+    return filepath

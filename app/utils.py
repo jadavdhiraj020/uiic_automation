@@ -130,6 +130,7 @@ def load_settings(portal_id: Optional[str] = None) -> dict[str, Any]:
     base = read_json_file(paths["default"]) or {}
     override = read_json_file(paths["user"]) or {}
     base.update(override)
+    base.pop("browser_headless", None)
     return base
 
 
@@ -138,6 +139,7 @@ def save_settings(overrides: dict[str, Any], portal_id: Optional[str] = None) ->
     paths = settings_paths(portal_id=portal_id)
     current = load_settings(portal_id=portal_id)
     current.update(overrides or {})
+    current.pop("browser_headless", None)
     write_json_file(paths["user"], current)
     return paths["user"]
 
