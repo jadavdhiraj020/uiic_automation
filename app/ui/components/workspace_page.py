@@ -287,7 +287,7 @@ class StructuredLogsPanel(QWidget):
 
     def set_portal(self, portal_id: str):
         self._portal_id = (portal_id or "uiic").lower()
-        self.show_details_check.setVisible(self._portal_id == "newindia")
+        self.show_details_check.setVisible(self._portal_id in {"newindia", "oic", "uiic"})
         self._apply_filters()
 
     def _set_auto_scroll(self, checked):
@@ -412,7 +412,7 @@ class StructuredLogsPanel(QWidget):
         show_details = self.show_details_check.isChecked()
         for row, entry in enumerate(self._entries):
             visible = True
-            if entry.get("portal") == "NEWINDIA" and entry.get("detail") and not show_details:
+            if entry.get("detail") and not show_details:
                 visible = False
             elif text and text not in entry["search"]:
                 visible = False

@@ -12,9 +12,12 @@ from app.automation.automation_logger import AutomationLogger
 from app.data.data_model import ClaimData
 from app.portals.newindia.automation.maruti_rows import (
     ROWS as _MARUTI_ROWS,
-    add_and_fill_row,
+    add_row,
     assign_existing_rows,
-    fill_blank_row,
+    dealer_not_allowed,
+    dealer_row_problems,
+    fill_item,
+    mark_dealer_group,
     read_maruti_items,
     row_problems,
     row_snapshot,
@@ -84,6 +87,7 @@ _PAYMENT_INVOICE = 'select[data-ng-model$=".isPaymentInvoice"], select#PaymentIn
 _FORM_READY = f"{_TAB} :is({_PAYMENT_INVOICE}, {_NEXT_BUTTON}):visible"
 _FORM_LOAD_TIMEOUT = 10
 _PRIMARY_ESTIMATE = 'select[name^="Is there any primary estimate"]'
+_MARUTI_DEALER_GROUP_SIZE = 20
 
 # Use the repeater to distinguish primary and supplementary rows on the same page.
 _ASSESSMENT_ROWS = r"""
@@ -529,26 +533,52 @@ async def _expand_panel_matching(container, patterns: tuple[re.Pattern[str], ...
     return None
 
 
-async def _set_allowed_service_not_allowed(sel) -> bool:
+async def _retry_maruti_not_allowed(select):
     with suppress(Exception):
-        await sel.scroll_into_view_if_needed()
-    selected = False
-    for kwargs in ({"label": "Not Allowed"}, {"value": "Not Allowed"}):
+        value = await select.evaluate("""field => {
+            if (field.disabled || !field.getClientRects().length) return null;
+            const options = [...field.options].filter(option => !option.matches(':disabled') &&
+                (option.value === 'Not Allowed' || option.textContent.trim() === 'Not Allowed'));
+            return options.length === 1 ? options[0].value : null;
+        }""", timeout=1000)
+        if value is not None:
+            await select.select_option(value=value, timeout=1500)
+
+
+async def _mark_maruti_dealer_rows(page, rows, initial, dealers, log, stop_cb):
+    recovery = current_recovery.get()
+    pending = [idx for idx in dealers if not dealer_not_allowed(initial[idx])]
+    if not pending:
+        return
+
+    for start in range(0, len(pending), _MARUTI_DEALER_GROUP_SIZE):
+        if stop_cb():
+            return
+        if recovery is not None:
+            await recovery.wait_if_manually_paused(page, log)
+        if stop_cb():
+            return
+        group = pending[start:start + _MARUTI_DEALER_GROUP_SIZE]
+        identities = [(idx, initial[idx]["part"], initial[idx]["values"]["description"]) for idx in group]
         with suppress(Exception):
-            await sel.select_option(timeout=3000, **kwargs)
-            selected = True
-            break
-    if not selected:
-        return False
-    with suppress(Exception):
-        await sel.evaluate(_JS_TRIGGER_ELEMENT_CHANGE, timeout=1500)
-    current = ""
-    with suppress(Exception):
-        current = await sel.evaluate(
-            "s => (s.options[s.selectedIndex]?.textContent || s.value || '').trim().toLowerCase()",
-            timeout=1000,
-        )
-    return current == "not allowed"
+            await mark_dealer_group(rows, identities)
+
+    current = await row_snapshot(rows)
+    for idx in pending:
+        if stop_cb():
+            return
+        if idx >= len(current) or dealer_not_allowed(current[idx]):
+            continue
+        if (current[idx]["added"] or current[idx]["part"] != initial[idx]["part"]
+                or current[idx]["values"]["description"] != initial[idx]["values"]["description"]):
+            continue
+        if recovery is not None:
+            await recovery.wait_if_manually_paused(page, log)
+        if stop_cb():
+            return
+        select = rows.nth(idx).locator('select[id="sel1"]:visible')
+        if await select.count() == 1:
+            await _retry_maruti_not_allowed(select)
 
 
 async def _open_maruti_pending_assessment(page, log, stop_cb):
@@ -692,19 +722,10 @@ async def _fill_maruti_assessment_rows(page, items, log, stop_cb):
     assigned, dealers, blanks = assign_existing_rows(initial, items)
     labels = [f"Survey item {idx + 1} ({item.description})" for idx, item in enumerate(items)]
 
-    # Mark only dealer rows. New and previously entered survey rows are handled separately.
-    for idx in dealers:
-        if stop_cb():
-            return False
-        if recovery is not None:
-            await recovery.wait_if_manually_paused(page, log)
-        if initial[idx]["values"]["service"].strip().casefold() != "not allowed":
-            select = rows.nth(idx).locator('select[id="sel1"]:visible')
-            if await select.count() == 1 and await select.is_enabled():
-                if not await _set_allowed_service_not_allowed(select) and not stop_cb():
-                    await _set_allowed_service_not_allowed(select)
+    await _mark_maruti_dealer_rows(page, rows, initial, dealers, log, stop_cb)
 
     count = len(initial)
+    gst_pending = []
     for idx, item in enumerate(items):
         if stop_cb():
             return False
@@ -712,23 +733,42 @@ async def _fill_maruti_assessment_rows(page, items, log, stop_cb):
             continue
         if recovery is not None:
             await recovery.wait_if_manually_paused(page, log)
+        if stop_cb():
+            return False
         if blanks:
             row_index = blanks.pop(0)
-            assigned[idx] = row_index
-            await fill_blank_row(rows, row_index, item, stop_cb)
-        elif await add_and_fill_row(body, rows, count, item, stop_cb):
-            assigned[idx] = count
+        elif await add_row(body, rows, count, stop_cb):
+            row_index = count
             count += 1
         else:
             # A late Add Row must be inspected before any further click.
             break
+        assigned[idx] = row_index
+        if await fill_item(rows.nth(row_index), item, stop_cb):
+            gst_pending.append(row_index)
+
+    if gst_pending:
+        async def gst_ready():
+            current = await row_snapshot(rows)
+            return all(idx < len(current) and parse_amount(current[idx]["values"]["gst"]) is not None
+                       for idx in gst_pending)
+
+        await wait_until_ready(gst_ready, seconds=2.5, stopped=stop_cb)
+
+    if recovery is not None:
+        await recovery.wait_if_manually_paused(page, log)
 
     async def issues_for_table():
         current = await row_snapshot(rows)
-        issues = []
+        dealer_issues = {}
         for idx in dealers:
-            if idx >= len(current) or current[idx]["values"]["service"].strip().casefold() != "not allowed":
-                issues.append(f"Dealer row {idx + 1} — set Allowed Service type to Not Allowed.")
+            state = current[idx] if idx < len(current) else None
+            for problem in dealer_row_problems(state):
+                dealer_issues.setdefault(problem, []).append(str(idx + 1))
+        issues = [
+            f"Dealer {'row' if len(numbers) == 1 else 'rows'} {', '.join(numbers)} — {problem}."
+            for problem, numbers in dealer_issues.items()
+        ]
         matches, _, _ = assign_existing_rows(current, items)
         reserved = set(matches.values())
         for idx, item in enumerate(items):
@@ -904,7 +944,7 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_c
         if is_maruti:
             if not await _fill_maruti_assessment_rows(page, items, log, stop_cb) or stop_cb():
                 return False
-            await _fill_maruti_bottom_summary(page, data, log, defaults, field_delay_ms, stop_cb)
+            await _fill_maruti_bottom_summary(page, data, log, defaults, 0, stop_cb)
             if stop_cb():
                 return False
             return await _advance_assessment(page, log, stop_cb)

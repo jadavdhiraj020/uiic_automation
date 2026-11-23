@@ -606,11 +606,8 @@ class MainWindow(QMainWindow):
         self.workspace_page.doc_status_label.setText(
             "📁 Indexing and extracting documents via OCR... Please wait."
         )
-        if portal_id == "newindia":
-            self._append_log("📂 Scanning claim folder... \u200bFolder Scan")
-            self._append_log(f"📁 Starting background scan for: {folder} \u200bFolder Scan\u200c")
-        else:
-            self._append_log(f"📁 Starting background scan for: {folder}")
+        self._append_log("📂 Scanning claim folder... \u200bFolder Scan")
+        self._append_log(f"📁 Starting background scan for: {folder} \u200bFolder Scan\u200c")
 
         # Disable buttons to prevent concurrent triggers
         self.workspace_page.btn_start.setEnabled(False)
@@ -670,12 +667,8 @@ class MainWindow(QMainWindow):
         self._active_scan_folder = ""
 
         # Log all lines produced by the scanner service
-        if current_portal_id == "newindia":
-            for line in result.log_lines:
-                self._append_log(f"{line} \u200bFolder Scan\u200c")
-        else:
-            for line in result.log_lines:
-                self._append_log(line)
+        for line in result.log_lines:
+            self._append_log(f"{line} \u200bFolder Scan\u200c")
 
         # Process success/failure
         if result.success:
@@ -688,22 +681,18 @@ class MainWindow(QMainWindow):
                     f"{self._scan_context.portal_display_name} "
                     f"({self._scan_context.portal_id})."
                 )
-                if current_portal_id == "newindia":
-                    self._append_log(f"{isolation_msg} \u200bFolder Scan\u200c")
-                else:
-                    self._append_log(isolation_msg)
-            if current_portal_id == "newindia":
-                claim_no = getattr(result.claim, "claim_no", "") or "Unknown"
-                try:
-                    errors, _warnings = result.claim.validate()
-                except Exception:
-                    errors = []
-                if errors:
-                    self._append_log(
-                        f"⚠️ Folder ready — Claim {claim_no} ({len(errors)} missing item(s)) \u200bFolder Scan"
-                    )
-                else:
-                    self._append_log(f"✅ Folder ready — Claim {claim_no} \u200bFolder Scan")
+                self._append_log(f"{isolation_msg} \u200bFolder Scan\u200c")
+            claim_no = getattr(result.claim, "claim_no", "") or "Unknown"
+            try:
+                errors, _warnings = result.claim.validate()
+            except Exception:
+                errors = []
+            if errors:
+                self._append_log(
+                    f"⚠️ Folder ready — Claim {claim_no} ({len(errors)} missing item(s)) \u200bFolder Scan"
+                )
+            else:
+                self._append_log(f"✅ Folder ready — Claim {claim_no} \u200bFolder Scan")
             self.workspace_page.update_data(self._claim, self._scan_result)
             if current_portal_id == "oic" and startup_review_notices(self._claim):
                 self.workspace_page.set_stage(1)
@@ -884,10 +873,7 @@ class MainWindow(QMainWindow):
                 _warn("Claim changed", "Review the current claim before starting automation.")
                 return
 
-        if portal_id == "newindia":
-            self._append_log("Starting automation thread... \u200bStartup\u200c")
-        else:
-            self.log("Starting automation thread...")
+        self._append_log("Starting automation thread... \u200bStartup\u200c")
         self._manual_pause_active = False
         self._manual_pause_pending = False
         self._thread = QThread()
@@ -906,8 +892,7 @@ class MainWindow(QMainWindow):
         self._worker.step_signal.connect(self.workspace_page.set_step)
         if portal_id in {"oic", "newindia"}:
             self._worker.recovery_signal.connect(self._show_oic_recovery)
-        if portal_id == "newindia":
-            self._worker.field_signal.connect(self._on_field_progress)
+        self._worker.field_signal.connect(self._on_field_progress)
 
         self.workspace_page.set_automation_running(True)
         self._set_portal_selector_locked(
@@ -918,10 +903,7 @@ class MainWindow(QMainWindow):
             "[Portal Isolation] Portal switching is disabled while automation is running. "
             "Stop the current automation before switching portal."
         )
-        if portal_id == "newindia":
-            self._append_log(f"{isolation_lock_msg} \u200bStartup\u200c")
-        else:
-            self._append_log(isolation_lock_msg)
+        self._append_log(f"{isolation_lock_msg} \u200bStartup\u200c")
         self._write_portal_audit_event(
             "portal_switch_locked_for_automation",
             portal_id=portal_id,

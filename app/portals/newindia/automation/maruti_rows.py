@@ -1,6 +1,7 @@
 """Enter and verify assessor-added rows in New India's Maruti assessment."""
 
 import re
+from contextlib import suppress
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -40,6 +41,50 @@ _FIELD_LABELS = {
     "hsn": "HSN/SAC Code", "gst": "GST%",
 }
 _NUMBER_FIELDS = {"mrp", "quantity", "depreciation", "amount", "gst"}
+_MARUTI_ITEM_OPTIONS = {"labour", "glass", "painting", "plastic", "metal", "denting", "misc", "spare", "other"}
+
+_EDIT_CONTROL = r"""
+(row, selector, value, byLabel = false) => {
+    if (!row.isConnected) return;
+    const fields = [...row.querySelectorAll(selector)].filter(field => field.getClientRects().length);
+    if (fields.length !== 1) return;
+    const [field] = fields;
+    if (field.matches(':disabled, [readonly]')) return;
+    if (field.tagName === 'SELECT') {
+        const options = [...field.options].filter(option => !option.matches(':disabled') &&
+            (option.value === value || (byLabel && option.textContent.trim() === value)));
+        if (options.length !== 1 || field.value === options[0].value) return;
+        field.value = options[0].value;
+    } else {
+        if (field.value === value || (field.maxLength >= 0 && value.length > field.maxLength)) return;
+        field.focus({preventScroll: true});
+        field.value = value;
+    }
+    field.dispatchEvent(new Event('input', {bubbles: true, composed: true}));
+    field.dispatchEvent(new Event('change', {bubbles: true}));
+    if (field.tagName !== 'SELECT') field.blur();
+}
+"""
+
+_EDIT_DEALERS = r"""
+(rows, expected) => {
+    const edit = """ + _EDIT_CONTROL + r""";
+    for (const [index, part, description] of expected) {
+        const row = rows[index];
+        if (!row || row.querySelector('input[id="vPartDesc"]') ||
+            row.cells[2]?.textContent.trim() !== part ||
+            row.cells[3]?.textContent.trim() !== description) continue;
+        edit(row, 'select[id="sel1"]', 'Not Allowed', true);
+    }
+}
+"""
+
+_EDIT_ITEM_FIELDS = r"""
+(row, entries) => {
+    const edit = """ + _EDIT_CONTROL + r""";
+    for (const [selector, value] of entries) edit(row, selector, value);
+}
+"""
 
 _SNAPSHOT = r"""
 (rows, selectors) => rows.map(row => {
@@ -54,11 +99,17 @@ _SNAPSHOT = r"""
         const field = probe(selector);
         const model = field && window.angular?.element(field)?.controller('ngModel');
         values[key] = read(selector, indices[key]);
+        if (key === 'service' && field?.selectedOptions[0]?.textContent.trim() === 'Not Allowed') {
+            values[key] = 'Not Allowed';
+        }
+        const view = model?.$viewValue;
         if (field && !field.disabled &&
             (model?.$invalid || model?.$pending || !field.validity.valid ||
+             (typeof view === 'string' && view.trim() !== field.value.trim()) ||
              (key === 'hsn' && model && !model.$modelValue))) invalid.push(key);
     }
     return {values, invalid, added: Boolean(probe('input[id="vPartDesc"]')),
+            itemSelect: Boolean(probe(selectors.item)),
             part: read('input[id="vPartNumber"]', 2), columns: row.cells.length};
 })
 """
@@ -119,19 +170,41 @@ def _word(value):
     return " ".join(value.casefold().split())
 
 
+def _same_field(key, shown, expected):
+    if key in _NUMBER_FIELDS:
+        return parse_amount(shown) == parse_amount(expected)
+    if key == "service" and expected == "Allow":
+        return _word(shown) in {"allow", "allowed"}
+    return _word(shown) == _word(expected)
+
+
+def dealer_not_allowed(state):
+    return _word(state["values"]["service"]) == "not allowed" and "service" not in state["invalid"]
+
+
+def dealer_row_problems(state):
+    if state is None:
+        return ["check the missing row"]
+    problems = []
+    if not dealer_not_allowed(state):
+        problems.append("set Allowed Service type to Not Allowed")
+    if state["itemSelect"] and (
+        _word(state["values"]["item"]) not in _MARUTI_ITEM_OPTIONS or "item" in state["invalid"]
+    ):
+        problems.append("select a valid Item")
+    # New India validates this value on every row when saving a Maruti draft.
+    if not re.fullmatch(r"[0-9]{1,2}(?:\.[0-9]{1,2})?", state["values"]["depreciation"]):
+        problems.append("enter Depreciation from 0 to 99.99 with up to two decimal places")
+    return problems
+
+
 def row_problems(state, item):
     if state is None:
         return ["the row is missing"]
     errors = ["Part No. should be blank"] if state["part"] else []
     for key, expected in item.values().items():
         shown = state["values"][key]
-        if key in _NUMBER_FIELDS:
-            valid = parse_amount(shown) == parse_amount(expected)
-        elif key == "service":
-            valid = _word(shown) in {"allow", "allowed"} if expected == "Allow" else _word(shown) == _word(expected)
-        else:
-            valid = _word(shown) == _word(expected)
-        if not valid:
+        if not _same_field(key, shown, expected):
             errors.append(f"{_FIELD_LABELS[key]} needs {expected}" + (f" (shows {shown})" if shown else ""))
         elif key in state["invalid"]:
             errors.append(f"New India did not accept {_FIELD_LABELS[key]} ({shown})")
@@ -170,35 +243,35 @@ async def row_snapshot(rows):
     return await rows.evaluate_all(_SNAPSHOT, _FIELDS)
 
 
-async def _fill_item(row, item, stop_cb):
-    for key, value in item.values().items():
+async def mark_dealer_group(rows, expected):
+    await rows.evaluate_all(_EDIT_DEALERS, expected)
+
+
+async def fill_item(row, item, stop_cb):
+    """Enter one row and return whether an HSN lookup was started."""
+    values = item.values()
+    ordinary = [(key, value) for key, value in values.items() if key not in {"hsn", "gst"}]
+    if stop_cb():
+        return False
+    try:
+        await row.evaluate(_EDIT_ITEM_FIELDS, [(_FIELDS[key], value) for key, value in ordinary], timeout=1500)
+        state = (await row_snapshot(row))[0]
+        ordinary = [
+            (key, value) for key, value in ordinary
+            if key in state["invalid"] or not _same_field(key, state["values"][key], value)
+        ]
+    except Exception:
+        pass  # Retry with Playwright if the row was rebuilt during fast entry.
+
+    for key, value in ordinary:
         if stop_cb():
-            return
+            return False
         field = row.locator(f"{_FIELDS[key]}:visible")
-        if await field.count() != 1 or not await field.is_enabled():
-            continue
         try:
+            if await field.count() != 1 or not await field.is_enabled():
+                continue
             if key in {"item", "service"}:
                 await field.select_option(value=value, timeout=1800)
-            elif key == "hsn":
-                await field.fill(value, timeout=1800)
-                options = row.locator('ul[typeahead-popup] li a:visible').filter(
-                    has_text=re.compile(rf"(?<!\w){re.escape(value)}(?!\w)"),
-                )
-
-                async def one_match():
-                    return await options.count() == 1
-
-                if await wait_until_ready(one_match, seconds=2.5, stopped=stop_cb):
-                    await options.click(timeout=1800)
-                    gst = row.locator(f'{_FIELDS["gst"]}:visible')
-
-                    async def gst_loaded():
-                        return await gst.count() == 1 and bool((await gst.input_value(timeout=400)).strip())
-
-                    await wait_until_ready(gst_loaded, seconds=2.5, stopped=stop_cb)
-                else:
-                    await field.blur(timeout=1000)
             elif await field.is_editable():
                 await field.fill(value, timeout=1800)
                 await field.blur(timeout=1000)
@@ -206,9 +279,33 @@ async def _fill_item(row, item, stop_cb):
             # The checkpoint reports the exact field if Angular did not retain it.
             continue
 
+    if stop_cb():
+        return False
+    field = row.locator(f'{_FIELDS["hsn"]}:visible')
+    if await field.count() != 1 or not await field.is_enabled():
+        return False
+    try:
+        await field.fill(item.hsn, timeout=1800)
+        options = row.locator('ul[typeahead-popup] li a:visible').filter(
+            has_text=re.compile(rf"(?<!\w){re.escape(item.hsn)}(?!\w)"),
+        )
+        # A strict locator waits for the suggestion and rejects ambiguous matches.
+        await options.wait_for(state="visible", timeout=2500)
+        if stop_cb():
+            return False
+        await options.click(timeout=1800)
+    except Exception:
+        return False
+    # Some forms expose GST as an editable box. Keep the normal portal lookup for
+    # read-only GST and verify its eventual value at the draft checkpoint.
+    if not stop_cb():
+        with suppress(Exception):
+            await row.evaluate(_EDIT_ITEM_FIELDS, [(_FIELDS["gst"], values["gst"])], timeout=1000)
+    return True
 
-async def add_and_fill_row(body, rows, index, item, stop_cb):
-    """Click once and wait for a single new editable row before entering anything."""
+
+async def add_row(body, rows, index, stop_cb):
+    """Click once and wait for a single new editable row."""
     add = body.locator(_ADD_ROW).filter(has_text=re.compile(r"^\s*Add Row\s*$", re.I))
     if await add.count() != 1:
         return False
@@ -223,11 +320,4 @@ async def add_and_fill_row(body, rows, index, item, stop_cb):
             return False
         return await rows.nth(index).locator(f'{_FIELDS["description"]}:visible').count() == 1
 
-    if not await wait_until_ready(added_one, seconds=4, stopped=stop_cb):
-        return False
-    await _fill_item(rows.nth(index), item, stop_cb)
-    return True
-
-
-async def fill_blank_row(rows, index, item, stop_cb):
-    await _fill_item(rows.nth(index), item, stop_cb)
+    return await wait_until_ready(added_one, seconds=4, stopped=stop_cb)

@@ -1,12 +1,85 @@
 import asyncio
-from playwright.async_api import Page
+from playwright.async_api import Error as PlaywrightError, Page
 from app.data.data_model import ClaimData
 from app.portals.newindia.automation.ui_utils import (
     fill_input_with_delay, select_dropdown_with_delay,
-    open_additional_section, record_additional_issue,
+    additional_section, open_additional_section, record_additional_issue,
 )
 from app.automation.automation_logger import AutomationLogger, _ts
 from app.utils import load_automation_defaults
+
+async def _fill_ifsc(page, value, log, delay_ms, source):
+    await fill_input_with_delay(page, 'input[name="IFSC Code"]', value, "IFSC Code", log, delay_ms, source=source)
+    find_btn = page.locator('button[data-ng-click="surveyorWorklistSurvey.getIFSCDetails_nt()"]:visible')
+    if await find_btn.count() == 1:
+        await find_btn.click(timeout=5000)
+        await asyncio.sleep(1.5)  # Allow the bank lookup to populate the read-only fields.
+        if isinstance(log, AutomationLogger):
+            log.success("Bank details fetched via 'Find' button.")
+        else:
+            log(f"[{_ts()}]   ✅ Clicked 'Find' to fetch bank details.")
+
+
+async def fill_ready_cheque_details(page, data, log, stop_cb, field_delay_ms):
+    """Use a completed background result to fill bank fields still blank at Next."""
+    event = getattr(data, "_deferred_cheque_ocr_event", None)
+    if stop_cb() or event is None or not event.is_set():
+        return
+
+    heading = additional_section(page, "NEFT Details")
+    if await heading.count() != 1:
+        return
+    panel = heading.locator("xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' panel ')][1]")
+    account = str(data.account_number or "").strip()
+    fields = (
+        ("IFSC Code", str(data.ifsc_code or "").strip()),
+        ("Account Number", account),
+        ("Re-Enter Account Number", account),
+    )
+    pending = []
+    for name, value in fields:
+        if not value:
+            continue
+        selector = f'input[name="{name}"]'
+        field = panel.locator(selector)
+        if await field.count() != 1:
+            continue
+        try:
+            existing = (await field.input_value(timeout=1000)).strip()
+            # A manual edit may indicate a different bank account. Avoid mixing the two.
+            if existing and existing.casefold() != value.casefold():
+                return
+            if not existing and await field.is_editable(timeout=1000):
+                pending.append((name, selector, value))
+        except PlaywrightError:
+            return
+
+    if not pending or not await open_additional_section(page, "NEFT Details", log, optional=True):
+        return
+
+    previous_section = getattr(log, "_section", None)
+    if isinstance(log, AutomationLogger):
+        log._section = "NEFT Details"
+    try:
+        for name, selector, value in pending:
+            if stop_cb():
+                return
+            field = panel.locator(f"{selector}:visible")
+            try:
+                if await field.count() != 1 or not await field.is_editable(timeout=1000):
+                    continue
+                if (await field.input_value(timeout=1000)).strip():
+                    continue
+                if name == "IFSC Code":
+                    await _fill_ifsc(page, value, log, field_delay_ms, "Cheque OCR")
+                else:
+                    await fill_input_with_delay(page, selector, value, name, log, field_delay_ms, source="Cheque OCR")
+            except PlaywrightError:
+                record_additional_issue(log, name)
+    finally:
+        if isinstance(log, AutomationLogger):
+            log._section = previous_section
+
 
 def _find_cheque_document(data: ClaimData) -> str:
     """Scans claim and upload doc dicts to find the cheque image/PDF."""
@@ -172,16 +245,7 @@ async def _fill_neft_details_inner(page: Page, data: ClaimData, log, stop_cb, fi
     # 3. IFSC Code
     try:
         if ifsc:
-            await fill_input_with_delay(page, 'input[name="IFSC Code"]', ifsc, "IFSC Code", log, field_delay_ms, source=ifsc_source)
-            # Click the 'Find' button to trigger bank details fetch using its specific ng-click action
-            find_btn = page.locator('button[data-ng-click="surveyorWorklistSurvey.getIFSCDetails_nt()"]')
-            if await find_btn.count() > 0:
-                await find_btn.click()
-                await asyncio.sleep(1.5)  # Wait for AJAX to populate readonly fields
-                if isinstance(log, AutomationLogger):
-                    log.success("Bank details fetched via 'Find' button.")
-                else:
-                    log(f"[{_ts()}]   ✅ Clicked 'Find' to fetch bank details.")
+            await _fill_ifsc(page, ifsc, log, field_delay_ms, ifsc_source)
         else:
             if isinstance(log, AutomationLogger):
                 log.field_skipped("IFSC Code", reason="Missing from both Cheque and Excel")
@@ -214,12 +278,12 @@ async def _fill_neft_details_inner(page: Page, data: ClaimData, log, stop_cb, fi
     # 6. Re-Enter Account Number
     try:
         if acc_no:
-            await fill_input_with_delay(page, 'input[name="Re-Enter Account Number"]', acc_no, "Account Re-entry", log, field_delay_ms, source="Calculated")
+            await fill_input_with_delay(page, 'input[name="Re-Enter Account Number"]', acc_no, "Re-Enter Account Number", log, field_delay_ms, source="Calculated")
         else:
             if isinstance(log, AutomationLogger):
-                log.field_skipped("Account Re-entry", reason="Missing account number")
+                log.field_skipped("Re-Enter Account Number", reason="Missing account number")
     except Exception:
-        record_additional_issue(log, "Re-enter Account Number")
+        record_additional_issue(log, "Re-Enter Account Number")
 
     if stop_cb(): return False
 

@@ -73,11 +73,14 @@ _PORTAL_TAGS = {
 }
 
 _UI_DETAIL_MARKER = "\u200c"
+_COMPACT_PORTALS = {"newindia", "oic", "uiic"}
 
 _NEWINDIA_STEP_ICONS = (
     ("login", "🔑"),
     ("navigate", "🧭"),
     ("worklist", "🧭"),
+    ("claim search", "🔍"),
+    ("basic details", "🚗"),
     ("quick update", "⚡"),
     ("photo", "📸"),
     ("registration", "🚗"),
@@ -88,6 +91,9 @@ _NEWINDIA_STEP_ICONS = (
     ("bank", "🏦"),
     ("work approval", "📋"),
     ("approval", "📋"),
+    ("interim", "📋"),
+    ("claim documents", "📎"),
+    ("loss", "💰"),
     ("assessment", "📊"),
     ("survey fee", "🧾"),
     ("fee bill", "🧾"),
@@ -99,12 +105,18 @@ _NI_VISIBLE_INFO_PATTERNS = (
     "resumed automation",
     "final declarations are checked",
     "browser left open",
+    "logged into",
+    "signed in",
+    "assessment tab is open",
+    "documents uploaded",
 )
 _NI_VISIBLE_SUCCESS_PATTERNS = (
-    "logged into new india",
+    "logged into",
+    "signed in",
     "portal confirmed",
     "survey fee bill saved successfully",
     "imported into the assessment rows",
+    "documents uploaded",
 )
 _NI_VISIBLE_WAIT_PATTERNS = (
     "captcha",
@@ -114,12 +126,15 @@ _NI_VISIBLE_WAIT_PATTERNS = (
 )
 
 
-def _newindia_step_icon(name: str, fallback: str = "📝") -> str:
+def _step_icon(name: str, fallback: str = "📝") -> str:
     lower = str(name or "").lower()
     for keyword, icon in _NEWINDIA_STEP_ICONS:
         if keyword in lower:
             return icon
     return fallback
+
+
+_newindia_step_icon = _step_icon
 
 
 def _ts() -> str:
@@ -229,8 +244,8 @@ class AutomationLogger:
                         f"Failed to create primary log dir, fell back to system temp path: {e}"
                     )
 
-            # For New India, also keep a clean human-readable .txt log beside the .json file.
-            if portal_id.lower() == "newindia" and self._json_log_file:
+            # For all portals using compact mode, keep a clean human-readable .txt log beside the .json file.
+            if portal_id.lower() in _COMPACT_PORTALS and self._json_log_file:
                 base, _ = os.path.splitext(self._json_log_file)
                 self._readable_log_file = f"{base}.txt"
                 try:
@@ -241,7 +256,7 @@ class AutomationLogger:
                     with open(self._readable_log_file, "a", encoding="utf-8") as f:
                         if needs_header:
                             f.write(
-                                f"NEW INDIA AUTOMATION LOG\n"
+                                f"{self._portal_tag} AUTOMATION LOG\n"
                                 f"Claim No : {claim_no}\n"
                                 f"Started  : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
                                 f"{'-' * 64}\n"
@@ -249,7 +264,7 @@ class AutomationLogger:
                 except Exception as e:
                     self._readable_log_file = None
                     self._py_logger.warning(
-                        f"Failed to initialize readable New India log file: {e}"
+                        f"Failed to initialize readable {self._portal_tag} log file: {e}"
                     )
             else:
                 self._readable_log_file = None
@@ -304,19 +319,29 @@ class AutomationLogger:
         except Exception as e:
             self._py_logger.warning(f"Failed to write readable log line: {e}")
 
+    def _is_compact(self) -> bool:
+        return str(self._portal_id or "").lower() in _COMPACT_PORTALS
+
+    def _sanitize_operator(
+        self, text: str, fallback: str = "Could not complete this step. Check Chrome."
+    ) -> tuple[str, Optional[str]]:
+        if not self._is_compact():
+            return text, None
+        from app.automation.run_diagnostics import portal_display_name, portal_operator_reason
+
+        raw = " ".join(str(text or "").split()).strip()
+        clean = portal_operator_reason(
+            raw, fallback, portal_name=portal_display_name(self._portal_id)
+        )
+        return clean, (raw if raw and clean != raw else None)
+
     def _sanitize_newindia(
         self, text: str, fallback: str = "Could not complete this step. Check Chrome."
     ) -> tuple[str, Optional[str]]:
-        if self._portal_id != "newindia":
-            return text, None
-        from app.portals.newindia.automation.logging_utils import newindia_operator_reason
-
-        raw = " ".join(str(text or "").split()).strip()
-        clean = newindia_operator_reason(raw, fallback)
-        return clean, (raw if raw and clean != raw else None)
+        return self._sanitize_operator(text, fallback)
 
     def _record_issue(self, message: str):
-        if self._portal_id != "newindia":
+        if not self._is_compact():
             return
         item = (self.section, message)
         with self._lock:
@@ -393,7 +418,7 @@ class AutomationLogger:
             try:
                 suffix = (
                     f"{self.section}{_UI_DETAIL_MARKER}"
-                    if (ui_detail and self._portal_id == "newindia")
+                    if (ui_detail and self._is_compact())
                     else self.section
                 )
                 self._log_cb(f"{line} \u200b{suffix}")
@@ -430,7 +455,7 @@ class AutomationLogger:
         with self._lock:
             is_detail = (
                 (True if ui_detail is None else ui_detail)
-                if self._portal_id == "newindia"
+                if self._is_compact()
                 else False
             )
             suffix = f"{self.section}{_UI_DETAIL_MARKER}" if is_detail else self.section
@@ -462,22 +487,22 @@ class AutomationLogger:
     # ── Standard Levels ───────────────────────────────────────────────────────
 
     def info(self, message: str, indent: Optional[int] = None, *, ui_detail: Optional[bool] = None):
-        if self._portal_id == "newindia" and "app.data.printable_excel_service:" in str(message):
+        if self._is_compact() and "app.data.printable_excel_service:" in str(message):
             self._py_logger.debug(f"[{self._portal_tag}][{self.section}] {message}")
             return
-        if ui_detail is None and self._portal_id == "newindia":
+        if ui_detail is None and self._is_compact():
             lower = str(message or "").lower()
             ui_detail = not any(p in lower for p in _NI_VISIBLE_INFO_PATTERNS)
         self._emit(LogLevel.INFO, message, indent=indent, ui_detail=bool(ui_detail))
 
     def success(self, message: str, indent: Optional[int] = None, *, ui_detail: Optional[bool] = None):
-        if ui_detail is None and self._portal_id == "newindia":
+        if ui_detail is None and self._is_compact():
             lower = str(message or "").lower()
             ui_detail = not any(p in lower for p in _NI_VISIBLE_SUCCESS_PATTERNS)
         self._emit(LogLevel.SUCCESS, message, indent=indent, ui_detail=bool(ui_detail))
 
     def warning(self, message: str, indent: Optional[int] = None):
-        clean_msg, raw_err = self._sanitize_newindia(
+        clean_msg, raw_err = self._sanitize_operator(
             message, "A minor issue occurred on this step. Check Chrome."
         )
         extra = {"raw_error": raw_err} if raw_err else None
@@ -492,7 +517,7 @@ class AutomationLogger:
 
     def error(self, context: str, detail: str = "", indent: Optional[int] = None):
         raw_msg = f"{context}: {detail}" if detail else context
-        clean_msg, raw_err = self._sanitize_newindia(
+        clean_msg, raw_err = self._sanitize_operator(
             raw_msg, "Could not complete this step. Check Chrome."
         )
         extra = {"raw_error": raw_err} if raw_err else None
@@ -510,8 +535,8 @@ class AutomationLogger:
         # Clean robust traceback extraction directly from exception object
         tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
         detail = f"{type(exc).__name__}: {exc}"
-        if self._portal_id == "newindia":
-            friendly, _ = self._sanitize_newindia(
+        if self._is_compact():
+            friendly, _ = self._sanitize_operator(
                 str(exc) or detail, "An unexpected problem stopped this step. Check Chrome."
             )
             msg = f"{context} — {friendly}"
@@ -538,7 +563,7 @@ class AutomationLogger:
             message,
             indent=indent,
             py_level=logging.DEBUG,
-            ui_detail=(self._portal_id == "newindia"),
+            ui_detail=self._is_compact(),
         )
 
     def step(
@@ -549,31 +574,31 @@ class AutomationLogger:
             LogLevel.INFO,
             f"Step {current}/{total}: {message}",
             indent=indent,
-            ui_detail=(self._portal_id == "newindia"),
+            ui_detail=self._is_compact(),
         )
 
     # ── Action-Specific Levels ────────────────────────────────────────────────
 
     def navigation(self, message: str, indent: Optional[int] = None):
-        self._emit(LogLevel.NAVIGATION, message, indent=indent, ui_detail=(self._portal_id == "newindia"))
+        self._emit(LogLevel.NAVIGATION, message, indent=indent, ui_detail=self._is_compact())
 
     def extraction(self, message: str, indent: Optional[int] = None):
-        self._emit(LogLevel.EXTRACTION, message, indent=indent, ui_detail=(self._portal_id == "newindia"))
+        self._emit(LogLevel.EXTRACTION, message, indent=indent, ui_detail=self._is_compact())
 
     def upload(self, message: str, indent: Optional[int] = None):
-        self._emit(LogLevel.UPLOAD, message, indent=indent, ui_detail=(self._portal_id == "newindia"))
+        self._emit(LogLevel.UPLOAD, message, indent=indent, ui_detail=self._is_compact())
 
     def validation(self, message: str, indent: Optional[int] = None):
-        self._emit(LogLevel.VALIDATION, message, indent=indent, ui_detail=(self._portal_id == "newindia"))
+        self._emit(LogLevel.VALIDATION, message, indent=indent, ui_detail=self._is_compact())
 
     def click(self, message: str, indent: Optional[int] = None):
-        self._emit(LogLevel.CLICK, message, indent=indent, ui_detail=(self._portal_id == "newindia"))
+        self._emit(LogLevel.CLICK, message, indent=indent, ui_detail=self._is_compact())
 
     def skip(self, message: str, indent: Optional[int] = None):
-        self._emit(LogLevel.SKIP, message, indent=indent, ui_detail=(self._portal_id == "newindia"))
+        self._emit(LogLevel.SKIP, message, indent=indent, ui_detail=self._is_compact())
 
     def popup(self, message: str, indent: Optional[int] = None):
-        self._emit(LogLevel.POPUP, message, indent=indent, ui_detail=(self._portal_id == "newindia"))
+        self._emit(LogLevel.POPUP, message, indent=indent, ui_detail=self._is_compact())
 
     # ── Wait / Retry ──────────────────────────────────────────────────────────
 
@@ -584,7 +609,7 @@ class AutomationLogger:
         if clean_what.lower().startswith("waiting for "):
             clean_what = clean_what[12:].strip()
         msg = f"Waiting for {clean_what}..." + (f" ({detail})" if detail else "")
-        if ui_detail is None and self._portal_id == "newindia":
+        if ui_detail is None and self._is_compact():
             lower = clean_what.lower()
             ui_detail = not any(p in lower for p in _NI_VISIBLE_WAIT_PATTERNS)
         self._emit(LogLevel.WAIT, msg, indent=indent, ui_detail=bool(ui_detail))
@@ -596,7 +621,7 @@ class AutomationLogger:
             LogLevel.RETRY,
             f"{what} — retry {attempt}/{max_attempts}",
             indent=indent,
-            ui_detail=(self._portal_id == "newindia"),
+            ui_detail=self._is_compact(),
         )
 
     # ── Field-Level Actions ───────────────────────────────────────────────────
@@ -611,9 +636,11 @@ class AutomationLogger:
         """Log a successfully filled form field."""
         if self._portal_id == "oic":
             display_val = str(value)
+            with self._lock:
+                self._fields_filled += 1
             msg = f"[{self._portal_tag}][{self._section}] — Filling {label}\n    • Source: {source}\n    • Value:  {display_val}"
             extra = {"field": label, "value": value, "source": source}
-            self._emit(LogLevel.SUCCESS, msg, indent=indent, extra=extra)
+            self._emit(LogLevel.SUCCESS, msg, indent=indent, extra=extra, ui_detail=True)
         elif self._portal_id == "newindia":
             display_val = str(value)
             shown = display_val if len(display_val) <= 80 else display_val[:77] + "..."
@@ -629,9 +656,11 @@ class AutomationLogger:
             self._emit(LogLevel.SUCCESS, msg, indent=indent, extra=extra, ui_detail=True)
         elif self._portal_id == "uiic":
             display_val = str(value)
+            with self._lock:
+                self._fields_filled += 1
             msg = f"[{self._portal_tag}][Field Mapping]\nUI Field:    {label}\nMapped From: {source}\nValue:       {display_val}"
             extra = {"field": label, "value": value, "source": source}
-            self._emit(LogLevel.SUCCESS, msg, indent=indent, extra=extra)
+            self._emit(LogLevel.SUCCESS, msg, indent=indent, extra=extra, ui_detail=True)
         else:
             display_val = str(value)[:60]
             self._emit(
@@ -648,9 +677,11 @@ class AutomationLogger:
         """Log a successfully selected dropdown value."""
         if self._portal_id == "oic":
             display_val = str(value)
+            with self._lock:
+                self._fields_filled += 1
             msg = f"[{self._portal_tag}][{self._section}] — Selecting {label}\n    • Source: {source}\n    • Value:  {display_val}"
             extra = {"field": label, "value": value, "source": source}
-            self._emit(LogLevel.SUCCESS, msg, indent=indent, extra=extra)
+            self._emit(LogLevel.SUCCESS, msg, indent=indent, extra=extra, ui_detail=True)
         elif self._portal_id == "newindia":
             display_val = str(value)
             shown = display_val if len(display_val) <= 80 else display_val[:77] + "..."
@@ -666,9 +697,11 @@ class AutomationLogger:
             self._emit(LogLevel.SUCCESS, msg, indent=indent, extra=extra, ui_detail=True)
         elif self._portal_id == "uiic":
             display_val = str(value)
+            with self._lock:
+                self._fields_filled += 1
             msg = f"[{self._portal_tag}][Field Mapping]\nUI Field:    {label}\nMapped From: {source}\nValue:       {display_val}"
             extra = {"field": label, "value": value, "source": source}
-            self._emit(LogLevel.SUCCESS, msg, indent=indent, extra=extra)
+            self._emit(LogLevel.SUCCESS, msg, indent=indent, extra=extra, ui_detail=True)
         else:
             self._emit(
                 LogLevel.SUCCESS, f"[{label}] selected → '{value}'", indent=indent
@@ -682,9 +715,11 @@ class AutomationLogger:
     ):
         """Log a skipped field."""
         if self._portal_id == "oic":
+            with self._lock:
+                self._fields_skipped += 1
             msg = f"[{self._portal_tag}][{self._section}] — {label} skipped\n    • Reason: {reason}"
             extra = {"field": label, "reason": reason}
-            self._emit(LogLevel.SKIP, msg, indent=indent, extra=extra)
+            self._emit(LogLevel.SKIP, msg, indent=indent, extra=extra, ui_detail=True)
         elif self._portal_id == "newindia":
             skip_reason = (
                 "No value found in claim file"
@@ -697,9 +732,11 @@ class AutomationLogger:
             extra = {"field": label, "status": "Skipped", "reason": skip_reason}
             self._emit(LogLevel.SKIP, msg, indent=indent, extra=extra, ui_detail=True)
         elif self._portal_id == "uiic":
+            with self._lock:
+                self._fields_skipped += 1
             msg = f"[{self._portal_tag}][Field Mapping]\nUI Field: {label}\nStatus:   Skipped\nReason:   {reason}"
             extra = {"field": label, "status": "Skipped", "reason": reason}
-            self._emit(LogLevel.SKIP, msg, indent=indent, extra=extra)
+            self._emit(LogLevel.SKIP, msg, indent=indent, extra=extra, ui_detail=True)
         else:
             self._emit(LogLevel.SKIP, f"[{label}] — {reason}", indent=indent)
 
@@ -709,7 +746,10 @@ class AutomationLogger:
             from app.portals.oic.automation.recovery import operator_reason
 
             error = operator_reason(error, "App3 could not complete this field. Check Chrome.")
+            with self._lock:
+                self._fields_failed += 1
             msg = f"{label} failed. {error}"
+            self._record_issue(msg)
             extra = {"field": label, "error": error}
             self._emit(
                 LogLevel.WARNING,
@@ -719,7 +759,7 @@ class AutomationLogger:
                 extra=extra,
             )
         elif self._portal_id == "newindia":
-            clean_err, raw_err = self._sanitize_newindia(
+            clean_err, raw_err = self._sanitize_operator(
                 error, "App3 could not fill this field. Check Chrome."
             )
             with self._lock:
@@ -737,8 +777,16 @@ class AutomationLogger:
                 extra=extra,
             )
         elif self._portal_id == "uiic":
-            msg = f"[{self._portal_tag}][Field Mapping]\nUI Field: {label}\nStatus:   Failed\nReason:   {error}"
-            extra = {"field": label, "status": "Failed", "error": error}
+            clean_err, raw_err = self._sanitize_operator(
+                error, "App3 could not fill this field. Check Chrome."
+            )
+            with self._lock:
+                self._fields_failed += 1
+            msg = f"[{self._portal_tag}][Field Mapping]\nUI Field: {label}\nStatus:   Failed\nReason:   {clean_err}"
+            self._record_issue(f"Could not fill '{label}' — {clean_err}")
+            extra = {"field": label, "status": "Failed", "error": clean_err}
+            if raw_err:
+                extra["raw_error"] = raw_err
             self._emit(
                 LogLevel.WARNING,
                 msg,
@@ -767,6 +815,7 @@ class AutomationLogger:
             msg = f"[{self._portal_tag}][{self._section}] — {field} validation failed\n    • Value:  {value}\n    • Reason: {reason}"
             if retry:
                 msg += f"\n    • Retry:  {retry}"
+            self._record_issue(f"Validation failed for '{field}' — {reason}")
             extra = {"field": field, "value": value, "reason": reason, "retry": retry}
             self._emit(
                 LogLevel.WARNING,
@@ -776,7 +825,7 @@ class AutomationLogger:
                 extra=extra,
             )
         elif self._portal_id == "newindia":
-            clean_reason, raw_err = self._sanitize_newindia(
+            clean_reason, raw_err = self._sanitize_operator(
                 reason, "New India rejected this value. Check Chrome."
             )
             msg = f"Validation failed for '{field}' — {clean_reason}"
@@ -800,8 +849,14 @@ class AutomationLogger:
                 extra=extra,
             )
         elif self._portal_id == "uiic":
-            msg = f"[{self._portal_tag}][Validation]\n{field} Failed\nReason: {reason}"
-            extra = {"field": field, "value": value, "reason": reason, "retry": retry}
+            clean_reason, raw_err = self._sanitize_operator(
+                reason, "UIIC rejected this value. Check Chrome."
+            )
+            msg = f"[{self._portal_tag}][Validation]\n{field} Failed\nReason: {clean_reason}"
+            self._record_issue(f"Validation failed for '{field}' — {clean_reason}")
+            extra = {"field": field, "value": value, "reason": clean_reason, "retry": retry}
+            if raw_err:
+                extra["raw_error"] = raw_err
             self._emit(
                 LogLevel.WARNING,
                 msg,
@@ -831,7 +886,7 @@ class AutomationLogger:
 
     def section_done(self, name: str, show_duration: bool = True):
         """Log the completion of a section."""
-        is_detail = self._portal_id == "newindia"
+        is_detail = self._is_compact()
         if show_duration and self._start_time:
             elapsed = time.time() - self._start_time
             self.success(f"{name} completed ({elapsed:.1f}s)", ui_detail=is_detail)
@@ -849,7 +904,7 @@ class AutomationLogger:
         self, claim_no: str, claim_type: str, survey_date: str, loss_amount: str
     ):
         """Display a prominent startup banner with claim details."""
-        if self._portal_id == "newindia":
+        if self._is_compact():
             with self._lock:
                 self._step_baseline = (
                     self._fields_filled,
@@ -875,7 +930,7 @@ class AutomationLogger:
 
     def phase_banner(self, phase_num: int, total: int, name: str, icon: str = "📝"):
         """Display a prominent phase banner in the engine log."""
-        if self._portal_id == "newindia":
+        if self._is_compact():
             with self._lock:
                 self._step_baseline = (
                     self._fields_filled,
@@ -884,7 +939,7 @@ class AutomationLogger:
                     self._uploads_ok,
                     self._uploads_failed,
                 )
-            step_icon = _newindia_step_icon(name, fallback=icon)
+            step_icon = _step_icon(name, fallback=icon)
             self.raw("")
             self.raw(f"{'━' * 56}")
             self.raw(f"  {step_icon} STEP {phase_num}/{total} — {name}")
@@ -916,7 +971,7 @@ class AutomationLogger:
                 "filename": filename,
                 "status": "In Progress",
             }
-            self._emit(LogLevel.UPLOAD, msg, indent=indent, extra=extra)
+            self._emit(LogLevel.UPLOAD, msg, indent=indent, extra=extra, ui_detail=True)
         elif self._portal_id == "newindia":
             msg = f"Uploading '{doc_type}' ({filename})..."
             extra = {
@@ -932,7 +987,7 @@ class AutomationLogger:
                 "filename": filename,
                 "status": "In Progress",
             }
-            self._emit(LogLevel.UPLOAD, msg, indent=indent, extra=extra)
+            self._emit(LogLevel.UPLOAD, msg, indent=indent, extra=extra, ui_detail=True)
         else:
             self._emit(
                 LogLevel.UPLOAD, f"Uploading [{doc_type}] ← {filename}", indent=indent
@@ -942,9 +997,11 @@ class AutomationLogger:
         self, doc_type: str, filename: str, indent: Optional[int] = None
     ):
         if self._portal_id == "oic":
+            with self._lock:
+                self._uploads_ok += 1
             msg = f"[{self._portal_tag}][Document Upload] — Uploading {doc_type}\n    • File:   {filename}\n    • Status: Success"
             extra = {"doc_type": doc_type, "filename": filename, "status": "Success"}
-            self._emit(LogLevel.UPLOAD_OK, msg, indent=indent, extra=extra)
+            self._emit(LogLevel.UPLOAD_OK, msg, indent=indent, extra=extra, ui_detail=True)
         elif self._portal_id == "newindia":
             with self._lock:
                 self._uploads_ok += 1
@@ -952,9 +1009,11 @@ class AutomationLogger:
             extra = {"doc_type": doc_type, "filename": filename, "status": "Success"}
             self._emit(LogLevel.UPLOAD_OK, msg, indent=indent, extra=extra, ui_detail=True)
         elif self._portal_id == "uiic":
+            with self._lock:
+                self._uploads_ok += 1
             msg = f"[{self._portal_tag}][Document Upload]\nUpload Successful"
             extra = {"doc_type": doc_type, "filename": filename, "status": "Success"}
-            self._emit(LogLevel.UPLOAD_OK, msg, indent=indent, extra=extra)
+            self._emit(LogLevel.UPLOAD_OK, msg, indent=indent, extra=extra, ui_detail=True)
         else:
             self._emit(
                 LogLevel.UPLOAD_OK,
@@ -967,7 +1026,10 @@ class AutomationLogger:
             from app.portals.oic.automation.recovery import operator_reason
 
             reason = operator_reason(reason, "OIC did not confirm the attachment.")
+            with self._lock:
+                self._uploads_failed += 1
             msg = f"[{self._portal_tag}][Document Upload] — Uploading {doc_type}\n    • File:   N/A\n    • Status: Failed\n    • Reason: {reason}"
+            self._record_issue(f"Upload failed for '{doc_type}' — {reason}")
             extra = {"doc_type": doc_type, "status": "Failed", "reason": reason}
             self._emit(
                 LogLevel.WARNING,
@@ -977,7 +1039,7 @@ class AutomationLogger:
                 extra=extra,
             )
         elif self._portal_id == "newindia":
-            clean_reason, raw_err = self._sanitize_newindia(
+            clean_reason, raw_err = self._sanitize_operator(
                 reason, "New India did not accept this document."
             )
             with self._lock:
@@ -1000,13 +1062,21 @@ class AutomationLogger:
                 extra=extra,
             )
         elif self._portal_id == "uiic":
-            msg = f"[{self._portal_tag}][Document Upload]\nUpload Failed\nDocument: {doc_type}\nReason:   {reason}\nRetry:    Exhausted"
+            clean_reason, raw_err = self._sanitize_operator(
+                reason, "UIIC did not accept this document."
+            )
+            with self._lock:
+                self._uploads_failed += 1
+            msg = f"[{self._portal_tag}][Document Upload]\nUpload Failed\nDocument: {doc_type}\nReason:   {clean_reason}\nRetry:    Exhausted"
+            self._record_issue(f"Upload failed for '{doc_type}' — {clean_reason}")
             extra = {
                 "doc_type": doc_type,
                 "status": "Failed",
-                "reason": reason,
+                "reason": clean_reason,
                 "retry": "Exhausted",
             }
+            if raw_err:
+                extra["raw_error"] = raw_err
             self._emit(
                 LogLevel.WARNING,
                 msg,
@@ -1033,7 +1103,7 @@ class AutomationLogger:
             LogLevel.SUCCESS,
             f"Merged PDF: {filename} ({size_mb:.1f}MB, {file_count} files)",
             indent=indent,
-            ui_detail=(self._portal_id == "newindia"),
+            ui_detail=self._is_compact(),
         )
 
     # ── Accordion/Panel Helpers ───────────────────────────────────────────────
@@ -1055,7 +1125,7 @@ class AutomationLogger:
             LogLevel.EXTRACTION,
             f"Extracted [{field}] → '{display_val}'",
             indent=indent,
-            ui_detail=(self._portal_id == "newindia"),
+            ui_detail=self._is_compact(),
         )
 
     def extraction_failed(
@@ -1064,7 +1134,7 @@ class AutomationLogger:
         msg = f"Could not extract [{field}]" + (f": {reason}" if reason else "")
         self._emit(LogLevel.WARNING, msg, indent=indent, py_level=logging.WARNING)
 
-    # ── New India Specialized Helpers ─────────────────────────────────────────
+    # ── Portal Extraction / Field Detail Helpers ──────────────────────────────
 
     def excel_extracted(
         self,
@@ -1082,12 +1152,13 @@ class AutomationLogger:
         elif self._portal_id == "uiic":
             msg = f"[{self._portal_tag}][Excel Extraction]\nField: {field}\nValue: {value}\nSheet: {sheet}\nCell:  {cell}"
             extra = {"field": field, "value": value, "sheet": sheet, "cell": cell}
-            self._emit(LogLevel.EXTRACTION, msg, indent=indent, extra=extra)
+            self._emit(LogLevel.EXTRACTION, msg, indent=indent, extra=extra, ui_detail=True)
         else:
             self._emit(
                 LogLevel.EXTRACTION,
                 f"Extracted [{field}] from Cell {cell} → '{value}'",
                 indent=indent,
+                ui_detail=self._is_compact(),
             )
 
     def ocr_processed(
@@ -1107,12 +1178,13 @@ class AutomationLogger:
                 lines.append(f"  • {k} Extracted: {v}")
             msg = "\n".join(lines)
             extra = {"document": doc_name, "extracted_fields": fields}
-            self._emit(LogLevel.EXTRACTION, msg, indent=indent, extra=extra)
+            self._emit(LogLevel.EXTRACTION, msg, indent=indent, extra=extra, ui_detail=True)
         else:
             self._emit(
                 LogLevel.EXTRACTION,
                 f"OCR complete for [{doc_name}]: {fields}",
                 indent=indent,
+                ui_detail=self._is_compact(),
             )
 
     def ocr_incomplete(
@@ -1173,12 +1245,13 @@ class AutomationLogger:
                 "source": source,
                 "status": status,
             }
-            self._emit(LogLevel.INFO, msg, indent=indent, extra=extra)
+            self._emit(LogLevel.INFO, msg, indent=indent, extra=extra, ui_detail=True)
         else:
             self._emit(
                 LogLevel.INFO,
                 f"Mapped [{doc_type}] → '{matched_file}' ({status})",
                 indent=indent,
+                ui_detail=self._is_compact(),
             )
 
     def field_mapped(
@@ -1192,12 +1265,13 @@ class AutomationLogger:
         elif self._portal_id == "uiic":
             msg = f"[{self._portal_tag}][Field Mapping]\nUI Field:     {ui_field}\nMapped From:  {source_field}\nValue:        {value}"
             extra = {"ui_field": ui_field, "source_field": source_field, "value": value}
-            self._emit(LogLevel.INFO, msg, indent=indent, extra=extra)
+            self._emit(LogLevel.INFO, msg, indent=indent, extra=extra, ui_detail=True)
         else:
             self._emit(
                 LogLevel.INFO,
                 f"Field Mapping [{ui_field}] ← '{source_field}' ({value})",
                 indent=indent,
+                ui_detail=self._is_compact(),
             )
 
     def retry_failed(
@@ -1210,7 +1284,7 @@ class AutomationLogger:
     ):
         """Log a failed operation retry attempt."""
         if self._portal_id == "newindia":
-            clean_reason, raw_err = self._sanitize_newindia(
+            clean_reason, raw_err = self._sanitize_operator(
                 reason, "Retrying after a portal hiccup."
             )
             msg = f"Retrying '{operation}' ({attempt}/{max_attempts}) — {clean_reason}"
@@ -1224,14 +1298,19 @@ class AutomationLogger:
                 extra["raw_error"] = raw_err
             self._emit(LogLevel.RETRY, msg, indent=indent, extra=extra, ui_detail=True)
         elif self._portal_id == "uiic":
-            msg = f"[{self._portal_tag}][Retry]\n{operation} Failed\nAttempt: {attempt}/{max_attempts}\nReason:  {reason}"
+            clean_reason, raw_err = self._sanitize_operator(
+                reason, "Retrying after a portal hiccup."
+            )
+            msg = f"[{self._portal_tag}][Retry]\n{operation} Failed\nAttempt: {attempt}/{max_attempts}\nReason:  {clean_reason}"
             extra = {
                 "operation": operation,
                 "attempt": attempt,
                 "max_attempts": max_attempts,
-                "reason": reason,
+                "reason": clean_reason,
             }
-            self._emit(LogLevel.RETRY, msg, indent=indent, extra=extra)
+            if raw_err:
+                extra["raw_error"] = raw_err
+            self._emit(LogLevel.RETRY, msg, indent=indent, extra=extra, ui_detail=True)
         else:
             self.retry(
                 f"{operation} failed: {reason}", attempt, max_attempts, indent=indent
@@ -1261,6 +1340,7 @@ class AutomationLogger:
                 indent=indent,
                 py_level=logging.WARNING,
                 extra=extra,
+                ui_detail=True,
             )
         else:
             self.warning(
@@ -1269,13 +1349,10 @@ class AutomationLogger:
 
     def section_transition(self, completed_sec: str, duration: float, next_sec: str):
         """Log section transitions clearly."""
-        if self._portal_id == "newindia":
+        if self._is_compact():
             self.success(
                 f"Finished '{completed_sec}' ({duration:.1f}s) → Next: {next_sec}"
             )
-        elif self._portal_id == "uiic":
-            msg = f"[{self._portal_tag}]\nCompleted: {completed_sec}\nDuration:  {duration:.1f} sec\n\nMoving To:\n{next_sec}"
-            self.raw(f"\n{LogLevel.NAVIGATION} {msg}\n")
         else:
             self.success(f"{completed_sec} completed ({duration:.1f}s)")
             self.info(f"Moving to {next_sec}")
@@ -1284,18 +1361,14 @@ class AutomationLogger:
         self, metric_name: str, duration: float, indent: Optional[int] = None
     ):
         """Log performance timings."""
-        if self._portal_id == "newindia":
+        if self._is_compact():
             self._py_logger.debug(
                 f"[{self._portal_tag}][Performance] {metric_name}: {duration:.1f}s"
             )
-        elif self._portal_id == "uiic":
-            msg = f"[{self._portal_tag}][Performance]\n{metric_name}\nDuration: {duration:.1f} sec"
-            extra = {"metric_name": metric_name, "duration": duration}
-            self._emit(LogLevel.INFO, msg, indent=indent, extra=extra)
         else:
             self.info(f"Performance: {metric_name} took {duration:.1f}s", indent=indent)
 
-    # ── New India Run Summary & Screenshot Helpers ────────────────────────────
+    # ── Shared Run Summary & Screenshot Helpers ───────────────────────────────
 
     def record_screenshot(
         self,
@@ -1323,7 +1396,7 @@ class AutomationLogger:
             indent=indent,
             py_level=logging.WARNING,
             extra=extra,
-            ui_detail=(self._portal_id == "newindia"),
+            ui_detail=self._is_compact(),
         )
 
     def record_step_result(
@@ -1352,12 +1425,12 @@ class AutomationLogger:
                 self._steps_completed.append((step_name, duration_s or 0.0))
                 clean_reason = ""
             else:
-                clean_reason, _ = self._sanitize_newindia(
+                clean_reason, _ = self._sanitize_operator(
                     reason, "Step did not complete. Check Chrome."
                 )
                 self._failed_step = (step_name, clean_reason)
 
-        if self._portal_id == "newindia":
+        if self._is_compact():
             dur = f" ({duration_s:.1f}s)" if duration_s is not None else ""
             if ok:
                 parts = []
@@ -1413,10 +1486,11 @@ class AutomationLogger:
                 f"Run Summary — {status_icon} {status} ({elapsed:.1f}s)",
                 f"Steps completed ({len(steps_ok)}): {step_names}",
             ]
+            clean_final = final_message
             if failed_step:
                 lines.append(f"Failed at: {failed_step[0]} — {failed_step[1]}")
             elif final_message and status.lower() != "completed":
-                clean_final, _ = self._sanitize_newindia(final_message, final_message)
+                clean_final, _ = self._sanitize_operator(final_message, final_message)
                 lines.append(f"Reason: {clean_final}")
 
             lines.append(
@@ -1449,7 +1523,7 @@ class AutomationLogger:
                 "issues_count": len(issues),
                 "readable_log_file": readable_log,
             }
-            if self._portal_id == "newindia":
+            if self._is_compact():
                 lower_status = status.lower()
                 if lower_status == "completed":
                     headline_parts = [f"{len(steps_ok)} steps", f"{fields_filled} filled"]
@@ -1484,8 +1558,8 @@ class AutomationLogger:
                     line,
                     indent=0,
                     py_level=logging.INFO if status_icon == "✅" else logging.WARNING,
-                    extra=None if self._portal_id == "newindia" else (summary_extra if line == lines[0] else None),
-                    ui_detail=(self._portal_id == "newindia"),
+                    extra=None if self._is_compact() else (summary_extra if line == lines[0] else None),
+                    ui_detail=self._is_compact(),
                 )
         finally:
             self.section = prev_section

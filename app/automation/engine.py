@@ -544,14 +544,14 @@ class AutomationEngine:
                     if ocr_result.status == "unsupported":
                         self.log.warning(ocr_result.message)
 
-                    if cheque_details.get("ifsc"):
+                    if cheque_details.get("ifsc") and not str(claim.ifsc_code or "").strip():
                         _set_claim_field(
                             "ifsc_code", cheque_details["ifsc"], "Cheque OCR"
                         )
                         self.log_cb(
                             f"  ✅ [Background OCR] IFSC Code: {cheque_details['ifsc']}"
                         )
-                    if cheque_details.get("account_number"):
+                    if cheque_details.get("account_number") and not str(claim.account_number or "").strip():
                         _set_claim_field(
                             "account_number",
                             cheque_details["account_number"],
@@ -840,6 +840,13 @@ class AutomationEngine:
 
                 _install_native_dialog_handler(page)
                 context.on("page", _install_native_dialog_handler)
+            if self.portal_id in {"oic", "uiic"}:
+                from app.automation.chrome_hud import FieldProgressTracker, current_field_tracker
+
+                tracker_token = current_field_tracker.set(
+                    FieldProgressTracker(field_progress_cb=self.field_cb)
+                )
+                resources.callback(current_field_tracker.reset, tracker_token)
             if self._oic_recovery is not None:
                 from app.portals.oic.automation.recovery import (
                     assessment_claim_mismatch, current_recovery, form_step_is_open, same_origin,
@@ -954,116 +961,30 @@ class AutomationEngine:
                 for warning in getattr(claim, "_scan_output_warnings", ()):
                     self.log.warning(warning)
 
-                # Path resolution and settings loading logs for UIIC/NIA/OIC
+                # Path resolution and settings debug log for UIIC/NIA/OIC
                 from app.utils import (
                     is_frozen,
                     get_base_dir,
-                    get_exe_dir,
                     settings_paths,
                     field_mapping_paths,
                     doc_mapping_paths,
                     automation_defaults_paths,
                 )
 
-                if self.portal_id == "newindia":
-                    s_paths = settings_paths(self.portal_id)
-                    fm_paths = field_mapping_paths(self.portal_id)
-                    dm_paths = doc_mapping_paths(self.portal_id)
-                    ad_paths = automation_defaults_paths(self.portal_id)
-                    self.log._py_logger.debug(
-                        "[NEW INDIA][Runtime] mode=%s base=%s settings=%s field=%s doc=%s defaults=%s",
-                        "EXE" if is_frozen() else "Source",
-                        get_base_dir(),
-                        s_paths.get("user") or s_paths.get("default"),
-                        fm_paths.get("user") or fm_paths.get("default"),
-                        dm_paths.get("user") or dm_paths.get("default"),
-                        ad_paths.get("user") or ad_paths.get("default"),
-                    )
-                else:
-                    self.log.raw(
-                        f"[{self.log._portal_tag}][Runtime]\nLoading Portal Config"
-                    )
-                    self.log.raw(
-                        f"[{self.log._portal_tag}][Runtime]\nPackaged Runtime: {'Frozen (EXE)' if is_frozen() else 'Source (Python)'}"
-                    )
-                    self.log.raw(
-                        f"[{self.log._portal_tag}][Runtime]\nBase Directory: {get_base_dir()}"
-                    )
-                    self.log.raw(
-                        f"[{self.log._portal_tag}][Runtime]\nExe Directory: {get_exe_dir()}"
-                    )
-
-                    # Settings
-                    s_paths = settings_paths(self.portal_id)
-                    self.log.raw(
-                        f"[{self.log._portal_tag}][Runtime]\nSettings Config Discovery:\n  • Bundled (Read-Only): {s_paths['default']}\n  • User (Writable):     {s_paths['user']}"
-                    )
-                    if os.path.exists(s_paths["user"]):
-                        self.log.raw(
-                            f"[{self.log._portal_tag}][Configuration]\nSettings Loaded (User Override Active)"
-                        )
-                    else:
-                        self.log.raw(
-                            f"[{self.log._portal_tag}][Configuration]\nSettings Loaded (Using Bundled Defaults)"
-                        )
-
-                    # Field mapping
-                    fm_paths = field_mapping_paths(self.portal_id)
-                    self.log.raw(
-                        f"[{self.log._portal_tag}][Runtime]\nField Mapping Discovery:\n  • Bundled (Read-Only): {fm_paths['default']}\n  • User (Writable):     {fm_paths['user']}"
-                    )
-                    if os.path.exists(fm_paths["user"]):
-                        self.log.raw(
-                            f"[{self.log._portal_tag}][Configuration]\nField Mapping Loaded (User Override Active)"
-                        )
-                    else:
-                        self.log.raw(
-                            f"[{self.log._portal_tag}][Configuration]\nField Mapping Loaded (Using Bundled Defaults)"
-                        )
-
-                    # Document mapping
-                    dm_paths = doc_mapping_paths(self.portal_id)
-                    self.log.raw(
-                        f"[{self.log._portal_tag}][Runtime]\nDocument Mapping Discovery:\n  • Bundled (Read-Only): {dm_paths['default']}\n  • User (Writable):     {dm_paths['user']}"
-                    )
-                    if os.path.exists(dm_paths["user"]):
-                        self.log.raw(
-                            f"[{self.log._portal_tag}][Configuration]\nDocument Mapping Loaded (User Override Active)"
-                        )
-                    else:
-                        self.log.raw(
-                            f"[{self.log._portal_tag}][Configuration]\nDocument Mapping Loaded (Using Bundled Defaults)"
-                        )
-
-                    # Automation defaults mapping
-                    ad_paths = automation_defaults_paths(self.portal_id)
-                    self.log.raw(
-                        f"[{self.log._portal_tag}][Runtime]\nAutomation Defaults Discovery:\n  • Bundled (Read-Only): {ad_paths['default']}\n  • User (Writable):     {ad_paths['user']}"
-                    )
-                    if os.path.exists(ad_paths["user"]):
-                        self.log.raw(
-                            f"[{self.log._portal_tag}][Configuration]\nAutomation Defaults Loaded (User Override Active)"
-                        )
-                    else:
-                        self.log.raw(
-                            f"[{self.log._portal_tag}][Configuration]\nAutomation Defaults Loaded (Using Bundled Defaults)"
-                        )
-
-                    # Portal config path
-                    from app.portals.registry import get_portal
-
-                    portal_info = get_portal(self.portal_id)
-                    if portal_info:
-                        self.log.raw(
-                            f"[{self.log._portal_tag}][Runtime]\nPortal Config Found:\n{portal_info.bundled_config_dir()}"
-                        )
-                        self.log.raw(
-                            f"[{self.log._portal_tag}][Configuration]\nUsing Portal-Specific Config"
-                        )
-                    else:
-                        self.log.raw(
-                            f"[{self.log._portal_tag}][Configuration]\nUsing Fallback Configuration"
-                        )
+                s_paths = settings_paths(self.portal_id)
+                fm_paths = field_mapping_paths(self.portal_id)
+                dm_paths = doc_mapping_paths(self.portal_id)
+                ad_paths = automation_defaults_paths(self.portal_id)
+                self.log._py_logger.debug(
+                    "[%s][Runtime] mode=%s base=%s settings=%s field=%s doc=%s defaults=%s",
+                    self.log._portal_tag,
+                    "EXE" if is_frozen() else "Source",
+                    get_base_dir(),
+                    s_paths.get("user") or s_paths.get("default"),
+                    fm_paths.get("user") or fm_paths.get("default"),
+                    dm_paths.get("user") or dm_paths.get("default"),
+                    ad_paths.get("user") or ad_paths.get("default"),
+                )
 
                 claim_type = settings.get("claim_type", "Non Maruti")
 
@@ -1076,9 +997,14 @@ class AutomationEngine:
 
                 total_steps = len(steps)
 
+                from app.automation.run_diagnostics import (
+                    capture_portal_screenshot,
+                    portal_display_name,
+                    portal_operator_reason,
+                )
+
                 self.step_cb(0, steps[0])
-                if self.portal_id == "newindia":
-                    self.log.section = "Login"
+                self.log.section = "Login"
                 self.log.phase_banner(1, total_steps, "Login to Portal")
 
                 if self.portal_id == "newindia":
@@ -1146,23 +1072,18 @@ class AutomationEngine:
                         if self._check_stop()
                         else "Login failed."
                     )
-                    if self.portal_id == "newindia":
-                        if not self._check_stop():
-                            from app.portals.newindia.automation.logging_utils import capture_newindia_screenshot
-
-                            await capture_newindia_screenshot(
-                                page, "login", self.log, reason=message, claim_no=claim.claim_no
-                            )
-                            self.log.record_step_result("Login", False, time.time() - login_started, reason=message)
-                        self.log.write_run_summary(
-                            "Stopped by User" if self._check_stop() else "Failed", message
+                    if not self._check_stop():
+                        await capture_portal_screenshot(
+                            page, self.portal_id, "login", self.log, reason=message, claim_no=claim.claim_no
                         )
+                        self.log.record_step_result("Login", False, time.time() - login_started, reason=message)
+                    self.log.write_run_summary(
+                        "Stopped by User" if self._check_stop() else "Failed", message
+                    )
                     return AutomationRunResult(False, message)
-                if self.portal_id == "newindia":
-                    self.log.record_step_result("Login", True, time.time() - login_started)
+                self.log.record_step_result("Login", True, time.time() - login_started)
                 if self._check_stop():
-                    if self.portal_id == "newindia":
-                        self.log.write_run_summary("Stopped by User", "Automation stopped by user.")
+                    self.log.write_run_summary("Stopped by User", "Automation stopped by user.")
                     return AutomationRunResult(False, "Automation stopped by user.")
 
                 if self._oic_recovery is not None:
@@ -1180,10 +1101,9 @@ class AutomationEngine:
                         if self._check_stop()
                         else "Could not find an authenticated Worklist page."
                     )
-                    if self.portal_id == "newindia":
-                        self.log.write_run_summary(
-                            "Stopped by User" if self._check_stop() else "Failed", message
-                        )
+                    self.log.write_run_summary(
+                        "Stopped by User" if self._check_stop() else "Failed", message
+                    )
                     return AutomationRunResult(False, message)
                 health_state["authenticated_page_ready"] = True
 
@@ -1194,14 +1114,16 @@ class AutomationEngine:
                 await asyncio.sleep(1.5)
 
                 if self._check_stop():
-                    if self.portal_id == "newindia":
-                        self.log.write_run_summary("Stopped by User", "Automation stopped by user.")
+                    self.log.write_run_summary("Stopped by User", "Automation stopped by user.")
                     return AutomationRunResult(False, "Automation stopped by user.")
 
                 self.step_cb(1, steps[1])
                 self.log.phase_banner(
                     2, total_steps, f"Navigate to Claim ({claim.claim_no})"
                 )
+                nav_started = time.time()
+                nav_title = "Worklist Navigation" if self.portal_id == "newindia" else "Navigate to Claim"
+                self.log.section = nav_title
 
                 if self.portal_id == "newindia":
                     from app.portals.newindia.automation.logging_utils import capture_newindia_screenshot
@@ -1212,8 +1134,6 @@ class AutomationEngine:
                     )
                     from app.portals.newindia.automation.ui_utils import classify_newindia_channel
 
-                    self.log.section = "Worklist Navigation"
-                    nav_started = time.time()
                     channel_info: dict = {}
                     try:
                         claim_page = await navigate_to_claim(
@@ -1286,23 +1206,38 @@ class AutomationEngine:
                         claim_page = page if navigated else None
                     else:
                         claim_page = await navigate()
+                    if claim_page is not None:
+                        self.log.record_step_result(nav_title, True, time.time() - nav_started)
                 else:
                     from app.automation.navigation_module import navigate_to_claim
 
                     claim_page = await navigate_to_claim(
                         page, claim.claim_no, settings=settings, log=self.log
                     )
+                    if claim_page is not None:
+                        self.log.record_step_result(nav_title, True, time.time() - nav_started)
 
                 if claim_page is None:
-                    message = f"Claim '{claim.claim_no}' was not found in Worklist or navigation failed."
-                    if self.portal_id == "newindia":
-                        await capture_newindia_screenshot(
-                            page, "worklist_navigation", self.log, reason=message, claim_no=claim.claim_no
-                        )
-                        self.log.record_step_result(
-                            "Worklist Navigation", False, time.time() - nav_started, reason=message
-                        )
-                        self.log.write_run_summary("Failed", message)
+                    if self._check_stop():
+                        self.log.write_run_summary("Stopped by User", "Automation stopped by user.")
+                        return AutomationRunResult(False, "Automation stopped by user.")
+                    message = (
+                        f"Claim '{claim.claim_no}' was not found in Worklist or navigation failed."
+                        if self.portal_id == "newindia"
+                        else f"Claim '{claim.claim_no}' could not be opened on {portal_display_name(self.portal_id)}."
+                    )
+                    await capture_portal_screenshot(
+                        page,
+                        self.portal_id,
+                        "worklist_navigation" if self.portal_id == "newindia" else "navigate_to_claim",
+                        self.log,
+                        reason=message,
+                        claim_no=claim.claim_no,
+                    )
+                    self.log.record_step_result(
+                        nav_title, False, time.time() - nav_started, reason=message
+                    )
+                    self.log.write_run_summary("Failed", message)
                     return AutomationRunResult(False, message)
 
                 page = claim_page
@@ -1315,8 +1250,7 @@ class AutomationEngine:
                 else:
                     self.log.info(f"Working on page: {page.url}")
                 if self._check_stop():
-                    if self.portal_id == "newindia":
-                        self.log.write_run_summary("Stopped by User", "Automation stopped by user.")
+                    self.log.write_run_summary("Stopped by User", "Automation stopped by user.")
                     return AutomationRunResult(False, "Automation stopped by user.")
 
                 self._start_deferred_ocr_jobs(claim)
@@ -1459,20 +1393,6 @@ class AutomationEngine:
                             else:
                                 self.log.info("NEFT Details is not shown for this claim.")
                             return not self._check_stop()
-                        if not await self._wait_for_deferred_ocr(
-                            claim,
-                            kind="cheque",
-                            label="Cheque",
-                            required_fields=(
-                                ("IFSC Code", "ifsc_code"),
-                                ("Account Number", "account_number"),
-                            ),
-                            dependent_step="New India NEFT Details",
-                        ):
-                            if self._check_stop() or self._newindia_recovery is None:
-                                self.log.error("Cheque details could not be read in time.")
-                                return False
-                            self.log.warning("Cheque data is still unavailable. App3 will check the page before Next.")
                         return await fill_neft_details(
                             page, claim, log=self.log, stop_cb=self._check_stop, field_delay_ms=field_delay
                         )
@@ -1605,43 +1525,67 @@ class AutomationEngine:
                                 self._oic_recovery.form_marker = None
                                 self._oic_recovery.transition_started = False
 
+                    from app.automation.chrome_hud import clear_field_hud
+
+                    async def _run_oic_step(
+                        step_idx: int,
+                        phase_num: int,
+                        title: str,
+                        slug: str,
+                        handler,
+                        source: str,
+                        destination: str,
+                        button: str = "Next",
+                    ) -> Optional[AutomationRunResult]:
+                        self.step_cb(step_idx, steps[step_idx])
+                        self.log.section = title
+                        self.log.phase_banner(phase_num, total_steps, title)
+                        step_t = time.time()
+                        ok = await run_form_phase(handler, source, destination, button)
+                        if not ok:
+                            msg = f"Phase {phase_num} ({title}) failed."
+                            if self._check_stop():
+                                self.log.write_run_summary("Stopped by User", "Automation stopped by user.")
+                            else:
+                                await capture_portal_screenshot(
+                                    page, "oic", slug, self.log, reason=msg, claim_no=claim.claim_no
+                                )
+                                self.log.record_step_result(title, False, time.time() - step_t, reason=msg)
+                                self.log.write_run_summary("Failed", msg)
+                            return AutomationRunResult(False, msg)
+                        self.log.record_step_result(title, True, time.time() - step_t)
+                        return None
+
                     # Phase 3: Claim Search (Generate Assessment form)
-                    self.step_cb(2, steps[2])
-                    self.log.phase_banner(3, total_steps, "Claim Search")
-                    if not await run_form_phase(
-                        fill_claim_search, "search", "basic",
-                    ):
-                        return AutomationRunResult(
-                            False, "Phase 3 (Claim Search) failed."
-                        )
+                    fail = await _run_oic_step(
+                        2, 3, "Claim Search", "claim_search", fill_claim_search, "search", "basic",
+                    )
+                    if fail is not None:
+                        return fail
 
                     # Phase 4: Basic Details
-                    self.step_cb(3, steps[3])
-                    self.log.phase_banner(4, total_steps, "Basic Details")
-                    if not await run_form_phase(
-                        fill_basic_details, "basic", "interim",
-                    ):
-                        return AutomationRunResult(
-                            False, "Phase 4 (Basic Details) failed."
-                        )
+                    fail = await _run_oic_step(
+                        3, 4, "Basic Details", "basic_details", fill_basic_details, "basic", "interim",
+                    )
+                    if fail is not None:
+                        return fail
 
                     # Phase 5: Interim Report
-                    self.step_cb(4, steps[4])
-                    self.log.phase_banner(5, total_steps, "Interim Report")
                     from app.portals.oic.automation.interim_report_module import (
                         fill_interim_report as oic_fill_interim_report,
                     )
 
-                    if not await run_form_phase(
-                        oic_fill_interim_report, "interim", "loss",
-                    ):
-                        return AutomationRunResult(
-                            False, "Phase 5 (Interim Report) failed."
-                        )
+                    fail = await _run_oic_step(
+                        4, 5, "Interim Report", "interim_report", oic_fill_interim_report, "interim", "loss",
+                    )
+                    if fail is not None:
+                        return fail
 
                     # Phase 6: Assessment of Loss
                     self.step_cb(5, steps[5])
+                    self.log.section = "Assessment of Loss"
                     self.log.phase_banner(6, total_steps, "Assessment of Loss")
+                    loss_t = time.time()
                     invoice_ready = await self._wait_for_deferred_ocr(
                         claim,
                         kind="invoice",
@@ -1653,8 +1597,22 @@ class AutomationEngine:
                         dependent_step="OIC Assessment of Loss",
                     )
                     if not invoice_ready:
+                        msg = "Phase 6 failed: invoice OCR timed out or stopped."
                         if self._oic_recovery is None or self._stop_requested:
-                            return AutomationRunResult(False, "Phase 6 failed: invoice OCR timed out or stopped.")
+                            if self._check_stop():
+                                self.log.write_run_summary("Stopped by User", "Automation stopped by user.")
+                            else:
+                                await capture_portal_screenshot(
+                                    page, "oic", "assessment_of_loss", self.log, reason=msg, claim_no=claim.claim_no
+                                )
+                                self.log.record_step_result("Assessment of Loss", False, time.time() - loss_t, reason=msg)
+                                self.log.write_run_summary("Failed", msg)
+                            return AutomationRunResult(False, msg)
+                        await capture_portal_screenshot(
+                            page, "oic", "assessment_of_loss", self.log, reason=msg, claim_no=claim.claim_no
+                        )
+                        self.log.record_step_result("Assessment of Loss", False, time.time() - loss_t, reason=msg)
+                        self.log.write_run_summary("Failed", msg)
                         await self._oic_recovery.pause(
                             page, self.log, "Prepare workshop invoice",
                             "Invoice extraction did not finish. Review the invoice in Chrome.",
@@ -1669,14 +1627,26 @@ class AutomationEngine:
                         if not await run_form_phase(
                             fill_assessment_of_loss, "loss", "upload", "Save and Next",
                         ):
+                            msg = "Phase 6 (Assessment of Loss) failed."
+                            if self._check_stop():
+                                self.log.write_run_summary("Stopped by User", "Automation stopped by user.")
+                            else:
+                                await capture_portal_screenshot(
+                                    page, "oic", "assessment_of_loss", self.log, reason=msg, claim_no=claim.claim_no
+                                )
+                                self.log.record_step_result("Assessment of Loss", False, time.time() - loss_t, reason=msg)
+                                self.log.write_run_summary("Failed", msg)
                             if self._oic_recovery is None and getattr(claim, "_oic_upload_failed", False) and not self._check_stop():
                                 self.log.error("Invoice upload failed. Automation has stopped; the browser remains open for review.")
                                 await self._wait_for_manual_review(browser)
-                            return AutomationRunResult(False, "Phase 6 (Assessment of Loss) failed.")
+                            return AutomationRunResult(False, msg)
+                        self.log.record_step_result("Assessment of Loss", True, time.time() - loss_t)
 
                     # Phase 7: Document Upload
                     self.step_cb(6, steps[6])
+                    self.log.section = "Document Upload"
                     self.log.phase_banner(7, total_steps, "Document Upload")
+                    upload_t = time.time()
                     from app.portals.oic.automation.document_upload_module import (
                         fill_document_upload_section,
                     )
@@ -1697,54 +1667,76 @@ class AutomationEngine:
                         if self._oic_recovery is not None:
                             self._oic_recovery.form_step = None
                             self._oic_recovery.form_marker = None
-                    if not uploaded and self._oic_recovery is not None and not self._stop_requested:
-                        await self._oic_recovery.pause(
-                            page, self.log, "Finish Document Upload",
-                            "App3 could not verify which attachments were completed.",
-                            instruction="Stop this run and review the attachments in Chrome.",
-                            section="Document Upload", stop_only=True,
-                        )
                     if not uploaded:
-                        return AutomationRunResult(
-                            False, "Phase 7 (Document Upload) failed."
-                        )
+                        msg = "Phase 7 (Document Upload) failed."
+                        if self._check_stop():
+                            self.log.write_run_summary("Stopped by User", "Automation stopped by user.")
+                        else:
+                            await capture_portal_screenshot(
+                                page, "oic", "document_upload", self.log, reason=msg, claim_no=claim.claim_no
+                            )
+                            self.log.record_step_result("Document Upload", False, time.time() - upload_t, reason=msg)
+                            self.log.write_run_summary("Failed", msg)
+                            if self._oic_recovery is not None and not self._stop_requested:
+                                await self._oic_recovery.pause(
+                                    page, self.log, "Finish Document Upload",
+                                    "App3 could not verify which attachments were completed.",
+                                    instruction="Stop this run and review the attachments in Chrome.",
+                                    section="Document Upload", stop_only=True,
+                                )
+                        return AutomationRunResult(False, msg)
+                    self.log.record_step_result("Document Upload", True, time.time() - upload_t)
 
                     self.log.section_done(
                         "Total Oriental Insurance Workflow", show_duration=True
                     )
+                    self.log.write_run_summary("Completed", "All OIC steps finished.")
+                    await clear_field_hud(page, clear_errors=False)
                     await self._wait_for_manual_review(browser)
                     return AutomationRunResult(
                         True, "Oriental Insurance phases complete."
                     )
 
                 # --- UIIC PORTAL PHASES ---
+                from app.automation.chrome_hud import clear_field_hud
+
                 self.step_cb(2, steps[2])
+                self.log.section = "Interim Report"
                 self.log.phase_banner(3, total_steps, "Fill Interim Report")
+                uiic_t = time.time()
                 await page.bring_to_front()
                 await page.evaluate("window.scrollTo(0, 0)")
                 await fill_interim_report(
                     page, claim, log_cb=self.log, settings=settings
                 )
                 if self._check_stop():
+                    self.log.write_run_summary("Stopped by User", "Automation stopped by user.")
                     return AutomationRunResult(False, "Automation stopped by user.")
+                self.log.record_step_result("Interim Report", True, time.time() - uiic_t)
 
                 await asyncio.sleep(1.0)
                 await page.bring_to_front()
 
                 self.step_cb(3, steps[3])
+                self.log.section = "Claim Documents"
                 self.log.phase_banner(4, total_steps, "Upload Claim Documents")
+                uiic_t = time.time()
                 await page.evaluate("window.scrollTo(0, 0)")
                 await fill_claim_documents(
                     page, claim, log_cb=self.log, settings=settings
                 )
                 if self._check_stop():
+                    self.log.write_run_summary("Stopped by User", "Automation stopped by user.")
                     return AutomationRunResult(False, "Automation stopped by user.")
+                self.log.record_step_result("Claim Documents", True, time.time() - uiic_t)
 
                 await asyncio.sleep(1.0)
                 await page.bring_to_front()
 
                 self.step_cb(4, steps[4])
+                self.log.section = "Claim Assessment"
                 self.log.phase_banner(5, total_steps, "Fill Claim Assessment")
+                uiic_t = time.time()
                 if not await self._wait_for_deferred_ocr(
                     claim,
                     kind="invoice",
@@ -1755,25 +1747,35 @@ class AutomationEngine:
                     ),
                     dependent_step="UIIC Claim Assessment",
                 ):
-                    return AutomationRunResult(
-                        False, "Phase 5 failed: invoice OCR timed out or stopped."
-                    )
+                    msg = "Phase 5 failed: invoice OCR timed out or stopped."
+                    if self._check_stop():
+                        self.log.write_run_summary("Stopped by User", "Automation stopped by user.")
+                    else:
+                        await capture_portal_screenshot(
+                            page, "uiic", "claim_assessment", self.log, reason=msg, claim_no=claim.claim_no
+                        )
+                        self.log.record_step_result("Claim Assessment", False, time.time() - uiic_t, reason=msg)
+                        self.log.write_run_summary("Failed", msg)
+                    return AutomationRunResult(False, msg)
                 await page.evaluate("window.scrollTo(0, 0)")
                 await fill_claim_assessment(
                     page, claim, log_cb=self.log, settings=settings
                 )
                 if self._check_stop():
+                    self.log.write_run_summary("Stopped by User", "Automation stopped by user.")
                     return AutomationRunResult(False, "Automation stopped by user.")
+                self.log.record_step_result("Claim Assessment", True, time.time() - uiic_t)
 
                 self.step_cb(5, "Complete")
                 self.log.section_done("Total UIIC Workflow", show_duration=True)
+                self.log.write_run_summary("Completed", "All UIIC steps finished.")
+                await clear_field_hud(page, clear_errors=False)
 
                 await self._wait_for_manual_review(browser)
                 return AutomationRunResult(True, "Automation finished.")
 
             except asyncio.CancelledError:
-                if self.portal_id == "newindia":
-                    self.log.write_run_summary("Stopped by User", "Automation stopped by user.")
+                self.log.write_run_summary("Stopped by User", "Automation stopped by user.")
                 if review_recovery is not None:
                     return AutomationRunResult(
                         False, f"{review_recovery.portal_name} automation stopped. Chrome is available for review."
@@ -1781,27 +1783,30 @@ class AutomationEngine:
                 self.log.error("Automation cancelled.")
                 return AutomationRunResult(False, "Automation cancelled.")
             except Exception as exc:
-                if self.portal_id == "newindia":
-                    from app.portals.newindia.automation.logging_utils import (
-                        capture_newindia_screenshot,
-                        newindia_operator_reason,
-                    )
+                from app.automation.run_diagnostics import (
+                    capture_portal_screenshot,
+                    portal_display_name,
+                    portal_operator_reason,
+                )
 
-                    friendly = newindia_operator_reason(
-                        str(exc), "An unexpected error stopped automation. Check Chrome."
-                    )
-                    self.log.exception(f"Step '{self.log.section}' failed", exc)
-                    await capture_newindia_screenshot(
-                        page, self.log.section or "error", self.log, reason=friendly, claim_no=claim.claim_no
-                    )
-                    self.log.record_step_result(self.log.section or "Automation", False, reason=friendly)
-                    self.log.write_run_summary("Failed", friendly)
+                portal_label = portal_display_name(self.portal_id)
+                friendly = portal_operator_reason(
+                    str(exc), "An unexpected error stopped automation. Check Chrome.", portal_name=portal_label
+                )
+                step_label = self.log.section or "Automation"
+                self.log.exception(f"Step '{step_label}' failed", exc)
+                await capture_portal_screenshot(
+                    page, self.portal_id, step_label, self.log, reason=friendly, claim_no=claim.claim_no
+                )
+                self.log.record_step_result(step_label, False, reason=friendly)
+                self.log.write_run_summary("Failed", friendly)
+
+                if self.portal_id == "newindia":
                     return AutomationRunResult(
-                        False, f"Step '{self.log.section}' failed: {friendly}"
+                        False, f"Step '{step_label}' failed: {friendly}"
                     )
                 if self._oic_recovery is None:
-                    self.log.exception("Automation failed", exc)
-                    return AutomationRunResult(False, f"Automation failed: {exc}")
+                    return AutomationRunResult(False, f"Step '{step_label}' failed: {friendly}")
                 self.log.error("OIC automation could not continue safely.")
                 if not self._stop_requested:
                     try:

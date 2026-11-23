@@ -6,6 +6,7 @@ import random
 from datetime import datetime
 
 from app.automation.automation_logger import AutomationLogger, _ts
+from app.automation.chrome_hud import emit_field_hud
 from app.portals.oic.automation.date_formatter import format_oic_date as _format_oic_date
 from app.portals.oic.automation.dropdowns import matching_option, select_dropdown_option
 from app.portals.oic.automation.recovery import (
@@ -197,6 +198,7 @@ async def fill_input_with_delay(
         await page.wait_for_selector(selector, state="visible", timeout=5000)
         
         locator = page.locator(selector).first
+        await emit_field_hud(page, log, label, "active", value=value, target=locator)
         await locator.focus()
         
         instant_fill, typing_delay = _get_oic_fill_settings()
@@ -212,6 +214,7 @@ async def fill_input_with_delay(
         if not result or not result.get("ok"):
             raise ValueError("OIC could not update this field.")
         await _check_field_validation(locator)
+        await emit_field_hud(page, log, label, "ok", value=value, target=locator)
         
         if isinstance(log, AutomationLogger):
             kwargs = {}
@@ -221,6 +224,7 @@ async def fill_input_with_delay(
         else:
             log(f"[{_ts()}]   ✅ [{label}] filled → '{str(value)[:60]}'")
     except Exception as e:
+        await emit_field_hud(page, log, label, "failed", value=value, selector=selector)
         if isinstance(log, AutomationLogger):
             log.field_failed(label, str(e))
         else:
@@ -242,9 +246,11 @@ async def select_dropdown_with_delay(
         return
     try:
         await page.wait_for_selector(selector, state="visible", timeout=5000)
+        await emit_field_hud(page, log, label, "active", value=value, selector=selector)
         res = await page.evaluate(_JS_SELECT, [selector, str(value)])
         if res and res.get("ok"):
             await _check_field_validation(page.locator(selector).first)
+            await emit_field_hud(page, log, label, "ok", value=res.get("text") or value, selector=selector)
             if isinstance(log, AutomationLogger):
                 kwargs = {}
                 if source is not None:
@@ -254,12 +260,14 @@ async def select_dropdown_with_delay(
                 log(f"[{_ts()}]   ✅ [{label}] selected → '{res.get('text')}'")
         else:
             err = res.get('err') if res else 'unknown'
+            await emit_field_hud(page, log, label, "failed", value=value, selector=selector)
             if isinstance(log, AutomationLogger):
                 log.field_failed(label, f"No match for '{value}': {err}")
             else:
                 log(f"[{_ts()}]   ⚠️ [{label}] select failed (no match for '{value}'): {err}")
             await field_problem(page, log, label, f"No match for '{value}': {err}")
     except Exception as e:
+        await emit_field_hud(page, log, label, "failed", value=value, selector=selector)
         if isinstance(log, AutomationLogger):
             log.field_failed(label, str(e))
         else:
@@ -279,11 +287,14 @@ async def click_radio_with_delay(
         await recovery.wait_if_manually_paused(page, log)
     if field_was_handled(page, log, label):
         return
+    radio_sel = f'input[name="{name}"][value="{value}"]'
+    await emit_field_hud(page, log, label, "active", value=value, selector=radio_sel)
     try:
         res = await page.evaluate(_JS_CLICK_RADIO, [name, value])
         if res and res.get("ok"):
             already = res.get("already", False)
             msg = f"'{value}'" + (" (already set)" if already else "")
+            await emit_field_hud(page, log, label, "ok", value=value, selector=radio_sel)
             if isinstance(log, AutomationLogger):
                 kwargs = {}
                 if source is not None:
@@ -293,12 +304,14 @@ async def click_radio_with_delay(
                 log(f"[{_ts()}]   {'✔' if already else '✅'} [{label}] → {msg}")
         else:
             err = res.get('err') if res else 'unknown'
+            await emit_field_hud(page, log, label, "failed", value=value, selector=radio_sel)
             if isinstance(log, AutomationLogger):
                 log.field_failed(label, f"Click failed: {err}")
             else:
                 log(f"[{_ts()}]   ⚠️ [{label}] click failed: {err}")
             await field_problem(page, log, label, f"Click failed: {err}")
     except Exception as e:
+        await emit_field_hud(page, log, label, "failed", value=value, selector=radio_sel)
         if isinstance(log, AutomationLogger):
             log.field_failed(label, str(e))
         else:
@@ -410,6 +423,8 @@ async def click_primeng_radio(
         sibling = page.locator(f"label[for='{radio_id}']") if radio_id else None
         # 3. p-radiobutton wrapper (React synthetic event trigger)
         wrapper = radio.locator("xpath=ancestor::div[contains(@class, 'p-radiobutton')]")
+        ring_target = wrapper.first if await wrapper.count() > 0 else radio
+        await emit_field_hud(page, log, label, "active", target=ring_target)
 
         if await ancestor.count() > 0:
             await ancestor.first.click()
@@ -420,6 +435,7 @@ async def click_primeng_radio(
         else:
             await radio.click()
 
+        await emit_field_hud(page, log, label, "ok", target=ring_target)
         if isinstance(log, AutomationLogger):
             kwargs = {}
             if source is not None:
@@ -428,6 +444,7 @@ async def click_primeng_radio(
         else:
             log(f"[{_ts()}]   ✅ [{label}] → selected")
     except Exception as e:
+        await emit_field_hud(page, log, label, "failed", selector=radio_selector)
         if isinstance(log, AutomationLogger):
             log.field_failed(label, str(e))
         else:
@@ -444,16 +461,19 @@ async def select_primeng_dropdown(
     """Select the requested option and check the value shown in the same field."""
     if field_was_handled(page, log, label):
         return True
+    await emit_field_hud(page, log, label, "active", value=value, selector=dropdown_selector)
     try:
         chosen = await select_dropdown_option(
             page, dropdown_selector, lambda options: matching_option(value, options, exact=exact), expected=value,
         )
+        await emit_field_hud(page, log, label, "ok", value=chosen, selector=dropdown_selector)
         if isinstance(log, AutomationLogger):
             log.field_selected(label, chosen, **({"source": source} if source is not None else {}))
         else:
             log(f"[{_ts()}] [{label}] selected → '{chosen}'")
         return True
     except Exception as exc:
+        await emit_field_hud(page, log, label, "failed", value=value, selector=dropdown_selector)
         if isinstance(log, AutomationLogger):
             log.field_failed(label, str(exc))
         else:
@@ -478,6 +498,7 @@ async def fill_primeng_inputnumber(
             inner_input = page.locator(selector).first
 
         await inner_input.wait_for(state="visible", timeout=5000)
+        await emit_field_hud(page, log, label, "active", value=value, target=inner_input)
         await inner_input.scroll_into_view_if_needed()
         await inner_input.focus()
 
@@ -494,6 +515,7 @@ async def fill_primeng_inputnumber(
         # Trigger change events
         await inner_input.evaluate("el => { el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); el.dispatchEvent(new Event('blur', { bubbles: true })); }")
         await _check_field_validation(inner_input)
+        await emit_field_hud(page, log, label, "ok", value=value, target=inner_input)
 
         if isinstance(log, AutomationLogger):
             kwargs = {}
@@ -503,6 +525,7 @@ async def fill_primeng_inputnumber(
         else:
             log(f"[{_ts()}]   ✅ [{label}] filled → '{str(value)[:60]}'")
     except Exception as e:
+        await emit_field_hud(page, log, label, "failed", value=value, selector=selector)
         if isinstance(log, AutomationLogger):
             log.field_failed(label, str(e))
         else:
@@ -553,6 +576,7 @@ async def fill_mui_datepicker(
         return decision == "fixed"
     formatted = format_date_for_mui(value)
     if not formatted:
+        await emit_field_hud(page, log, label, "failed")
         if isinstance(log, AutomationLogger):
             log.field_failed(label, "empty date value — skipped")
         else:
@@ -560,6 +584,7 @@ async def fill_mui_datepicker(
         await field_problem(page, log, label, "empty date value — skipped")
         return False
 
+    date_sel = f".DatePicker:has(label:has-text('{label_text}')) input.MuiInputBase-input"
     try:
         # 1. Locate the DatePicker container by its label text
         container = page.locator(
@@ -570,6 +595,7 @@ async def fill_mui_datepicker(
         # 2. Find the MUI input inside that container
         input_el = container.locator("input.MuiInputBase-input").first
         await input_el.wait_for(state="visible", timeout=3000)
+        await emit_field_hud(page, log, label, "active", value=formatted, target=input_el)
         await input_el.scroll_into_view_if_needed()
 
         # 3. Triple-click and clear any pre-existing value to avoid appending onto pre-filled date masks
@@ -593,6 +619,7 @@ async def fill_mui_datepicker(
             displayed = await input_el.input_value(timeout=3000)
             if format_date_for_mui(displayed.replace("\u200e", "")) != formatted:
                 raise ValueError("OIC did not keep the date after entry.")
+        await emit_field_hud(page, log, label, "ok", value=formatted, target=input_el)
 
         if isinstance(log, AutomationLogger):
             kwargs = {}
@@ -604,6 +631,7 @@ async def fill_mui_datepicker(
         return True
 
     except Exception as e:
+        await emit_field_hud(page, log, label, "failed", value=formatted, selector=date_sel)
         if isinstance(log, AutomationLogger):
             log.field_failed(label, str(e))
         else:
@@ -634,6 +662,7 @@ async def fill_textarea_primeng(
     try:
         locator = page.locator(selector).first
         await locator.wait_for(state="visible", timeout=5000)
+        await emit_field_hud(page, log, label, "active", value=value, target=locator)
         await locator.scroll_into_view_if_needed()
         await locator.focus()
 
@@ -653,6 +682,7 @@ async def fill_textarea_primeng(
             "el.dispatchEvent(new Event('blur',   {bubbles: true})); }"
         )
         await _check_field_validation(locator)
+        await emit_field_hud(page, log, label, "ok", value=value, target=locator)
 
         if isinstance(log, AutomationLogger):
             kwargs = {}
@@ -662,6 +692,7 @@ async def fill_textarea_primeng(
         else:
             log(f"[{_ts()}]   ✅ [{label}] filled → '{str(value)[:60]}'")
     except Exception as e:
+        await emit_field_hud(page, log, label, "failed", value=value, selector=selector)
         if isinstance(log, AutomationLogger):
             log.field_failed(label, str(e))
         else:

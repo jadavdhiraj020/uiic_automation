@@ -14,6 +14,7 @@ import os
 import re
 from typing import Callable, Optional
 from app.automation.automation_logger import AutomationLogger, _ts
+from app.automation.chrome_hud import emit_field_hud
 
 logger = logging.getLogger(__name__)
 
@@ -100,10 +101,15 @@ async def _raw_fill(page, sel: str, value_str: str, label: str,
         try:
             el = page.locator(sel).first
             await el.wait_for(state="visible", timeout=timeout_ms)
+            await emit_field_hud(
+                page, log, label, "retrying" if attempt > 0 else "active",
+                value=value_str, target=el,
+            )
             await el.click(click_count=3, force=True)
             await el.fill(value_str) 
             await el.press("Tab")
             await asyncio.sleep(0.1)
+            await emit_field_hud(page, log, label, "ok", value=value_str, target=el)
             
             if isinstance(log, AutomationLogger):
                 log.field_filled(label, value_str)
@@ -118,6 +124,7 @@ async def _raw_fill(page, sel: str, value_str: str, label: str,
                     log(f"  🔄 {label}: retry {attempt+1} ({str(e)[:60]})")
                 await asyncio.sleep(0.5)
             else:
+                await emit_field_hud(page, log, label, "failed", value=value_str, selector=sel)
                 if isinstance(log, AutomationLogger):
                     log.field_failed(label, str(e))
                 else:
@@ -207,6 +214,7 @@ async def safe_fill_date(page, sel: str, value, label: str,
     try:
         el = page.locator(sel).first
         await el.wait_for(state="visible", timeout=timeout_ms)
+        await emit_field_hud(page, log, label, "active", value=display, target=el)
 
         set_ok = await page.evaluate("""
             ([selector, dateVal]) => {
@@ -244,12 +252,14 @@ async def safe_fill_date(page, sel: str, value, label: str,
             if actual and actual.strip():
                 await page.keyboard.press("Escape")  # close any stray popup
                 await asyncio.sleep(0.1)
+                await emit_field_hud(page, log, label, "ok", value=actual, target=el)
                 if isinstance(log, AutomationLogger):
                     log.field_filled(label, actual)
                 else:
                     log(f"  ✅ [Filled] {label} : '{actual}' ({src_tag}, Mode: JS)")
                 return True
             else:
+                await emit_field_hud(page, log, label, "failed", value=display, selector=sel)
                 if isinstance(log, AutomationLogger):
                     log.field_failed(label, "Value verification failed")
                 else:
@@ -257,6 +267,7 @@ async def safe_fill_date(page, sel: str, value, label: str,
                 return False
 
     except Exception as e1:
+        await emit_field_hud(page, log, label, "failed", value=display, selector=sel)
         if isinstance(log, AutomationLogger):
             log.field_failed(label, f"JS strategy failed: {e1}")
         else:
@@ -305,11 +316,13 @@ async def safe_select(page, sel: str, value: str, label: str,
     try:
         el = page.locator(sel).first
         await el.wait_for(state="visible", timeout=timeout_ms)
+        await emit_field_hud(page, log, label, "active", value=value, target=el)
 
         # ── Strategy 1: Try exact label match ─────────────────────────────────
         try:
             await el.select_option(label=value, timeout=timeout_ms)
             await asyncio.sleep(0.1)
+            await emit_field_hud(page, log, label, "ok", value=value, target=el)
             if isinstance(log, AutomationLogger):
                 log.field_selected(label, value)
             else:
@@ -322,6 +335,7 @@ async def safe_select(page, sel: str, value: str, label: str,
         try:
             await el.select_option(value=value, timeout=timeout_ms)
             await asyncio.sleep(0.1)
+            await emit_field_hud(page, log, label, "ok", value=value, target=el)
             if isinstance(log, AutomationLogger):
                 log.field_selected(label, value)
             else:
@@ -341,6 +355,7 @@ async def safe_select(page, sel: str, value: str, label: str,
             if val_lower == txt_lower or val_lower in txt_lower or txt_lower in val_lower:
                 await el.select_option(value=opt_val)
                 await asyncio.sleep(0.1)
+                await emit_field_hud(page, log, label, "ok", value=txt, target=el)
                 if isinstance(log, AutomationLogger):
                     log.field_selected(label, txt)
                 else:
@@ -352,6 +367,7 @@ async def safe_select(page, sel: str, value: str, label: str,
             if val_lower == stripped:
                 await el.select_option(value=opt_val)
                 await asyncio.sleep(0.1)
+                await emit_field_hud(page, log, label, "ok", value=txt, target=el)
                 if isinstance(log, AutomationLogger):
                     log.field_selected(label, txt)
                 else:
@@ -387,18 +403,21 @@ async def safe_select(page, sel: str, value: str, label: str,
         """, [sel, value.strip().lower()])
         if set_ok:
             await asyncio.sleep(0.1)
+            await emit_field_hud(page, log, label, "ok", value=str(set_ok), target=el)
             if isinstance(log, AutomationLogger):
                 log.field_selected(label, str(set_ok))
             else:
                 log(f"  ✅ [Selected] {label} : '{set_ok}' ({src_tag}, Mode: JS Fallback)")
             return True
 
+        await emit_field_hud(page, log, label, "failed", value=value, selector=sel)
         if isinstance(log, AutomationLogger):
             log.field_failed(label, f"No match found for '{value}'")
         else:
             log(f"  ⚠️  {label}: no match for '{value}'")
         return False
     except Exception as e:
+        await emit_field_hud(page, log, label, "failed", value=value, selector=sel)
         if isinstance(log, AutomationLogger):
             log.field_failed(label, str(e))
         else:
@@ -412,8 +431,10 @@ async def safe_radio(page, sel: str, label: str,
     try:
         el = page.locator(sel).first
         await el.wait_for(state="visible", timeout=timeout_ms)
+        await emit_field_hud(page, log, label, "active", value="Yes", target=el)
         await el.click()
         await asyncio.sleep(0.1)
+        await emit_field_hud(page, log, label, "ok", value="Yes", target=el)
         
         if isinstance(log, AutomationLogger):
             log.info(f"{label}: Yes")
@@ -421,6 +442,7 @@ async def safe_radio(page, sel: str, label: str,
             log(f"  ✅ {label}: Yes")
         return True
     except Exception as e:
+        await emit_field_hud(page, log, label, "failed", value="Yes", selector=sel)
         if isinstance(log, AutomationLogger):
             log.field_failed(label, str(e))
         else:
@@ -434,8 +456,13 @@ async def safe_click(page, sel: str, log = None, label: str = "", timeout_ms: in
         try:
             el = page.locator(sel).first
             await el.wait_for(state="visible", timeout=timeout_ms)
+            if label:
+                await emit_field_hud(
+                    page, log, label, "retrying" if attempt > 0 else "active", target=el,
+                )
             await el.click()
             if label:
+                await emit_field_hud(page, log, label, "ok", target=el)
                 if isinstance(log, AutomationLogger):
                     log.info(f"[Clicked] {label}")
                 elif log:
@@ -451,6 +478,7 @@ async def safe_click(page, sel: str, log = None, label: str = "", timeout_ms: in
                 await asyncio.sleep(0.5)
             else:
                 if label:
+                    await emit_field_hud(page, log, label, "failed", selector=sel)
                     if isinstance(log, AutomationLogger):
                         log.field_failed(label, str(e))
                     elif log:
@@ -523,12 +551,14 @@ async def js_select_option(page, sel_index: int, doc_type: str,
         }
     """, [sel_index, doc_type, ng_model])
     if result:
+        await emit_field_hud(page, log, doc_type, "ok", value=str(result))
         if isinstance(log, AutomationLogger):
             log.field_selected(f"Dropdown[{sel_index}]", str(result))
         else:
             log(f"  ✅ [Selected] {doc_type} : '{result}' (JS)")
         return True
     
+    await emit_field_hud(page, log, doc_type, "failed", value=doc_type)
     if isinstance(log, AutomationLogger):
         log.field_failed(doc_type, "No matching dropdown option found via JS")
     else:

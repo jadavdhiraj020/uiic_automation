@@ -309,6 +309,22 @@ class OperatorRecovery:
             if self.stopped():
                 break
             if first_prompt and page and not page.is_closed():
+                if self.portal_name != "New India":
+                    from app.automation.chrome_hud import current_field_tracker, update_field_hud
+                    from app.automation.run_diagnostics import capture_portal_screenshot
+
+                    tracker = current_field_tracker.get()
+                    filled = getattr(tracker, "fields_filled", 0) if tracker else 0
+                    failed = getattr(tracker, "fields_failed", 0) if tracker else 0
+                    skipped = getattr(tracker, "fields_skipped", 0) if tracker else 0
+                    await update_field_hud(
+                        page, section, title or "Paused for review", "paused",
+                        filled=filled, failed=failed, skipped=skipped,
+                    )
+                    if title != "Automation Paused" and not stop_only:
+                        await capture_portal_screenshot(
+                            page, "oic", f"paused_{section}", log, reason=title, claim_no=self.claim_number or "",
+                        )
                 await focus_chrome(page, self.browser_pid)
             prompt = RecoveryPrompt(
                 prompt_id, section, title, detail,

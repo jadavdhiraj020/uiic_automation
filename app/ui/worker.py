@@ -25,11 +25,9 @@ class AutomationWorker(QObject):
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            recovery_options = {}
+            recovery_options = {"field_cb": self.field_signal.emit}
             if self.portal_id in {"oic", "newindia"}:
                 recovery_options["recovery_cb"] = self.recovery_signal.emit
-            if self.portal_id == "newindia":
-                recovery_options["field_cb"] = self.field_signal.emit
             self._engine = AutomationEngine(
                 log_cb    = lambda msg: self.log_signal.emit(msg),
                 step_cb   = lambda i, s: self.step_signal.emit(i, s),

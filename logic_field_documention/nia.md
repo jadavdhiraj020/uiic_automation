@@ -118,7 +118,7 @@ Files larger than 1.5 MB are compressed before upload. The merged PDF may be up 
 | 12    | **Survey Fee Bill**                  | Fee amounts, GST, HSN, fee bill document, then **Submit**             |
 | End   | Your review                                | App3 leaves Chrome open so you can check everything.                        |
 
-Before NEFT Details and Claim Assessment, App3 waits for the cheque and invoice reading to finish (it may run in the background while earlier steps are filled). If that reading is not ready, the run stops at that step.
+App3 fills NEFT Details and Work Approval while the cheque is read in the background. It checks for a completed cheque result before **Additional Details → Next**. Claim Assessment still waits for the workshop invoice reading when needed. See the [automation engine](../app/automation/engine.py).
 
 ---
 
@@ -254,13 +254,13 @@ Fields follow each channel's top-to-bottom order:
 | ------------------------------ | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
 | **Payment To**           | ðŸ§® Calculated  | **Dealer** when the report says "payment to repairer", "payment to dealer" or "in favour of" a repairer or dealer. **Insured** when it says "payment to insured", "payment to reimbursement" or "in favour of" the insured. | "Insured"                                    |
 | Dealer Name (only when Dealer) | ðŸ§® Calculated  | The Registered Owner Name. There is no dealer label for New India.                                                                                                                                                                      |                                              |
-| **IFSC Code**            | ðŸ“„ Direct      | From the report, else from the cheque photo. App3 then clicks Find to load the bank branch.                                                                                                                                             | Blocks start unless the cheque can supply it |
-| **Account Number**       | ðŸ“„ Direct      | From the report, else from the cheque photo.                                                                                                                                                                                            | Blocks start unless the cheque can supply it |
+| **IFSC Code**            | ðŸ“„ Direct      | From the report, then from the cheque. App3 clicks **Find** to load the bank branch. | If still blank or invalid at **Next**, New India validation can put it in the page review. |
+| **Account Number**       | ðŸ“„ Direct      | From the report, then from the cheque. | If still blank or invalid at **Next**, New India validation can put it in the page review. |
 | Re-Enter Account Number        | ðŸ§® Calculated  | Same as Account Number.                                                                                                                                                                                                                 |                                              |
 | Account Type                   | ðŸ” Matched     | From the report. When the report says nothing (or says Savings) and the cheque shows a type, the cheque wins. Entered in capitals.                                                                                                      | "Savings" (setting)                          |
 | Party Payment Method           | âš™ï¸ Setting | NEFT                                                                                                                                                                                                                                    |                                              |
 
-The cheque is only read when IFSC Code or Account Number is missing from the report.
+The cheque is only read when IFSC Code or Account Number is missing from the report. If a background result is ready by **Additional Details → Next**, App3 fills only blank, editable bank fields, including **Re-Enter Account Number**. For example, when the report supplies IFSC and the cheque supplies the account number during Work Approval, App3 can fill both blank account inputs in one pass. If an entered bank value conflicts with the result, App3 leaves the bank fields for review. When the scan is still running, any bank fields New India requires are listed in the same review as the other unfinished fields on the page. See [NEFT Details](../app/portals/newindia/automation/neft_module.py) and [Work Approval](../app/portals/newindia/automation/work_approval_module.py).
 
 ---
 
@@ -327,7 +327,11 @@ When New India displays the **Maruti / Tie-Up** part-wise assessment layout (ide
 6. **Save as Draft:** App3 requests a draft save after verifying the pending rows and waits for confirmation. It pauses in Chrome for the operator to review the draft. **Continue** resumes the existing summary fields and navigation to Document Upload. An unconfirmed draft stays open for inspection.
 7. **Summary and Next:** After the draft review, App3 fills the existing Net Salvage, Towing, Additional Towing, Recommendations and Re-Inspection fields, saves the summary, and runs the existing **Next** review before opening Document Upload.
 
-The new row controls were checked against the saved portal template and exercised in a local Chromium form. Live portal draft confirmation remains to be verified.
+App3 changes the dealer dropdowns in row order, up to 20 per browser call. It checks Pause and Stop between groups and retries a dropdown individually if the browser did not retain the selection. For each new survey row, App3 enters standard fields together and checks which values New India kept. It still clicks **Add Row** once per item and selects each HSN/SAC suggestion in that row. GST responses can arrive while subsequent rows are filled, and App3 checks the results before saving. The summary fields use their existing verification without the extra between-field delay.
+
+New India requires a valid **Item** on dealer rows that show the Item dropdown, including those marked **Not Allowed**. It also validates **Depreciation** on every row. For example, if dealer row 12 still shows **Select**, App3 lists row 12 in the review card before clicking **Save as Draft**. Choose the correct Item in Chrome and click **Continue** to recheck the rows.
+
+The table and draft controls were observed on the live page. Row entry and draft review were exercised in a local Chromium form. Live timing and draft confirmation remain to be verified.
 
 [Maruti row mappings](../app/portals/newindia/automation/maruti_rows.py) · [Maruti draft and review](../app/portals/newindia/automation/claim_assessment_module.py)
 
@@ -433,7 +437,7 @@ The run does not start when any of these 26 values is missing:
 Claim Number · Registered Owner Name · Vehicle Registration Number · Date of Registration · Engine No · Chassis No · Vehicle Make · Class of Vehicle · RTO Name · Odometer Reading · Vehicle Color · Registered Laden Weight · Type of Vehicle · Type of Fuel · Cause/Nature of Accident · Driver Name · DOB of Driver · Age of Driver · Driver License Number · Driver License Issue Date · Driver License Expiry Date · IFSC Code · Account Number · Vendor/Tax Invoice Date · Vendor/Tax Invoice Number · Primary Assessment
 
 - Odometer Reading and Primary Assessment may be 0. For the other fields, 0 counts as missing.
-- Invoice Number and Date do not block the start when they will be read from the invoice PDF. IFSC Code and Account Number do not block the start when they will be read from the cheque. The run stops later if that reading does not deliver them.
+- Invoice Number and Date do not block the start when they will be read from the invoice PDF. IFSC Code and Account Number do not block the start when they will be read from the cheque. App3 checks the bank fields at **Additional Details → Next**.
 
 ### 16.2 These only warn (the run continues)
 

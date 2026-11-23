@@ -3,6 +3,7 @@ import logging
 import os
 from playwright.async_api import Page
 from app.data.data_model import ClaimData
+from app.portals.newindia.automation.neft_module import fill_ready_cheque_details
 from app.portals.newindia.automation.ui_utils import (
     check_checkbox_with_delay,
     fill_input_with_delay,
@@ -335,6 +336,10 @@ async def _fill_work_approval_inner(
         record_additional_issue(log, "The details furnished above are verified by me and found in order")
 
     if stop_cb(): return False
+
+    await fill_ready_cheque_details(page, data, log, stop_cb, field_delay_ms)
+    if stop_cb():
+        return False
 
     # 8. Click Next button
     recovery = current_recovery.get()
