@@ -123,8 +123,15 @@ _SNAPSHOT = r"""
             values[key] = 'Not Allowed';
         }
         const view = model?.$viewValue;
+        const errors = model?.$error ? Object.keys(model.$error) : [];
+        // New India's claimAssessmentFormParse() clears $error.parse on 'P'/'S'/'SFB'
+        // after typeahead selection, but omits a 'Maruti' branch, leaving $error.parse=true
+        // on input#hsnCode even after a valid suggestion is selected and $modelValue is set.
+        const modelInvalid = Boolean(
+            model?.$invalid && !(key === 'hsn' && model?.$modelValue && errors.length === 1 && errors[0] === 'parse')
+        );
         if (field && !field.disabled &&
-            (model?.$invalid || model?.$pending || !field.validity.valid ||
+            (modelInvalid || model?.$pending || !field.validity.valid ||
              (typeof view === 'string' && view.trim() !== field.value.trim()) ||
              (key === 'hsn' && model && !model.$modelValue))) invalid.push(key);
     }
@@ -380,6 +387,7 @@ async def fill_item(row, item, stop_cb):
     ordinary = [(key, values[key]) for key in ordered_keys if key in values]
     if stop_cb():
         return False
+    state = None
     try:
         await row.evaluate(_EDIT_ITEM_FIELDS, [(_FIELDS[key], value) for key, value in ordinary], timeout=1500)
         state = (await row_snapshot(row))[0]
@@ -418,7 +426,26 @@ async def fill_item(row, item, stop_cb):
     field = row.locator(f'{_FIELDS["hsn"]}:visible')
     if await field.count() != 1 or not await field.is_enabled():
         return False
+    _clear_hsn_parse_js = """el => {
+        const model = window.angular?.element(el)?.controller('ngModel');
+        if (model && model.$modelValue) {
+            model.$setValidity('parse', true);
+            el.classList.remove('error-field', 'inperr');
+        }
+    }"""
+    if (
+        state is not None
+        and _same_field("hsn", state["values"].get("hsn", ""), item.hsn)
+        and "hsn" not in state["invalid"]
+        and parse_amount(state["values"].get("gst", "")) is not None
+    ):
+        with suppress(Exception):
+            await field.evaluate(_clear_hsn_parse_js, timeout=1000)
+        return True
     try:
+        if (await field.input_value(timeout=1000)).strip():
+            await field.click(timeout=1000)
+            await field.fill("", timeout=1500)
         await field.fill(item.hsn, timeout=1800)
         options = row.locator('ul[typeahead-popup] li a:visible').filter(
             has_text=re.compile(rf"(?<!\w){re.escape(item.hsn)}(?!\w)"),
@@ -428,6 +455,8 @@ async def fill_item(row, item, stop_cb):
         if stop_cb():
             return False
         await options.click(timeout=1800)
+        with suppress(Exception):
+            await field.evaluate(_clear_hsn_parse_js, timeout=1000)
     except Exception:
         return False
     return True
