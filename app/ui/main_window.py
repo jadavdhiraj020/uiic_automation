@@ -86,6 +86,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._worker = None
         self._thread = None
+        # AI debug report switch (Logs tab). Kept in memory only: OFF on every launch.
+        self._ai_debug_mode = False
+        self._latest_ai_debug_path = ""
         self._close_requested = False
         self._automation_stopping = False
         self._manual_pause_active = False
@@ -186,6 +189,8 @@ class MainWindow(QMainWindow):
         self.workspace_page.pause_clicked.connect(self._toggle_pause_automation)
         self.workspace_page.stop_clicked.connect(self._stop_automation)
         self.workspace_page.export_log_clicked.connect(self._export_log)
+        self.workspace_page.ai_debug_mode_toggled.connect(self._set_ai_debug_mode)
+        self.workspace_page.copy_ai_debug_clicked.connect(self._copy_ai_debug_report)
         self.settings_page = SettingsPage(append_log_cb=self._append_log)
         self.settings_page.set_portal(get_active_portal_id() or "uiic")
 
@@ -430,6 +435,8 @@ class MainWindow(QMainWindow):
         # Update window title to show active portal
         self.setWindowTitle(f"Surveyor Automation — {portal.display_name}")
         self.workspace_page.set_portal(portal_id)
+        # The last report belongs to the old portal's run; the ON/OFF switch itself stays as set.
+        self._set_ai_debug_report_path("")
 
         # Reload settings page to show portal-specific settings
         self.settings_page.set_portal(portal_id)
@@ -877,8 +884,10 @@ class MainWindow(QMainWindow):
         self._manual_pause_active = False
         self._manual_pause_pending = False
         self._thread = QThread()
+        self._set_ai_debug_report_path("")
         self._worker = AutomationWorker(
-            claim, settings_override=settings, portal_id=portal_id
+            claim, settings_override=settings, portal_id=portal_id,
+            debug_mode=self._ai_debug_mode,
         )
         self._worker.moveToThread(self._thread)
 
@@ -893,6 +902,7 @@ class MainWindow(QMainWindow):
         if portal_id in {"oic", "newindia"}:
             self._worker.recovery_signal.connect(self._show_oic_recovery)
         self._worker.field_signal.connect(self._on_field_progress)
+        self._worker.debug_report_signal.connect(self._set_ai_debug_report_path)
 
         self.workspace_page.set_automation_running(True)
         self._set_portal_selector_locked(
@@ -1250,6 +1260,38 @@ class MainWindow(QMainWindow):
 
     def log(self, text):
         self._append_log(text)
+
+    def _set_ai_debug_mode(self, checked: bool):
+        self._ai_debug_mode = bool(checked)
+        if checked:
+            self.log("AI debug report ON — the next automation run will also save an AI debug report.")
+        else:
+            self.log("AI debug report OFF.")
+
+    def _set_ai_debug_report_path(self, path: str):
+        self._latest_ai_debug_path = str(path or "")
+        try:
+            self.workspace_page.logs_panel.set_ai_debug_report(self._latest_ai_debug_path)
+        except RuntimeError:
+            pass
+
+    def _copy_ai_debug_report(self):
+        path = self._latest_ai_debug_path
+        if not path or not os.path.isfile(path):
+            QMessageBox.information(
+                self,
+                "AI Debug Report",
+                "No AI debug report yet. Turn on 'AI debug report' in the Logs tab and run the automation once.",
+            )
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                text = fh.read()
+        except Exception as exc:
+            QMessageBox.warning(self, "AI Debug Report", f"Could not read the report: {exc}")
+            return
+        QApplication.clipboard().setText(text)
+        self.log(f"AI debug report copied to the clipboard ({os.path.basename(path)}).")
 
     def _export_log(self):
         path, _ = QFileDialog.getSaveFileName(

@@ -39,6 +39,12 @@ import uuid
 from datetime import datetime
 from typing import Callable, Optional
 
+from app.automation.debug_recorder import (
+    is_sensitive_label,
+    mask_sensitive_value,
+    scrub_typed_values,
+)
+
 # ── Log Level Tags ────────────────────────────────────────────────────────────
 
 
@@ -199,8 +205,39 @@ class AutomationLogger:
         self._issues: list[tuple[str, str]] = []
         self._summary_written: bool = False
         self._step_baseline: tuple[int, int, int, int, int] = (0, 0, 0, 0, 0)
+        # AI debug report recorder; stays None unless the Logs-tab switch is ON.
+        self._debug_recorder = None
         if claim_no:
             self.set_claim_context(claim_no, portal_id)
+
+    def attach_debug_recorder(self, recorder) -> None:
+        """Send warnings, errors and step results to an AI debug report recorder."""
+        if recorder is not None:
+            recorder.snapshot_fn = self._debug_snapshot
+        self._debug_recorder = recorder
+
+    @property
+    def debug_report_path(self) -> Optional[str]:
+        recorder = self._debug_recorder
+        return getattr(recorder, "report_path", None) if recorder is not None else None
+
+    def _debug_snapshot(self) -> dict:
+        """Read-only copy of the run counters for the AI debug report."""
+        with self._lock:
+            return {
+                "run_started_at": self._run_started_at,
+                "correlation_id": self.correlation_id,
+                "steps_completed": [name for name, _ in self._steps_completed],
+                "failed_step": self._failed_step,
+                "fields_filled": self._fields_filled,
+                "fields_skipped": self._fields_skipped,
+                "fields_failed": self._fields_failed,
+                "uploads_ok": self._uploads_ok,
+                "uploads_failed": self._uploads_failed,
+                "screenshots": list(self._screenshots),
+                "readable_log_file": self._readable_log_file,
+                "json_log_file": self._json_log_file,
+            }
 
     def set_claim_context(
         self, claim_no: str, portal_id: str, log_file_path: Optional[str] = None
@@ -397,6 +434,7 @@ class AutomationLogger:
         py_level: int = logging.INFO,
         extra: Optional[dict] = None,
         ui_detail: bool = False,
+        debug_exc: Optional[BaseException] = None,
     ):
         """Emit a formatted log line to both UI callback and Python logger."""
         with self._lock:
@@ -449,6 +487,16 @@ class AutomationLogger:
             self._write_json_log(entry)
             if self._readable_log_file:
                 self._write_readable_log(f"[{ts[:8]}] [{self.section}] {icon} {py_message}")
+
+        # AI debug report (Logs tab switch). None when OFF, so normal runs skip this.
+        recorder = self._debug_recorder
+        if recorder is not None and py_level >= logging.WARNING:
+            try:
+                recorder.note_log(
+                    logging.getLevelName(py_level), icon, self.section, message, extra, exc=debug_exc,
+                )
+            except Exception:
+                pass
 
     def raw(self, text: str, *, ui_detail: Optional[bool] = None):
         """Emit raw unformatted text (for separators, blank lines, banners)."""
@@ -550,7 +598,7 @@ class AutomationLogger:
             "traceback": tb,
         }
         self._emit(
-            LogLevel.ERROR, msg, indent=indent, py_level=logging.ERROR, extra=extra
+            LogLevel.ERROR, msg, indent=indent, py_level=logging.ERROR, extra=extra, debug_exc=exc
         )
         with self._lock:
             self._py_logger.error(
@@ -634,6 +682,7 @@ class AutomationLogger:
         source: str = "Excel",
     ):
         """Log a successfully filled form field."""
+        value = mask_sensitive_value(label, value)  # never log Password/Captcha values
         if self._portal_id == "oic":
             display_val = str(value)
             with self._lock:
@@ -675,6 +724,7 @@ class AutomationLogger:
         source: str = "Excel",
     ):
         """Log a successfully selected dropdown value."""
+        value = mask_sensitive_value(label, value)
         if self._portal_id == "oic":
             display_val = str(value)
             with self._lock:
@@ -742,15 +792,20 @@ class AutomationLogger:
 
     def field_failed(self, label: str, error: str, indent: Optional[int] = None):
         """Log a failed field action."""
+        if is_sensitive_label(label):
+            error = scrub_typed_values(error)  # Playwright errors can echo typed text
         if self._portal_id == "oic":
             from app.portals.oic.automation.recovery import operator_reason
 
+            raw_error = error
             error = operator_reason(error, "App3 could not complete this field. Check Chrome.")
             with self._lock:
                 self._fields_failed += 1
             msg = f"{label} failed. {error}"
             self._record_issue(msg)
             extra = {"field": label, "error": error}
+            if self._debug_recorder is not None and raw_error and raw_error != error:
+                extra["raw_error"] = raw_error  # AI debug report only
             self._emit(
                 LogLevel.WARNING,
                 msg,
@@ -811,6 +866,7 @@ class AutomationLogger:
         indent: Optional[int] = None,
     ):
         """Log a failed validation on a field/value, optionally with a retry string."""
+        value = mask_sensitive_value(field, value)
         if self._portal_id == "oic":
             msg = f"[{self._portal_tag}][{self._section}] — {field} validation failed\n    • Value:  {value}\n    • Reason: {reason}"
             if retry:
@@ -1120,7 +1176,7 @@ class AutomationLogger:
     # ── Extraction Helpers ────────────────────────────────────────────────────
 
     def extracted(self, field: str, value: str, indent: Optional[int] = None):
-        display_val = str(value)[:60]
+        display_val = str(mask_sensitive_value(field, value))[:60]
         self._emit(
             LogLevel.EXTRACTION,
             f"Extracted [{field}] → '{display_val}'",
@@ -1258,6 +1314,7 @@ class AutomationLogger:
         self, ui_field: str, source_field: str, value: str, indent: Optional[int] = None
     ):
         """Log field mapping results."""
+        value = mask_sensitive_value(ui_field, value)
         if self._portal_id == "newindia":
             msg = f"[{self._portal_tag}][Field Mapping]\nUI Field:     {ui_field}\nMapped From:  {source_field}\nValue:        {value}"
             extra = {"ui_field": ui_field, "source_field": source_field, "value": value}
@@ -1430,6 +1487,13 @@ class AutomationLogger:
                 )
                 self._failed_step = (step_name, clean_reason)
 
+        recorder = self._debug_recorder
+        if recorder is not None:
+            try:
+                recorder.note_step(step_name, ok, duration_s, reason)
+            except Exception:
+                pass
+
         if self._is_compact():
             dur = f" ({duration_s:.1f}s)" if duration_s is not None else ""
             if ok:
@@ -1506,6 +1570,9 @@ class AutomationLogger:
                     lines.append(f"  📸 {step_name}: {shot_path}")
             if readable_log:
                 lines.append(f"Saved log file: {readable_log}")
+            recorder = self._debug_recorder
+            if recorder is not None:
+                lines.append(f"AI debug report: {recorder.report_path}")
 
             summary_extra = {
                 "summary": True,
@@ -1561,5 +1628,10 @@ class AutomationLogger:
                     extra=None if self._is_compact() else (summary_extra if line == lines[0] else None),
                     ui_detail=self._is_compact(),
                 )
+            if recorder is not None:
+                try:
+                    recorder.finalize(status, final_message)
+                except Exception:
+                    pass
         finally:
             self.section = prev_section

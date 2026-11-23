@@ -246,6 +246,8 @@ class AutomationEngine:
         step_cb: Callable[[int, str], None] = lambda i, s: None,
         recovery_cb=None,
         field_cb=None,
+        debug_mode: bool = False,
+        debug_report_cb=None,
     ):
         def safe_log_cb(msg):
             try:
@@ -279,6 +281,9 @@ class AutomationEngine:
         self.field_cb = safe_field_cb if field_cb is not None else None
         self._stop_event = threading.Event()
         self.log = AutomationLogger("ENGINE", self.log_cb, portal_id=self.portal_id)
+        # AI debug report (Logs tab switch). Fixed for the whole run; OFF by default.
+        self._debug_mode = bool(debug_mode)
+        self._debug_report_cb = debug_report_cb
         self._recovery_cb = recovery_cb
         self._manual_review_prompt_id: Optional[str] = None
         self._manual_review_done = threading.Event()
@@ -294,6 +299,33 @@ class AutomationEngine:
             self._newindia_recovery = NewIndiaRecovery(
                 recovery_cb, self._stop_event.is_set, field_progress_cb=self.field_cb,
             )
+
+    def _start_ai_debug_report(self, claim, settings) -> None:
+        """Attach the AI debug report recorder. Only called when the switch is ON."""
+        try:
+            from app.automation.debug_recorder import AIDebugRecorder
+
+            def safe_report_cb(path):
+                if self._debug_report_cb is None:
+                    return
+                try:
+                    self._debug_report_cb(path)
+                except Exception:
+                    pass
+
+            recorder = AIDebugRecorder(
+                self.portal_id,
+                getattr(claim, "claim_no", "") or "",
+                self.log._json_log_file,
+                on_report_path=safe_report_cb,
+            )
+            recorder.set_context(settings=settings, claim=claim)
+            self.log.attach_debug_recorder(recorder)
+            recorder.note_info("Startup", "AI debug report started")
+            self.log.info(f"AI debug report is ON: {os.path.basename(recorder.report_path)}")
+        except Exception as exc:
+            # The report is an extra; never let it stop a run.
+            logger.warning("AI debug report could not start: %s", exc)
 
     def resume_oic(self, prompt_id, decision):
         if self._manual_review_prompt_id and prompt_id == self._manual_review_prompt_id:
@@ -951,6 +983,8 @@ class AutomationEngine:
                     self.log.correlation_id = claim.correlation_id
                 if hasattr(claim, "_scan_logs") and claim._scan_logs:
                     self.log.write_historical_logs(claim._scan_logs)
+                if self._debug_mode:
+                    self._start_ai_debug_report(claim, settings)
 
                 # Wait for background document/assessment generation to finish
                 bg_thread = getattr(claim, "_background_generation_thread", None)

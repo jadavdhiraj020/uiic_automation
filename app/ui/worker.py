@@ -8,12 +8,14 @@ class AutomationWorker(QObject):
     done_signal = pyqtSignal(bool, str)
     recovery_signal = pyqtSignal(object)
     field_signal = pyqtSignal(object)
+    debug_report_signal = pyqtSignal(str)  # path of this run's AI debug report
 
-    def __init__(self, claim, settings_override=None, portal_id: str = "uiic"):
+    def __init__(self, claim, settings_override=None, portal_id: str = "uiic", debug_mode: bool = False):
         super().__init__()
         self.claim             = claim
         self.settings_override = settings_override
         self.portal_id         = portal_id
+        self.debug_mode        = bool(debug_mode)
         self._engine           = None
         self._stop_event       = threading.Event()
 
@@ -28,6 +30,9 @@ class AutomationWorker(QObject):
             recovery_options = {"field_cb": self.field_signal.emit}
             if self.portal_id in {"oic", "newindia"}:
                 recovery_options["recovery_cb"] = self.recovery_signal.emit
+            if self.debug_mode:
+                recovery_options["debug_mode"] = True
+                recovery_options["debug_report_cb"] = self.debug_report_signal.emit
             self._engine = AutomationEngine(
                 log_cb    = lambda msg: self.log_signal.emit(msg),
                 step_cb   = lambda i, s: self.step_signal.emit(i, s),
