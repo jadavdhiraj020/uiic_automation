@@ -1307,6 +1307,21 @@ class MainWindow(QMainWindow):
                 self.log(f"Log exported to {path}")
             except Exception as e:
                 QMessageBox.critical(self, "Export Failed", str(e))
+                return
+            self._export_ai_debug_copy(path)
+
+    def _export_ai_debug_copy(self, exported_log_path: str):
+        """When an AI debug report exists for the last run, save a copy beside the exported log."""
+        report = self._latest_ai_debug_path
+        if not report or not os.path.isfile(report):
+            return
+        target = os.path.splitext(exported_log_path)[0] + "_ai_debug.md"
+        try:
+            with open(report, "r", encoding="utf-8") as src, open(target, "w", encoding="utf-8", newline="\n") as dst:
+                dst.write(src.read())
+            self.log(f"AI debug report exported to {target}")
+        except Exception as e:
+            QMessageBox.warning(self, "AI Debug Report", f"The log was exported, but the AI debug report could not be copied:\n{e}")
 
     def _toggle_pwd(self, checked):
         self.settings_page.inp_password.setEchoMode(

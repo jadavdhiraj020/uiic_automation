@@ -224,7 +224,8 @@ class StructuredLogsPanel(QWidget):
         self.debug_mode_check.setChecked(False)
         self.debug_mode_check.setToolTip(
             "Save one extra report for AI troubleshooting on the next run: the exact code place,\n"
-            "the real error text, run settings and the end of the log. Passwords stay hidden.\n"
+            "the real error text, browser errors and failed portal calls, a quick read-only page\n"
+            "snapshot at each problem, run settings and the end of the log. Passwords stay hidden.\n"
             "Works for UIIC, OIC and New India. Starts OFF every time App3 opens."
         )
         self.debug_mode_check.toggled.connect(self.debug_mode_toggled.emit)

@@ -327,6 +327,25 @@ class AutomationEngine:
             # The report is an extra; never let it stop a run.
             logger.warning("AI debug report could not start: %s", exc)
 
+    def _attach_ai_debug_browser(self, context) -> None:
+        """AI debug report only: listen (read-only) to browser errors. No-op when the switch is OFF."""
+        recorder = getattr(self.log, "_debug_recorder", None)
+        if recorder is None:
+            return
+        try:
+            recorder.attach_browser(context)
+        except Exception as exc:
+            logger.warning("AI debug report could not watch the browser: %s", exc)
+
+    def _stop_ai_debug_browser(self) -> None:
+        recorder = getattr(self.log, "_debug_recorder", None)
+        if recorder is None:
+            return
+        try:
+            recorder.stop_browser_capture()
+        except Exception:
+            pass
+
     def resume_oic(self, prompt_id, decision):
         if self._manual_review_prompt_id and prompt_id == self._manual_review_prompt_id:
             self._manual_review_done.set()
@@ -985,6 +1004,7 @@ class AutomationEngine:
                     self.log.write_historical_logs(claim._scan_logs)
                 if self._debug_mode:
                     self._start_ai_debug_report(claim, settings)
+                self._attach_ai_debug_browser(context)
 
                 # Wait for background document/assessment generation to finish
                 bg_thread = getattr(claim, "_background_generation_thread", None)
@@ -1852,6 +1872,7 @@ class AutomationEngine:
                         pass
                 return AutomationRunResult(False, "OIC automation could not continue safely. Check Chrome.")
             finally:
+                self._stop_ai_debug_browser()
                 if health_task:
                     if not health_task.done():
                         health_task.cancel()

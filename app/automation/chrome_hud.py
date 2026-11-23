@@ -317,3 +317,16 @@ async def emit_field_hud(
         await update_field_hud(
             page, sec, label, state, filled=filled, failed=failed, skipped=skipped,
         )
+
+    if state == "failed" and getattr(log, "_debug_recorder", None) is not None:
+        # AI debug report only (Logs-tab switch ON): one read-only look at the field and page.
+        from app.automation.debug_recorder import debug_snapshot
+
+        sec = ""
+        with suppress(Exception):
+            sec = section or getattr(log, "section", None) or getattr(log, "_section", None) or ""
+        await debug_snapshot(
+            log, page, target=target, selector=selector, label=label,
+            reason=f"Field failed in {sec}" if sec else "Field failed",
+            extra={"Tried value": value, "Section": sec},
+        )
