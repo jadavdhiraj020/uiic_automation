@@ -704,7 +704,7 @@ async def _save_maruti_draft(page, body, log, stop_cb):
             await original.dispose()
 
 
-async def _fill_maruti_assessment_rows(page, items, log, stop_cb):
+async def _fill_maruti_assessment_rows(page, items, data, defaults, log, stop_cb):
     recovery = current_recovery.get()
     if await page.locator(_BLOCKING_DIALOGS).count():
         if recovery is None:
@@ -810,6 +810,15 @@ async def _fill_maruti_assessment_rows(page, items, log, stop_cb):
         return False
     if stop_cb() or (recovery is not None and not await recovery._same_step(page, "three")):
         return False
+    # Fill the bottom-summary required fields (Recommendations, Re-Inspection) BEFORE
+    # clicking Save as Draft so New India's form validation passes and the draft is accepted.
+    if not stop_cb():
+        await _fill_reinspection(page, data, log, 0)
+    if not stop_cb():
+        await _fill_text(
+            page, log, "textarea#recommendations", "Recommendations",
+            str(defaults.get("recommendations") or "Approved"), 0, source="Default",
+        )
     if not await _save_maruti_draft(page, body, log, stop_cb):
         if not stop_cb() and recovery is not None:
             await recovery.pause(
@@ -963,7 +972,7 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_c
             return False
 
         if is_maruti:
-            if not await _fill_maruti_assessment_rows(page, items, log, stop_cb) or stop_cb():
+            if not await _fill_maruti_assessment_rows(page, items, data, defaults, log, stop_cb) or stop_cb():
                 return False
             await _fill_maruti_bottom_summary(page, data, log, defaults, 0, stop_cb)
             if stop_cb():
