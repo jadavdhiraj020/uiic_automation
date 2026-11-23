@@ -219,9 +219,9 @@ class StructuredLogsPanel(QWidget):
         self.auto_scroll_check.setChecked(True)
         self.auto_scroll_check.toggled.connect(self._set_auto_scroll)
         title_lay.addWidget(self.auto_scroll_check)
-        # AI debug report: session-only switch, always OFF when App3 opens.
+        # AI debug report: ON by default on every launch.
         self.debug_mode_check = QCheckBox("AI debug report")
-        self.debug_mode_check.setChecked(False)
+        self.debug_mode_check.setChecked(True)
         self.debug_mode_check.setToolTip(
             "Save one extra report for AI troubleshooting on the next run: the exact code place,\n"
             "the real error text, browser errors and failed portal calls, a quick read-only page\n"

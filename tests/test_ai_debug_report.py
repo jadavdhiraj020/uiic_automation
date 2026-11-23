@@ -190,15 +190,15 @@ def test_report_problems_never_break_the_run(tmp_path):
     assert not Path(recorder.report_path).exists()
 
 
-def test_engine_keeps_report_off_unless_asked():
+def test_engine_defaults_ai_debug_report_on():
     pytest.importorskip("playwright.async_api")
     from app.automation.engine import AutomationEngine
 
-    assert AutomationEngine(portal_id="uiic")._debug_mode is False
-    assert AutomationEngine(portal_id="oic", debug_mode=True)._debug_mode is True
+    assert AutomationEngine(portal_id="uiic")._debug_mode is True
+    assert AutomationEngine(portal_id="oic", debug_mode=False)._debug_mode is False
 
 
-def test_logs_panel_switch_starts_off_on_every_portal():
+def test_logs_panel_switch_starts_on_every_portal():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PyQt6.QtWidgets", exc_type=ImportError)
     from PyQt6.QtWidgets import QApplication
@@ -211,12 +211,12 @@ def test_logs_panel_switch_starts_off_on_every_portal():
     panel.debug_mode_toggled.connect(toggled.append)
     for portal_id in PORTALS:
         panel.set_portal(portal_id)
-        assert not panel.debug_mode_check.isChecked()
+        assert panel.debug_mode_check.isChecked()
         assert not panel.debug_mode_check.isHidden()
     assert not panel.btn_copy_ai_debug.isEnabled()
 
-    panel.debug_mode_check.setChecked(True)
-    assert toggled == [True]
+    panel.debug_mode_check.setChecked(False)
+    assert toggled == [False]
     panel.set_ai_debug_report("C:/synthetic/TESTCLAIM001_run_ai_debug.md")
     assert panel.btn_copy_ai_debug.isEnabled()
     panel.set_debug_switch_locked(True)

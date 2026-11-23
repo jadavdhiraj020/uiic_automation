@@ -233,7 +233,7 @@ class AutomationEngine:
         step_cb: Callable[[int, str], None] = lambda i, s: None,
         recovery_cb=None,
         field_cb=None,
-        debug_mode: bool = False,
+        debug_mode: bool = True,
         debug_report_cb=None,
     ):
         def safe_log_cb(msg):

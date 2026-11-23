@@ -86,8 +86,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._worker = None
         self._thread = None
-        # AI debug report switch (Logs tab). Kept in memory only: OFF on every launch.
-        self._ai_debug_mode = False
+        # AI debug report switch (Logs tab). Default ON on every launch.
+        self._ai_debug_mode = True
         self._latest_ai_debug_path = ""
         self._close_requested = False
         self._automation_stopping = False

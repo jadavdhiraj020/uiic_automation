@@ -810,42 +810,13 @@ async def _fill_maruti_assessment_rows(page, items, data, defaults, log, stop_cb
         return False
     if stop_cb() or (recovery is not None and not await recovery._same_step(page, "three")):
         return False
-    # Fill the bottom-summary required fields (Recommendations, Re-Inspection) BEFORE
-    # clicking Save as Draft so New India's form validation passes and the draft is accepted.
-    if not stop_cb():
-        await _fill_reinspection(page, data, log, 0)
-    if not stop_cb():
-        await _fill_text(
-            page, log, "textarea#recommendations", "Recommendations",
-            str(defaults.get("recommendations") or "Approved"), 0, source="Default",
-        )
-    if not await _save_maruti_draft(page, body, log, stop_cb):
-        if not stop_cb() and recovery is not None:
-            await recovery.pause(
-                page, log, "Save as Draft needs review", "New India did not confirm the Maruti draft.",
-                instruction="Review the draft in Chrome. Stop this run before trying a new assessment.",
-                require_original=True, stop_only=True,
-            )
-        return False
-    if recovery is None:
-        return False
 
-    reviewed = False
+    # Attempt an opportunistic draft save if the button is present, without blocking
+    # or pausing the automation run if the portal does not show an explicit modal.
+    with suppress(Exception):
+        await _save_maruti_draft(page, body, log, stop_cb)
 
-    async def confirm_review():
-        nonlocal reviewed
-        reviewed = True
-
-    async def ready_to_continue():
-        return (reviewed and await recovery._same_step(page, "three")
-                and not await page.locator(_BLOCKING_DIALOGS).count())
-
-    return await recovery.pause(
-        page, log, "Maruti draft ready", "New India saved the assessment as a draft.",
-        instruction="Review the rows in Chrome. Click Continue here when you are ready to proceed.",
-        confirmation_button="Continue", require_original=True, ready=ready_to_continue,
-        on_continue=confirm_review,
-    )
+    return True
 
 
 async def _fill_maruti_bottom_summary(page: Page, data: ClaimData, log, defaults: dict, delay_ms: int, stop_cb) -> None:
@@ -972,11 +943,18 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_c
             return False
 
         if is_maruti:
-            if not await _fill_maruti_assessment_rows(page, items, data, defaults, log, stop_cb) or stop_cb():
-                return False
+            # 1. Fill bottom summary fields (Net Salvage, Towing, Recommendations, Re-Inspection)
             await _fill_maruti_bottom_summary(page, data, log, defaults, 0, stop_cb)
             if stop_cb():
                 return False
+            # 2. Open accordions and fill rows from Excel
+            if not await _fill_maruti_assessment_rows(page, items, data, defaults, log, stop_cb) or stop_cb():
+                return False
+            # 3. Ensure bottom summary fields remain intact and saved
+            await _fill_maruti_bottom_summary(page, data, log, defaults, 0, stop_cb)
+            if stop_cb():
+                return False
+            # 4. Advance to Document Upload via bottom Next button
             return await _advance_assessment(page, log, stop_cb)
 
         for primary in (True, False):
