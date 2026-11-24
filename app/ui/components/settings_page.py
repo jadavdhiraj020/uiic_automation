@@ -502,8 +502,13 @@ class SettingsPage(QWidget):
             # Col Offset SpinBox
             offset_spin = SafeSpinBox()
             offset_spin.setObjectName("embeddedSpin")
-            # Paint's percentage is to the left of its label in the OIC report.
-            offset_spin.setRange(-100 if self._portal_id == "oic" and fn == "paint_depreciation_rate" else 0, 100)
+            # These percentages sit to the left of their label: the OIC paint rate and
+            # the New India Metal / Painting Depreciation % cells (shipped col_offset -1).
+            left_of_label = (
+                (self._portal_id == "oic" and fn == "paint_depreciation_rate")
+                or (self._portal_id == "newindia" and fn in ("metal_depreciation_pct", "paint_depreciation_pct"))
+            )
+            offset_spin.setRange(-100 if left_of_label else 0, 100)
             offset_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
             offset_spin.setValue(int(cfg.get("col_offset", 1)))
             self.mapping_table.setCellWidget(i, 4, offset_spin)
