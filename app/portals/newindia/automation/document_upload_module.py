@@ -53,6 +53,8 @@ logger = logging.getLogger(__name__)
 # ── Constants ─────────────────────────────────────────────────────────────────
 MAX_MERGED_PDF_BYTES = 15 * 1024 * 1024   # 15 MB portal limit (merged PDF)
 MAX_MANDATORY_FILE_BYTES = 1536 * 1024    # 1.5 MB portal limit per individual file
+_UPLOAD_STALL_S = 60.0       # give up when the upload count has not grown for this long
+_UPLOAD_HARD_CAP_S = 300.0   # absolute ceiling for one mandatory-documents batch
 
 # Supports both Tie-Up / Maruti (uploadFile) and Non-Tie-Up (uploadFileNonTieUp)
 _MANDATORY_FORM = 'ng-form[name="mandatoryDocForm"]:visible'
@@ -470,14 +472,24 @@ async def _wait_for_mandatory_upload_outcome(
     stop_cb,
     previous_banners: _UploadBanners,
     uploaded_before: int = 0,
-    max_wait_s: float = 45.0,
+    max_wait_s: float = _UPLOAD_STALL_S,
 ) -> tuple[bool, str]:
     """
     Wait for mandatory upload completion across Tie-Up (inline banner / uploaded table)
     and Non-Tie-Up (row badges / modal / uploaded table).
+
+    New India uploads the batch one file at a time and the inline banner counts up
+    ("1 Documents Uploaded", then "3 ...", then "4 ..."). A partial count is therefore
+    progress, not a failure: keep waiting while the count or the Successful rows keep
+    growing, and give up only after ``max_wait_s`` with no progress (or a hard cap).
     Returns (upload_ok, failure_reason).
     """
-    deadline = asyncio.get_running_loop().time() + max_wait_s
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    progress_at = started
+    best_reported = 0
+    best_successful = 0
+    deadline = started + _UPLOAD_HARD_CAP_S
     expected_rows = len(row_indices)
     # A success dialog can report a partial upload. Only accept its count if it
     # agrees with the verified batch, or fall back to the per-row statuses.
@@ -492,7 +504,13 @@ async def _wait_for_mandatory_upload_outcome(
     successful_count = 0
     failed_count = 0
 
-    while asyncio.get_running_loop().time() < deadline:
+    def note_progress(kind: str, done: int) -> None:
+        if isinstance(log, AutomationLogger):
+            log.info(f"Upload progress: {done}/{expected_rows} {kind}...")
+        else:
+            log(f"[{_ts()}]   ⏳ Upload progress: {done}/{expected_rows} {kind}...")
+
+    while loop.time() < deadline and loop.time() - progress_at < max_wait_s:
         if stop_cb():
             return False, "Automation stopped by user."
         cur_detail: dict = {}
@@ -519,8 +537,11 @@ async def _wait_for_mandatory_upload_outcome(
             return False, reason
 
         banner_ok, reported_count = _inline_banner_confirms(success_text, error_text, expected_rows)
-        if reported_count is not None and not banner_ok:
-            return False, f"Only {reported_count}/{expected_rows} mandatory documents uploaded."
+        if reported_count is not None and not banner_ok and reported_count > best_reported:
+            # Partial count: the portal is still uploading the remaining files.
+            best_reported = reported_count
+            progress_at = loop.time()
+            note_progress("documents uploaded", reported_count)
         if banner_ok:
             if isinstance(log, AutomationLogger):
                 log.success(f"Portal confirmed upload: {success_text[:120]}")
@@ -529,6 +550,10 @@ async def _wait_for_mandatory_upload_outcome(
             return True, ""
 
         successful_count, failed_count = await _count_mandatory_upload_statuses(page, row_indices)
+        if successful_count > best_successful:
+            best_successful = successful_count
+            progress_at = loop.time()
+            note_progress("rows Successful", successful_count)
         if successful_count >= expected_rows:
             if isinstance(log, AutomationLogger):
                 log.success(f"All {expected_rows} document(s) uploaded successfully.")
@@ -547,9 +572,12 @@ async def _wait_for_mandatory_upload_outcome(
             if error_text:
                 return False, f"New India upload error: {error_text[:120]}"
             banner_ok, reported_count = _inline_banner_confirms(success_text, error_text, expected_rows)
-            if reported_count is not None and not banner_ok:
-                return False, f"Only {reported_count}/{expected_rows} mandatory documents uploaded."
             successful_count, failed_count = await _count_mandatory_upload_statuses(page, row_indices)
+            if reported_count is not None and not banner_ok and failed_count == 0:
+                # A per-file success popup arrived but the batch is not finished yet.
+                best_reported = max(best_reported, reported_count)
+                popup_tag = None
+                continue
             if failed_count == 0:
                 if isinstance(log, AutomationLogger):
                     log.success(f"Portal confirmed mandatory upload ({expected_rows} document(s)).")
@@ -589,6 +617,13 @@ async def _wait_for_mandatory_upload_outcome(
 
         await asyncio.sleep(0.15)
 
+    if stop_cb():
+        return False, "Automation stopped by user."
+    if best_reported:
+        return False, (
+            f"Only {best_reported}/{expected_rows} mandatory documents uploaded "
+            f"(no further progress for {int(max_wait_s)}s)."
+        )
     return False, f"Mandatory document upload not confirmed ({successful_count}/{expected_rows} rows Successful)."
 
 

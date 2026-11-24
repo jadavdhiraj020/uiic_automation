@@ -14,6 +14,7 @@ from app.portals.newindia.automation.maruti_rows import (
     ROWS as _MARUTI_ROWS,
     add_row,
     assign_existing_rows,
+    build_depreciation_rules,
     dealer_not_allowed,
     dealer_row_problems,
     fill_item,
@@ -732,6 +733,28 @@ async def _save_maruti_draft(page, body, log, stop_cb):
             await original.dispose()
 
 
+def _row_value(item):
+    """Amount and Depreciation shown in the log and Chrome status box for one row."""
+    values = item.values()
+    return f"{values['amount']} (Dep {values['depreciation']}%)"
+
+
+def _row_label(idx, total, item):
+    text = " ".join(str(item.description or "").split())
+    return f"Survey item {idx + 1}/{total} ({text if len(text) <= 28 else text[:25] + '...'})"
+
+
+async def _report_row(page, recovery, label, state, value=""):
+    """Show one part-wise row in the Chrome HUD and the run progress counters."""
+    if recovery is not None:
+        recovery.report_field_progress("Claim Assessment", label, state, value=value)
+    await update_field_hud(
+        page, "Claim Assessment", label, state,
+        filled=getattr(recovery, "fields_filled", 0), failed=getattr(recovery, "fields_failed", 0),
+        skipped=getattr(recovery, "fields_skipped", 0),
+    )
+
+
 async def _fill_maruti_assessment_rows(page, items, data, defaults, log, stop_cb):
     recovery = current_recovery.get()
     if await page.locator(_BLOCKING_DIALOGS).count():
@@ -771,7 +794,24 @@ async def _fill_maruti_assessment_rows(page, items, data, defaults, log, stop_cb
     await _mark_maruti_dealer_rows(page, rows, initial, dealers, log, stop_cb)
 
     count = len(initial)
+    total_items = len(items)
     gst_pending = []
+    if isinstance(log, AutomationLogger):
+        log.info(
+            f"Entering {total_items} assessed item(s) from the Primary Assessment workbook "
+            f"({len(assigned)} already on the portal)."
+        )
+        rules = build_depreciation_rules(data, defaults)
+        log.info(f"Depreciation rules: {rules.summary()}")
+        if rules.plastic_setting_invalid:
+            log.warning(
+                "Plastic Depreciation % in Automation Defaults is not 0 to 99.99; Plastic rows use 50."
+            )
+        for name in rules.missing():
+            log.warning(
+                f"{name} Depreciation % was not found in the Excel. {name} rows use Depreciation 0; "
+                "check them in Chrome."
+            )
     for idx, item in enumerate(items):
         if stop_cb():
             return False
@@ -781,6 +821,8 @@ async def _fill_maruti_assessment_rows(page, items, data, defaults, log, stop_cb
             await recovery.wait_if_manually_paused(page, log)
         if stop_cb():
             return False
+        row_label = _row_label(idx, total_items, item)
+        await _report_row(page, recovery, row_label, "active", _row_value(item))
         if blanks:
             row_index = blanks.pop(0)
         elif await add_row(body, rows, count, stop_cb):
@@ -788,8 +830,11 @@ async def _fill_maruti_assessment_rows(page, items, data, defaults, log, stop_cb
             count += 1
         else:
             # A late Add Row must be inspected before any further click.
+            await _report_row(page, recovery, row_label, "failed")
             break
         assigned[idx] = row_index
+        with suppress(Exception):
+            await rows.nth(row_index).scroll_into_view_if_needed(timeout=1500)
         if await fill_item(rows.nth(row_index), item, stop_cb):
             gst_pending.append(row_index)
 
@@ -842,13 +887,35 @@ async def _fill_maruti_assessment_rows(page, items, data, defaults, log, stop_cb
             elif log:
                 log(issue)
 
+    # Per-item result so the operator can see every Excel row that was entered.
+    entered = 0
+    for idx, item in enumerate(items):
+        row_label = _row_label(idx, total_items, item)
+        amount = _row_value(item)
+        if any(issue.startswith(f"Survey item {idx + 1} (") for issue in issues) or idx not in assigned:
+            await _report_row(page, recovery, row_label, "failed", amount)
+            continue
+        entered += 1
+        await _report_row(page, recovery, row_label, "ok", amount)
+        if isinstance(log, AutomationLogger):
+            log.field_filled(row_label, amount, source="Excel")
+    if isinstance(log, AutomationLogger):
+        summary = f"Part-wise rows: {entered}/{total_items} Excel item(s) entered."
+        (log.success if entered == total_items else log.warning)(summary)
+
     if stop_cb() or (recovery is not None and not await recovery._same_step(page, "three")):
         return False
 
     # Attempt an opportunistic draft save if the button is present, without blocking
     # or pausing the automation run if the portal does not show an explicit modal.
+    saved = False
     with suppress(Exception):
-        await _save_maruti_draft(page, body, log, stop_cb)
+        saved = await _save_maruti_draft(page, body, log, stop_cb)
+    if isinstance(log, AutomationLogger):
+        if saved:
+            log.success("Part-wise rows saved as draft.")
+        else:
+            log.warning("Part-wise rows were entered but Save as Draft was not confirmed. Check Chrome.")
 
     return True
 
@@ -961,6 +1028,7 @@ async def fill_claim_assessment_details(page: Page, data: ClaimData, log, stop_c
                 items = read_maruti_items(
                     data.assessment_files.get("assessment_excel"),
                     source_excel_path=getattr(data, "source_excel_path", None),
+                    rules=build_depreciation_rules(data, defaults),
                 )
             except Exception as exc:
                 reason = getattr(data, "_newindia_primary_assessment_error", "") or str(exc)

@@ -186,6 +186,7 @@ class SettingsPage(QWidget):
                 ("payment_method", "Payment Method", "NEFT payment method", "text"),
                 ("account_type", "Account Type", "NEFT account type fallback", "text"),
                 ("relationship_with_insured", "Relationship With Insured", "Driver details fallback", "text"),
+                ("plastic_depreciation_pct", "Plastic Depreciation %", "Maruti part-wise rows: Depreciation for Plastic parts when Nil Depreciation is not Yes (0 to 99.99)", "text"),
                 ("table_boundary_keyword", "Table Boundary Keyword", "End-of-table marker(s) in Excel. Separate multiple with | (e.g. 'sub total|grand total')", "text"),
             ] + _printable_rows,
             "oic": [

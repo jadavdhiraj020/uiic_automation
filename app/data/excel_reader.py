@@ -634,6 +634,23 @@ def _parse_nil_depreciation(value):
     return None
 
 
+def _parse_depreciation_pct(value):
+    """Return a clean percentage such as "12.5" or "25", or None when it is not 0-99.99."""
+    if value is None or isinstance(value, bool):
+        return None
+    text = str(value).strip().rstrip("%").strip().replace(",", "")
+    try:
+        pct = Decimal(text)
+    except InvalidOperation:
+        return None
+    if not pct.is_finite():
+        return None
+    pct = pct.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)  # New India accepts 2 decimals
+    if pct < 0 or pct >= 100:
+        return None
+    return format(pct.normalize(), "f")
+
+
 def _parse_time_string(val: str) -> Optional[Tuple[str, str]]:
     """
     Parse a string for a valid time, converting to 24-hour (HH, MM).
@@ -833,6 +850,8 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
         "delivery_order_time": _parse_delivery_order_time,
         "workshop_gst_amount": _parse_workshop_gst_amount,
         "nil_depreciation": _parse_nil_depreciation,
+        "metal_depreciation_pct": _parse_depreciation_pct,
+        "paint_depreciation_pct": _parse_depreciation_pct,
     } if portal_id == "newindia" else {}
 
     for field_name, cfg in mapping.items():

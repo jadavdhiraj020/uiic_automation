@@ -371,15 +371,26 @@ async def _click_visible_enabled_button(
     except Exception:
         pass
 
+    async def portal_reacted() -> bool:
+        # A click that raised can still have reached the portal (the upload/save
+        # alert opens, then the button disables). Never click again in that case.
+        try:
+            return bool(await page.locator(_BLOCKING_DIALOGS).count())
+        except Exception:
+            return False
+
     try:
-        await visible_btn.click(timeout=5000)
+        await visible_btn.click(timeout=4000)
         return True, "clicked"
     except Exception:
+        if await portal_reacted():
+            return True, "clicked"
         try:
-            await visible_btn.click(timeout=5000, force=True)
+            await visible_btn.click(timeout=4000, force=True)
             return True, "clicked"
         except Exception:
-            pass
+            if await portal_reacted():
+                return True, "clicked"
 
     # JS fallback for overlapping styling wrappers
     try:
@@ -737,11 +748,22 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
                         else:
                             log("   ⚠️ No confirmation popup after Survey Fee Bill Upload click.")
                 else:
-                    sfb_upload_issue = (
-                        "Survey Fee Bill Upload button was disabled."
-                        if upload_reason == "disabled"
-                        else "Survey Fee Bill Upload button was not found or could not be clicked."
-                    )
+                    # The click may have landed and the success alert may still be opening.
+                    late_tag = await dismiss_portal_popup(
+                        page, log, max_wait_s=4.0, classify=True, context="SFB Upload",
+                        success_message=_SFB_UPLOAD_SUCCESS_MSG,
+                    ) if upload_reason == "error" else None
+                    if late_tag == "success":
+                        if _structured:
+                            log.success("Survey Fee Bill document uploaded successfully.")
+                        else:
+                            log("   ✅ Survey Fee Bill document uploaded.")
+                    else:
+                        sfb_upload_issue = (
+                            "Survey Fee Bill Upload button was disabled."
+                            if upload_reason == "disabled"
+                            else "Survey Fee Bill Upload button was not found or could not be clicked."
+                        )
         except Exception as e:
             sfb_upload_issue = f"Survey Fee Bill upload failed: {str(e)[:100]}"
 

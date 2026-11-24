@@ -27,6 +27,7 @@
   "account_type": "Savings",
   "relationship_with_insured": "Self",
   "table_boundary_keyword": "sub total|total|grand total",
+  "plastic_depreciation_pct": "50",
   "eager_folder_ocr": false,
 
   "_comment_printable": "Printable Excel & PDF settings. Always enabled, no toggle.",

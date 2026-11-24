@@ -3,7 +3,7 @@
 import re
 from contextlib import suppress
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 
 from openpyxl import load_workbook
@@ -143,6 +143,88 @@ _SNAPSHOT = r"""
 """
 
 
+_ZERO = Decimal("0")
+_PLASTIC_DEFAULT_PCT = Decimal("50")
+
+
+def _parse_pct(value) -> Decimal | None:
+    """A percentage from 0 to 99.99 (the range New India accepts), else None."""
+    text = str(value if value is not None else "").strip().rstrip("%").strip()
+    if not text:
+        return None
+    try:
+        pct = Decimal(text)
+    except InvalidOperation:
+        return None
+    if not pct.is_finite():
+        return None
+    pct = pct.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)  # New India accepts 2 decimals
+    if pct < 0 or pct >= 100:
+        return None
+    return pct
+
+
+def _pct_text(pct: Decimal) -> str:
+    return format(pct.normalize(), "f")
+
+
+@dataclass(frozen=True)
+class DepreciationRules:
+    """Depreciation % App3 enters for each Maruti row.
+
+    Nil Depreciation = Yes: every row 0. Otherwise (No or missing): Plastic uses the
+    Automation Defaults value (50), Metal and Painting use the Excel values, and Glass,
+    Labour and everything else are 0. A Metal or Painting % that Excel did not give is 0.
+    """
+    nil_depreciation: bool = False
+    metal: Decimal | None = None
+    painting: Decimal | None = None
+    plastic: Decimal = _PLASTIC_DEFAULT_PCT
+    plastic_setting_invalid: bool = False
+
+    def for_item(self, kind: str) -> Decimal:
+        if self.nil_depreciation:
+            return _ZERO
+        if kind == "Plastic":
+            return self.plastic
+        if kind == "Metal":
+            return self.metal if self.metal is not None else _ZERO
+        if kind == "Painting":
+            return self.painting if self.painting is not None else _ZERO
+        return _ZERO
+
+    def missing(self) -> list[str]:
+        """Excel percentages that were needed but not found (empty under Nil Depreciation)."""
+        if self.nil_depreciation:
+            return []
+        return [
+            name for name, pct in (("Metal", self.metal), ("Painting", self.painting)) if pct is None
+        ]
+
+    def summary(self) -> str:
+        if self.nil_depreciation:
+            return "Nil Depreciation is Yes: Depreciation 0 on every row."
+        shown = lambda pct: _pct_text(pct) if pct is not None else "not found (0)"  # noqa: E731
+        return (
+            f"Nil Depreciation is not Yes: Plastic {_pct_text(self.plastic)}, "
+            f"Metal {shown(self.metal)}, Painting {shown(self.painting)}, Glass 0, Labour and others 0."
+        )
+
+
+def build_depreciation_rules(data, defaults) -> DepreciationRules:
+    """Rules from the scanned Excel values and the Automation Defaults."""
+    nil = str(getattr(data, "nil_depreciation", "") or "").strip().lower() in {"yes", "y"}
+    raw_plastic = (defaults or {}).get("plastic_depreciation_pct")
+    plastic = _parse_pct(raw_plastic)
+    return DepreciationRules(
+        nil_depreciation=nil,
+        metal=_parse_pct(getattr(data, "metal_depreciation_pct", "")),
+        painting=_parse_pct(getattr(data, "paint_depreciation_pct", "")),
+        plastic=plastic if plastic is not None else _PLASTIC_DEFAULT_PCT,
+        plastic_setting_invalid=plastic is None and str(raw_plastic or "").strip() != "",
+    )
+
+
 @dataclass(frozen=True)
 class MarutiItem:
     item: str
@@ -150,6 +232,7 @@ class MarutiItem:
     amount: Decimal
     hsn: str
     mrp: Decimal | None = None
+    depreciation: Decimal = _ZERO
 
     def values(self):
         charge = format(self.amount.normalize(), "f")
@@ -158,14 +241,17 @@ class MarutiItem:
         service_val = "Repair" if self.item in {"Labour", "Painting"} else "Replace"
         return {
             "item": self.item, "description": self.description,
-            "mrp": mrp_text, "quantity": "1", "depreciation": "0",
+            "mrp": mrp_text, "quantity": "1", "depreciation": _pct_text(self.depreciation),
             "dealer_service": service_val, "service": service_val,
             "amount": charge, "hsn": self.hsn,
         }
 
 
-def _read_excel_painting_items(source_excel_path: str | None) -> list[MarutiItem]:
-    """Extract net Painting rows (reduced by the sheet's paint depreciation %) from source Excel."""
+def _read_excel_painting_items(
+    source_excel_path: str | None, rules: DepreciationRules | None = None,
+) -> list[MarutiItem]:
+    """Extract Painting rows (full Excel PAINT amount) from the source Excel."""
+    rules = rules or DepreciationRules(nil_depreciation=True)
     if not source_excel_path or not Path(source_excel_path).is_file():
         return []
     defaults = load_automation_defaults(portal_id="newindia")
@@ -192,7 +278,10 @@ def _read_excel_painting_items(source_excel_path: str | None) -> list[MarutiItem
             mrp_amt = est if (est is not None and est > 0) else amt
             name = str(prow.get("part_name") or "").strip()
             if name:
-                items.append(MarutiItem("Painting", name, amt, _MARUTI_LABOUR_HSN, mrp=mrp_amt))
+                items.append(MarutiItem(
+                    "Painting", name, amt, _MARUTI_LABOUR_HSN, mrp=mrp_amt,
+                    depreciation=rules.for_item("Painting"),
+                ))
         return items
     except Exception:
         return []
@@ -200,8 +289,12 @@ def _read_excel_painting_items(source_excel_path: str | None) -> list[MarutiItem
         wb.close()
 
 
-def read_maruti_items(path, source_excel_path: str | None = None):
-    """Use the same rows and amounts prepared by the current folder scan."""
+def read_maruti_items(path, source_excel_path: str | None = None, rules: DepreciationRules | None = None):
+    """Use the same rows and amounts prepared by the current folder scan.
+
+    ``rules`` sets each row's Depreciation; without it every row keeps Depreciation 0.
+    """
+    rules = rules or DepreciationRules(nil_depreciation=True)
     if not path or Path(path).name.casefold() != ASSESSMENT_WORKBOOK:
         raise ValueError("Scan the claim folder to prepare a fresh Primary Assessment workbook.")
     workbook = load_workbook(path, read_only=True, data_only=True)
@@ -246,7 +339,9 @@ def read_maruti_items(path, source_excel_path: str | None = None):
 
             if not kind or not name or amount is None or amount < 0 or not hsn.isascii() or not hsn.isdigit():
                 raise ValueError(f"Review the item type, description, amount and HSN on workbook row {source_row}.")
-            items.append(MarutiItem(kind, name, amount, hsn, mrp=mrp_amount))
+            items.append(MarutiItem(
+                kind, name, amount, hsn, mrp=mrp_amount, depreciation=rules.for_item(kind),
+            ))
     finally:
         workbook.close()
 
@@ -265,7 +360,7 @@ def read_maruti_items(path, source_excel_path: str | None = None):
                 ):
                     candidate_excel = str(entry)
                     break
-        items.extend(_read_excel_painting_items(candidate_excel))
+        items.extend(_read_excel_painting_items(candidate_excel, rules))
 
     if not items:
         raise ValueError("No assessed items were prepared. Check the report and rescan the folder.")

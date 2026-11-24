@@ -208,6 +208,8 @@ class ClaimData:
     parts_50_dep_excl_gst: str = "0"
     parts_nil_dep_excl_gst: str = "0"
     nil_depreciation: str = ""
+    metal_depreciation_pct: str = ""   # New India Maruti: Excel "DEP. ON METAL (IN %)" (value left of label)
+    paint_depreciation_pct: str = ""   # New India Maruti: Excel "% LESS COST OF PAINT MATERIAL" (value left of label)
     parts_gst18_amount: str = "0"
 
     # ── Claim Assessment — Labour ─────────────────────────────────────────────
@@ -1015,6 +1017,19 @@ class ClaimData:
         if str(getattr(self, "nil_depreciation", "") or "").strip().lower() not in {"yes", "no", "y", "n"}:
             warnings.append("Nil Depreciation (Yes/No) not found in Excel — verify in Claim Assessment")
 
+        # Maruti part-wise rows: Metal and Painting Depreciation come from Excel unless
+        # Nil Depreciation is Yes. A missing Nil Depreciation counts as No.
+        nil_dep_yes = str(getattr(self, "nil_depreciation", "") or "").strip().lower() in {"yes", "y"}
+        if not from_pdf and not nil_dep_yes:
+            for attr, label, item in (
+                ("metal_depreciation_pct", "Metal Depreciation %", "Metal"),
+                ("paint_depreciation_pct", "Painting Depreciation %", "Painting"),
+            ):
+                if not str(getattr(self, attr, "") or "").strip():
+                    warnings.append(
+                        f"{label} not found in Excel — Maruti {item} rows will use Depreciation 0"
+                    )
+
         if not self.claim_doc_files:
             warnings.append("No claim documents found in folder")
 
@@ -1434,6 +1449,9 @@ class ClaimData:
             ("Invoice Date",          _inv_val(self.vendor_invoice_date), True, _inv_src("vendor_invoice_date")),
             ("Invoice Number",        _inv_val(self.vendor_invoice_number), True, _inv_src("vendor_invoice_number")),
             ("Nil Depreciation",      self.nil_depreciation,       False, _src("nil_depreciation")),
+            ("Metal Depreciation %",  self.metal_depreciation_pct, False, _src("metal_depreciation_pct")),
+            ("Painting Depreciation %", self.paint_depreciation_pct, False, _src("paint_depreciation_pct")),
+            ("Plastic Depreciation %", str(defaults.get("plastic_depreciation_pct") or "50"), False, settings),
             ("Primary Assessment (₹)",self.primary_assessment,       True,  _src("primary_assessment")),
             ("Supplementary Est.?",   self.is_supplementary_estimate, True, _src("is_supplementary_estimate")),
             ("Painting Details",      self.painting_work_details,    True,  _src("painting_work_details")),

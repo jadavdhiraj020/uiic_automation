@@ -654,52 +654,6 @@ def _find_painting_column(sheet, header_row: int, col_map: Dict[str, int]) -> Op
     return None
 
 
-def _detect_paint_depreciation_pct(sheet, after_row: int = 1) -> float:
-    """Detect the sheet's paint material / paint depreciation percentage (e.g. 12.5).
-
-    Returns 0.0 when no paint depreciation row or Nil Depreciation applies.
-    """
-    # Check if the sheet explicitly specifies Nil Depreciation = Yes
-    for r in range(1, sheet.max_row + 1):
-        for c in range(1, sheet.max_column + 1):
-            raw = sheet.cell(row=r, column=c).value
-            if raw is None:
-                continue
-            low = str(raw).strip().lower()
-            if low in ("nil depreciation", "nil dep", "zero depreciation", "zero dep"):
-                for nc in range(c + 1, min(c + 7, sheet.max_column + 1)):
-                    nval = sheet.cell(row=r, column=nc).value
-                    if nval is None or str(nval).strip() in ("", ":"):
-                        continue
-                    if str(nval).strip().lower() in ("yes", "y", "true", "1"):
-                        return 0.0
-                    break
-
-    search_start = max(1, after_row)
-    for r in range(search_start, min(search_start + 35, sheet.max_row + 1)):
-        for c in range(1, sheet.max_column + 1):
-            raw = sheet.cell(row=r, column=c).value
-            if raw is None:
-                continue
-            text = str(raw).strip()
-            low = text.lower()
-            if "paint" in low and ("less" in low or "dep" in low or "material" in low or "discount" in low):
-                # 1. Check cell to the left (e.g. col 1 = 12.5, col 2 = '% LESS COST OF PAINT MATERIAL / PAINT DEP.')
-                for prev_c in range(c - 1, 0, -1):
-                    pval = _clean_numeric(sheet.cell(row=r, column=prev_c).value)
-                    if pval is not None:
-                        if 0 <= pval < 100:
-                            return float(pval)
-                        break
-                # 2. Check inline percentage inside the label text (e.g. 'Less 12.5% Paint Dep.')
-                m = re.search(r"(\d+(?:\.\d+)?)\s*%", text)
-                if m:
-                    pct = float(m.group(1))
-                    if 0 <= pct < 100:
-                        return pct
-    return 0.0
-
-
 def extract_painting_rows(
     sheet,
     header_row: int,
@@ -711,8 +665,10 @@ def extract_painting_rows(
     """Extract per-item Painting rows from the Labour table's PAINT column.
 
     Each row with PAINT > 0 produces a Painting item dictionary whose
-    assessed amount is reduced by the sheet's paint depreciation percentage
-    (e.g. 12.5% on row '12.5 | % LESS COST OF PAINT MATERIAL / PAINT DEP.').
+    assessed amount is the full Excel PAINT value (e.g. 5,000 stays 5,000).
+    The paint depreciation % is NOT applied here: it is read separately
+    (field ``paint_depreciation_pct``) and entered in the portal's
+    Depreciation column by the Maruti row logic.
     """
     paint_col = _find_painting_column(sheet, header_row, col_map)
     if not paint_col:
@@ -728,7 +684,6 @@ def extract_painting_rows(
             _boundary_variants.add(_t.replace(" ", ""))
 
     raw_items: List[tuple[int, str, float, float]] = []
-    stop_r = sheet.max_row
     for r in range(header_row + 1, sheet.max_row + 1):
         row_texts = [
             str(sheet.cell(row=r, column=c).value).strip().lower()
@@ -736,7 +691,6 @@ def extract_painting_rows(
             if sheet.cell(row=r, column=c).value is not None
         ]
         if any(t in _boundary_variants for t in row_texts):
-            stop_r = r
             break
 
         name_raw = sheet.cell(row=r, column=desc_col).value if desc_col else None
@@ -757,12 +711,10 @@ def extract_painting_rows(
     if not raw_items:
         return []
 
-    paint_dep_pct = _detect_paint_depreciation_pct(sheet, after_row=stop_r)
-    factor = (100.0 - paint_dep_pct) / 100.0
     painting_rows: List[dict] = []
     for r, item_name, paint_val, est_amt in raw_items:
-        net_paint = round(paint_val * factor, 2)
-        if net_paint <= 0:
+        full_paint = round(paint_val, 2)
+        if full_paint <= 0:
             continue
         painting_rows.append({
             "category": "Painting",
@@ -771,7 +723,7 @@ def extract_painting_rows(
             "service_type": "REPAIR",
             "estimated_amount": est_amt,
             "billed_amount": paint_val,
-            "assessed_amount": net_paint,
+            "assessed_amount": full_paint,
             "depreciation_pct": 0,
             "hsn_code": hsn_code,
             "gst_pct": 0,
@@ -779,8 +731,8 @@ def extract_painting_rows(
         })
         if audit_lines is not None:
             audit_lines.append(
-                f"Painting row {r}: added '{item_name}' gross={paint_val} "
-                f"paint_dep={paint_dep_pct}% assessed={net_paint} hsn={hsn_code}"
+                f"Painting row {r}: added '{item_name}' paint={paint_val} "
+                f"assessed={full_paint} (full Excel value) hsn={hsn_code}"
             )
     return painting_rows
 
