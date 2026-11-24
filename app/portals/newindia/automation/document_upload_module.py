@@ -342,6 +342,47 @@ async def _count_uploaded_documents(page: Page) -> int:
         return 0
 
 
+_ALREADY_APPLIED_RE = re.compile(r"\balready\s+(?:applied|uploaded)\b", re.I)
+
+
+def _file_key(name) -> str:
+    return " ".join(str(name or "").split()).casefold()
+
+
+def alert_says_already_applied(alert_body: str, filenames) -> bool:
+    """True when a portal alert says every one of ``filenames`` is already applied for the claim."""
+    body = " ".join(str(alert_body or "").split()).casefold()
+    names = [key for key in map(_file_key, filenames) if key]
+    if not names or not _ALREADY_APPLIED_RE.search(body):
+        return False
+    # Whole-name match, so "a.pdf" is not found inside "data.pdf".
+    return all(re.search(rf"(?<![\w.-]){re.escape(key)}(?![\w-])", body) for key in names)
+
+
+def all_files_listed(filenames, listed) -> bool:
+    """True when every file name is in ``listed`` (a set of ``_file_key`` names)."""
+    keys = [_file_key(name) for name in filenames]
+    return bool(keys) and all(key and key in listed for key in keys)
+
+
+async def _uploaded_document_names(page: Page) -> set[str]:
+    """File names shown in the portal's Uploaded Documents table."""
+    try:
+        cells = await page.evaluate("""() => {
+            const out = [];
+            for (const row of document.querySelectorAll(
+                'tr[data-ng-repeat*="uploadDocArray"], tr[ng-repeat*="uploadDocArray"], ' +
+                'tr[data-ng-repeat*="uploadedDocuments"], tr[ng-repeat*="uploadedDocuments"]'
+            )) {
+                for (const cell of row.cells) out.push((cell.textContent || '').trim());
+            }
+            return out;
+        }""")
+    except Exception:
+        return set()
+    return {_file_key(text) for text in cells if text}
+
+
 async def _count_mandatory_upload_statuses(page: Page, row_indices: Iterable[int]) -> tuple[int, int]:
     """Count only the rows that were actually prepared for this upload."""
     successful = 0
@@ -473,6 +514,7 @@ async def _wait_for_mandatory_upload_outcome(
     previous_banners: _UploadBanners,
     uploaded_before: int = 0,
     max_wait_s: float = _UPLOAD_STALL_S,
+    expected_files: tuple[str, ...] = (),
 ) -> tuple[bool, str]:
     """
     Wait for mandatory upload completion across Tie-Up (inline banner / uploaded table)
@@ -526,6 +568,24 @@ async def _wait_for_mandatory_upload_outcome(
         if tag is not None:
             popup_tag = tag
             popup_detail = cur_detail
+            # New India refuses a second upload of files it already holds. When its alert
+            # names every file we sent and its Uploaded Documents table lists them all,
+            # there is nothing left to upload and nothing for the operator to review.
+            if (
+                tag != "success"
+                and expected_files
+                and alert_says_already_applied(cur_detail.get("body"), expected_files)
+                and all_files_listed(expected_files, await _uploaded_document_names(page))
+            ):
+                message = (
+                    f"New India already holds these {len(expected_files)} mandatory document(s). "
+                    "Nothing to upload again; continuing."
+                )
+                if isinstance(log, AutomationLogger):
+                    log.info(message)
+                else:
+                    log(f"[{_ts()}]   ℹ️ {message}")
+                return True, ""
 
         success_text, error_text = await _new_inline_upload_text(page, previous_banners)
         if error_text:
@@ -938,6 +998,7 @@ async def fill_document_upload_section(
                                 upload_ok, failure_reason = await _wait_for_mandatory_upload_outcome(
                                     page, row_indices, log, stop_cb, previous_banners,
                                     uploaded_before=uploaded_before,
+                                    expected_files=tuple(name for _, names in prepared.values() for name in names),
                                 )
             except Exception as exc:
                 logger.debug("Mandatory Documents upload could not be verified: %r", exc)

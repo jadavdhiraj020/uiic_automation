@@ -557,6 +557,52 @@ async def fill_item(row, item, stop_cb):
     return True
 
 
+DEPRECIATION_ROW_KINDS = frozenset({"Metal", "Plastic", "Painting"})
+
+
+async def fill_existing_depreciation(row, item, stop_cb) -> bool:
+    """Type only the Depreciation % on a row the portal already held.
+
+    Rows that came from the portal are matched to Excel items and are not re-entered, so
+    their Depreciation stays at the portal's 0 unless it is typed here. Only Metal, Plastic
+    and Painting rows are touched, nothing else on the row changes, and a locked or
+    read-only box is left alone. Returns True when the row now shows the wanted value
+    because of this call.
+    """
+    if item.item not in DEPRECIATION_ROW_KINDS or stop_cb():
+        return False
+    wanted = item.values()["depreciation"]
+
+    def accepted(state):
+        return (
+            _same_field("depreciation", state["values"]["depreciation"], wanted)
+            and "depreciation" not in state["invalid"]
+        )
+
+    try:
+        if accepted((await row_snapshot(row))[0]):
+            return False
+    except Exception:
+        return False
+    try:
+        await row.evaluate(_EDIT_ITEM_FIELDS, [(_FIELDS["depreciation"], wanted)], timeout=1500)
+        if accepted((await row_snapshot(row))[0]):
+            return True
+    except Exception:
+        pass  # Retry with Playwright if the row was rebuilt during fast entry.
+    if stop_cb():
+        return False
+    field = row.locator(f'{_FIELDS["depreciation"]}:visible')
+    try:
+        if await field.count() != 1 or not await field.is_enabled() or not await field.is_editable():
+            return False
+        await field.fill(wanted, timeout=1800)
+        await field.blur(timeout=1000)
+        return accepted((await row_snapshot(row))[0])
+    except Exception:
+        return False
+
+
 async def add_row(body, rows, index, stop_cb):
     """Click once and wait for a single new editable row."""
     add = body.locator(_ADD_ROW).filter(has_text=re.compile(r"^\s*Add Row\s*$", re.I))

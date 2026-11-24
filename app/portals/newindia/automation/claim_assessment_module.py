@@ -17,6 +17,7 @@ from app.portals.newindia.automation.maruti_rows import (
     build_depreciation_rules,
     dealer_not_allowed,
     dealer_row_problems,
+    fill_existing_depreciation,
     fill_item,
     mark_dealer_group,
     read_maruti_items,
@@ -812,10 +813,15 @@ async def _fill_maruti_assessment_rows(page, items, data, defaults, log, stop_cb
                 f"{name} Depreciation % was not found in the Excel. {name} rows use Depreciation 0; "
                 "check them in Chrome."
             )
+    depreciation_entered = 0
     for idx, item in enumerate(items):
         if stop_cb():
             return False
         if idx in assigned:
+            # The portal already holds this row. Leave it as it is, except for the
+            # Depreciation % the rules give Metal, Plastic and Painting rows.
+            if await fill_existing_depreciation(rows.nth(assigned[idx]), item, stop_cb):
+                depreciation_entered += 1
             continue
         if recovery is not None:
             await recovery.wait_if_manually_paused(page, log)
@@ -837,6 +843,9 @@ async def _fill_maruti_assessment_rows(page, items, data, defaults, log, stop_cb
             await rows.nth(row_index).scroll_into_view_if_needed(timeout=1500)
         if await fill_item(rows.nth(row_index), item, stop_cb):
             gst_pending.append(row_index)
+
+    if depreciation_entered and isinstance(log, AutomationLogger):
+        log.info(f"Depreciation % entered on {depreciation_entered} row(s) already on the portal.")
 
     if gst_pending:
         async def gst_ready():
