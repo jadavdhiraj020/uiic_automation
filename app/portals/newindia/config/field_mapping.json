@@ -1,13 +1,6 @@
 {
   "_comment": "field_mapping.json — New India Assurance portal. Maps ClaimData fields to Excel labels. search_labels lists fallback labels tried in order. '_mandatory': true marks fields required for automation.",
-
-  "_derived_fields": [
-    "whether_driver_without_license",
-    "payment_invoice_in_name_of_nia",
-    "re_inspection_required",
-    "additional_towing_charges",
-    "pre_accident_condition"
-  ],
+  "_derived_fields": ["whether_driver_without_license", "payment_invoice_in_name_of_nia", "re_inspection_required", "additional_towing_charges"],
   "claim_no": {
     "sheet": "ALL",
     "search_labels": ["Claim No.", "Claim no.", "Claim No", "Claim no", "Claim Number", "claim_number", "claim_no"],
@@ -15,10 +8,9 @@
     "col_offset": 1,
     "_mandatory": true
   },
-
   "registered_owner_name": {
     "sheet": "ALL",
-    "search_labels": ["Registered Owner Name", "Owner Name", "Name of Owner", "Insured Name", "NAME OF INSURED"],
+    "search_labels": ["INSURED", "Registered Owner Name", "Owner Name", "Name of Owner", "Insured Name", "NAME OF INSURED"],
     "row_offset": 0,
     "col_offset": 1,
     "allow_text_values": true,
@@ -76,7 +68,7 @@
     "row_offset": 0,
     "col_offset": 1,
     "allow_text_values": true,
-    "_mandatory": false
+    "_mandatory": true
   },
   "class_of_vehicle": {
     "sheet": "ALL",
@@ -120,7 +112,7 @@
   },
   "type_of_vehicle": {
     "sheet": "ALL",
-    "search_labels": ["Type of Vehicle", "Vehicle Type"],
+    "search_labels": ["Class of Vehicle", "Type of Vehicle", "Vehicle Type"],
     "row_offset": 0,
     "col_offset": 1,
     "allow_text_values": true,
@@ -128,7 +120,7 @@
   },
   "type_of_fuel": {
     "sheet": "ALL",
-    "search_labels": ["Type of Fuel", "Fuel Type", "Fuel"],
+    "search_labels": ["Fuel Used", "Type of Fuel", "Fuel Type", "Fuel"],
     "row_offset": 0,
     "col_offset": 1,
     "allow_text_values": true,
@@ -209,9 +201,9 @@
   },
   "cause_nature_of_accident": {
     "sheet": "ALL",
-    "search_labels": ["Cause and Nature of Accident", "Nature of Accident", "Cause of Accident", "Nature of Loss"],
-    "row_offset": 0,
-    "col_offset": 1,
+    "search_labels": ["CAUSE AND NATURE OF ACCIDENT", "Cause and Nature of Accident", "Nature of Accident", "Cause of Accident", "Nature of Loss"],
+    "row_offset": 1,
+    "col_offset": 0,
     "allow_text_values": true,
     "_mandatory": true
   },
@@ -257,7 +249,7 @@
   },
   "license_type_of_driver": {
     "sheet": "ALL",
-    "search_labels": ["License Type of Driver", "License Type", "Type of License", "DL Type"],
+    "search_labels": ["Type of Licence", "License Type of Driver", "License Type", "Type of License", "DL Type"],
     "row_offset": 0,
     "col_offset": 1,
     "allow_text_values": true,
@@ -265,7 +257,7 @@
   },
   "dob_of_driver": {
     "sheet": "ALL",
-    "search_labels": ["DOB of Driver", "Driver DOB", "Date of Birth of Driver", "Driver Date of Birth"],
+    "search_labels": ["DOB", "DOB of Driver", "Driver DOB", "Date of Birth of Driver", "Driver Date of Birth"],
     "row_offset": 0,
     "col_offset": 1,
     "_mandatory": true
@@ -305,21 +297,21 @@
   },
   "driver_license_number": {
     "sheet": "ALL",
-    "search_labels": ["Driver Driving License Number", "Driving License Number", "DL Number", "DL No", "License No"],
+    "search_labels": ["LICENCE NO.", "Driver Driving License Number", "Driving License Number", "DL Number", "DL No", "License No"],
     "row_offset": 0,
     "col_offset": 1,
     "_mandatory": true
   },
   "driver_license_issue_date": {
     "sheet": "ALL",
-    "search_labels": ["Driver Driving License Issue Date", "DL Issue Date", "License Issue Date"],
+    "search_labels": ["Date of issue", "Driver Driving License Issue Date", "DL Issue Date", "License Issue Date"],
     "row_offset": 0,
     "col_offset": 1,
     "_mandatory": true
   },
   "driver_license_expiry_date": {
     "sheet": "ALL",
-    "search_labels": ["Driver Driving License Expiry Date", "DL Expiry Date", "License Expiry Date", "License Valid Till"],
+    "search_labels": ["valid till", "Driver Driving License Expiry Date", "DL Expiry Date", "License Expiry Date", "License Valid Till"],
     "row_offset": 0,
     "col_offset": 1,
     "_mandatory": true
@@ -405,7 +397,8 @@
     "row_offset": 0,
     "col_offset": 1,
     "allow_literal_values": true,
-    "_mandatory": true
+    "_mandatory": true,
+    "fallback_value": "No"
   },
   "ifsc_code": {
     "sheet": "ALL",
@@ -416,14 +409,14 @@
   },
   "account_number": {
     "sheet": "ALL",
-    "search_labels": ["Account Number", "Account No", "A/C No", "Acct No"],
+    "search_labels": ["A/C NUMBER:", "A/C NUMBER", "Account Number", "Account No", "A/C No", "Acct No"],
     "row_offset": 0,
     "col_offset": 1,
     "_mandatory": true
   },
   "account_type": {
     "sheet": "ALL",
-    "search_labels": ["Account Type", "A/C Type", "Type of Account"],
+    "search_labels": ["A/C TYPE:", "A/C TYPE", "Account Type", "A/C Type", "Type of Account"],
     "row_offset": 0,
     "col_offset": 1,
     "allow_text_values": true,
@@ -509,7 +502,7 @@
   },
   "vendor_invoice_date": {
     "sheet": "ALL",
-    "search_labels": ["Vendor/Tax Invoice Date", "Tax Invoice Date", "Invoice Date"],
+    "search_labels": ["Dated", "Vendor/Tax Invoice Date", "Tax Invoice Date", "Invoice Date"],
     "row_offset": 0,
     "col_offset": 1,
     "_mandatory": true
@@ -606,7 +599,7 @@
   },
   "net_salvage": {
     "sheet": "ALL",
-    "search_labels": ["Net Salvage", "Salvage Value", "Salvage"],
+    "search_labels": ["% salavage Value", "Net Salvage", "Salvage Value", "Salvage"],
     "row_offset": 0,
     "col_offset": 1,
     "fallback_value": "0",
@@ -647,7 +640,7 @@
   },
   "towing_additional_charges": {
     "sheet": "ALL",
-    "search_labels": ["Towing / Additional Towing Charges", "Towing Charges"],
+    "search_labels": ["Towing / Additional Towing Charges", "Towing Charges", "Additional Towing"],
     "row_offset": 0,
     "col_offset": 1,
     "fallback_value": "0",
@@ -704,7 +697,7 @@
   },
   "mobile_no": {
     "sheet": "ALL",
-    "search_labels": ["mobile no", "mobile", "Mobile:", "surveyor_mobile"],
+    "search_labels": ["CONTACT NO", "mobile no", "mobile", "Mobile:", "surveyor_mobile"],
     "row_offset": 0,
     "col_offset": 1,
     "_mandatory": true
@@ -716,7 +709,6 @@
     "col_offset": 1,
     "_mandatory": true
   },
-
   "_comment_sfb": "Survey Fee Bill fields — Professional Fee, Traveling Expenses, and Others amount from Excel. Photo Charges uses Website 2 Automation Defaults, bundled as 200.",
   "professional_fee": {
     "sheet": "ALL",

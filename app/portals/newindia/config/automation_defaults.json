@@ -7,12 +7,12 @@
   "rc_verified_via_parivahan": "Yes",
   "close_proximity_break_in": "No",
   "allow_cashless_claim": "Yes",
-  "remarks_default": "Yes",
+  "remarks_default": "Ok",
   "observation_default": "Ok",
   "missing_text_default": "NA",
   "photo_charges_default": "200",
-  "assessment_parts_hsn_code": "8512",
-  "assessment_labour_hsn_code": "8729",
+  "assessment_parts_hsn_code": "870840",
+  "assessment_labour_hsn_code": "998714",
   "hsn_code": "8512",
   "gst_applicable": "Yes",
   "driver_without_license": "No",
@@ -29,11 +29,11 @@
   "table_boundary_keyword": "sub total|total|grand total",
   "plastic_depreciation_pct": "50",
   "eager_folder_ocr": false,
-
   "_comment_printable": "Printable Excel & PDF settings. Always enabled, no toggle.",
   "printable_output_excel_name": "Printable_Assessment.xlsx",
   "printable_output_pdf_name": "Printable_Assessment.pdf",
   "printable_print_mode": "scale_percentage",
   "printable_scale_percentage": 80,
-  "printable_column_range": "A:L"
+  "printable_column_range": "A:L",
+  "reinspection_required": "No"
 }
