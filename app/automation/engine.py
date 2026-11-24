@@ -855,9 +855,18 @@ class AutomationEngine:
             if review_recovery is not None:
                 from app.portals.oic.automation.review_browser import launch_review_browser
 
+                # New India logins can trigger Chrome's "Change your password" data-breach
+                # dialog, which blocks the portal page. Turn that warning off in this
+                # throw-away profile only; the user's own Chrome is untouched.
+                browser_preferences = (
+                    {"profile": {"password_manager_leak_detection": False}}
+                    if self.portal_id == "newindia"
+                    else None
+                )
                 browser = await launch_review_browser(
                     browser_type, launch_args, slow_mo, self._stop_event.is_set,
                     portal_name=review_recovery.portal_name,
+                    preferences=browser_preferences,
                 )
                 context = browser.contexts[0]
             else:

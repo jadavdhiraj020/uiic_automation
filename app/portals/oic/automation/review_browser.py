@@ -1,6 +1,7 @@
 """Launch an isolated Chrome browser that can outlive the automation connection."""
 
 import asyncio
+import json
 import shutil
 import subprocess
 import sys
@@ -78,12 +79,23 @@ async def focus_chrome(page, pid: int | None = None) -> None:
             await asyncio.wait_for(page.bring_to_front(), timeout=2)
 
 
-async def launch_review_browser(browser_type, args, slow_mo, stopped, *, portal_name="OIC"):
+def seed_profile_preferences(profile: Path, preferences: dict) -> None:
+    """Write Chrome settings into a brand-new profile before its first launch."""
+    default_dir = profile / "Default"
+    default_dir.mkdir(parents=True, exist_ok=True)
+    (default_dir / "Preferences").write_text(json.dumps(preferences), encoding="utf-8")
+
+
+async def launch_review_browser(
+    browser_type, args, slow_mo, stopped, *, portal_name="OIC", preferences: dict | None = None,
+):
     executable = Path(browser_type.executable_path)
     if not executable.is_file():
         raise FileNotFoundError(f"Playwright Chromium was not found at {executable}. Run playwright install chromium.")
     profile = Path(tempfile.mkdtemp(prefix=f"{portal_name.lower().replace(' ', '-')}-review-"))
     try:
+        if preferences:
+            seed_profile_preferences(profile, preferences)
         process = subprocess.Popen(
             [str(executable), *args, "--remote-debugging-port=0",
              "--remote-debugging-address=127.0.0.1", f"--user-data-dir={profile}",
