@@ -820,6 +820,8 @@ async def _fill_maruti_assessment_rows(page, items, data, defaults, log, stop_cb
         if idx in assigned:
             # The portal already holds this row. Leave it as it is, except for the
             # Depreciation % the rules give Metal, Plastic and Painting rows.
+            if recovery is not None:
+                await recovery.wait_if_manually_paused(page, log)
             if await fill_existing_depreciation(rows.nth(assigned[idx]), item, stop_cb):
                 depreciation_entered += 1
             continue
