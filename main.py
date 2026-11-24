@@ -200,6 +200,17 @@ def main() -> None:
     logger = logging.getLogger(__name__)
     logger.info("Starting UIIC Surveyor Automation")
 
+    # A new EXE with different shipped defaults replaces this PC's saved mapping and
+    # defaults (old copies are kept in a backup folder). Never blocks startup.
+    try:
+        from app.config_sync import refresh_saved_config_for_all_portals
+
+        refreshed = refresh_saved_config_for_all_portals()
+        if refreshed:
+            logger.info("Saved settings replaced by the new shipped defaults for: %s", ", ".join(refreshed))
+    except Exception:
+        logger.exception("Could not compare saved settings with the shipped defaults; continuing")
+
     # Import PyQt6 early inside the main try/except loop to catch startup errors.
     from PyQt6.QtGui import QIcon
     from PyQt6.QtWidgets import QApplication, QMessageBox

@@ -6,6 +6,7 @@ Run from the project folder:
 All values are synthetic; no browser is started.
 """
 
+import json
 import sys
 from decimal import Decimal
 from pathlib import Path
@@ -59,17 +60,44 @@ def test_paint_pct_is_read_from_the_cell_left_of_label():
 
 def test_metal_pct_uses_only_the_left_cell():
     # Value only on the right of the label: exact left-cell reading must not pick it up.
-    right_only = _Sheet([["Life", None, "SO, DEP. ON METAL (IN %)", None, 25]])
+    right_only = _Sheet([["Life", None, "% OF METAL", None, 25]])
     assert er._search_label(
-        right_only, "DEP. ON METAL (IN %)", 0, -1,
+        right_only, "% OF METAL", 0, -1,
         exact_offset=True, cell_parser=er._parse_depreciation_pct,
     ) == (None, None)
-    left = _Sheet([[None, 25, "SO, DEP. ON METAL (IN %)", None]])
+    left = _Sheet([[None, 25, "% OF METAL ", None]])
     value, _ = er._search_label(
-        left, "DEP. ON METAL (IN %)", 0, -1,
+        left, "% OF METAL", 0, -1,
         exact_offset=True, cell_parser=er._parse_depreciation_pct,
     )
     assert value == "25"
+
+
+def test_bundled_labels_read_metal_and_paint_from_the_survey_layout():
+    """Layout of a real survey sheet: the 'SO, DEP. ON METAL' row has vehicle life on its
+    left and must not be used; the '% OF METAL' row has the percentage on its left."""
+    mapping = json.loads(
+        (ROOT / "app/portals/newindia/config/field_mapping.json").read_text(encoding="utf-8")
+    )
+    sheet = _Sheet([
+        ["LIFE OF VEHICLE ( IN YEARS )", None, None, None, None, 8.02, "SO, DEP. ON METAL (IN %)", None, None, 40],
+        [40, "% OF METAL ", 50, "% OF PLASTIC", None, 3199.69, 10035.16, 0],
+        [12.5, "% LESS COST OF PAINT MATERIAL / PAINT DEP.", None, None, None, None, None, None, None, 2812.5],
+    ])
+
+    def read(field):
+        cfg = mapping[field]
+        for label in cfg["search_labels"]:
+            value, _ = er._search_label(
+                sheet, label, cfg["row_offset"], cfg["col_offset"],
+                exact_offset=bool(cfg.get("exact_offset")), cell_parser=er._parse_depreciation_pct,
+            )
+            if value:
+                return value
+        return None
+
+    assert read("metal_depreciation_pct") == "40"
+    assert read("paint_depreciation_pct") == "12.5"
 
 
 # ── Rules ───────────────────────────────────────────────────────────────────

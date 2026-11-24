@@ -208,7 +208,7 @@ class ClaimData:
     parts_50_dep_excl_gst: str = "0"
     parts_nil_dep_excl_gst: str = "0"
     nil_depreciation: str = ""
-    metal_depreciation_pct: str = ""   # New India Maruti: Excel "DEP. ON METAL (IN %)" (value left of label)
+    metal_depreciation_pct: str = ""   # New India Maruti: Excel "% OF METAL" (value left of label)
     paint_depreciation_pct: str = ""   # New India Maruti: Excel "% LESS COST OF PAINT MATERIAL" (value left of label)
     parts_gst18_amount: str = "0"
 

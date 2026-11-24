@@ -8,7 +8,9 @@ from PyQt6.QtWidgets import (
 )
 import os
 import json
+from app.config_sync import export_to_project
 from app.utils import (
+    is_frozen,
     load_settings, save_settings, settings_paths,
     load_field_mapping, save_field_mapping, reset_field_mapping,
     load_doc_mapping, save_doc_mapping, reset_doc_mapping,
@@ -93,7 +95,17 @@ class SettingsPage(QWidget):
         footer.setObjectName("settingsFooter")
         br = QPushButton("  Reset to Defaults  ")
         br.setObjectName("btnSettingsReset")
-        br.clicked.connect(self._reset_defaults); fl.addWidget(br); fl.addStretch()
+        br.clicked.connect(self._reset_defaults); fl.addWidget(br)
+        if not is_frozen():
+            be = QPushButton("  Export as Shared Defaults  ")
+            be.setObjectName("btnSettingsReset")
+            be.setToolTip(
+                "Developer: save these settings, then write this portal's field mapping, document mapping "
+                "and automation defaults into the project config files. Username, password and portal URL "
+                "are never written."
+            )
+            be.clicked.connect(self._export_shared_defaults); fl.addWidget(be)
+        fl.addStretch()
         self.btn_save = QPushButton("  Save All Settings  "); self.btn_save.setObjectName("btnSettingsSave"); self.btn_save.setMinimumSize(180, 42); self.btn_save.clicked.connect(self._save_all); fl.addWidget(self.btn_save)
         root.addWidget(footer)
 
@@ -764,6 +776,30 @@ class SettingsPage(QWidget):
             if hasattr(self, "btn_save"):
                 self.btn_save.setText("  ⚠ Save Failed  ")
                 QTimer.singleShot(3000, lambda: self.btn_save.setText("  Save All Settings  "))
+
+    def _export_shared_defaults(self):
+        answer = QMessageBox.question(
+            self, "Export as Shared Defaults",
+            "Save your current settings, then write this portal's field mapping, document mapping and "
+            "automation defaults into the project config files?\n\n"
+            "Username, password and portal URL are not written. Commit and push the changed files to "
+            "send them to every user in the next EXE.",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self._save_all()
+            written = export_to_project(self._portal_id)
+        except Exception as e:
+            self.append_log(f"❌  Export failed: {e}")
+            QMessageBox.warning(self, "Export as Shared Defaults", f"Export failed:\n{e}")
+            return
+        names = "\n".join(os.path.relpath(path) for path in written)
+        self.append_log("✅  Exported shared defaults: " + ", ".join(os.path.basename(p) for p in written))
+        QMessageBox.information(
+            self, "Export as Shared Defaults",
+            f"Written to the project:\n{names}\n\nCommit and push these files to ship them.",
+        )
 
     def _reset_defaults(self):
         if QMessageBox.question(self, "Reset", "Reset all to defaults?") == QMessageBox.StandardButton.Yes:

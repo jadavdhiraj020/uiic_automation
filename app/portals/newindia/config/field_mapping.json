@@ -558,7 +558,7 @@
   "metal_depreciation_pct": {
     "display_name": "Metal Depreciation %",
     "sheet": "ALL",
-    "search_labels": ["DEP. ON METAL (IN %)", "DEP. ON METAL", "Metal Depreciation"],
+    "search_labels": ["% OF METAL"],
     "row_offset": 0,
     "col_offset": -1,
     "exact_offset": true,

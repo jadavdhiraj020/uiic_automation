@@ -42,7 +42,7 @@ Sample/test data folders (`AAA/`, `ATTACHMENT/`, `OIC DOCS/`, `SendAnywhere_7460
 
 ## Architecture notes
 
-- **Portal-aware config resolution:** each config file has a bundled default (`app/portals/<id>/config/`) and a per-user override in AppData. UIIC falls back to legacy `app/config/` when its portal files are absent. Docs must distinguish shipped defaults from workspace overrides.
+- **Portal-aware config resolution:** each config file has a bundled default (`app/portals/<id>/config/`) and a per-user override in AppData. UIIC falls back to legacy `app/config/` when its portal files are absent. Docs must distinguish shipped defaults from workspace overrides. When a build's shipped `field_mapping.json`, `doc_mapping.json` or `automation_defaults.json` differ from what a PC last saw, [app/config_sync.py](app/config_sync.py) moves that PC's saved copies to `config_backups` at startup (packaged EXE only) (never `settings.json`, which holds credentials). Settings → "Export as Shared Defaults" (source runs only) writes a PC's config into the shipped files.
 - **Capability flags on `PortalInfo`** (e.g. `requires_document_merge`) keep portal-specific behavior out of shared code like the folder scanner. Add flags there rather than branching on portal id in shared modules.
 - **Pipeline:** claim folder → `folder_scanner` + Excel/PDF readers → claim data model → validation gate in UI → worker thread runs portal automation via Playwright → pause/recovery dialogs on failure → browser left open for manual final submit.
 - Only one insurer automation runs at a time; Web Queue cases stay staged until selected in Workspace.

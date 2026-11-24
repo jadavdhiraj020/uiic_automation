@@ -588,6 +588,8 @@ These are in App3 Settings â†’ Automation Defaults for OIC.
 
 Three settings (Item side description, Item IGST rate, Labour estimated amount) are **not used** by the current invoice upload. It always uses "Front" and 18%, and labour estimated amount equals the labour amount.
 
+**Saved settings and new EXEs.** Values saved on a PC beat the shipped defaults, with one exception: when a new EXE ships different OIC field mapping, document mapping or automation defaults, the packaged EXE moves that PC's saved copies of those three files to `%LOCALAPPDATA%\UIIC_Surveyor_Automation\config_backups\<date_time>\oic` on its first launch, and the new shipped values apply (a run from the project folder skips this). The first launch of an EXE with this behavior also counts, so a PC with saved values is refreshed once. `settings.json` (username, password, portal URL) is never replaced. On a PC that runs App3 from the project folder, Settings, **Export as Shared Defaults** writes the current OIC mapping and defaults into `app/portals/oic/config/` for commit and push; it never writes username, password or portal URL. Code: [config_sync.py](../app/config_sync.py).
+
 ---
 
 ## 14. Points worth checking
