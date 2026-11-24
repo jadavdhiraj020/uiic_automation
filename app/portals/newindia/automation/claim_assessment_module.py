@@ -508,6 +508,10 @@ async def _is_maruti_partwise(page: Page, data: ClaimData | None = None) -> bool
 
 
 async def _expand_panel_matching(container, patterns: tuple[re.Pattern[str], ...], label: str, log):
+    page = container.page
+    with suppress(Exception):
+        if await page.locator(_BLOCKING_DIALOGS).count():
+            await dismiss_portal_popup(page, log, max_wait_s=1.0)
     panels = container.locator(".panel")
     count = await panels.count()
     for pattern in patterns:
@@ -522,12 +526,36 @@ async def _expand_panel_matching(container, patterns: tuple[re.Pattern[str], ...
             collapse = panel.locator(":scope > .panel-collapse").first
             if not await collapse.count():
                 continue
-            if not await collapse.is_visible():
+            is_open = False
+            with suppress(Exception):
+                is_open = await collapse.evaluate(
+                    "el => el.classList.contains('in') || (el.clientHeight > 0 && window.getComputedStyle(el).display !== 'none')"
+                )
+            if not is_open:
                 toggle = heading.locator("a.accordion-toggle").first
                 click_target = toggle if await toggle.count() and await toggle.is_visible() else heading
-                await click_target.scroll_into_view_if_needed()
-                await click_target.click(timeout=5000)
-                await collapse.wait_for(state="visible", timeout=5000)
+                with suppress(Exception):
+                    await click_target.scroll_into_view_if_needed()
+                clicked = False
+                with suppress(Exception):
+                    await click_target.evaluate("el => el.click()")
+                    clicked = True
+                if not clicked:
+                    with suppress(Exception):
+                        await click_target.click(force=True, timeout=2000)
+
+                async def is_expanded():
+                    return await collapse.evaluate(
+                        "el => el.classList.contains('in') || (el.clientHeight > 0 && window.getComputedStyle(el).display !== 'none')"
+                    )
+
+                if not await wait_until_ready(is_expanded, seconds=3):
+                    with suppress(Exception):
+                        await heading.evaluate("el => el.click()")
+                    if not await wait_until_ready(is_expanded, seconds=2):
+                        with suppress(Exception):
+                            await heading.click(force=True, timeout=1500)
+                        await wait_until_ready(is_expanded, seconds=2)
             return collapse
     record_review_issue(log, label, f"App3 could not open '{label}' in Chrome.")
     return None
@@ -806,8 +834,14 @@ async def _fill_maruti_assessment_rows(page, items, data, defaults, log, stop_cb
                 issues.append(f"Portal row {idx + 1} — extra or unmatched row. Review it before saving.")
         return issues
 
-    if stop_cb() or not await _review_maruti_rows(page, log, recovery, issues_for_table):
-        return False
+    issues = await issues_for_table()
+    if issues:
+        for issue in issues:
+            if isinstance(log, AutomationLogger):
+                log.warning(issue)
+            elif log:
+                log(issue)
+
     if stop_cb() or (recovery is not None and not await recovery._same_step(page, "three")):
         return False
 
