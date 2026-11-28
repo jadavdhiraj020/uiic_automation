@@ -37,16 +37,16 @@ htmlcov/
 Thumbs.db
 
 # Microsoft Office lock files (auto-generated, never commit these)
-# ~$*.xlsx
-# ~$*.xls
-# ~$*.docx
-# ~$*.doc
-# ~$*.pptx
-# ~$*.ppt
+~$*.xlsx
+~$*.xls
+~$*.docx
+~$*.doc
+~$*.pptx
+~$*.ppt
 
 # Logs & Temporary Files
-# logs/
-# *.log
+logs/
+*.log
 tmp/
 temp/
 scratch/
@@ -59,13 +59,13 @@ scratch/
 
 # # User claim folders & uploaded documents
 # automationfolderuploading/
-# *.xlsx
-# *.xls
-# *.pdf
-# *.jpg
-# *.jpeg
-# *.png
-# *.puc
+*.xlsx
+*.xls
+*.pdf
+*.jpg
+*.jpeg
+*.png
+*.puc
 
 # # CUSTOM SKILLS
 # .agents/*
