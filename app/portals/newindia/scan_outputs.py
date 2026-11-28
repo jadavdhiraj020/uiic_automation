@@ -9,7 +9,7 @@ from tempfile import TemporaryDirectory
 from xml.etree import ElementTree
 from zipfile import BadZipFile, ZipFile
 
-from app.portals.oic.generated_files import has_generated_owner, publish_generated
+from app.portals.oic.generated_files import has_generated_owner, is_generated_fee_bill, publish_generated
 
 
 ASSESSMENT_WORKBOOK = "auto_primary_assessment.xlsx"
@@ -53,6 +53,7 @@ def is_scan_output(path, settings):
     name = Path(path).name
     return (_is_legacy_name(name, settings)
             or name.casefold() == str(settings.get("reinspection_output_filename") or "").casefold()
+            or is_generated_fee_bill(path)
             or has_generated_owner(path, portal_id="newindia"))
 
 

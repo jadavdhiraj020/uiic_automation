@@ -248,6 +248,8 @@ All configuration lives in `app/config/`. These files control how the applicatio
 
 Portal automation opens Chrome visibly in UIIC, New India, and OIC.
 
+For an Excel claim, the scan prepares a survey report PDF from sheet 1, a fee bill PDF from sheet 2, and a re-inspection PDF from sheet 3 when an existing re-inspection file is not selected. All three use the selected print mode and column range or scale. The scan warns if the fee bill PDF cannot be created.
+
 | Key | Default | Description |
 |:----|:--------|:------------|
 | `portal_url` | `https://portal.uiic.in/...` | UIIC portal login URL |

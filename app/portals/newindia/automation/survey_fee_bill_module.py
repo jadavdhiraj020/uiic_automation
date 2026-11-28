@@ -23,6 +23,15 @@ _SFB_SUBMIT_BTN = (
     'button[data-ng-click="saveSurveyFeeBill()"], '
     'button[ng-click="saveSurveyFeeBill()"]'
 )
+
+
+async def _fee_bill_submit_enabled(page):
+    if await page.locator(_BLOCKING_DIALOGS).count():
+        return False
+    button = page.locator(f":is({_SFB_SUBMIT_BTN}):visible").first
+    return bool(await button.count()) and not await button.is_disabled()
+
+
 _SFB_UPLOAD_SUCCESS_MSG = re.compile(
     r"\b(?:document\s+uploaded\s+successfully|uploaded\s+successfully)\b", re.I
 )
@@ -51,6 +60,15 @@ def _find_survey_fee_bill_document(data: ClaimData) -> str:
     # Direct mapping from assessment_files
     raw = getattr(data, "assessment_files", {})
     if isinstance(raw, dict):
+        fee_bill = raw.get("survey_fee_bill", "")
+        fee_bill = os.path.normpath(fee_bill) if fee_bill else ""
+        if fee_bill and os.path.isfile(fee_bill) and fee_bill.lower().endswith(".pdf"):
+            return fee_bill
+
+        scan_result = getattr(data, "_scan_result", None)
+        if scan_result is not None and getattr(scan_result, "excel_path", None):
+            return ""
+
         for key in ["invoice", "final_invoice"]:
             path = raw.get(key, "")
             path = os.path.normpath(path) if path else ""
@@ -487,20 +505,21 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
     # 0. Pre-check: locate the Survey Fee Bill document. If missing, we still
     #    fill all form fields and only skip the document upload + submit.
     doc_path = _find_survey_fee_bill_document(data)
+    scan_result = getattr(data, "_scan_result", None)
+    generated_bill_expected = bool(
+        scan_result is not None and getattr(scan_result, "excel_path", None)
+    )
     if not doc_path:
+        message = (
+            "Survey Fee Bill PDF is unavailable. Upload the fee bill in Chrome before continuing."
+            if generated_bill_expected
+            else "Survey Fee Bill PDF not found in claim directories. Document upload is skipped."
+        )
         if _structured:
             log.field_skipped("Survey Fee Bill Document", reason="No PDF available in scan")
-            log.warning(
-                "Survey Fee Bill PDF not found in claim directories "
-                "(expected: final_invoice.pdf or invoice.pdf). "
-                "Will fill fields only — skipping document upload."
-            )
+            log.warning(message)
         else:
-            log(
-                "   ⚠️ Survey Fee Bill PDF not found "
-                "(expected: final_invoice.pdf or invoice.pdf). "
-                "Will fill fields only — skipping document upload."
-            )
+            log(f"   ⚠️ {message}")
     else:
         if _structured:
             log.document_mapped("Survey Fee Bill", os.path.basename(doc_path), "Matched Successfully")
@@ -774,14 +793,9 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
                 log(f"   ⚠️ {sfb_upload_issue}")
             recovery = current_recovery.get()
             if recovery is not None:
-                async def _sfb_submit_enabled():
-                    if await page.locator(_BLOCKING_DIALOGS).count():
-                        return False
-                    btn = page.locator(f":is({_SFB_SUBMIT_BTN}):visible").first
-                    return bool(await btn.count()) and not await btn.is_disabled()
-
                 recovery.record_field_issue(
-                    log, "Survey Fee Bill Document", sfb_upload_issue, manual_value=_sfb_submit_enabled,
+                    log, "Survey Fee Bill Document", sfb_upload_issue,
+                    manual_value=lambda: _fee_bill_submit_enabled(page),
                 )
 
         if stop_cb():
@@ -794,6 +808,16 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
             log.warning("Document upload skipped — no Survey Fee Bill PDF available.")
         else:
             log("   ⚠️ Document upload skipped — no PDF available.")
+
+        if generated_bill_expected:
+            recovery = current_recovery.get()
+            if recovery is None:
+                return False
+            recovery.record_field_issue(
+                log, "Survey Fee Bill Document",
+                "Upload the fee bill PDF in Chrome before continuing.",
+                manual_value=lambda: _fee_bill_submit_enabled(page),
+            )
 
     # ══════════════════════════════════════════════════════════════════════════
     # SUBMIT

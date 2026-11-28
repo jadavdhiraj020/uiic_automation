@@ -37,4 +37,5 @@ def find_main_report_source(folder: str, scan_result, portal_id: str = "uiic", *
         return find_newindia_report(folder, preferred=preferred, stop_cb=stop_cb)
 
     from app.data.pdf_report_reader import find_pdf_survey_report
-    return find_pdf_survey_report(folder, preferred=preferred)
+    from app.portals.oic.generated_files import is_generated_fee_bill
+    return find_pdf_survey_report(folder, preferred=preferred, exclude=is_generated_fee_bill)

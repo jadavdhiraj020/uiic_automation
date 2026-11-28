@@ -90,7 +90,7 @@
     ]
   },
   "survey_fee_bill": {
-    "_comment": "Survey Fee Bill document upload — reuses final invoice document.",
+    "_comment": "PDF-only Survey Fee Bill fallback keywords; Excel claims use the generated sheet 2 PDF.",
     "survey_fee_bill_doc": [
       "final_invoice",
       "invoice",

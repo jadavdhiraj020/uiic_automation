@@ -584,6 +584,10 @@ class DataReviewPanel(QWidget):
         upload_warning = getattr(claim, "_oic_upload_warning", "") if portal_id == "oic" else ""
         if upload_warning and upload_warning not in warnings:
             warnings = [upload_warning, *warnings]
+        scan_result = getattr(claim, "_scan_result", None)
+        fee_bill_error = getattr(scan_result, "survey_fee_bill_error", "")
+        if fee_bill_error:
+            warnings = [f"Survey Fee Bill PDF is missing. {fee_bill_error}", *warnings]
         self.validation_chips.set_issues(errors, warnings, survey_pdf=review_pdf)
 
         all_fields = claim.all_fields_for_preview()

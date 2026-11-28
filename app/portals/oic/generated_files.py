@@ -10,6 +10,7 @@ from pathlib import Path
 from app.utils import ensure_dir, user_data_dir
 
 _publish_lock = threading.Lock()
+SURVEY_FEE_BILL_PDF = "survey_fee_bill.pdf"
 
 
 def _digest(path):
@@ -38,6 +39,13 @@ def _matches_owner(target, owner_path):
 
 def has_generated_owner(target, *, portal_id="oic"):
     return _matches_owner(target, _owner_path(target, portal_id))
+
+
+def is_generated_fee_bill(path):
+    return (
+        Path(path).name.casefold() == SURVEY_FEE_BILL_PDF
+        and has_generated_owner(path, portal_id="shared")
+    )
 
 
 def publish_generated(staged_path, target, *, portal_id="oic", allow_legacy=False, stop_cb=None):

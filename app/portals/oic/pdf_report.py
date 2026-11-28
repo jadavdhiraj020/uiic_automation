@@ -808,6 +808,7 @@ def supplement_oic_pdf_fees(claim, folder, *, stop_cb=None):
     from pdfplumber.utils.exceptions import PdfminerException
 
     from app.data.pdf_report_reader import read_lines
+    from app.portals.oic.generated_files import is_generated_fee_bill
 
     fee_fields = [key for key in FEE_FIELDS if not claim._excel_coords.get(key)]
     if not fee_fields:
@@ -817,6 +818,8 @@ def supplement_oic_pdf_fees(claim, folder, *, stop_cb=None):
     for path in Path(folder).glob("*.pdf"):
         if stop_cb and stop_cb():
             raise InterruptedError("PDF fee bill reading cancelled")
+        if is_generated_fee_bill(path):
+            continue
         name = compact(path.stem)
         if "feebill" not in name and not name.startswith("sfbill"):
             continue

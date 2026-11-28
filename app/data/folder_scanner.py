@@ -37,6 +37,7 @@ from app.portals.newindia.scan_outputs import (
     publish_scan_output,
     staging_folder,
 )
+from app.portals.oic.generated_files import SURVEY_FEE_BILL_PDF, is_generated_fee_bill
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +189,7 @@ class FolderScanResult:
         self.policy_warnings: List[str] = []
         self.policy_events: List[dict] = []
         self.generated_files: List[str] = []
+        self.survey_fee_bill_error: str = ""
         self.cancelled: bool = False
         self.cancellation_reason: str = ""
 
@@ -218,7 +220,14 @@ class FolderScanResult:
         return lines
 
 
-def run_headless_reinspection_com(full_path: str, pdf_path: str, sheet_index: int) -> bool:
+def run_headless_reinspection_com(
+    full_path: str,
+    pdf_path: str,
+    sheet_index: int,
+    print_mode: Optional[str] = None,
+    scale: Optional[int] = None,
+    col_range: Optional[Tuple[str, str]] = None,
+) -> bool:
     """
     Runs the win32com part of reinspection sheet extraction inside the headless subprocess.
     """
@@ -274,9 +283,19 @@ def run_headless_reinspection_com(full_path: str, pdf_path: str, sheet_index: in
             if wb.Worksheets.Count >= sheet_index + 1:
                 ws = wb.Worksheets(sheet_index + 1)  # COM uses 1-based indexing
 
+                if print_mode == "column_range" and col_range:
+                    start_col, end_col = col_range
+                    ws.PageSetup.PrintArea = f"${start_col}:${end_col}"
+                    ws.PageSetup.Zoom = False
+                    ws.PageSetup.FitToPagesWide = 1
+                    ws.PageSetup.FitToPagesTall = False
+                elif print_mode == "scale_percentage" and scale:
+                    ws.PageSetup.PrintArea = ""
+                    ws.PageSetup.Zoom = scale
+
                 # Strategy 1: Export selected worksheet directly
                 try:
-                    logger.info("Reinspection PDF strategy 1: worksheet export started")
+                    logger.info("Sheet %d PDF strategy 1: worksheet export started", sheet_index + 1)
                     ws.Select()
                     ws.ExportAsFixedFormat(0, os.path.abspath(pdf_path), 0, True, False, OpenAfterPublish=False)
                     logger.info(f"✅ Generated {pdf_path} via win32com worksheet export")
@@ -287,7 +306,7 @@ def run_headless_reinspection_com(full_path: str, pdf_path: str, sheet_index: in
 
                 # Strategy 2: Export workbook after isolating target sheet visibility
                 try:
-                    logger.info("Reinspection PDF strategy 2: workbook export started")
+                    logger.info("Sheet %d PDF strategy 2: workbook export started", sheet_index + 1)
                     for i in range(1, wb.Worksheets.Count + 1):
                         wb.Worksheets(i).Visible = i == (sheet_index + 1)
                     wb.Worksheets(sheet_index + 1).Select()
@@ -300,7 +319,7 @@ def run_headless_reinspection_com(full_path: str, pdf_path: str, sheet_index: in
 
                 # Strategy 3: Copy target sheet to temp workbook and export
                 try:
-                    logger.info("Reinspection PDF strategy 3: temp workbook export started")
+                    logger.info("Sheet %d PDF strategy 3: temp workbook export started", sheet_index + 1)
                     ws.Copy()
                     temp_wb = excel.ActiveWorkbook
                     try:
@@ -439,17 +458,35 @@ def _extract_sheet_for_reinspection_pdf(
     folder_path: str,
     sheet_index: int = 2,
     output_filename: str = "reinspection_report.pdf",
+    *,
+    print_settings: Optional[dict] = None,
 ) -> str | None:
     """
-    Extracts the 3rd sheet (0-based sheet_index=2) from the main Excel workbook
-    and generates a standalone re-inspection PDF (reinspection_report.pdf).
-    Does NOT store any reinspection Excel file in the folder.
-    Always overwrites any pre-existing reinspection PDF with a fresh copy.
-    If the workbook has fewer than 3 sheets, skips cleanly without error.
+    Export a workbook sheet as a PDF, defaulting to the third sheet.
+    The optional print settings match the printable survey report.
     """
     if not output_filename or not output_filename.lower().endswith(".pdf"):
         output_filename = "reinspection_report.pdf"
     pdf_path = _join_export_path(folder_path, output_filename)
+
+    print_mode = None
+    scale = None
+    col_range = None
+    if print_settings is not None:
+        from app.data.printable_excel_service import _validate_column_range, _validate_scale
+
+        print_mode = str(print_settings.get("printable_print_mode", "scale_percentage") or "scale_percentage").strip().lower()
+        if print_mode == "column_range":
+            col_range = _validate_column_range(str(print_settings.get("printable_column_range", "A:L") or "A:L"))
+            if col_range is None:
+                logger.warning("Sheet %d PDF skipped: invalid print column range.", sheet_index + 1)
+                return None
+        else:
+            print_mode = "scale_percentage"
+            scale = _validate_scale(print_settings.get("printable_scale_percentage", 80))
+            if scale is None:
+                logger.warning("Sheet %d PDF skipped: invalid print scale.", sheet_index + 1)
+                return None
 
     # 1. Clean up any legacy reinspection Excel files in the claim folder
     for legacy_name in ("reinspection.xlsx", "re-inspection report format.xlsx"):
@@ -469,13 +506,13 @@ def _extract_sheet_for_reinspection_pdf(
         wb_check.close()
         if sheet_count < sheet_index + 1:
             logger.info(
-                "Workbook has %d sheet(s). Sheet %d (Re-Inspection) is not present; skipping re-inspection PDF.",
+                "Workbook has %d sheet(s). Sheet %d is not present; skipping its PDF.",
                 sheet_count,
                 sheet_index + 1,
             )
             return None
     except Exception as check_exc:
-        logger.debug("Reinspection sheet count check note: %s", check_exc)
+        logger.debug("Sheet count check note: %s", check_exc)
 
     # 3. Remove existing PDF to guarantee a clean overwrite
     if os.path.isfile(pdf_path):
@@ -486,12 +523,15 @@ def _extract_sheet_for_reinspection_pdf(
 
     # 4. Strategy A: Direct win32com export of target worksheet to PDF
     try:
-        ok = run_headless_reinspection_com(full_path, pdf_path, sheet_index=sheet_index)
+        ok = run_headless_reinspection_com(
+            full_path, pdf_path, sheet_index=sheet_index,
+            print_mode=print_mode, scale=scale, col_range=col_range,
+        )
         if ok and os.path.isfile(pdf_path) and os.path.getsize(pdf_path) > 0:
-            logger.info("✅ Generated re-inspection PDF via Excel COM: %s", Path(pdf_path).name)
+            logger.info("✅ Generated sheet %d PDF via Excel COM: %s", sheet_index + 1, Path(pdf_path).name)
             return pdf_path
     except Exception as com_err:
-        logger.warning("Primary COM reinspection export failed: %s", com_err)
+        logger.warning("Primary sheet PDF export failed: %s", com_err)
 
     # 5. Strategy B: openpyxl to isolate Sheet 3 in a temporary Excel file,
     # then convert to PDF via printable_excel_service._generate_pdf, then delete temp Excel.
@@ -514,15 +554,19 @@ def _extract_sheet_for_reinspection_pdf(
             wb.close()
 
             _plogs = []
-            _generate_pdf(temp_excel, pdf_path, _plogs)
+            _generate_pdf(
+                temp_excel, pdf_path, _plogs,
+                print_mode=print_mode, scale=scale, col_range=col_range,
+            )
             if os.path.isfile(pdf_path) and os.path.getsize(pdf_path) > 0:
                 logger.info(
-                    "✅ Generated re-inspection PDF via secondary pipeline: %s",
+                    "✅ Generated sheet %d PDF via secondary pipeline: %s",
+                    sheet_index + 1,
                     Path(pdf_path).name,
                 )
                 return pdf_path
     except Exception as fallback_err:
-        logger.warning("Secondary reinspection PDF generation failed: %s", fallback_err)
+        logger.warning("Secondary sheet PDF generation failed: %s", fallback_err)
     finally:
         if temp_excel and os.path.isfile(temp_excel):
             try:
@@ -830,8 +874,8 @@ def scan_folder(
         ext = Path(fname).suffix.lower()
         fname_lower = fname.lower()
 
-        if is_newindia_output(full_path):
-            result.skipped_files.append((full_path, "Generated New India scan output"))
+        if is_newindia_output(full_path) or is_generated_fee_bill(full_path):
+            result.skipped_files.append((full_path, "Generated scan output"))
             continue
 
         if portal_id == "oic" and (_is_oic_generated_workbook(fname) or _is_oic_generated_audit(fname)):
@@ -911,7 +955,9 @@ def scan_folder(
                         spot_path = None
                         try:
                             with staging_folder(folder_path) as stage:
-                                staged = _extract_sheet_for_reinspection_pdf(full_path, stage)
+                                staged = _extract_sheet_for_reinspection_pdf(
+                                    full_path, stage, print_settings=automation_defaults,
+                                )
                                 if staged:
                                     spot_path = publish_scan_output(staged, target, stop_cb=stop_cb)
                         except (OSError, ValueError) as exc:
@@ -919,6 +965,7 @@ def scan_folder(
                     else:
                         spot_path = _extract_sheet_for_reinspection_pdf(
                             full_path, folder_path, sheet_index=2, output_filename="reinspection_report.pdf",
+                            print_settings=automation_defaults,
                         )
                     if spot_path and os.path.isfile(spot_path):
                         _mark_generated(spot_path)
@@ -936,6 +983,41 @@ def scan_folder(
                         logger.info(
                             "No re-inspection PDF generated (Sheet 3 absent or extraction skipped)."
                         )
+
+                if _cancel_checkpoint("before_survey_fee_bill_generation"):
+                    return result
+                fee_bill_target = os.path.join(folder_path, SURVEY_FEE_BILL_PDF)
+                try:
+                    from app.portals.oic.generated_files import publish_generated
+
+                    with staging_folder(folder_path) as stage:
+                        fee_bill_staged = _extract_sheet_for_reinspection_pdf(
+                            full_path, stage, sheet_index=1,
+                            output_filename=SURVEY_FEE_BILL_PDF,
+                            print_settings=automation_defaults,
+                        )
+                        if fee_bill_staged:
+                            with open(fee_bill_staged, "rb") as generated:
+                                if generated.read(5) != b"%PDF-":
+                                    raise ValueError("The generated file is not a PDF.")
+                            fee_bill_path = publish_generated(
+                                fee_bill_staged, fee_bill_target,
+                                portal_id="shared", stop_cb=stop_cb,
+                            )
+                            if fee_bill_path:
+                                result.assessment_files["survey_fee_bill"] = fee_bill_path
+                                _mark_generated(fee_bill_path)
+                        elif not _is_cancelled():
+                            result.survey_fee_bill_error = (
+                                "App3 could not create the survey fee bill PDF from sheet 2."
+                            )
+                except (OSError, ValueError) as exc:
+                    result.survey_fee_bill_error = (
+                        f"App3 could not create the survey fee bill PDF: {exc}"
+                    )
+                if result.survey_fee_bill_error:
+                    result.policy_warnings.append(result.survey_fee_bill_error)
+                    logger.warning("%s", result.survey_fee_bill_error)
             else:
                 logger.info("Skipped secondary Excel file: %s", fname)
                 result.skipped_files.append(
@@ -1370,7 +1452,7 @@ def scan_folder(
                 if not os.path.isfile(_full):
                     continue
                 _fname_lower = _fname.lower()
-                if _fname_lower in _skip_fnames or is_newindia_output(_full):
+                if _fname_lower in _skip_fnames or is_newindia_output(_full) or is_generated_fee_bill(_full):
                     continue
                 if portal_id == "oic" and (_is_oic_generated_workbook(_fname) or _is_oic_generated_audit(_fname)):
                     continue
