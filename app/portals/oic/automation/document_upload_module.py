@@ -525,6 +525,9 @@ async def _upload_other_documents(
                      if p and os.path.isfile(p) and os.path.normpath(p) not in used_files]
     else:
         remaining = PdfMergeService.collect_remaining(data, used_files, config)
+    from app.automation.services.document_order import order_remaining_documents
+    from app.portals.oic.generated_files import is_generated_fee_bill
+    remaining = order_remaining_documents(path for path in remaining if not is_generated_fee_bill(path))
     unsupported = [p for p in remaining if Path(p).suffix.lower() not in config.only_extensions]
     if unsupported:
         log.warning(

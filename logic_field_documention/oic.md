@@ -473,6 +473,8 @@ Then App3 clicks **Save and Next**.
 
 If a required slot (1, 2, 3) cannot be uploaded, App3 pauses so you can attach the file in Chrome.
 
+The remaining files in **Other Documents** are ordered by their filenames: survey report → re-inspection → fee bill → estimate → invoice → payment receipt → RC → DL → tax → fitness → permit → claim form → voucher → cancelled cheque → PAN → Aadhaar → KYC → other files. Files assigned to another upload remain excluded, while the existing photograph handling keeps the original multi-photo PDF when needed. Missing types are skipped, and files in the same group are ordered by name. A newly prepared merge uses this order; an old pre-merged PDF is not rearranged. See [document ordering](../app/automation/services/document_order.py).
+
 ---
 
 ## 10. All value changes at a glance

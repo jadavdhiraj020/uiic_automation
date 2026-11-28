@@ -1203,7 +1203,6 @@ def scan_folder(
         assessment_path = os.path.join(folder_path, assessment_name)
 
         try:
-            import tempfile
             import uuid
             from app.data.printable_excel_service import (
                 _create_printable_excel,
@@ -1493,6 +1492,10 @@ def scan_folder(
                     _known.add(_norm)
                     logger.info("OIC additional photograph for Other Documents: %s", Path(_photo).name)
 
+        if portal_id in {"newindia", "oic"}:
+            from app.automation.services.document_order import order_remaining_documents
+            result.claim_related_files = order_remaining_documents(result.claim_related_files)
+
         # Pre-merge now so UI can show the real filename and size
         if result.claim_related_files and folder_path:
             if _cancel_checkpoint("before_claim_related_premerge"):
@@ -1505,19 +1508,15 @@ def scan_folder(
                 CLAIM_RELATED_PDF if portal_id in {"newindia", "oic"} else f"claim_others_documents_{timestamp}.pdf",
             )
             _mergeable_exts = {".pdf", ".jpg", ".jpeg", ".png", ".gif", ".bmp"}
-            _mergeable = [
-                f
-                for f in result.claim_related_files
-                if Path(f).suffix.lower() in _mergeable_exts
-            ]
-            # Convert extra photo formats supported by Pillow for PDF merging.
+            _mergeable = []
+            # Keep converted photos in the same position as their source.
             _photo_merge_temps = []
-            if portal_id == "oic":
-                import tempfile
-                from PIL import Image, ImageSequence
-                for _photo in result.claim_related_files:
-                    if Path(_photo).suffix.lower() not in {".tif", ".tiff", ".webp"}:
-                        continue
+            for _photo in result.claim_related_files:
+                _extension = Path(_photo).suffix.lower()
+                if _extension in _mergeable_exts:
+                    _mergeable.append(_photo)
+                elif portal_id == "oic" and _extension in {".tif", ".tiff", ".webp"}:
+                    from PIL import Image, ImageSequence
                     try:
                         with Image.open(_photo) as _image:
                             _frames = [frame.convert("RGB") for frame in ImageSequence.Iterator(_image)]
