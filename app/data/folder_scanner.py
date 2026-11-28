@@ -1170,7 +1170,8 @@ def scan_folder(
         None,
     )
     if (
-        work_approval_key
+        portal_id != "newindia"
+        and work_approval_key
         and work_approval_key not in result.claim_doc_files
         and "invoice" in result.assessment_files
     ):

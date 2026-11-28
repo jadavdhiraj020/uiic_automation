@@ -15,7 +15,10 @@ from app.portals.oic.generated_files import has_generated_owner, is_generated_fe
 ASSESSMENT_WORKBOOK = "auto_primary_assessment.xlsx"
 ASSESSMENT_SHEET = "Primary_Assessment_Template"
 CLAIM_RELATED_PDF = "claim_others_documents_current.pdf"
-_PRINTABLE_DEFAULTS = ("Printable_Assessment.xlsx", "Printable_Assessment.pdf")
+SURVEY_REPORT_PDF = "survey_report.pdf"
+_LEGACY_PRINTABLE_PDF = "Printable_Assessment.pdf"
+_PRINTABLE_DEFAULTS = ("Printable_Assessment.xlsx", SURVEY_REPORT_PDF)
+_LEGACY_PRINTABLE_DEFAULTS = ("Printable_Assessment.xlsx", _LEGACY_PRINTABLE_PDF)
 _LEGACY_NAMES = re.compile(
     r"(?:auto_primary_assessment(?:_\d+)?(?:\.xlsx|_audit\.txt)"
     r"|primary_assessment_skipped_audit\.txt"
@@ -34,7 +37,11 @@ def printable_names(settings):
     for key, extension, default in zip(
         ("printable_output_excel_name", "printable_output_pdf_name"), (".xlsx", ".pdf"), _PRINTABLE_DEFAULTS
     ):
-        name = ntpath.basename(str(settings.get(key) or default).strip()) or default
+        raw_name = ntpath.basename(str(settings.get(key) or default).strip()) or default
+        if key == "printable_output_pdf_name" and raw_name.casefold() == _LEGACY_PRINTABLE_PDF.casefold():
+            name = SURVEY_REPORT_PDF
+        else:
+            name = raw_name
         names.append(name if name.lower().endswith(extension) else name + extension)
     return tuple(names)
 
@@ -42,7 +49,10 @@ def printable_names(settings):
 def _is_legacy_name(name, settings):
     if _LEGACY_NAMES.fullmatch(name):
         return True
-    for filename in (*_PRINTABLE_DEFAULTS, *printable_names(settings)):
+    for filename in (*_LEGACY_PRINTABLE_DEFAULTS, *printable_names(settings)):
+        # A user-supplied survey_report.pdf is protected unless App3 owns it.
+        if filename.casefold() == SURVEY_REPORT_PDF:
+            continue
         stem, extension = os.path.splitext(filename)
         if re.fullmatch(re.escape(stem) + r"(?:_\d{8}_\d{6})?" + re.escape(extension), name, re.I):
             return True

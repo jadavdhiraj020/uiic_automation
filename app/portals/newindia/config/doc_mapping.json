@@ -41,9 +41,8 @@
   "expected_claim_docs": [
     "Chassis Number Photograph",
     "Odometer Reading Photograph",
-    "Cancelled Cheque / Bank Details",
-    "Work Approval Document"
-  ],
+    "Cancelled Cheque / Bank Details"
+  ],  
   "other_slots": [],
   "claim_assessment_tab": {
     "invoice": [
