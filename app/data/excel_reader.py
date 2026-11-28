@@ -623,6 +623,12 @@ def _parse_workshop_gst_amount(value):
     return format(parsed, "f") if parsed is not None else None
 
 
+def _parse_work_approval_time(value):
+    from app.portals.newindia.field_values import normalize_work_approval_time
+
+    return normalize_work_approval_time(value)
+
+
 def _parse_nil_depreciation(value):
     if value is None or isinstance(value, bool):
         return None
@@ -848,6 +854,7 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
     newindia_parsers = {
         "delivery_order_date": _parse_delivery_order_date,
         "delivery_order_time": _parse_delivery_order_time,
+        "work_approval_time": _parse_work_approval_time,
         "workshop_gst_amount": _parse_workshop_gst_amount,
         "nil_depreciation": _parse_nil_depreciation,
         "metal_depreciation_pct": _parse_depreciation_pct,
@@ -890,6 +897,8 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
         row_off    = cfg.get("row_offset", 0)
         col_off    = cfg.get("col_offset", 1)
         is_date    = "date" in field_name or "dob" in field_name or (
+            portal_id == "newindia" and field_name == "tax_paid_upto"
+        ) or (
             portal_id == "oic" and field_name == "fitness_valid_upto"
         )
         allow_literal_values = bool(cfg.get("allow_literal_values"))

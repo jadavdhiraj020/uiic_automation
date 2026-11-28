@@ -553,7 +553,7 @@ def format_date_ddmmyyyy(raw_date) -> str:
     val = str(raw_date).strip()
     
     # Try parsing common formats, particularly timestamps from Excel
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d-%m-%Y %H:%M:%S", "%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y"):
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%d-%m-%Y %H:%M:%S", "%d-%m-%Y", "%d/%m/%Y", "%d.%m.%Y", "%m/%d/%Y", "%d-%b-%Y"):
         try:
             dt = datetime.strptime(val, fmt)
             return dt.strftime("%d/%m/%Y")

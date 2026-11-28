@@ -229,6 +229,7 @@
     "search_labels": ["Tax Paid Upto", "Tax Paid Up to", "Tax Valid"],
     "row_offset": 0,
     "col_offset": 1,
+    "is_date": true,
     "_mandatory": false
   },
   "transfer_date": {

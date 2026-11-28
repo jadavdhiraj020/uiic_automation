@@ -517,7 +517,8 @@ async def _fill_registration_cert_inner(page: Page, data: ClaimData, log, stop_c
     try:
         val = data.tax_paid_upto
         if val:
-            await fill_input_with_delay(page, 'input[name="taxPaidUpto"]', val, "Tax Paid Upto", log, field_delay_ms, source="Excel")
+            formatted_date = format_date_ddmmyyyy(val)
+            await fill_input_with_delay(page, 'input[name="taxPaidUpto"]', formatted_date, "Tax Paid Upto", log, field_delay_ms, source="Excel")
         else:
             if isinstance(log, AutomationLogger):
                 log.field_skipped("Tax Paid Upto", reason="Missing from Excel")

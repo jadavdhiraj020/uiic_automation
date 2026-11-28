@@ -565,6 +565,7 @@ class ClaimData:
             from app.portals.newindia.field_values import (
                 normalize_driver_license_number,
                 normalize_vehicle_color,
+                normalize_work_approval_time,
                 parse_survey_time,
                 resolve_newindia_license_type,
                 resolve_newindia_vehicle_type,
@@ -633,6 +634,10 @@ class ClaimData:
                 if not self._excel_coords.get("time_of_survey") and self._excel_coords.get("time_hh"):
                     self._excel_coords["time_of_survey"] = self._excel_coords["time_hh"]
                 self._excel_logs.append(f"  📊 time_of_survey normalized: '{parsed_time}'")
+
+            if self.work_approval_time:
+                if normalized_wat := normalize_work_approval_time(self.work_approval_time):
+                    self.work_approval_time = normalized_wat
 
             if self.vehicle_color:
                 normalized_color = normalize_vehicle_color(self.vehicle_color)

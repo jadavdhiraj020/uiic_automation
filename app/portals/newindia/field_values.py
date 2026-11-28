@@ -55,6 +55,25 @@ def parse_survey_time(value, *, embedded=False):
     return None
 
 
+def normalize_work_approval_time(value):
+    """Normalize New India Work Approval Time to 24-hour HH:MM, or None if unreadable."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)) and 0 <= value < 1:
+        minutes = min(round(value * 86400), 86399) // 60
+        return f"{minutes // 60:02d}:{minutes % 60:02d}"
+    text = str(value).strip()
+    if not text:
+        return None
+    if re.fullmatch(r"0?\.\d+", text):
+        frac = float(text)
+        if 0 <= frac < 1:
+            minutes = min(round(frac * 86400), 86399) // 60
+            return f"{minutes // 60:02d}:{minutes % 60:02d}"
+    parsed = parse_survey_time(value)
+    return parsed[:5] if parsed else None
+
+
 def parse_amount(value):
     if isinstance(value, (int, float, Decimal)) and not isinstance(value, bool):
         number = Decimal(str(value))

@@ -13,6 +13,7 @@ from app.portals.newindia.automation.ui_utils import (
 )
 from app.portals.newindia.automation.popup_service import dismiss_portal_popup
 from app.portals.newindia.automation.recovery import _TAB_STATE, current_recovery
+from app.portals.newindia.field_values import normalize_work_approval_time
 from app.portals.oic.automation.recovery import wait_until_ready
 from app.automation.automation_logger import AutomationLogger
 from app.utils import load_automation_defaults
@@ -210,11 +211,9 @@ async def _fill_work_approval_section(page, data, log, stop_cb, field_delay_ms):
 
     # 5. Work Approval Time
     try:
-        val = str(getattr(data, 'work_approval_time', '') or '').strip()
-        if val:
-            # Normalise to HH:MM format
-            if len(val) >= 5 and ":" in val:
-                val = val[:5]
+        raw_val = str(getattr(data, 'work_approval_time', '') or '').strip()
+        if raw_val:
+            val = normalize_work_approval_time(raw_val) or raw_val
             selector = 'input[name="workApprovalTime"], input[name="Work Approval Time"]'
             await fill_input_with_delay(page, selector, val, "Work Approval Time", log, field_delay_ms, source="Excel")
         else:
