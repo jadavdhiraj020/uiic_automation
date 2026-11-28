@@ -361,6 +361,8 @@ class ClaimData:
     is_gst_applicable: str = ""
     vendor_invoice_date: str = ""
     vendor_invoice_number: str = ""
+    sfb_invoice_date: str = ""
+    sfb_invoice_number: str = ""
     primary_assessment: str = ""
     is_supplementary_estimate: str = ""
     painting_work_details: str = ""
@@ -946,6 +948,10 @@ class ClaimData:
         fee_issue = getattr(self, "_newindia_sfb_others_issue", "")
         if fee_issue:
             warnings.append(f"Survey Fee Bill Others needs review: {fee_issue}")
+        for label, value in (("SFB Invoice Number", self.sfb_invoice_number),
+                             ("SFB Invoice Date", self.sfb_invoice_date)):
+            if not str(value or "").strip():
+                warnings.append(f"{label} is missing — review in Survey Fee Bill")
         from_pdf = str(getattr(self, "source_report_path", "") or "").lower().endswith(".pdf")
         if from_pdf:
             errors.extend(getattr(self, "_newindia_pdf_review_errors", ()) or ())
@@ -1480,8 +1486,8 @@ class ClaimData:
 
             # ── Survey Fee Bill ─────────────────────────────
             ("Is Invoice in Name of NIA?", defaults.get("invoice_in_company_name") or "Yes", True, settings),
-            ("SFB Invoice Number",    _inv_val(self.vendor_invoice_number), True, _inv_src("vendor_invoice_number")),
-            ("SFB Invoice Date",      _inv_val(self.vendor_invoice_date), True, _inv_src("vendor_invoice_date")),
+            ("SFB Invoice Number",    self.sfb_invoice_number or "—", True, _src("sfb_invoice_number")),
+            ("SFB Invoice Date",      self.sfb_invoice_date or "—", True, _src("sfb_invoice_date")),
             ("Professional Fee (₹)",  self.professional_fee,         False, _src("professional_fee")),
             ("Photos Amount (₹)",     self.photo_charges,            False, _src("photo_charges")),
             ("Conveyance Amount (₹)", self.traveling_expenses,       False, _src("traveling_expenses")),

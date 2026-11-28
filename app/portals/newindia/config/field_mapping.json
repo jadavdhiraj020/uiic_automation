@@ -514,6 +514,22 @@
     "col_offset": 1,
     "_mandatory": true
   },
+  "sfb_invoice_number": {
+    "display_name": "Survey Fee Bill Invoice Number",
+    "sheet": "Sheet2",
+    "search_labels": ["Ref", "Ref No", "Reference No", "Reference Number"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
+  "sfb_invoice_date": {
+    "display_name": "Survey Fee Bill Invoice Date",
+    "sheet": "Sheet2",
+    "search_labels": ["Date", "Bill Date", "Invoice Date"],
+    "row_offset": 0,
+    "col_offset": 1,
+    "_mandatory": true
+  },
   "primary_assessment": {
     "sheet": "ALL",
     "search_labels": ["Primary Assessment", "Assessment Amount", "Net Payable", "Net Amount"],

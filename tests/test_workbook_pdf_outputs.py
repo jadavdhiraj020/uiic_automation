@@ -231,6 +231,8 @@ def test_newindia_requests_review_before_saving_without_fee_bill(tmp_path, monke
     invoice = tmp_path / "invoice.pdf"
     _write_pdf(invoice)
     claim = ClaimData(portal_id="newindia")
+    claim.sfb_invoice_number = "S-10"
+    claim.sfb_invoice_date = "12/11/2026"
     claim.assessment_files = {"invoice": str(invoice)}
     claim._scan_result = SimpleNamespace(excel_path="main.xlsx")
 
@@ -269,6 +271,8 @@ def test_newindia_attaches_generated_fee_bill(tmp_path, monkeypatch):
     _write_pdf(invoice)
     _write_pdf(fee_bill)
     claim = ClaimData(portal_id="newindia")
+    claim.sfb_invoice_number = "S-10"
+    claim.sfb_invoice_date = "12/11/2026"
     claim.assessment_files = {"invoice": str(invoice), "survey_fee_bill": str(fee_bill)}
     claim._scan_result = SimpleNamespace(excel_path="main.xlsx")
     recovery = SimpleNamespace(

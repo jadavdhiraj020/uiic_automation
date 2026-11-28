@@ -284,6 +284,43 @@ def _label_rows(rows, aliases):
                 yield replace(row, cells=((cells[0][0], cells[-1][1], text[start:end].strip()),))
 
 
+def _fee_invoice_candidates(rows, mapping):
+    """Read fee-bill Ref/Date only from an identified fee-bill page."""
+    from app.portals.newindia.fee_invoice import _invoice_value
+
+    defaults = {
+        "sfb_invoice_number": ("Ref", "Ref No", "Reference No", "Reference Number"),
+        "sfb_invoice_date": ("Date", "Bill Date", "Invoice Date"),
+    }
+    aliases = {}
+    for key, fallback in defaults.items():
+        configured = mapping.get(key, {}).get("search_labels", ())
+        aliases[key] = (configured,) if isinstance(configured, str) else tuple(configured or fallback)
+    boundaries = tuple(label for values in aliases.values() for label in values)
+    result = defaultdict(list)
+    uncertain = defaultdict(set)
+    for row in _label_rows(rows, boundaries):
+        for key, labels in aliases.items():
+            raw = _after(row.text, labels)
+            if raw is None:
+                continue
+            if key == "sfb_invoice_number":
+                match = IDENTIFIER.match(raw)
+                value = _invoice_value(key, match.group(0)) if match else ""
+            else:
+                value = _date(raw)
+            if value:
+                if getattr(row, "confidence", 1.0) < MIN_FIELD_CONFIDENCE:
+                    uncertain[key].add(value)
+                else:
+                    result[key].append((value, row.source))
+    for key, low_values in uncertain.items():
+        confirmed = {value for value, _ in result[key]}
+        if low_values - confirmed:
+            result.pop(key, None)
+    return result
+
+
 def _date(value: str) -> str:
     match = DATE_RX.search(value)
     raw = match[1] if match else ""
@@ -830,6 +867,16 @@ def read_newindia_pdf_report(path, *, stop_cb=None) -> ClaimData:
                 if compact(val) not in PLACEHOLDERS:
                     _set(claim, "police_station_name", val, line.source)
 
+    if sections["fees"] and "fee_bill_identity" not in warnings:
+        fee_pages = {line.page for line in sections["fees"]}
+        fee_page_rows = [line for line in lines if line.page in fee_pages]
+        for key, values in _fee_invoice_candidates(fee_page_rows, mapping).items():
+            unique = {value for value, _ in values}
+            if len(unique) == 1:
+                _set(claim, key, *values[0])
+            elif len(unique) > 1:
+                warnings[key] = f"Conflicting {key.replace('_', ' ')} values in the fee-bill PDF."
+
     # Workshop / Vendor invoice no & date (explicitly excluding Fee Bill section)
     ws_no_candidates = {}
     ws_dt_candidates = {}
@@ -968,8 +1015,10 @@ def supplement_newindia_pdf_fees(claim: ClaimData, folder: str, *, stop_cb=None)
 
     defaults = load_automation_defaults(portal_id="newindia")
     fee_fields = [key for key in FEE_FIELDS if not claim._excel_coords.get(key)]
-    if not fee_fields or not folder:
+    invoice_fields = [key for key in ("sfb_invoice_number", "sfb_invoice_date") if not claim._excel_coords.get(key)]
+    if (not fee_fields and not invoice_fields) or not folder:
         return
+    mapping = load_field_mapping(portal_id="newindia")
 
     folder_path = Path(folder)
     if not folder_path.is_dir():
@@ -1033,6 +1082,10 @@ def supplement_newindia_pdf_fees(claim: ClaimData, folder: str, *, stop_cb=None)
         shared = {key for key, value in identity.items() if value and verified.get(key)}
         if not shared or any(compact(verified[key]) != compact(identity[key]) for key in shared):
             continue
+
+        for key, values in _fee_invoice_candidates(rows, mapping).items():
+            if key in invoice_fields:
+                candidates[key].extend((value, f"{source} · {path.name}") for value, source in values)
 
         for key in fee_fields:
             for row in rows:

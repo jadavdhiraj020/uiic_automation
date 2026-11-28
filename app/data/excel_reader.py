@@ -860,6 +860,7 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
 
         if portal_id == "newindia" and field_name in {
             "sfb_reinspection_charges", "sfb_misc_charge", "sfb_others",
+            "sfb_invoice_number", "sfb_invoice_date",
         }:
             # These amounts are read together from the fee bill below.  The
             # generic scan can otherwise pick a different row or sheet.
@@ -1021,6 +1022,17 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
 
     if portal_id == "newindia":
         from app.portals.newindia.fee_charges import read_fee_charges
+        from app.portals.newindia.fee_invoice import read_invoice_fields
+
+        invoice_fields = read_invoice_fields(wb, mapping, excel_path)
+        claim._newindia_sfb_invoice_issues = {}
+        for key, (value, source, issue) in invoice_fields.items():
+            setattr(claim, key, value)
+            if source:
+                claim._excel_coords[key] = source
+            if issue:
+                claim._newindia_sfb_invoice_issues[key] = issue
+                claim._excel_logs.append(f"  [REVIEW] {key}: {issue}")
 
         charges = read_fee_charges(wb, mapping, excel_path)
         issues = []

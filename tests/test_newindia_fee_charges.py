@@ -88,6 +88,8 @@ def test_unreadable_others_requests_review_before_fee_bill_save(tmp_path, monkey
     pdf = tmp_path / "survey_fee_bill.pdf"
     pdf.write_bytes(b"%PDF-1.4\n")
     claim = ClaimData(portal_id="newindia")
+    claim.sfb_invoice_number = "S-10"
+    claim.sfb_invoice_date = "12/11/2026"
     claim.assessment_files = {"survey_fee_bill": str(pdf)}
     claim._scan_result = SimpleNamespace(excel_path="main.xlsx")
     claim._newindia_sfb_others_issue = "Misc: amount is unreadable."

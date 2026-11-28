@@ -42,6 +42,11 @@ async def _fee_bill_others_entered(page):
     return bool(value) and _amount(value) is not None
 
 
+async def _fee_bill_invoice_entered(page, selector):
+    field = page.locator(selector).first
+    return bool(await field.count()) and bool((await field.input_value()).strip())
+
+
 _SFB_UPLOAD_SUCCESS_MSG = re.compile(
     r"\b(?:document\s+uploaded\s+successfully|uploaded\s+successfully)\b", re.I
 )
@@ -577,7 +582,7 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
 
     # Field 2: Surveyor Fee Invoice Number
     try:
-        val = getattr(data, 'vendor_invoice_number', '') or ''
+        val = getattr(data, 'sfb_invoice_number', '') or ''
         if val:
             val = str(val).strip()
             sel = 'input#surveyorFeeInvoiceNumber'
@@ -588,6 +593,12 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
                 log.warning("Surveyor Fee Invoice Number missing — field is mandatory!")
             else:
                 log("   ⚠️ Surveyor Fee Invoice Number missing from data (mandatory).")
+            recovery = current_recovery.get()
+            if recovery is not None:
+                recovery.record_field_issue(
+                    log, "SFB Invoice Number", "Enter the survey fee bill reference in Chrome.",
+                    manual_value=lambda: _fee_bill_invoice_entered(page, 'input#surveyorFeeInvoiceNumber'),
+                )
     except Exception as e:
         if _structured:
             log.error(f"SFB Invoice Number error: {str(e)[:100]}")
@@ -599,7 +610,7 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
 
     # Field 3: Surveyor Fee Invoice Date
     try:
-        val = getattr(data, 'vendor_invoice_date', '') or ''
+        val = getattr(data, 'sfb_invoice_date', '') or ''
         if val:
             val = str(val).strip()
             sel = 'input[name="surveyorFeeInvoiceDate"]'
@@ -610,6 +621,12 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
                 log.warning("Surveyor Fee Invoice Date missing — field is mandatory!")
             else:
                 log("   ⚠️ Surveyor Fee Invoice Date missing from data (mandatory).")
+            recovery = current_recovery.get()
+            if recovery is not None:
+                recovery.record_field_issue(
+                    log, "SFB Invoice Date", "Enter the survey fee bill date in Chrome.",
+                    manual_value=lambda: _fee_bill_invoice_entered(page, 'input[name="surveyorFeeInvoiceDate"]'),
+                )
     except Exception as e:
         if _structured:
             log.error(f"SFB Invoice Date error: {str(e)[:100]}")
