@@ -724,7 +724,24 @@
     "col_offset": 1,
     "_mandatory": false
   },
+  "sfb_reinspection_charges": {
+    "display_name": "Survey Fee Bill Re-inspection Charges",
+    "sheet": "Sheet2",
+    "search_labels": ["Re-inspection", "Re Inspection", "Reinspection", "Re-inspection Charges", "Re-inspection Fee"],
+    "row_offset": 0,
+    "col_offset": 5,
+    "_mandatory": false
+  },
+  "sfb_misc_charge": {
+    "display_name": "Survey Fee Bill Misc Charge",
+    "sheet": "Sheet2",
+    "search_labels": ["Misc", "Misc Charge", "Misc Charges", "Miscellaneous", "Miscellaneous Charges"],
+    "row_offset": 0,
+    "col_offset": 5,
+    "_mandatory": false
+  },
   "sfb_others": {
+    "display_name": "Survey Fee Bill Others (PDF only)",
     "sheet": "ALL",
     "search_labels": ["Others", "Other Charges", "Other Amount", "Misc", "Misc Charges"],
     "row_offset": 0,

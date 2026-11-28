@@ -32,6 +32,16 @@ async def _fee_bill_submit_enabled(page):
     return bool(await button.count()) and not await button.is_disabled()
 
 
+async def _fee_bill_others_entered(page):
+    from app.portals.newindia.fee_charges import _amount
+
+    field = page.locator("input#others").first
+    if not await field.count():
+        return False
+    value = (await field.input_value()).strip()
+    return bool(value) and _amount(value) is not None
+
+
 _SFB_UPLOAD_SUCCESS_MSG = re.compile(
     r"\b(?:document\s+uploaded\s+successfully|uploaded\s+successfully)\b", re.I
 )
@@ -635,6 +645,19 @@ async def _fill_survey_fee_bill_inner(page, data, log, stop_cb, field_delay_ms):
         if stop_cb():
             return False
         try:
+            if attr_name == "sfb_others" and getattr(data, "_newindia_sfb_others_issue", ""):
+                issue = f"Check Re-inspection and Misc, then enter the correct Others amount. {data._newindia_sfb_others_issue}"
+                if _structured:
+                    log.warning(issue)
+                else:
+                    log(f"   ⚠️ {issue}")
+                recovery = current_recovery.get()
+                if recovery is None:
+                    return False
+                recovery.record_field_issue(
+                    log, "Others", issue, manual_value=lambda: _fee_bill_others_entered(page),
+                )
+                continue
             val = photo_charges_default if attr_name == "photo_charges" else str(getattr(data, attr_name, '') or '').strip()
             src = "Default" if attr_name == "photo_charges" else "Excel"
             if val and val != "0":

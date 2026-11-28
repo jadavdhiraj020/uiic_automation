@@ -858,6 +858,13 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
         if field_name.startswith("_"):
             continue
 
+        if portal_id == "newindia" and field_name in {
+            "sfb_reinspection_charges", "sfb_misc_charge", "sfb_others",
+        }:
+            # These amounts are read together from the fee bill below.  The
+            # generic scan can otherwise pick a different row or sheet.
+            continue
+
         if field_name == "surveyor_observation":
             observation_default = str(automation_defaults.get("observation_default", "Ok") or "Ok")
             claim.surveyor_observation = observation_default
@@ -1011,6 +1018,31 @@ def extract_claim_data(excel_path: str, portal_id: str = "uiic"):
                 labels_str = ' | '.join(labels)
                 missing_fields.append(f"{field_name} (labels: '{labels_str}')")
                 logger.warning(f"  [MISSING] {field_name}: labels '{labels_str}' not found or value empty")
+
+    if portal_id == "newindia":
+        from app.portals.newindia.fee_charges import read_fee_charges
+
+        charges = read_fee_charges(wb, mapping, excel_path)
+        issues = []
+        for key, label in (("sfb_reinspection_charges", "Re-inspection"),
+                           ("sfb_misc_charge", "Misc")):
+            value, source, issue = charges[key]
+            if issue:
+                issues.append(f"{label}: {issue}")
+                setattr(claim, key, "")
+            else:
+                setattr(claim, key, format(value, "f"))
+                if source:
+                    claim._excel_coords[key] = source
+        if issues:
+            claim.sfb_others = ""
+            claim._newindia_sfb_others_issue = " ".join(issues)
+            claim._excel_logs.append(f"  [REVIEW] Survey Fee Bill Others: {claim._newindia_sfb_others_issue}")
+        else:
+            total = charges["sfb_reinspection_charges"][0] + charges["sfb_misc_charge"][0]
+            claim.sfb_others = format(total, "f")
+            claim._excel_coords["sfb_others"] = "Re-inspection Charges + Misc Charge"
+            claim._excel_logs.append(f"  [CALCULATED] Survey Fee Bill Others: {claim.sfb_others}")
 
     # ── Calculate Derived Business Logic ──────────────────────────────────────
     # Professional Fee calculation for UIIC: Survey Fee + Re-inspection Fee (Decimal monetary arithmetic).

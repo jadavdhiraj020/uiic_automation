@@ -248,6 +248,8 @@ class ClaimData:
     daily_allowance: str = "0"
     photo_charges: str = "0"
     sfb_others: str = "0"               # NIA Survey Fee Bill "Others" amount
+    sfb_reinspection_charges: str = ""
+    sfb_misc_charge: str = ""
     total_claimed_amount: str = "0"
 
     # ── OIC Assessment of Loss ───────────────────────────────────────────────
@@ -941,6 +943,9 @@ class ClaimData:
     def _validate_newindia(self) -> Tuple[List[str], List[str]]:
         """New India validation — driven by mandatory field list."""
         errors, warnings = [], []
+        fee_issue = getattr(self, "_newindia_sfb_others_issue", "")
+        if fee_issue:
+            warnings.append(f"Survey Fee Bill Others needs review: {fee_issue}")
         from_pdf = str(getattr(self, "source_report_path", "") or "").lower().endswith(".pdf")
         if from_pdf:
             errors.extend(getattr(self, "_newindia_pdf_review_errors", ()) or ())
@@ -1480,6 +1485,8 @@ class ClaimData:
             ("Professional Fee (₹)",  self.professional_fee,         False, _src("professional_fee")),
             ("Photos Amount (₹)",     self.photo_charges,            False, _src("photo_charges")),
             ("Conveyance Amount (₹)", self.traveling_expenses,       False, _src("traveling_expenses")),
+            ("Re-inspection Charges (₹)", self.sfb_reinspection_charges, False, _src("sfb_reinspection_charges")),
+            ("Misc Charge (₹)", self.sfb_misc_charge, False, _src("sfb_misc_charge")),
             ("Others (₹)",            self.sfb_others,               False, _src("sfb_others")),
         ]
         if str(getattr(self, "source_report_path", "") or "").lower().endswith(".pdf"):

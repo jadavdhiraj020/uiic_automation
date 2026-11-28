@@ -411,11 +411,13 @@ A table whose header App3 is less than 80% sure of is skipped. If neither table 
 | Professional Fee         | ðŸ“„ Direct      | Skipped when 0.                                                                                                          | Left empty                          |
 | Photos Amount            | âš™ï¸ Setting | Always 200.                                                                                                              |                                     |
 | Conveyance Amount        | ðŸ“„ Direct      | From Conveyance or Traveling Expenses. Skipped when 0.                                                                   | Left empty                          |
-| Others                   | ðŸ“„ Direct      | Skipped when 0.                                                                                                          | Left empty                          |
+| Others                   | Calculated | For Excel, adds Re-inspection Charges and Misc Charge from the fee-bill sheet. PDF-only claims keep the existing direct PDF extraction. Skipped when 0. | Unreadable Excel charges are flagged for review before saving. |
 | GST Applicable           | âš™ï¸ Setting | Yes                                                                                                                      |                                     |
 | HSN Code                 | âš™ï¸ Setting | 8512. Typed, then the matching entry is picked from the list.                                                            |                                     |
 | Survey Fee Bill document | ðŸ“Ž File        | Excel claims use the fee bill PDF generated from sheet 2. If it is unavailable, App3 asks the user to upload it in Chrome before saving. PDF-only claims use the existing mapped-document fallback. Then Upload is clicked. If New India's "Document uploaded successfully" alert is open, App3 reads the alert and does not click again. | Excel claims ask for review; PDF-only claims retain the existing fallback |
 | Submit                   | ðŸ”’ Fixed       | **Clicked automatically**, and the confirmation popup is closed.                                                   |                                     |
+
+For Excel claims, **Settings → Field Mapping** has separate entries for Re-inspection Charges and Misc Charge. The shipped mappings look on the second worksheet, on the label's row and five columns to its right. For example, ₹500 plus ₹150.50 fills **Others** with ₹650.50. A blank charge or absent label counts as zero. If the sheet is missing, a label occurs more than once, an amount is unreadable, or a formula has no saved result, Extraction Review warns and the Survey Fee Bill asks the user to check **Others** before saving. See [fee charge extraction](../app/portals/newindia/fee_charges.py) and [fee bill entry](../app/portals/newindia/automation/survey_fee_bill_module.py). PDF-only claims retain their existing fee extraction.
 
 ---
 
@@ -646,7 +648,9 @@ Labels are tried left to right on every sheet. The value is the first real entry
 | Email ID                        | (first ".com" email, cell I4 first) Â· email id Â· email Â· e-mail:- Â· surveyor_email                                                                             |               |
 | Professional Fee                | professional fee Â· professional fees Â· survey fee Â· survey fees Â· Prof. Fee Â· Prof. Fees                                                                    |               |
 | Conveyance                      | Conveyance Â· Conveyance Charges Â· Traveling Expenses Â· Conveyance Amount Â· Travel Expenses Â· Conveyance Charge Â· Traveling Charge Â· Traveling Charges |               |
-| Others (fee bill)               | Others Â· Other Charges Â· Other Amount Â· Misc Â· Misc Charges                                                                                                    |               |
+| Re-inspection Charges (fee bill) | Sheet 2: Re-inspection, Re Inspection, Reinspection, Re-inspection Charges, Re-inspection Fee. Amount is five columns to the right by default. | Blank is 0 |
+| Misc Charge (fee bill) | Sheet 2: Misc, Misc Charge, Misc Charges, Miscellaneous, Miscellaneous Charges. Amount is five columns to the right by default. | Blank is 0 |
+| Others (PDF only) | Others, Other Charges, Other Amount, Misc, Misc Charges | |
 | Payment To                      | Any cell with "payment to insured", "payment to reimbursement", "payment to repairer", "payment to dealer", or "favour" with insured, repairer or dealer                   | Insured       |
 
 To stop a wrong match, a label without the word "date" never matches a cell that contains "date", and a label without "person" never matches a cell that contains "person".
