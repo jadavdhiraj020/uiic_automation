@@ -226,6 +226,12 @@ class SettingsPage(QWidget):
     def _build_automation_defaults_tab(self):
         s = QScrollArea(); s.setWidgetResizable(True); s.setFrameShape(QFrame.Shape.NoFrame)
         w = QWidget(); l = QVBoxLayout(w); l.setContentsMargins(32, 24, 32, 24)
+        search_box, self.defaults_search_input = _search_row(
+            "Filter settings by name, value, or usage...",
+            self._filter_defaults_table,
+        )
+        l.addWidget(search_box)
+
         self.defaults_table = QTableWidget(0, 3)
         self.defaults_table.setObjectName("settingsTable")
         self.defaults_table.setAlternatingRowColors(True)
@@ -456,6 +462,7 @@ class SettingsPage(QWidget):
             used_item = QTableWidgetItem(used_in)
             used_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
             self.defaults_table.setItem(i, 2, used_item)
+        self._filter_defaults_table(self.defaults_search_input.text())
 
         # Field Mapping
         m = load_field_mapping(portal_id=self._portal_id)
@@ -546,32 +553,42 @@ class SettingsPage(QWidget):
             self.doc_table.setItem(i, 2, kw_item)
         self._filter_doc_table(self.doc_search_input.text())
 
-    def _filter_table(self, text):
-        text = (text or "").strip().lower()
-        for i in range(self.mapping_table.rowCount()):
+    def _filter_qtable(self, table, text):
+        query = (text or "").strip().lower()
+        for row in range(table.rowCount()):
+            if not query:
+                table.setRowHidden(row, False)
+                continue
             values = []
-            for col in range(self.mapping_table.columnCount()):
-                item = self.mapping_table.item(i, col)
+            for col in range(table.columnCount()):
+                item = table.item(row, col)
                 if item:
                     values.append(item.text().lower())
                     if col == 0:
-                        values.append(item.data(Qt.ItemDataRole.UserRole).lower())
-                widget = self.mapping_table.cellWidget(i, col)
+                        key = item.data(Qt.ItemDataRole.UserRole)
+                        if key:
+                            values.append(str(key).lower())
+                widget = table.cellWidget(row, col)
                 if isinstance(widget, QComboBox):
                     values.append(widget.currentText().lower())
+                    data = widget.currentData()
+                    if isinstance(data, str) and data:
+                        values.append(data.lower())
                 elif isinstance(widget, QSpinBox):
                     values.append(str(widget.value()))
-            self.mapping_table.setRowHidden(i, bool(text) and text not in " ".join(values))
+                    values.append(widget.text().lower())
+                elif isinstance(widget, QLineEdit):
+                    values.append(widget.text().lower())
+            table.setRowHidden(row, query not in " ".join(values))
+
+    def _filter_defaults_table(self, text):
+        self._filter_qtable(self.defaults_table, text)
+
+    def _filter_table(self, text):
+        self._filter_qtable(self.mapping_table, text)
 
     def _filter_doc_table(self, text):
-        text = (text or "").strip().lower()
-        for row in range(self.doc_table.rowCount()):
-            values = []
-            for col in range(self.doc_table.columnCount()):
-                item = self.doc_table.item(row, col)
-                if item:
-                    values.append(item.text().lower())
-            self.doc_table.setRowHidden(row, bool(text) and text not in " ".join(values))
+        self._filter_qtable(self.doc_table, text)
 
     def _save_all(self):
         try:
@@ -635,8 +652,10 @@ class SettingsPage(QWidget):
                 elif isinstance(widget, QLineEdit):
                     raw = widget.text().strip()
 
-                    def _scroll_to_error(w=widget):
-                        idx = self.defaults_table.indexAt(w.pos())
+                    def _scroll_to_error(w=widget, row_idx=r):
+                        if self.defaults_table.isRowHidden(row_idx):
+                            self.defaults_search_input.clear()
+                        idx = self.defaults_table.model().index(row_idx, 1)
                         if idx.isValid():
                             self.defaults_table.scrollTo(idx)
                         w.setFocus()
@@ -690,7 +709,9 @@ class SettingsPage(QWidget):
                     value_item = self.defaults_table.item(r, 1)
                     raw = value_item.text().strip() if value_item else ""
 
-                    def _scroll_to_error(vi=value_item):
+                    def _scroll_to_error(vi=value_item, row_idx=r):
+                        if self.defaults_table.isRowHidden(row_idx):
+                            self.defaults_search_input.clear()
                         if vi:
                             self.defaults_table.setCurrentItem(vi)
                             self.defaults_table.scrollToItem(vi)

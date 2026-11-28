@@ -494,7 +494,7 @@ By default, New India's **Logs** tab shows a compact icon-led stream: folder rea
 
 Under **Settings → Field Mapping**, New India shows **Delivery Order Date (Optional)** and **Delivery Order Time (Optional)**. When blank, both also show **OPTIONAL** in Extraction Review. **COL OFFSET** starts at 0 for every New India field except **Metal Depreciation %** and **Painting Depreciation %**, which accept `-1` (value left of the label). A saved workspace value for these two beats the shipped `-1`, so a saved `0` or `1` makes App3 read the wrong cell until it is set back to `-1` or reset.
 
-These settings are under **Settings → Automation Defaults** for New India.
+These settings are under **Settings → Automation Defaults** for New India. A search bar at the top filters rows by **Setting**, **Value**, or **Used In** (keeping your search text when switching portals or resetting). **Save All Settings** still saves every setting, including filtered-out rows, and clears the filter automatically if a hidden setting fails validation. See [settings page](../app/ui/components/settings_page.py).
 
 | Setting                    | Default    | Affects                                                         |
 | -------------------------- | ---------- | --------------------------------------------------------------- |

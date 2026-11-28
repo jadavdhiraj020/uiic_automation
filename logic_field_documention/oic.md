@@ -559,7 +559,7 @@ By default, OIC's **Logs** tab shows a compact icon-led stream: folder readiness
 
 ## 13. Settings you can change
 
-These are in App3 Settings â†’ Automation Defaults for OIC.
+These are in App3 Settings â†’ Automation Defaults for OIC. A search bar at the top filters rows by **Setting**, **Value**, or **Used In** (keeping your search text when switching portals or resetting). **Save All Settings** still saves every setting, including filtered-out rows, and clears the filter automatically if a hidden setting fails validation. See [settings page](../app/ui/components/settings_page.py).
 
 | Setting                      | Default                          | Affects                                              |
 | ---------------------------- | -------------------------------- | ---------------------------------------------------- |
