@@ -99,6 +99,8 @@ All dates are entered on New India as **DD/MM/YYYY** (for example 15/01/2024), w
 
 When the source is Excel, App3 uses sheet 1 for the printable survey report, sheet 2 for `survey_fee_bill.pdf`, and sheet 3 for the generated re-inspection report when no existing re-inspection file is selected. All three generated PDFs use the selected **Print Mode** and its column range or scale. For example, Column Range `A:L` applies to all three. App3 replaces its own fee bill PDF on a later successful scan, keeps it out of source-document searches, and protects a same-named user file. If the bill cannot be created, Extraction Review shows a warning and the Survey Fee Bill step asks for manual review. The workbook is opened read-only for sheet export. See [folder scanning](../app/data/folder_scanner.py) and [fee bill upload](../app/portals/newindia/automation/survey_fee_bill_module.py).
 
+New India creates the printable workbook only in a temporary scan folder and publishes the PDF after rendering. If rendering fails, the temporary workbook is removed and a warning is logged. Existing printable Excel and assessment audit files in the claim folder are left untouched. See [printable output](../app/portals/newindia/scan_outputs.py).
+
 Files larger than 1.5 MB are compressed before upload. The merged PDF may be up to 15 MB.
 
 ---
@@ -361,11 +363,11 @@ For each Excel item App3 scrolls the row into view, shows `Survey item N/M (desc
 
 ### 12.3 How App3 builds the primary assessment sheet
 
-On each scan, App3 builds **auto_primary_assessment.xlsx** from the active worksheet saved in the survey Excel, or from verified assessment rows when the survey PDF is the source. It uses the same filename for each successful replacement and saves a short audit text file beside it. Non-Tie-Up uploads the workbook prepared by that scan. Maruti reads the rows locally for direct entry (and also reads per-item **Painting** rows, at the full `PAINT` value, from the source Excel's `PAINT` column).
+On each scan, App3 builds **auto_primary_assessment.xlsx** from the active worksheet saved in the survey Excel, or from verified assessment rows when the survey PDF is the source. It uses the same filename for each successful replacement. The scan does not create a separate assessment audit text file in the claim folder. Non-Tie-Up uploads the workbook prepared by that scan. Maruti reads the rows locally for direct entry (and also reads per-item **Painting** rows, at the full `PAINT` value, from the source Excel's `PAINT` column).
 
 If Excel locks the existing output, App3 keeps the existing file and skips its upload. The review message tells the operator to close the workbook and rescan. For example, if a new scan changes a bumper from ₹3,000 to ₹3,500 while Excel has the file open, the later successful rescan replaces the workbook with the ₹3,500 version.
 
-[Workbook preparation](../app/ui/services/claim_folder_service.py) · [Workbook format and audit](../app/data/assessment_generator.py) · [Shared parts and painting extractor](../app/data/excel_parts_extractor.py)
+[Workbook preparation](../app/ui/services/claim_folder_service.py) · [Workbook format](../app/data/assessment_generator.py) · [Shared parts and painting extractor](../app/data/excel_parts_extractor.py)
 
 **Spare parts table.** Found by its header row: Sr/S.No, Description/Parts Name/Particulars/Item, Metal (or `M-Age`), Plastic (or `P-50%`), Glass (or `G-0%`), with optional Estimated. Zero or negative cells in unused material columns are treated as empty. Each part row becomes:
 

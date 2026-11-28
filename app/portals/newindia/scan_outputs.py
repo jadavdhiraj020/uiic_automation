@@ -96,12 +96,18 @@ def refresh_printable_output(source_excel_path, output_folder, settings, logs, s
                       "printable_output_pdf_name": pdf_name, "printable_use_timestamp": False}
     with staging_folder(output_folder) as stage:
         created = process_printable_output(source_excel_path, stage, fixed_settings, logs, stop_cb=stop_cb)
+        published_pdf = False
         for staged in map(Path, created or ()):
+            if staged.name.casefold() != pdf_name.casefold():
+                # The workbook is only a temporary step in rendering the PDF.
+                continue
             name = staged.name
             try:
                 target = Path(output_folder) / name
                 if target.exists() and os.path.samefile(target, source_excel_path):
                     raise FileExistsError("This filename is used by the source workbook.")
-                publish_scan_output(staged, target, settings, stop_cb=stop_cb)
+                published_pdf = bool(publish_scan_output(staged, target, settings, stop_cb=stop_cb))
             except (OSError, ValueError) as exc:
                 logs.append(f"Warning: {name} skipped. {exc}")
+        if not published_pdf and not (stop_cb and stop_cb()):
+            logs.append("Warning: Printable survey PDF could not be prepared.")

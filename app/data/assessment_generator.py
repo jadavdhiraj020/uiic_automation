@@ -57,20 +57,8 @@ class AssessmentGenerationResult:
     message: str = ""
 
 
-def _audit_path_for(output_path: str) -> str:
-    root, _ext = os.path.splitext(output_path)
-    return f"{root}_audit.txt"
-
-
-def _write_audit_file(audit_path: str, lines: List[str], *, stop_cb=None) -> None:
-    try:
-        with staging_folder(os.path.dirname(os.path.abspath(audit_path))) as stage:
-            staged = os.path.join(stage, os.path.basename(audit_path))
-            with open(staged, "w", encoding="utf-8") as fh:
-                fh.write("\n".join(lines).rstrip() + "\n")
-            publish_scan_output(staged, audit_path, stop_cb=stop_cb)
-    except OSError as exc:
-        logger.warning("Skipped assessment audit %s: %s", os.path.basename(audit_path), exc)
+def _log_assessment_details(lines: List[str]) -> None:
+    logger.debug("Primary assessment details:\n%s", "\n".join(lines))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -168,7 +156,7 @@ def _write_primary_assessment_output(
     *,
     stop_cb=None,
 ) -> Optional[str]:
-    """Sanitise rows, write the primary assessment workbook atomically, and save audit."""
+    """Sanitise rows and write the primary assessment workbook atomically."""
     output_path = os.path.join(output_folder, ASSESSMENT_WORKBOOK)
 
     # Sanitise copies: strip OIC-specific keys so the NIA template writer only
@@ -181,7 +169,6 @@ def _write_primary_assessment_output(
         all_rows.append(cleaned)
 
     wb = _create_template_workbook(all_rows)
-    audit_path = _audit_path_for(output_path)
     try:
         with staging_folder(output_folder) as stage:
             staged = os.path.join(stage, ASSESSMENT_WORKBOOK)
@@ -197,7 +184,6 @@ def _write_primary_assessment_output(
         "",
         "Result",
         f"Output Excel: {output_path}",
-        f"Audit File: {audit_path}",
         f"Parts rows: {len(parts_rows)}",
         f"Labour rows: {len(labour_rows)}",
         f"Total rows: {len(all_rows)}",
@@ -205,7 +191,7 @@ def _write_primary_assessment_output(
         f"Labour assessed total: {labour_total}",
         f"Grand assessed total: {parts_total + labour_total}",
     ])
-    _write_audit_file(audit_path, audit_lines, stop_cb=stop_cb)
+    _log_assessment_details(audit_lines)
 
     logger.info(
         "Assessment generator: SUCCESS — %d rows (%d parts + %d labour) → %s",
@@ -329,11 +315,8 @@ def generate_primary_assessment(source_excel_path: str, output_folder: str, *, s
     # ── Guard: no data extracted ──
     if not all_rows:
         logger.warning("Assessment generator: no parts or labour data found — skipping generation")
-        # Use a deterministic filename so we don't consume a numbered slot that the
-        # actual generator would later claim, avoiding phantom path conflicts.
-        audit_path = os.path.join(output_folder, "primary_assessment_skipped_audit.txt")
         audit_lines.extend(["", "Result", "No parts or labour data found. Excel generation skipped."])
-        _write_audit_file(audit_path, audit_lines, stop_cb=stop_cb)
+        _log_assessment_details(audit_lines)
         return None
 
     return _write_primary_assessment_output(
@@ -349,16 +332,14 @@ def generate_primary_assessment_result(
         return AssessmentGenerationResult(
             output_path=output_path,
             status="generated",
-            generated_files=[output_path, _audit_path_for(output_path)],
+            generated_files=[output_path],
             message="Primary assessment generated.",
         )
 
-    skipped_audit = os.path.join(output_folder, "primary_assessment_skipped_audit.txt")
-    generated_files = [skipped_audit] if os.path.exists(skipped_audit) else []
     return AssessmentGenerationResult(
         output_path=None,
         status="skipped_no_data",
-        generated_files=generated_files,
+        generated_files=[],
         message="Assessment generation skipped: no parts/labour data found.",
     )
 
@@ -393,23 +374,21 @@ def generate_primary_assessment_from_pdf_result(
         audit_lines.append("Review Errors")
         audit_lines.extend(f"- {issue}" for issue in review_errors)
         audit_lines.extend(["", "Result", "PDF assessment verification failed. Excel generation skipped."])
-        audit_path = os.path.join(output_folder, "primary_assessment_skipped_audit.txt")
-        _write_audit_file(audit_path, audit_lines, stop_cb=stop_cb)
+        _log_assessment_details(audit_lines)
         return AssessmentGenerationResult(
             output_path=None,
             status="skipped_review_error",
-            generated_files=[audit_path] if os.path.isfile(audit_path) else [],
+            generated_files=[],
             message="; ".join(review_errors),
         )
 
     if not parts_rows and not labour_rows:
         audit_lines.extend(["Result", "No parts or labour data found in survey PDF. Excel generation skipped."])
-        audit_path = os.path.join(output_folder, "primary_assessment_skipped_audit.txt")
-        _write_audit_file(audit_path, audit_lines, stop_cb=stop_cb)
+        _log_assessment_details(audit_lines)
         return AssessmentGenerationResult(
             output_path=None,
             status="skipped_no_data",
-            generated_files=[audit_path] if os.path.isfile(audit_path) else [],
+            generated_files=[],
             message="Assessment generation skipped: no parts/labour data found in survey PDF.",
         )
 
@@ -417,11 +396,10 @@ def generate_primary_assessment_from_pdf_result(
         parts_rows, labour_rows, output_folder, audit_lines, stop_cb=stop_cb,
     )
     if output_path:
-        audit_file = _audit_path_for(output_path)
         return AssessmentGenerationResult(
             output_path=output_path,
             status="generated",
-            generated_files=[p for p in (output_path, audit_file) if os.path.isfile(p)],
+            generated_files=[output_path],
             message="Primary assessment generated from survey PDF.",
         )
 

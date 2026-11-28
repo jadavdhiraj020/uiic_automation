@@ -99,7 +99,7 @@ def _run_background_document_generation(
                     from app.data.printable_excel_service import process_printable_output
                 _output_dir = os.path.dirname(os.path.abspath(scan_result.excel_path))
                 _settings = dict(portal_defaults or {})
-                bg_logger.info(f"Generating printable Excel/PDF copy for {Path(scan_result.excel_path).name}...")
+                bg_logger.info(f"Generating printable survey PDF for {Path(scan_result.excel_path).name}...")
                 process_printable_output(
                     source_excel_path=scan_result.excel_path,
                     output_folder=_output_dir,
